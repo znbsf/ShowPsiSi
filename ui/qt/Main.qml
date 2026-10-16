@@ -945,7 +945,7 @@ ApplicationWindow {
             } else if (step === 4) {
                 if (exporting || exportFeedback.indexOf("Exported") !== 0) return;
                 checks.ts_success = exportFeedback.includes("chosen λ.ts") && JSON.stringify(preview) === savedPreview;
-                checks.remembered_folder = core.localPath(lastExportFolder) === directory;
+                checks.remembered_folder = core.localPath(lastExportFolder) === core.localPath(core.fileUrl(directory));
                 choose(directory + "/chosen λ.ts");
                 step++;
             } else if (step === 5) {

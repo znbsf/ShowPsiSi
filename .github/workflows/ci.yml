@@ -80,3 +80,44 @@ jobs:
           rustup toolchain install 1.99.1 --profile minimal
       - name: Compile native shell and test URL restrictions
         run: cargo +1.99.1 test --locked --manifest-path ui/tauri/src-tauri/Cargo.toml
+  windows-native:
+    name: Windows MSVC engine and Qt
+    runs-on: windows-2022
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Extract pinned TSDuck SDK and install Qt 6.7.3
+        run: ./scripts/ci/windows.ps1 -Phase Dependencies
+      - name: Build MSVC engine and deploy Qt runtime
+        id: build
+        run: ./scripts/ci/windows.ps1 -Phase Build
+      - name: Windows engine, protocol and transport regressions
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/ci/windows.ps1 -Phase EngineTests
+      - name: Native Qt offscreen interaction regressions
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: ./scripts/ci/windows.ps1 -Phase QtTests
+      - name: Collect SDK and native DLL diagnostics
+        if: always()
+        run: ./scripts/ci/windows.ps1 -Phase Diagnostics
+      - name: Keep Windows native evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-validation
+          path: |
+            artifacts/windows-native
+            build/windows/CMakeCache.txt
+            build/windows/CMakeFiles/CMakeConfigureLog.yaml
+            aqtinstall.log
+          if-no-files-found: warn
+          retention-days: 14

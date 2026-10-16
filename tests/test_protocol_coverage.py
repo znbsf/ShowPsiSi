@@ -123,10 +123,47 @@ class ProtocolCoverageTests(unittest.TestCase):
             _, details = self.analyze(names, 'auto')
             for name in names:
                 self.assert_native(details, name)
-        _, details = self.analyze(['MGT', 'TVCT'], 'isdb', [0x1ffb, 0x123])
-        self.assertEqual(len(details), 2)
-        self.assertTrue(all(d['native_table']['name'] == 'generic_long_table' for d in details))
-        self.assertTrue(all(d['references'] == [] for d in details))
+        # TSDuck 3.39's first registered matching table wins when explicit ISDB
+        # and detected ATSC evidence conflict. Windows and Linux registration
+        # orders can produce the correct ATSC native table or a raw fallback.
+        # Neither outcome may relabel these bytes as ISDB LDT/CDT.
+        for standard in ['atsc', 'isdb']:
+            _, details = self.analyze(['MGT', 'TVCT'], standard, [0x1ffb, 0x123])
+            self.assertEqual(len(details), 2)
+            for detail in details:
+                with self.subTest(standard=standard, pid=detail['pid']):
+                    expected = {0xc7: 'MGT', 0xc8: 'TVCT'}[detail['table_id']]
+                    native = detail['native_table']
+                    self.assertEqual(detail['standards_context'], standard)
+                    self.assertEqual(detail['pid'], FIXTURES[expected][0])
+                    self.assertEqual(detail['raw_hex'], FIXTURES[expected][1].upper())
+                    self.assertTrue(detail['native_table_complete'])
+                    self.assertIn(native['name'], (expected, 'generic_long_table'), repr(detail))
+                    if native['name'] == 'generic_long_table':
+                        self.assertEqual(standard, 'isdb', repr(detail))
+                        self.assertEqual(detail['native_decode_status'], 'generic raw fallback')
+                        payload = ''.join(native['children'][0]['text'].split())
+                        self.assertEqual(payload, FIXTURES[expected][1][16:-8].upper())
+                    else:
+                        self.assertEqual(detail['native_decode_status'], 'native TSDuck decoder')
+                        if expected == 'MGT':
+                            entry = next(n for n in native['children'] if n['name'] == 'table')['attributes']
+                            self.assertEqual(entry['type'], 'TVCT-current')
+                            self.assertEqual(int(entry['pid'], 0), 0x123)
+                            self.assertEqual(int(entry['version_number'], 0), 0)
+                        else:
+                            channel = next(n for n in native['children'] if n['name'] == 'channel')['attributes']
+                            self.assertEqual(channel['short_name'], 'LAB-HD')
+                            self.assertEqual(int(channel['major_channel_number'], 0), 7)
+                            self.assertEqual(int(channel['minor_channel_number'], 0), 1)
+                            self.assertEqual(int(channel['program_number'], 0), 101)
+                            self.assertEqual(int(channel['source_id'], 0), 101)
+                    # Reference policy uses the explicitly chosen family even if
+                    # the SDK decoded a known table from another family.
+                    if standard == 'isdb':
+                        self.assertEqual(detail['references'], [])
+                    else:
+                        self.assertTrue(any(r['id'] == 'atsc-psip' for r in detail['references']))
     def test_dvb_s_s2_t_t2_c_delivery_fields_and_references(self):
         _, details = self.analyze(['DELIVERY_NIT'], 'dvb')
         nit = self.assert_native(details, 'NIT')

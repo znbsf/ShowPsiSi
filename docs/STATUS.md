@@ -1,13 +1,14 @@
 # ShowPsiSi status
 
-Updated: 2026-10-16 UTC. Development branch: `feat/protocol-robustness-next`.
-Baseline: https://github.com/znbsf/ShowPsiSi/pull/1 merged into main as
-`ac039f6de903a58080185edb06f5fe9290c787ef` on 2026-10-16 UTC. No release published.
+Updated: 2026-10-16 UTC.
 
-Next iteration is in progress: version-generation integrity, snapshot comparison,
-persistent workbench layout, broader protocol regressions and Windows cloud CI.
-The counts below describe the latest local regression run; pending CI/native steps
-are kept separate from those local results.
+- PR #1 merged as `ac039f6`: modern workbenches and initial integrity loop.
+- PR #2 merged as `beb2e57`: Windows MSVC engine/Qt validation.
+- PR #3 merged as `f63bc60`: snapshot comparison, layout persistence and protocol
+  generation integrity. All four jobs passed at feature head `98482d1` in
+  [run 38976239202](https://github.com/znbsf/ShowPsiSi/actions/runs/38976239202).
+- No release or installer published. Windows Tauri compile/test validation is the
+  next CI-only step, separately tracked from Windows Qt/runtime claims.
 
 ## Current result
 
@@ -58,8 +59,9 @@ Copy URL succeeds and clears the error. Browser navigation itself is not verifie
 The CI-only Windows PR #2 is merged as `beb2e57`. All four jobs passed in
 run 38974640106, including Windows baseline engine/protocol/HTTP/Qt regressions.
 The retained Windows Qt screenshot was inspected after fixing offscreen font
-discovery. This validates the merged baseline; the expanded feature suite still
-needs its own CI run.
+discovery. The expanded PR #3 suite also passed all four jobs: Windows engine29 + one
+explicitly allowed absent-recording test, protocol26, HTTP5 and Qt8. Its retained
+Windows Qt smoke screenshot was downloaded and visually inspected.
 
 The SDK currently registers **43 table decoders / 306 descriptor decoders**.
 The 12,490-byte standards index associates 191 descriptor names and 26 table names,

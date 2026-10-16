@@ -89,6 +89,8 @@ let selected = "",
   activeAnalyze = null;
 let aggregateDiagnostic = null;
 let backendFailure = "";
+let comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: 0 };
+let savedWorkspace = null, comparisonEvidence = "", inspectionEvidence = null;
 let firstPaint = false,
   completePaint = false,
   preview = {},
@@ -107,10 +109,10 @@ const invoke = (...args) =>
         ),
       );
 $("#app").innerHTML = `
-<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><button class="btn quiet" id="api">Agent API</button></header>
+<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="api">Agent API</button></header>
 <div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button></div>
 <div class="stats" id="stats"></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only transport stream and manifest, without media or PCR.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><div class="actions"><button class="btn" id="export" disabled>Export SI-only TS + manifest</button><button class="btn" id="close-edit">Close</button></div></dialog>
@@ -128,7 +130,7 @@ function disableBackendActions() {
   if (!backendFailure) return;
   document
     .querySelectorAll(
-      "#scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,[data-history]",
+      "#scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
     )
     .forEach((element) => {
       element.disabled = true;
@@ -151,6 +153,9 @@ function disconnectBackend(reason) {
   activeAnalyze = null;
   ++inspectEpoch;
   ++queryEpoch;
+  ++comparison.epoch;
+  comparison.loading = false;
+  comparison.error = backendFailure;
   for (const job of pending.values()) {
     clearTimeout(job.timer);
     job.reject(new Error(backendFailure));
@@ -170,7 +175,7 @@ function call(method, params = {}) {
     // Only idle read requests expire. Analysis may be long-running, and write
     // timeouts would leave ambiguous outcomes. Backend exit rejects every job.
     const canTimeout =
-      ["inspect", "query", "capabilities"].includes(method) &&
+      ["inspect", "query", "diff_snapshots", "capabilities"].includes(method) &&
       !busy &&
       ![...pending.values()].some((job) => job.method === "analyze");
     const timer = canTimeout
@@ -236,6 +241,8 @@ async function scan() {
     return;
   }
   busy = true;
+  if (tab === "Changes") changeTab("Services");
+  comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
   ++queryEpoch;
   selectionReset();
   data = {};
@@ -268,7 +275,7 @@ async function scan() {
     render();
   }
 }
-async function inspect(id, sid = -1, key = "") {
+async function inspect(id, sid = -1, key = "", evidence = null) {
   if (backendFailure) return;
   if (!id) {
     notice("Aggregate diagnostic: packet locations are not indexed.");
@@ -276,7 +283,9 @@ async function inspect(id, sid = -1, key = "") {
   }
   aggregateDiagnostic = null;
   const epoch = ++inspectEpoch;
-  const atPacket = data.selected_packet;
+  const atPacket = evidence ? evidence.atPacket : data.selected_packet;
+  comparisonEvidence = evidence?.label || "";
+  inspectionEvidence = evidence;
   selected = id;
   selectedService = sid;
   selectedKey = key || id;
@@ -286,7 +295,8 @@ async function inspect(id, sid = -1, key = "") {
   openNodes.clear();
   treeSearch = "";
   renderInspector();
-  renderList();
+  if (tab !== "Changes") renderList();
+  else $("#list").querySelectorAll("[data-comparison-evidence]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.evidenceKey === selectedKey)));
   try {
     const result = await call("inspect", {
       id,
@@ -309,6 +319,10 @@ async function inspect(id, sid = -1, key = "") {
       openNodes.add(
         `section/services/${sid}/descriptors/${primaryDescriptor.offset}`,
       );
+    if (comparisonEvidence)
+      notice(comparisonEvidence + " · evidence loaded · main snapshot unchanged");
+    else if ($("#notice").classList.contains("error"))
+      notice("Section loaded · PID " + hex(detail.pid) + " · " + detail.name);
   } catch (error) {
     if (epoch !== inspectEpoch) return;
     detailError = String(error);
@@ -332,6 +346,7 @@ function defaultInspect() {
 }
 async function snapshot(packet, id) {
   if (busy || backendFailure) return;
+  if (tab === "Changes") changeTab("Services");
   const epoch = ++queryEpoch;
   selectionReset();
   renderInspector();
@@ -436,14 +451,15 @@ function render() {
       (el) =>
         (el.onclick = () => {
           filter = el.dataset.filter === "All tables" ? "" : el.dataset.filter;
-          tab = "Tables";
+          changeTab("Tables");
           page = 0;
           render();
+          [...$("#sidebar").querySelectorAll("button")].find((button) => button.dataset.filter === el.dataset.filter)?.focus();
         }),
     );
   $("#extension").innerHTML =
     `<div class="panel-title">DESCRIPTOR EXTENSION</div><strong>${esc(data.extension_id || "No extension reported")}</strong><p>Schema extensions use their declared scope. Native decoding follows the table context; raw evidence is retained.</p>`;
-  $("#tabs").innerHTML = ["Services", "Tables", "EPG", "Issues"]
+  $("#tabs").innerHTML = ["Services", "Tables", "EPG", "Issues", "Changes"]
     .map(
       (t) =>
         `<button role="tab" aria-selected="${tab === t}" tabindex="${tab === t ? 0 : -1}" class="${tab === t ? "active" : ""}" data-tab="${t}" ${tip(t)}>${t}${t === "Issues" && data.diagnostics?.length ? ` <span class="tab-count">${num(data.diagnostics.length)}</span>` : ""}</button>`,
@@ -453,9 +469,10 @@ function render() {
     .querySelectorAll("button")
     .forEach((el) => {
       el.onclick = () => {
-        tab = el.dataset.tab;
+        changeTab(el.dataset.tab);
         page = 0;
         render();
+        $('#tabs [aria-selected="true"]').focus();
       };
       el.onkeydown = (e) => {
         if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
@@ -463,7 +480,7 @@ function render() {
           const buttons = [...$("#tabs").children];
           const next =
             buttons[
-              (buttons.indexOf(el) + (e.key === "ArrowRight" ? 1 : 3)) % 4
+              (buttons.indexOf(el) + (e.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length
             ];
           next.click();
           $('#tabs [aria-selected="true"]').focus();
@@ -542,6 +559,13 @@ function rowIdentity(r, index) {
         : r.id;
 }
 function renderList() {
+  $(".searchbar").hidden = tab === "Changes";
+  $("#list").setAttribute("role", tab === "Changes" ? "region" : "listbox");
+  $("#list").setAttribute("aria-label", tab === "Changes" ? "Snapshot changes" : "Stream records");
+  if (tab === "Changes") {
+    renderComparison();
+    return;
+  }
   const rows = recordRows();
   page = Math.max(0, Math.min(page, Math.ceil(rows.length / PAGE_SIZE) - 1));
   const start = page * PAGE_SIZE;
@@ -630,6 +654,157 @@ function renderList() {
     });
   if (!$('#list [tabindex="0"]'))
     $('#list [role="option"]')?.setAttribute("tabindex", "0");
+}
+function changeTab(next) {
+  if (next === tab) return;
+  let restoreInspection = false;
+  if (next === "Changes") {
+    savedWorkspace = { selected, selectedService, selectedKey, detail, detailError,
+      aggregateDiagnostic, treeSearch, openNodes: new Set(openNodes), view, inspectionEvidence, wasLoading: loadingDetail };
+    ++inspectEpoch;
+    loadingDetail = false;
+    detail = {};
+    detailError = "";
+    aggregateDiagnostic = null;
+    comparisonEvidence = "";
+    if (comparison.from === null && data.complete) {
+      comparison.to = data.selected_packet ?? Math.max(0, data.packets - 1);
+      comparison.from = data.history?.find((entry) => entry.last_packet < comparison.to)?.last_packet ?? 0;
+    }
+  } else if (tab === "Changes") {
+    ++inspectEpoch;
+    loadingDetail = false;
+    if (savedWorkspace) {
+      restoreInspection = savedWorkspace.wasLoading;
+      ({ selected, selectedService, selectedKey, detail, detailError,
+        aggregateDiagnostic, treeSearch, openNodes, view, inspectionEvidence } = savedWorkspace);
+      savedWorkspace = null;
+    }
+    comparisonEvidence = "";
+  }
+  tab = next;
+  if (restoreInspection && selected && !backendFailure) inspect(selected, selectedService, selectedKey);
+}
+function comparisonPresets() {
+  const current = data.selected_packet ?? Math.max(0, data.packets - 1);
+  return `<option value="">Choose current / history…</option><option value="${current}">Current snapshot · packet ${num(current)}</option><option value="0">Start · packet 0</option><option value="${Math.max(0, data.packets - 1)}">Latest · packet ${num(data.packets - 1)}</option>` +
+    (data.history || []).map((entry) => `<option value="${entry.last_packet}">${esc(entry.label)} · through packet ${num(entry.last_packet)}</option>`).join("");
+}
+function invalidateComparison() {
+  ++comparison.epoch;
+  comparison.loading = false;
+  comparison.result = null;
+  comparison.error = "";
+  ++inspectEpoch;
+  detail = {};
+  detailError = "";
+  loadingDetail = false;
+  comparisonEvidence = "";
+  renderInspector();
+  renderComparisonResults();
+}
+function renderComparison() {
+  const disabled = busy || backendFailure || !data.complete;
+  $("#service-head").innerHTML = `<div class="comparison-controls"><div class="comparison-source" title="${esc(data.source || "No source")}">${esc(data.source || "Analyze a stream to compare its observed states")}</div><div class="comparison-endpoints">${[["from", "A · before"], ["to", "B · after"]].map(([side, label]) => `<div><label for="compare-${side}">${label}</label><input id="compare-${side}" type="number" min="0" max="${Math.max(0, (data.packets || 1) - 1)}" step="1" value="${comparison[side] ?? ""}" aria-label="${label} packet cutoff" ${disabled ? "disabled" : ""}><select data-preset="${side}" aria-label="Choose snapshot ${side === "from" ? "A" : "B"} from history" ${disabled ? "disabled" : ""}>${comparisonPresets()}</select></div>`).join("")}</div><div class="comparison-actions"><button id="swap-comparison" class="btn small" ${disabled ? "disabled" : ""} title="Reverse the comparison direction">Swap A / B</button><label class="sr-only" for="compare-kind">Changed record type</label><select id="compare-kind" ${disabled ? "disabled" : ""}>${[["all", "All changes"], ["tables", "Tables"], ["services", "Services"], ["events", "Events"]].map(([value, label]) => `<option value="${value}" ${comparison.kind === value ? "selected" : ""}>${label}</option>`).join("")}</select><button id="run-comparison" class="btn primary" ${disabled || comparison.loading ? "disabled" : ""}>${comparison.loading ? "Comparing…" : "Compare A → B"}</button></div><p class="meta comparison-help">Inclusive packet cutoffs within this source. Only observed valid current state is compared; missing observations do not prove a broadcast removal.</p></div>`;
+  for (const side of ["from", "to"]) {
+    $("#compare-" + side).oninput = (event) => {
+      comparison[side] = event.target.value === "" ? null : Number(event.target.value);
+      invalidateComparison();
+    };
+    $("#compare-" + side).onkeydown = (event) => {
+      if (event.key === "Enter") runComparison();
+    };
+  }
+  $("#service-head").querySelectorAll("[data-preset]").forEach((el) => {
+    el.onchange = () => {
+      if (el.value === "") return;
+      comparison[el.dataset.preset] = Number(el.value);
+      $("#compare-" + el.dataset.preset).value = el.value;
+      invalidateComparison();
+    };
+  });
+  $("#swap-comparison").onclick = () => {
+    [comparison.from, comparison.to] = [comparison.to, comparison.from];
+    invalidateComparison();
+    renderComparison();
+    $("#swap-comparison").focus();
+  };
+  $("#compare-kind").onchange = (event) => {
+    comparison.kind = event.target.value;
+    invalidateComparison();
+  };
+  $("#run-comparison").onclick = () => runComparison();
+  renderComparisonResults();
+}
+function comparisonValue(value) {
+  if (value == null) return "—";
+  return typeof value === "object" ? JSON.stringify(value) : String(value);
+}
+function comparisonSide(side, label, change, index) {
+  if (!side) return `<div class="comparison-side absent"><h4>${label}</h4><p>No observed record in this state</p></div>`;
+  const value = side.value;
+  const fields = [...new Set([...(change.changed_fields || []).filter((field) => field !== "payload"), ...(change.kind === "services" ? ["name", "provider", "pmt_pid"] : change.kind === "events" ? ["title", "start", "duration_seconds"] : ["name", "version", "bytes"])])].filter((field) => change.changed_fields?.includes(field) || Object.prototype.hasOwnProperty.call(value, field));
+  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span>${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · v${evidence.version} · section ${evidence.section}</button>`).join("")}</div></div>`;
+}
+function renderComparisonResults() {
+  const result = comparison.result;
+  $("#prev").disabled = !result || result.offset === 0 || comparison.loading || !!backendFailure;
+  $("#next").disabled = !result || result.next_offset == null || comparison.loading || !!backendFailure;
+  $("#run-comparison")?.toggleAttribute("disabled", comparison.loading || busy || !!backendFailure || !data.complete);
+  if ($("#run-comparison")) $("#run-comparison").textContent = comparison.loading ? "Comparing…" : "Compare A → B";
+  $("#page-label").textContent = result ? result.total_changes ? `${num(result.offset + 1)}–${num(Math.min(result.offset + result.changes.length, result.total_changes))} of ${num(result.total_changes)} changes` : "0 changes" : "Snapshot comparison";
+  if (!result) {
+    $("#list").innerHTML = `<div class="empty"><span class="empty-icon">${comparison.error ? "⚠" : "⇄"}</span><h3>${comparison.loading ? "Comparing observed states…" : comparison.error ? "Unable to compare" : "What changed between versions?"}</h3><p>${esc(comparison.error || "Choose A and B from the captured version history or the current snapshot, then compare. Original source bytes remain unchanged.")}</p></div>`;
+    return;
+  }
+  const totals = Object.values(result.summary).reduce((counts, item) => ({ added: counts.added + item.added, removed: counts.removed + item.removed, changed: counts.changed + item.changed }), { added: 0, removed: 0, changed: 0 });
+  $("#list").innerHTML = `<div class="comparison-summary"><strong>A ${num(result.from_packet)} → B ${num(result.to_packet)}</strong><span>All record types: <span class="ok">${num(totals.added)} added</span> · <span class="bad">${num(totals.removed)} removed</span> · ${num(totals.changed)} changed</span><span class="meta">${result.kind === "all" ? "Showing all kinds" : "Showing " + esc(result.kind)} · ${num(result.total_changes)} changes</span></div>${result.changes.length ? result.changes.map((change, index) => {
+    const identity = change.identity, value = change.after?.value || change.before?.value || {};
+    const title = change.kind === "services" ? (value.name || "Unnamed service") + " · SID " + hex(identity.service_id)
+      : change.kind === "events" ? (value.title || "Untitled event") + " · event " + hex(identity.event_id)
+        : (value.name || "Table") + " · PID " + hex(identity.pid) + " · section " + identity.section;
+    return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${change.changed_fields?.length ? `<p class="changed-fields">Changed: ${change.changed_fields.map(esc).join(", ")}</p>${change.changed_fields.includes("payload") ? '<p class="meta">Raw section payload differs. Open source evidence to inspect its bytes.</p>' : ""}` : ""}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div></article>`;
+  }).join("") : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+  $("#list").querySelectorAll("[data-comparison-evidence]").forEach((el) => {
+    el.onclick = () => {
+      const [index, letter, evidenceIndex] = el.dataset.comparisonEvidence.split(":");
+      const change = result.changes[Number(index)], side = letter === "A" ? change.before : change.after;
+      const evidence = side.evidence[Number(evidenceIndex)];
+      inspect(evidence.id, change.kind === "services" && Number(evidenceIndex) === 0 ? change.identity.service_id : -1, el.dataset.evidenceKey,
+        { atPacket: side.at_packet, label: "Comparison " + letter + " · packet " + num(side.at_packet) });
+    };
+  });
+}
+async function runComparison(offset = 0) {
+  if (busy || backendFailure || !data.complete) return;
+  for (const side of ["from", "to"]) {
+    if (!Number.isSafeInteger(comparison[side]) || comparison[side] < 0 || comparison[side] >= data.packets) {
+      comparison.error = "Choose a whole packet number between 0 and " + num(data.packets - 1) + " for " + (side === "from" ? "A" : "B") + ".";
+      comparison.result = null;
+      renderComparisonResults();
+      $("#compare-" + side).focus();
+      return;
+    }
+  }
+  const epoch = ++comparison.epoch, revision = data.revision;
+  comparison.loading = true;
+  comparison.error = "";
+  comparison.result = null;
+  renderComparisonResults();
+  try {
+    const result = await call("diff_snapshots", { from_packet: comparison.from, to_packet: comparison.to,
+      kind: comparison.kind, offset, limit: PAGE_SIZE });
+    if (epoch !== comparison.epoch || revision !== data.revision) return;
+    comparison.result = result;
+  } catch (error) {
+    if (epoch !== comparison.epoch) return;
+    comparison.error = String(error);
+  } finally {
+    if (epoch === comparison.epoch) {
+      comparison.loading = false;
+      if (tab === "Changes") renderComparisonResults();
+    }
+  }
 }
 function fieldValue(key, value) {
   if (value === null) return "—";
@@ -1058,7 +1233,7 @@ function referencePanel() {
     valid
       .map(
         (ref) =>
-          `<section class="reference"><a data-reference href="${esc(ref.url)}" target="_blank" rel="noopener noreferrer">${esc(ref.title || ref.id || "Specification")} <span class="external-label">Open</span></a><p class="meta">${esc(ref.version || "")} · ${esc(ref.scope || "standard-level")}</p>${ref.access ? `<p>${esc(ref.access)}</p>` : ""}${ref.notes ? `<p>${esc(ref.notes)}</p>` : ""}<div class="reference-url">${esc(ref.url)}</div><button class="btn small" data-copy-reference="${esc(ref.url)}">Copy URL</button></section>`,
+          `<section class="reference"><a data-reference href="${esc(ref.url)}" target="_blank" rel="noopener noreferrer">${esc(ref.title || ref.id || "Specification")} <span class="external-label">Open</span></a><p class="meta">${esc(ref.version || "")} · ${esc(ref.scope || "standard-level")}</p>${ref.access ? `<p>${esc(ref.access)}</p>` : ""}${ref.notes ? `<p>${esc(ref.notes)}</p>` : ""}<textarea class="reference-url" readonly rows="3" spellcheck="false" aria-label="Specification URL">${esc(ref.url)}</textarea><button class="btn small" data-copy-reference="${esc(ref.url)}">Copy URL</button><p class="reference-status" role="status" aria-live="polite" hidden></p></section>`,
       )
       .join("") +
     "</div>"
@@ -1071,18 +1246,19 @@ function renderInspector() {
     return;
   }
   if (loadingDetail || detailError || !detail.name) {
-    panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR</div><div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError && !backendFailure ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
+    panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR</div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError && !backendFailure ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
     $("#retry-inspect")?.addEventListener("click", () =>
-      inspect(selected, selectedService, selectedKey),
+      inspect(selected, selectedService, selectedKey, inspectionEvidence),
     );
     return;
   }
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div><div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(detail.name)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? "TSDuck XML" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : "TSDuck XML"}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure ? "" : "disabled"}>Rename service…</button></div>`;
+  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(detail.name)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? "TSDuck XML" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : "TSDuck XML"}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>
       (el.onclick = () => {
         view = el.dataset.view;
         renderInspector();
+        $('#inspector [data-view="' + view + '"]').focus();
       }),
   );
   if (view === "tree") {
@@ -1090,6 +1266,14 @@ function renderInspector() {
     $("#tree-search").oninput = (e) => {
       treeSearch = e.target.value;
       renderTree();
+    };
+    $("#tree-search").onkeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        treeSearch = "";
+        event.target.value = "";
+        renderTree();
+      }
     };
     renderTree();
     $("#expand-tree").onclick = () => {
@@ -1107,40 +1291,64 @@ function renderInspector() {
       renderTree();
     };
   }
-  panel.querySelectorAll("[data-reference]").forEach(
-    (el) =>
-      (el.onclick = async (event) => {
-        if (env.runtime === "cloud-browser") return;
-        event.preventDefault();
-        try {
-          await invoke("open_reference", { url: el.href });
-        } catch (error) {
-          notice(
-            "Could not open reference: " + String(error) + ". Use Copy URL.",
-            true,
-          );
+  panel.querySelectorAll(".reference").forEach((section) => {
+    const link = section.querySelector("[data-reference]");
+    const copy = section.querySelector("[data-copy-reference]");
+    const field = section.querySelector(".reference-url");
+    const status = section.querySelector(".reference-status");
+    let action = 0, opening = false;
+    const feedback = (message, error, token) => {
+      if (token !== action || !section.isConnected) return;
+      status.hidden = false;
+      status.textContent = message;
+      status.classList.toggle("bad", error);
+      notice(message, error);
+    };
+    field.onfocus = () => field.select();
+    link.onclick = async (event) => {
+      // Browser preview keeps ordinary external-link behavior. Only the native
+      // shell submits to an OS URL handler and can report its launch failure.
+      if (env.runtime === "cloud-browser") return;
+      event.preventDefault();
+      if (opening) return;
+      const token = ++action;
+      opening = true;
+      link.setAttribute("aria-disabled", "true");
+      link.setAttribute("aria-busy", "true");
+      feedback("Submitting reference URL to the system browser…", false, token);
+      try {
+        await invoke("open_reference", { url: link.href });
+        feedback("Reference URL submitted to the system browser. If no window appears, use Copy URL.", false, token);
+      } catch (error) {
+        feedback("Could not open reference: " + String(error) + ". Use Copy URL or select the URL below.", true, token);
+      } finally {
+        opening = false;
+        link.removeAttribute("aria-disabled");
+        link.removeAttribute("aria-busy");
+      }
+    };
+    copy.onclick = async () => {
+      const token = ++action;
+      copy.disabled = true;
+      try {
+        await navigator.clipboard.writeText(copy.dataset.copyReference);
+        feedback("Reference URL copied", false, token);
+      } catch (error) {
+        if (token === action && section.isConnected) {
+          field.focus();
+          field.select();
         }
-      }),
-  );
-  panel.querySelectorAll("[data-copy-reference]").forEach(
-    (el) =>
-      (el.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(el.dataset.copyReference);
-          notice("Reference URL copied");
-        } catch (error) {
-          notice(
-            "Clipboard unavailable. Select and copy the URL shown under the reference.",
-            true,
-          );
-        }
-      }),
-  );
+        feedback("Automatic clipboard access is unavailable. The URL is selected; press Ctrl+C or ⌘C to copy it.", true, token);
+      } finally {
+        copy.disabled = false;
+      }
+    };
+  });
   $("#edit").onclick = openEdit;
 }
 function renderTimeline() {
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="latest" ${busy || backendFailure || !data.source ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
+    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.source ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
       data.history || []
     )
       .slice(historyPage * 40, (historyPage + 1) * 40)
@@ -1160,6 +1368,7 @@ function renderTimeline() {
     renderTimeline();
   });
   $("#latest").onclick = () => snapshot(-1);
+  $("#compare-snapshots").onclick = () => { changeTab("Changes"); render(); $("#compare-from").focus(); };
   $("#timeline")
     .querySelectorAll("[data-history]")
     .forEach(
@@ -1309,12 +1518,23 @@ $("#search").oninput = (e) => {
   page = 0;
   renderList();
 };
+$("#search").onkeydown = (event) => {
+  if (event.key === "Escape") {
+    event.preventDefault();
+    search = "";
+    event.target.value = "";
+    page = 0;
+    renderList();
+  }
+};
 $("#prev").onclick = () => {
+  if (tab === "Changes") { runComparison(Math.max(0, (comparison.result?.offset || 0) - PAGE_SIZE)); return; }
   page--;
   renderList();
   $("#list").scrollTop = 0;
 };
 $("#next").onclick = () => {
+  if (tab === "Changes") { runComparison(comparison.result?.next_offset || 0); return; }
   page++;
   renderList();
   $("#list").scrollTop = 0;
@@ -1322,41 +1542,145 @@ $("#next").onclick = () => {
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
+    if (tab === "Changes") { changeTab("Services"); render(); }
     $("#search").focus();
     $("#search").select();
   }
 });
-function splitter(id, property, min, max, direction) {
-  const el = $(id);
-  const width = () =>
-    parseFloat(getComputedStyle($("#panes")).getPropertyValue(property));
-  const set = (value) => {
-    const bounded = Math.max(min, Math.min(max, value));
-    $("#panes").style.setProperty(property, bounded + "px");
-    el.setAttribute("aria-valuenow", Math.round(bounded));
-  };
-  el.setAttribute("aria-valuemin", min);
-  el.setAttribute("aria-valuemax", max);
-  el.setAttribute("aria-valuenow", width());
-  el.onpointerdown = (e) => {
-    const start = e.clientX,
-      initial = width();
-    el.setPointerCapture(e.pointerId);
-    el.onpointermove = (move) =>
-      set(initial + (move.clientX - start) * direction);
-    el.onpointerup = () => {
-      el.onpointermove = null;
-    };
-  };
-  el.onkeydown = (e) => {
-    if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
-      e.preventDefault();
-      set(width() + (e.key === "ArrowRight" ? 16 : -16) * direction);
+// Persist only explicit size choices. Responsive clamping must not overwrite a
+// preferred desktop layout when a user temporarily narrows the window.
+const LAYOUT_KEY = "showpsisi.workbench.layout.v1";
+const layoutBounds = { explorer: [140, 300], inspector: [300, 780] };
+let preferredLayout = {}, layoutStorageAvailable = true;
+function layoutStorageWarning(message) {
+  $("#layout-status").textContent = message;
+  $("#layout-status").title = message;
+}
+function readLayout() {
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_KEY);
+    if (raw === null) return;
+    const saved = JSON.parse(raw);
+    if (!saved || saved.version !== 1 || typeof saved.widths !== "object" || !saved.widths || Array.isArray(saved.widths))
+      throw new Error("Unrecognized layout");
+    const widths = {};
+    for (const name of Object.keys(layoutBounds)) {
+      if (!(name in saved.widths)) continue;
+      const value = saved.widths[name];
+      if (typeof value !== "number" || !Number.isFinite(value))
+        throw new Error("Invalid pane width");
+      widths[name] = Math.max(layoutBounds[name][0], Math.min(layoutBounds[name][1], value));
     }
+    preferredLayout = widths;
+  } catch (error) {
+    preferredLayout = {};
+    // Parsing/shape errors recover to defaults; inaccessible storage is also
+    // harmless. Do not remove another version or any unrelated application data.
+    layoutStorageWarning("Layout defaults restored");
+  }
+}
+function saveLayout(reset = false) {
+  try {
+    if (reset) window.localStorage.removeItem(LAYOUT_KEY);
+    else window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ version: 1, widths: preferredLayout }));
+    layoutStorageAvailable = true;
+    layoutStorageWarning("");
+  } catch (error) {
+    layoutStorageAvailable = false;
+    layoutStorageWarning("Layout saved for this session only");
+  }
+}
+function defaultLayout() {
+  const width = $("#panes").clientWidth;
+  return width >= 1550 ? { explorer: 200, inspector: 540 }
+    : width <= 1050 ? { explorer: 145, inspector: 350 }
+      : { explorer: 178, inspector: 520 };
+}
+function availablePaneWidth() {
+  const width = $("#panes").clientWidth;
+  return width - 8 - (width <= 1050 ? 220 : 260);
+}
+function currentLayout() {
+  const styles = getComputedStyle($("#panes"));
+  return { explorer: parseFloat(styles.getPropertyValue("--explorer-width")),
+    inspector: parseFloat(styles.getPropertyValue("--inspector-width")) };
+}
+function applyLayout() {
+  const panes = $("#panes"), defaults = defaultLayout();
+  let explorer = preferredLayout.explorer ?? defaults.explorer;
+  let inspector = preferredLayout.inspector ?? defaults.inspector;
+  if (panes.clientWidth > 760) {
+    explorer = Math.max(140, Math.min(explorer, availablePaneWidth() - 300));
+    inspector = Math.max(300, Math.min(inspector, availablePaneWidth() - explorer));
+  }
+  panes.style.setProperty("--explorer-width", explorer + "px");
+  panes.style.setProperty("--inspector-width", inspector + "px");
+  for (const [name, id] of [["explorer", "#split-left"], ["inspector", "#split-right"]]) {
+    const other = name === "explorer" ? inspector : explorer;
+    const el = $(id), value = name === "explorer" ? explorer : inspector;
+    el.setAttribute("aria-valuemin", layoutBounds[name][0]);
+    el.setAttribute("aria-valuemax", Math.max(layoutBounds[name][0], Math.min(layoutBounds[name][1], availablePaneWidth() - other)));
+    el.setAttribute("aria-valuenow", Math.round(value));
+    el.setAttribute("aria-valuetext", Math.round(value) + " pixels");
+  }
+}
+function setPaneWidth(name, value) {
+  const other = currentLayout()[name === "explorer" ? "inspector" : "explorer"];
+  preferredLayout[name] = Math.max(layoutBounds[name][0],
+    Math.min(layoutBounds[name][1], availablePaneWidth() - other, value));
+  applyLayout();
+}
+function splitter(id, name, direction) {
+  const el = $(id);
+  let drag = null;
+  el.onpointerdown = (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    el.focus();
+    drag = { pointerId: event.pointerId, start: event.clientX, initial: currentLayout()[name] };
+    el.setPointerCapture(event.pointerId);
+    document.body.classList.add("resizing-panes");
+  };
+  el.onpointermove = (event) => {
+    if (drag?.pointerId === event.pointerId)
+      setPaneWidth(name, drag.initial + (event.clientX - drag.start) * direction);
+  };
+  const finish = () => {
+    if (!drag) return;
+    drag = null;
+    document.body.classList.remove("resizing-panes");
+    saveLayout();
+  };
+  el.onpointerup = finish;
+  el.onpointercancel = finish;
+  el.onlostpointercapture = finish;
+  el.ondblclick = () => {
+    delete preferredLayout[name];
+    applyLayout();
+    saveLayout();
+  };
+  el.onkeydown = (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const step = event.shiftKey ? 64 : 16;
+    const value = event.key === "Home" ? layoutBounds[name][0]
+      : event.key === "End" ? layoutBounds[name][1]
+        : currentLayout()[name] + (event.key === "ArrowRight" ? step : -step) * direction;
+    setPaneWidth(name, value);
+    saveLayout();
   };
 }
-splitter("#split-left", "--explorer-width", 140, 300, 1);
-splitter("#split-right", "--inspector-width", 300, 780, -1);
+readLayout();
+applyLayout();
+splitter("#split-left", "explorer", 1);
+splitter("#split-right", "inspector", -1);
+window.addEventListener("resize", applyLayout);
+$("#reset-layout").onclick = () => {
+  preferredLayout = {};
+  applyLayout();
+  saveLayout(true);
+  notice(layoutStorageAvailable ? "Default layout restored" : "Default layout restored for this session");
+};
 async function boot() {
   render();
   if (!native?.event?.listen) {
@@ -1405,6 +1729,7 @@ window.showpsisi = {
   call,
   getState: () => data,
   getDetail: () => detail,
+  getComparison: () => comparison.result,
 };
 boot().catch((error) => {
   disconnectBackend("Backend connection failed: " + String(error));

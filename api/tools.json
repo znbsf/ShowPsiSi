@@ -9,7 +9,8 @@
     "validation": "CRC, demux status, DVB SDT/PMT/EIT descriptor bounds; not a complete conformance checker",
     "edit": "single-section actual SDT service rename",
     "export": "signalling snapshot, not live remultiplexing",
-    "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, no RF demodulation or blanket DTMB claim."
+    "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, no RF demodulation or blanket DTMB claim.",
+    "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness."
   },
   "tools": [
     {
@@ -72,7 +73,7 @@
     },
     {
       "name": "query",
-      "description": "Read the latest observed current sections and derived actual-TS services at a packet position. Observation state, not a guarantee of broadcast validity intervals.",
+      "description": "Read the latest observed current sections and derived actual-TS services from complete SDT on canonical PID 0x0011 (extra-PID SDTs stay table evidence) at a packet position. Observation state, not a guarantee of broadcast validity intervals.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -81,6 +82,54 @@
             "minimum": 0
           }
         },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "diff_snapshots",
+      "description": "Compare two inclusive packet-cutoff observation snapshots in the current successful analysis. Read-only deterministic added/removed/changed table section slots, actual-TS services from canonical SDT PID 0x0011 and DVB-layout EIT (0x4e..0x6f) event evidence; repeats and provenance-only updates do not count as content changes. Both cutoffs must be within 0..packets-1; reverse and equal cutoffs are allowed. Pages are filtered by kind; summary counts always cover all kinds. Keep revision and cutoffs fixed while paginating. Event identities retain PID/table/section/network/service/id/start; rescheduling or moving section is removed+added.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "from_packet": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Inclusive baseline section completion packet index."
+          },
+          "to_packet": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Inclusive comparison section completion packet index."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "all",
+              "tables",
+              "services",
+              "events"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          }
+        },
+        "required": [
+          "from_packet",
+          "to_packet"
+        ],
         "additionalProperties": false
       },
       "annotations": {

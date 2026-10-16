@@ -57,7 +57,8 @@ flowchart LR
 | capabilities | schema、版本、能力边界 |
 | analyze | 增量进度、服务/事件、历史、诊断 |
 | query | 指定包位置的观察快照 |
-| inspect | 原始 hex、字段、字节偏移、所有出现位置 |
+| inspect | 原始 hex、字段、字节偏移、指定截面内的出现位置 |
+| diff_snapshots | 同次分析的 A/B 截面对比：表、服务、事件的新增／移除／变化，附双方证据 |
 | load_extension | 加载声明式协议规则，要求重新分析 |
 | preview_rename | 修改前后、version/CRC、绑定当前 revision 的 token |
 | export | 写新文件，返回来源与修改 manifest |
@@ -89,4 +90,21 @@ MCP 客户端的配置示例（不自动修改任何客户端配置）：
 
 MCP adapter 已通过 initialize、tools/list 和完整 tools/call 工作流：分析、查看原始证据、预览改名、导出、回读验证；中文服务名与中文输出路径也已覆盖。未测试特定外部 AI 客户端，也没有配置模型、API key 或自动授权客户端写文件。协议具备本机文件读取和新文件输出能力，应按客户端的实际授权范围接入。
 
-后续优先增加 `diff_snapshots`、有字段 schema 的 `preview_patch`、批量事务、取消/进度、持久化证据索引和 export profile。届时可将工具结果进一步分页，避免把所有 EPG/出现位置一次性塞进 AI 上下文。
+后续优先增加有字段 schema 的 `preview_patch`、批量事务、取消/进度、持久化证据索引和 export profile。届时可将工具结果进一步分页，避免把所有 EPG/出现位置一次性塞进 AI 上下文。
+
+
+## 截面对比（下一轮实现）
+
+`diff_snapshots` 是只读操作，要求一次成功完成的分析。`from_packet` 和
+`to_packet` 使用当前分析内的零起始包编号，包含在对应包完成接收的 section。
+允许 A→B 和 B→A；每条结果携带双方各自的包位置与证据，不修改查询或编辑状态。
+
+表按有效 current section 的稳定槽位比较；重复收到相同字节不会被当成变化。
+服务按 ONID/TSID/SID 关联；事件另外保留 PID、表、section、事件 ID 和开始时间，
+不把 p/f 与 schedule 的不同证据强行合并。增加／移除表示两个观测截面的差异，
+不能解释为已经证明节目开播／停播。
+
+`kind` 可选 `all`、`tables`、`services`、`events`；`offset`、`limit` 提供确定性分页，
+单页最多 200 条。`summary` 给出各类统计，`next_offset` 为 null 时表示没有下一页。
+`before`／`after` 内含 `at_packet`、`value` 和 `evidence`；前端必须用相应一侧的
+截面调用 inspect，避免从历史比较跳到未来的解码结果。

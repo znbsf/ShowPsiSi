@@ -54,3 +54,28 @@ Independently opened the regenerated `docs/images/qt-workbench.png`, `docs/image
 ## Follow-up parity and safety loop
 
 Qt record and ancestry-preserving field/value search have now been implemented, including Ctrl+K, Escape and retained selection. Native tests also check literal hostile stream text, plain tooltip rendering and no image fetches. Both workbenches pass the selected historical cutoff into inspection; the native tree cannot silently use later sibling sections. Browser/native-shell disconnection handling disables unavailable backend actions rather than leaving an endless loading state. These extend, rather than retroactively alter, the visual checkpoint above.
+
+
+## Continued product loop: comparison and layout persistence
+
+After PR #1 merged, the next cloud iteration adds a genuine A/B investigation
+workflow to both frontends. The inspector labels the evidence side and its packet
+cutoff independently of the current workbench snapshot. Added/removed/changed
+counts refer to observed snapshots, not a proven broadcast lifecycle. Users can
+select history/current cutoffs, inspect both sides and return without silently
+changing their original snapshot. Explicit navigation is labeled separately.
+
+Resizable layouts now restore validated local preferences and offer Reset layout.
+Malformed or inaccessible settings must not prevent analysis. Keyboard resizing
+uses the same persistence path as dragging.
+
+Actual browser review found and corrected a scrolling comparison summary, missing
+selected-evidence cues, page-local selection identity reuse and stale error text
+after retry. The retry path retains the comparison-side cutoff. Qt narrow populated
+review found that verbose metadata plus a tall saved timeline left too few result
+rows; the follow-up uses compact metadata and tests visible selection rather than
+treating an offscreen dispatched click as proof of interaction.
+
+Runtime evidence and exact final test totals are recorded in STATUS.md and the
+cloud/native validation documents. Exact semantic field-to-byte highlighting is
+still not claimed: arbitrary SDK XML fields do not supply reliable byte ranges.

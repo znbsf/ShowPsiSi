@@ -42,3 +42,23 @@ If a cloud browser has a separate network namespace, `127.0.0.1` in that browser
 - File exports never overwrite existing files and must report manifest/output failures. Preview tokens belong to one analysis revision.
 - Keep production UI independent of the browser-validation adapter. No bundled sample data masquerading as a successful scan.
 - Run tests before pushing a feature branch. Do not rewrite main or merge without reviewing outstanding platform limitations.
+
+## Cloud desktop launch fallback (verified 2026-10-16)
+
+A restricted shell may reject Chromium's required socket/IPC operations before any
+application test runs. In this environment the supported cloud desktop can launch
+the same test command. This is the assistant's cloud desktop, not the owner's PC.
+
+If terminal text entry fails because its focused terminal is not exposed as an
+editable accessibility field, use the desktop's Application Finder (Alt+F2).
+A short wrapper under `/workspace/shared/` is accessible from both the shell and
+the cloud desktop. `/tmp/` may be a different filesystem namespace: a successful
+launch action alone does not prove the wrapper ran. If text entry is unavailable,
+the documented native per-key input works in the Finder's command field. Inspect
+the complete command before pressing Enter, then verify a fresh output log and
+exit status in the shared workspace. Do not infer success from a closed dialog.
+
+Keep wrappers, logs and transient screenshots ignored, stop only processes owned
+by the validation task, and retain the production browser/native distinction.
+Do not disable Chromium/WebKit sandboxing or change host security settings to
+work around an execution-environment restriction.

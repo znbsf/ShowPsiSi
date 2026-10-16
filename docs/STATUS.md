@@ -1,7 +1,13 @@
 # ShowPsiSi status
 
-Updated: 2026-10-16 UTC. Development branch: `feat/editor-workbench-integrity`.
-Review: https://github.com/znbsf/ShowPsiSi/pull/1 (draft; not merged or released).
+Updated: 2026-10-16 UTC. Development branch: `feat/protocol-robustness-next`.
+Baseline: https://github.com/znbsf/ShowPsiSi/pull/1 merged into main as
+`ac039f6de903a58080185edb06f5fe9290c787ef` on 2026-10-16 UTC. No release published.
+
+Next iteration is in progress: version-generation integrity, snapshot comparison,
+persistent workbench layout, broader protocol regressions and Windows cloud CI.
+The counts below describe the latest local regression run; pending CI/native steps
+are kept separate from those local results.
 
 ## Current result
 
@@ -11,32 +17,49 @@ navigation and search. The parser exposes its linked native table/descriptor
 registry, explicit standards/regional context, section-PID discovery and optional
 extra PIDs. An offline metadata index provides verified standard-level links.
 
-This iteration used the assistant's **own Linux cloud computer only**. No owner
-Windows PC, television or phone was accessed. The actual native Linux Qt and
+Interactive development used the assistant's **own Linux cloud computer**;
+Windows validation uses GitHub-hosted runners. No owner Windows PC, television
+or phone was accessed. The actual native Linux Qt and
 Tauri/WebKitGTK applications have been built and exercised, including native
 edit/export. Browser validation is separately labeled and never substituted for
 a native-runtime claim.
 
 ## Verified current behavior
 
-- 25 engine tests: source preservation, analysis failure reset, exact PAT→PMT
+- Read-only A/B snapshot comparison with deterministic pagination, explicit cutoffs,
+  per-side evidence and stable identities. Native Qt and browser workflows preserve
+  the main selected snapshot until an explicit navigation action.
+- Qt and Web pane sizes persist with bounded restoration and Reset layout.
+- Reused-version generations and same-packet reception order preserve evidence
+  boundaries. Extra-PID SDT stays inspectable without replacing canonical services.
+
+- 30 engine tests: source preservation, analysis failure reset, exact PAT→PMT
   binding, snapshot inspection cutoff, regional text, extension validation,
   export exclusivity/cleanup, framing and regular-file input guards.
-- 9 protocol/reference tests: ATSC and ISDB fixtures; DVB-S/S2/T/T2/C delivery
+- 26 protocol/reference tests: ATSC and ISDB fixtures; DVB-S/S2/T/T2/C delivery
   parameters; private PDS isolation, nondefault PID discovery and unknown bytes.
-- 4 HTTP bridge tests and 10 live Chromium/native-engine tests, including backend
+- 5 HTTP bridge tests and 16 live Chromium/native-engine tests, including backend
   termination, keyboard/tree interaction, historical snapshots and responsive layout.
-- 4 compiled native Qt tests: real workflows, search, literal untrusted text and
+- 8 compiled native Qt tests: real workflows, search, literal untrusted text and
   tooltips, no remote image fetches, and failure-state cleanup.
-- 2 Rust native-shell allowlist tests. Native GTK source selection, save/export,
+- 7 Rust native-shell tests: exact URL allowlist plus launcher success/failure,
+  spawn errors, bounded diagnostics and unconfirmed timeout. Native GTK source selection, save/export,
   independent readback, overwrite-warning cancellation and backend-death flows
   were also checked in the actual application.
 - Both workbenches carry the selected packet cutoff into inspection. A historical
   view cannot silently assemble a later sibling section.
 
-Total automated test cases above: **54**. See [cloud validation](VALIDATION_CLOUD.md),
+Total automated test cases above: **92**. See [cloud validation](VALIDATION_CLOUD.md),
 [native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
-These are local cloud results; check the PR's latest CI commit separately.
+These are local cloud results; check each PR's latest CI commit separately.
+Native Linux Tauri comparison and persisted layout have been exercised on the
+new assets. Its actual unsupported desktop-browser helper now reports failure;
+Copy URL succeeds and clears the error. Browser navigation itself is not verified.
+The CI-only Windows PR #2 is merged as `beb2e57`. All four jobs passed in
+run 38974640106, including Windows baseline engine/protocol/HTTP/Qt regressions.
+The retained Windows Qt screenshot was inspected after fixing offscreen font
+discovery. This validates the merged baseline; the expanded feature suite still
+needs its own CI run.
 
 The SDK currently registers **43 table decoders / 306 descriptor decoders**.
 The 12,490-byte standards index associates 191 descriptor names and 26 table names,
@@ -52,8 +75,7 @@ without bundling PDFs. These counts are not conformance percentages. See
   ATSC 3.0 IP/ROUTE/MMT support.
 - No exhaustive standards conformance, arbitrary descriptor/table edit/remux,
   live UDP/SRT input, persistent large-file index or production EPG time grid.
-- Exact field-to-byte selection highlighting and persistent layout customization
-  remain future work. Unknown private syntax is retained, never invented.
+- Exact field-to-byte selection highlighting remains future work. Unknown private syntax is retained, never invented.
 - Export output+manifest use exclusive creation and failure cleanup, but are not
   a crash-atomic transaction spanning two files.
 

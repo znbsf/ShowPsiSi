@@ -54,3 +54,24 @@ input path instead, and use the CLI/API to test exports.
 If a sandbox disallows Chromium's required process/socket operations, run these
 same tests in a permitted desktop/CI environment. Do not treat a failed launch
 or a screenshot-only snapshot as a passing live integration test.
+
+## Snapshot comparison and layout regressions
+
+The engine suite checks `diff_snapshots` through JSONL and MCP, bounded/stable
+pagination, reverse and equal cutoffs, no evidence from future packets, network
+identity collisions, unchanged repeat observations, and preservation of preview
+state/source bytes. Protocol tests exercise generation reuse, same-packet wire
+order and canonical service projection as well as native descriptor semantics.
+
+The browser and compiled Qt suites exercise A/B capture, side-specific evidence,
+restored main-snapshot navigation, active-request locking, persisted splitter sizes,
+reset and invalid-settings behavior. Qt additionally validates the populated
+1000×680 comparison with a tall saved timeline and real scroll-to-visible selection.
+
+The hosted Windows route is `.github/workflows/ci.yml` plus
+`scripts/ci/windows.ps1`. It uses official pinned SDKs, explicit native executable
+paths, UTF-8 and an offscreen Qt plugin. Its strict Python runner rejects missing
+executables, empty suites and unexpected skips. Only the named optional real-file
+test is allowed to skip when that exact recording is absent; the result reports
+that exclusion explicitly. This is not equivalent to native dialogs, WebView2,
+installer testing or real-recording coverage on Windows.

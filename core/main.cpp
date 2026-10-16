@@ -83,7 +83,7 @@ public:
 
 struct Record {
     std::string id,key; Bytes raw; unsigned pid=0,tid=0,ext=0,version=0,number=0,last=0; bool valid=true,current=true;
-    std::vector<uint64_t> positions,ends; uint64_t lastPacket=0;
+    std::vector<uint64_t> positions,ends,orders; uint64_t lastPacket=0;
     J descriptors=J::array(),services=J::array(),events=J::array(),issues=J::array(),fields=J::object();
 };
 
@@ -96,23 +96,49 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     std::string standardsContext="auto";
     J requestId; std::function<void()> onFirst; bool complete=false; size_t revision=0;
     J pending=J::object(), demuxStatus=J::object(); std::vector<std::pair<unsigned,Bytes>> patchSections;
-    std::map<std::string,const Record*> latest(uint64_t at) const {
-        std::map<std::string,const Record*> chosen;
-        std::map<std::string,std::pair<uint64_t,unsigned>> generations;
-        for(const auto& r:records)if(r.valid&&r.current){
+    // A DVB table identity includes the network/transport identifiers in its
+    // payload. table_id_extension alone is insufficient for SDT-other / EIT.
+    static std::string tableGroup(const Record& r) {
+        std::string key=std::to_string(r.pid)+":"+std::to_string(r.tid)+":"+std::to_string(r.ext);
+        if((r.tid==0x42||r.tid==0x46)&&r.raw.size()>=11)key+=":onid="+std::to_string(u16(r.raw,8));
+        if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14)key+=":tsid="+std::to_string(u16(r.raw,8))+":onid="+std::to_string(u16(r.raw,10));
+        return key;
+    }
+    static std::string sectionKey(const Record& r) { return tableGroup(r)+":"+std::to_string(r.number); }
+    std::map<std::string,const Record*> latest(uint64_t at,bool current=true) const {
+        struct Observation { const Record* record; uint64_t order; };
+        std::vector<Observation> observed;
+        std::map<std::string,Observation> generations;
+        for(const auto& r:records)if(r.valid&&r.current==current){
             auto end=std::upper_bound(r.ends.begin(),r.ends.end(),at);if(end==r.ends.begin())continue;
-            std::string group=std::to_string(r.pid)+":"+std::to_string(r.tid)+":"+std::to_string(r.ext);
-            if(generations[group].first<=*(end-1))generations[group]={*(end-1),r.version};
-            auto found=chosen.find(r.key);
-            if(found==chosen.end()||*(end-1)>=*std::prev(std::upper_bound(found->second->ends.begin(),found->second->ends.end(),at)))chosen[r.key]=&r;
+            const auto group=tableGroup(r);Observation item{&r,r.orders.at(size_t(end-r.ends.begin())-1)};observed.push_back(item);
+            auto found=generations.find(group);
+            if(found==generations.end()||found->second.order<=item.order)generations.insert_or_assign(group,item);
         }
-        for(auto it=chosen.begin();it!=chosen.end();){const auto&r=*it->second;std::string group=std::to_string(r.pid)+":"+std::to_string(r.tid)+":"+std::to_string(r.ext);if(r.version!=generations.at(group).second)it=chosen.erase(it);else ++it;}
-        return chosen;
+        // A repeated five-bit version after a different observed generation is
+        // not permission to resurrect siblings from its previous cycle. A receive
+        // ordinal disambiguates multiple completed sections in one TS packet.
+        std::map<std::string,uint64_t> barriers;
+        for(const auto& item:observed){
+            const auto group=tableGroup(*item.record);const auto& newest=*generations.at(group).record;
+            if(item.record->version!=newest.version||item.record->last!=newest.last){
+                auto found=barriers.find(group);if(found==barriers.end()||found->second<item.order)barriers[group]=item.order;
+            }
+        }
+        std::map<std::string,Observation> slots;
+        for(const auto& item:observed){
+            const auto& r=*item.record;const auto group=tableGroup(r);const auto& newest=*generations.at(group).record;
+            auto barrier=barriers.find(group);
+            if(r.version!=newest.version||r.last!=newest.last||(barrier!=barriers.end()&&item.order<=barrier->second))continue;
+            const auto key=sectionKey(r);auto found=slots.find(key);
+            if(found==slots.end()||found->second.order<=item.order)slots.insert_or_assign(key,item);
+        }
+        std::map<std::string,const Record*> chosen;for(const auto& [key,item]:slots)chosen[key]=item.record;return chosen;
     }
     bool completeGroup(const Record& r,const std::map<std::string,const Record*>& selected) const {
         for(unsigned i=0;i<=r.last;i++){
-            auto it=selected.find(std::to_string(r.pid)+":"+std::to_string(r.tid)+":"+std::to_string(r.ext)+":"+std::to_string(i));
-            if(it==selected.end()||it->second->version!=r.version||it->second->last!=r.last)return false;
+            auto it=selected.find(tableGroup(r)+":"+std::to_string(i));
+            if(it==selected.end()||it->second->version!=r.version||it->second->last!=r.last||it->second->current!=r.current)return false;
         }
         return true;
     }
@@ -132,7 +158,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             if(next>end) { issue(r,"descriptor_length",p,"Declared length exceeds descriptor loop; raw bytes retained"); d["malformed"]=true; r.descriptors.push_back(d); break; }
             ts::Descriptor bin(r.raw.data()+p,n+2);
             ts::xml::Document nativeDocument;auto* parent=nativeDocument.initialize(u"descriptor");
-            if(auto* native=bin.toXML(descriptorDuck,parent,pds,ts::TID(r.tid))){d["native"]=xmlTree(native);d["name"]=native->name().toUTF8();d["native_decoded"]=native->name()!=u"generic_descriptor";}
+            if(auto* native=bin.toXML(descriptorDuck,parent,descriptorDuck.actualPDS(pds),ts::TID(r.tid))){d["native"]=xmlTree(native);d["name"]=native->name().toUTF8();d["native_decoded"]=native->name()!=u"generic_descriptor";}
 
             if(tag==0x05&&n>=4)descriptorDuck.addRegistrationId((uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4));
             if(tag==0x5f&&n==4) { pds=(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4); d["name"]="private_data_specifier_descriptor"; d["fields"]["private_data_specifier"]=pds; }
@@ -241,7 +267,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             }
             decode(r); ids[id]=records.size();records.push_back(std::move(r));it=ids.find(id);
         }
-        Record& r=records[it->second];r.positions.push_back(first);r.ends.push_back(last);r.lastPacket=last;
+        Record& r=records[it->second];r.positions.push_back(first);r.ends.push_back(last);r.orders.push_back(observations);r.lastPacket=last;
         if(!valid && !r.issues.empty() && r.issues[0]["code"]=="crc32")++crcErrors;
         if(r.valid&&r.current) {
             if(previous[key]!=id) {
@@ -262,6 +288,24 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at); size_t count=size_t(stop-r.ends.begin());
         return {{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
     }
+    J derivedSnapshot(const std::map<std::string,const Record*>& selected) const {
+        J out={{"services",J::array()},{"events",J::array()}};
+        std::map<std::string,J> services; std::map<std::pair<unsigned,unsigned>,unsigned> pmts; std::map<std::pair<unsigned,unsigned>,J> components;
+        for(const auto& [key,item]:selected) {
+            const Record& r=*item;
+            if((r.tid==0||r.tid==2||r.tid==0x42)&&!completeGroup(r,selected))continue;
+            if(r.tid==0&&r.pid==0)for(const auto& p:r.fields.value("programs",J::array()))if(p["service_id"]!=0)pmts[{r.ext,p["service_id"].get<unsigned>()}]=p["pmt_pid"].get<unsigned>();
+            if(r.tid==2)components[{r.pid,r.ext}]=r.fields;
+            if(r.tid==0x42&&r.pid==0x11)for(const auto& s:r.services)services[std::to_string(s["onid"].get<unsigned>())+":"+std::to_string(s["ts_id"].get<unsigned>())+":"+std::to_string(s["id"].get<unsigned>())]=s;
+            for(const auto& e:r.events)out["events"].push_back(e);
+        }
+        std::string groupBy=extension.value("organization",J::object()).value("group_by",std::string("group"));
+        for(auto& [key,s]:services) { unsigned sid=s["id"];s["key"]=key;auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});s["pmt_pid"]=pat!=pmts.end()?J(pat->second):J();if(pat!=pmts.end()){auto pmt=components.find({pat->second,sid});if(pmt!=components.end())s["components"]=pmt->second;}s["group"]=s.value(groupBy,J("Unassigned"));out["services"].push_back(s); }
+        std::string sort=extension.value("organization",J::object()).value("sort_by",std::string("id"));
+        std::sort(out["services"].begin(),out["services"].end(),[&](const J&a,const J&b){J av=a.value(sort,J());J bv=b.value(sort,J());return (av.is_null()?a["id"]:av)<(bv.is_null()?b["id"]:bv);});
+        return out;
+    }
+
 public:
     explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension; }
     void handleSection(ts::SectionDemux& demux,const ts::Section& s) override {
@@ -289,24 +333,98 @@ public:
             out["tables"].push_back(summary(r,at));
             for(auto d:r.issues) { d["id"]=r.id;d["pid"]=r.pid;d["packet"]=r.positions.front();d["count"]=size_t(stop-r.ends.begin());out["diagnostics"].push_back(d); }
         }
-        std::map<std::string,J> services; std::map<std::pair<unsigned,unsigned>,unsigned> pmts; std::map<std::pair<unsigned,unsigned>,J> components;
-        for(const auto& [key,item]:selected) {
-            const Record& r=*item;
-            if((r.tid==0||r.tid==2||r.tid==0x42)&&!completeGroup(r,selected))continue;
-            if(r.tid==0&&r.pid==0)for(const auto& p:r.fields.value("programs",J::array()))if(p["service_id"]!=0)pmts[{r.ext,p["service_id"].get<unsigned>()}]=p["pmt_pid"].get<unsigned>();
-            if(r.tid==2)components[{r.pid,r.ext}]=r.fields;
-            if(r.tid==0x42)for(const auto& s:r.services)services[std::to_string(s["onid"].get<unsigned>())+":"+std::to_string(s["ts_id"].get<unsigned>())+":"+std::to_string(s["id"].get<unsigned>())]=s;
-            for(const auto& e:r.events)out["events"].push_back(e);
-        }
-        std::string groupBy=extension.value("organization",J::object()).value("group_by",std::string("group"));
-        for(auto& [key,s]:services) { unsigned sid=s["id"];s["key"]=key;auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});s["pmt_pid"]=pat!=pmts.end()?J(pat->second):J();if(pat!=pmts.end()){auto pmt=components.find({pat->second,sid});if(pmt!=components.end())s["components"]=pmt->second;}s["group"]=s.value(groupBy,J("Unassigned"));out["services"].push_back(s); }
-        std::string sort=extension.value("organization",J::object()).value("sort_by",std::string("id"));
-        std::sort(out["services"].begin(),out["services"].end(),[&](const J&a,const J&b){J av=a.value(sort,J());J bv=b.value(sort,J());return (av.is_null()?a["id"]:av)<(bv.is_null()?b["id"]:bv);});
+        const auto derived=derivedSnapshot(selected);out["services"]=derived["services"];out["events"]=derived["events"];
         constexpr size_t bins=80; std::vector<uint64_t> counts(bins,0),bad(bins,0); uint64_t denominator=std::max<uint64_t>(1,totalBytes/stride);
         for(const auto& r:records)for(auto pos:r.positions){size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
-        out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"}};
+        out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         if(demuxStatus.value("discontinuities",uint64_t(0))>0)out["diagnostics"].push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities on monitored PSI/SI PIDs (aggregate; packet locations not yet retained)"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
+        return out;
+    }
+    J diffSnapshots(const J& args) const {
+        if(!complete||packets==0)throw std::runtime_error("Complete a successful analysis before comparing snapshots");
+        const uint64_t from=args.at("from_packet").get<uint64_t>(),to=args.at("to_packet").get<uint64_t>();
+        if(from>=packets||to>=packets)throw std::runtime_error("Snapshot packet must be within the analyzed packet range (0.."+std::to_string(packets-1)+")");
+        const std::string kind=args.value("kind",std::string("all"));
+        const size_t offset=args.value("offset",size_t(0)),limit=args.value("limit",size_t(100));
+        struct Item { J identity,value,content; std::vector<const Record*> evidence; };
+        using Items=std::map<std::string,std::map<std::string,Item>>;
+        auto snapshot=[&](uint64_t at){
+            Items result;const auto selected=latest(at);const auto derived=derivedSnapshot(selected);
+            std::map<unsigned,std::vector<const Record*>> patEvidence;
+            std::map<std::pair<unsigned,unsigned>,std::vector<const Record*>> pmtEvidence;
+            for(const auto& [key,ptr]:selected){
+                const auto& r=*ptr;
+                J identity={{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"section",r.number}};
+                if((r.tid==0x42||r.tid==0x46)&&r.raw.size()>=11)identity["original_network_id"]=u16(r.raw,8);
+                if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){identity["transport_stream_id"]=u16(r.raw,8);identity["original_network_id"]=u16(r.raw,10);}
+                J value=summary(r,at);value["complete_group"]=completeGroup(r,selected);
+                J content={{"version",r.version},{"last_section",r.last},{"payload",r.id}};
+                result["tables"][key]={identity,value,content,{&r}};
+                if(completeGroup(r,selected)){
+                    if(r.tid==0&&r.pid==0)patEvidence[r.ext].push_back(&r);
+                    if(r.tid==2)pmtEvidence[{r.pid,r.ext}].push_back(&r);
+                }
+            }
+            for(const auto& service:derived["services"]){
+                const auto& r=records.at(ids.at(service.at("source_id").get<std::string>()));
+                J identity={{"original_network_id",service["onid"]},{"transport_stream_id",service["ts_id"]},{"service_id",service["id"]},{"source_pid",r.pid}};
+                J content=service;content.erase("source_id");content.erase("key");
+                std::vector<const Record*> sources={&r};
+                // Include the exact complete PAT/PMT evidence used to derive the
+                // association, never a stale PMT sharing only the service id.
+                if(!service["pmt_pid"].is_null()){
+                    const auto& pat=patEvidence[service["ts_id"].get<unsigned>()];sources.insert(sources.end(),pat.begin(),pat.end());
+                    if(service.contains("components")){
+                        const auto& pmt=pmtEvidence[{service["pmt_pid"].get<unsigned>(),service["id"].get<unsigned>()}];sources.insert(sources.end(),pmt.begin(),pmt.end());
+                    }
+                }
+                result["services"][service.at("key").get<std::string>()]={identity,service,content,sources};
+            }
+            // Event identities retain EIT table/PID/section and start time.
+            // This deliberately does not merge p/f and schedule evidence or a
+            // reused event id at another scheduled time into one event.
+            for(const auto& event:derived["events"]){
+                const auto& r=records.at(ids.at(event.at("source_id").get<std::string>()));
+                J identity={{"original_network_id",event["onid"]},{"transport_stream_id",event["ts_id"]},{"service_id",event["service_id"]},{"pid",r.pid},{"table_id",r.tid},{"section",r.number},{"event_id",event["id"]},{"start",event["start"]}};
+                J content=event;content.erase("source_id");
+                const std::string base=identity.dump();std::string key=base;size_t occurrence=0;
+                // Malformed duplicate identities within one section remain
+                // individually visible rather than overwriting one another.
+                while(result["events"].count(key))key=base+":duplicate="+std::to_string(++occurrence);
+                if(occurrence)identity["duplicate_index"]=occurrence;
+                result["events"][key]={identity,event,content,{&r}};
+            }
+            return result;
+        };
+        const auto before=snapshot(from),after=snapshot(to);
+        J out={{"source",source.u8string()},{"revision",revision},{"from_packet",from},{"to_packet",to},{"kind",kind},{"summary",J::object()},{"changes",J::array()},{"offset",offset},{"limit",limit},{"next_offset",nullptr}};
+        out["scope"]={{"cutoffs","inclusive section completion packet indexes in this analysis revision"},{"tables","selected valid current section slots; byte/version changes, excluding repeated observations"},{"services","complete actual-SDT services on canonical PID 0x0011; other PIDs remain table evidence; PAT/PMT fields only from complete matching generations; compare derived fields, not provenance-only changes"},{"events","observed DVB-layout EIT (table ids 0x4e..0x6f) section events, separated by PID/table/section/ONID/TSID/SID/event id/start; no schedule segment completeness guarantee"},{"evidence","each side contains only occurrences completed at or before its cutoff; no scan-global history, counters or density"},{"decoding_context","fixed analysis-session standards and extension context"},{"absence","absence is observed snapshot state, not proof a service/event ceased broadcasting"},{"order","tables, services, events; lexicographic identity key within each kind"}};
+        size_t total=0;
+        for(const auto* category:{"tables","services","events"}){
+            const std::map<std::string,Item> empty;
+            const auto& a=before.count(category)?before.at(category):empty;const auto& b=after.count(category)?after.at(category):empty;
+            J counts={{"added",0},{"removed",0},{"changed",0},{"unchanged",0}};
+            std::set<std::string> keys;for(const auto& [key,item]:a)keys.insert(key);for(const auto& [key,item]:b)keys.insert(key);
+            for(const auto& key:keys){
+                auto old=a.find(key),now=b.find(key);std::string change;
+                if(old==a.end())change="added";else if(now==b.end())change="removed";
+                else change=old->second.content==now->second.content?"unchanged":"changed";
+                counts[change]=counts[change].get<size_t>()+1;
+                if(change=="unchanged"||(kind!="all"&&kind!=category))continue;
+                const size_t index=total++;if(index<offset||out["changes"].size()>=limit)continue;
+                J fields=J::array();
+                if(change=="changed"){
+                    std::set<std::string> names;for(auto it=old->second.content.begin();it!=old->second.content.end();++it)names.insert(it.key());for(auto it=now->second.content.begin();it!=now->second.content.end();++it)names.insert(it.key());
+                    for(const auto& name:names)if(!old->second.content.contains(name)||!now->second.content.contains(name)||old->second.content.at(name)!=now->second.content.at(name))fields.push_back(name);
+                }
+                auto side=[&](const Item& item,uint64_t at){J evidence=J::array();for(const auto* r:item.evidence)evidence.push_back(summary(*r,at));return J{{"at_packet",at},{"value",item.value},{"evidence",evidence}};};
+                out["changes"].push_back({{"kind",category},{"change",change},{"key",key},{"identity",now!=b.end()?now->second.identity:old->second.identity},{"changed_fields",fields},{"before",old==a.end()?J():side(old->second,from)},{"after",now==b.end()?J():side(now->second,to)}});
+            }
+            out["summary"][category]=counts;
+        }
+        out["total_changes"]=total;
+        if(offset<total&&out["changes"].size()<total-offset)out["next_offset"]=offset+out["changes"].size();
         return out;
     }
     J analyze(const J& args,const J& rid) {
@@ -363,19 +481,18 @@ public:
         if(observed==r.ends.begin())throw std::runtime_error("Section was not observed at or before selected packet");
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
         J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;
-        out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"observed matching-version sections at or before selected packet":"observed matching-version sections at last occurrence of inspected section"}};
+        out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
         if(r.valid){
-            // Assemble only one observed version/current group at this occurrence.
+            // Share the same generation boundary as query/export, including
+            // current/next isolation and version rollover.
+            const auto selected=latest(cutoff,r.current);
             std::map<unsigned,const Record*> group;
-            for(const auto& candidate:records)if(candidate.valid&&candidate.pid==r.pid&&candidate.tid==r.tid&&candidate.ext==r.ext&&candidate.version==r.version&&candidate.current==r.current&&candidate.last==r.last){
-                auto end=std::upper_bound(candidate.ends.begin(),candidate.ends.end(),cutoff);if(end==candidate.ends.begin())continue;
-                auto found=group.find(candidate.number);if(found==group.end()||*(end-1)>=*std::prev(std::upper_bound(found->second->ends.begin(),found->second->ends.end(),cutoff)))group[candidate.number]=&candidate;
-            }
+            for(const auto& [key,candidate]:selected)if(tableGroup(*candidate)==tableGroup(r))group[candidate->number]=candidate;
             ts::BinaryTable table;bool full=group.size()==r.last+1;
-            const bool superseded=group.count(r.number)&&group.at(r.number)->id!=r.id;if(superseded)full=false;
+            const bool superseded=!group.count(r.number)||group.at(r.number)->id!=r.id;if(superseded)full=false;
             for(unsigned i=0;i<=r.last;i++){auto found=group.find(i);if(found==group.end()){full=false;break;}const auto& part=*found->second;table.addNewSection(part.raw.data(),part.raw.size(),ts::PID(part.pid),ts::CRC32::CHECK);}
             ts::DuckContext tableDuck(&NULLREP);tableDuck.resetStandards(duck.standards());tableDuck.setDefaultCharsetIn(duck.charsetIn());tableDuck.setDefaultCharsetOut(duck.charsetOut());tableDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
             ts::xml::Document document;auto* parent=document.initialize(u"tsduck");
@@ -448,6 +565,11 @@ public:
         if(fs::exists(path)||fs::exists(path.u8string()+".manifest.json"))throw std::runtime_error("Output already exists; choose a new path");
         bool patch=args.contains("preview_token");if(patch&&(pending.empty()||args["preview_token"]!=pending["token"]||pending["revision"]!=revision))throw std::runtime_error("Missing or stale edit preview token");
         uint64_t at=args.value("at_packet",UINT64_MAX);const auto selected=latest(at);
+        if(patch){
+            const auto& target=records.at(ids.at(pending.at("source_id").get<std::string>()));
+            for(const auto& [key,r]:selected)if(r->pid==target.pid&&r->tid==target.tid&&r->ext==target.ext&&tableGroup(*r)!=tableGroup(target))
+                throw std::runtime_error("Ambiguous SDT edit: multiple network identities share the target PID and transport stream id at this snapshot");
+        }
         for(const auto& [key,r]:selected)if((r->tid==0||r->tid==2||r->tid==0x42)&&!completeGroup(*r,selected))throw std::runtime_error("Incomplete PAT/PMT/SDT at selected packet; wait for all sections of one version");
         std::vector<std::pair<unsigned,Bytes>> output;J evidence=J::array();bool applied=false;
         for(const auto& [key,r]:selected){if(patch&&r->id==pending["source_id"]){output.insert(output.end(),patchSections.begin(),patchSections.end());applied=true;}else output.push_back({r->pid,r->raw});evidence.push_back(summary(*r,at));}
@@ -493,6 +615,7 @@ public:
         }
         if(method=="analyze")return analyze(args,rid);
         if(method=="query")return state(args.value("at_packet",UINT64_MAX));
+        if(method=="diff_snapshots")return diffSnapshots(args);
         if(method=="inspect")return inspect(args);
         if(method=="preview_rename")return preview(args);
         if(method=="export")return exportData(args);

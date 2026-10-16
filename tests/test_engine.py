@@ -45,9 +45,11 @@ class EngineTests(unittest.TestCase):
             def call(i,method,params):
                 p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params})+'\n');p.stdin.flush();return json.loads(p.stdout.readline())['result']
             self.assertEqual(call(1,'initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['serverInfo']['name'],'ShowPsiSi')
-            self.assertEqual(len(call(2,'tools/list',{})['tools']),7)
+            tools=call(2,'tools/list',{})['tools'];self.assertEqual(len(tools),8);self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
             r=call(3,'tools/call',{'name':'analyze','arguments':{'path':str(ROOT/'samples/generated/lab.ts')}});self.assertFalse(r['isError']);self.assertEqual(len(r['structuredContent']['services']),6)
             service=r['structuredContent']['services'][0]
+            comparison=call(8,'tools/call',{'name':'diff_snapshots','arguments':{'from_packet':0,'to_packet':r['structuredContent']['packets']-1,'limit':1}})['structuredContent']
+            self.assertEqual(len(comparison['changes']),1);self.assertIsNotNone(comparison['next_offset'])
             d=call(4,'tools/call',{'name':'inspect','arguments':{'id':service['source_id']}});self.assertIn('raw_hex',d['structuredContent'])
             preview=call(5,'tools/call',{'name':'preview_rename','arguments':{'id':service['source_id'],'service_id':service['id'],'name':'Agent 测试频道'}})['structuredContent']
             exported=call(6,'tools/call',{'name':'export','arguments':{'path':self.output('中文 测试.ts'),'preview_token':preview['token']}})['structuredContent']
@@ -311,6 +313,168 @@ class EngineTests(unittest.TestCase):
             self.assertFalse(responses[2]['result']['complete']);self.assertEqual(responses[2]['result']['tables'],[])
             link=Path(self.output('普通 链接.ts'));link.symlink_to(ROOT/'samples/generated/lab.ts')
             result=self.core.call('analyze',{'path':str(link)});self.assertTrue(result['complete']);self.assertEqual(len(result['services']),6)
+
+    def test_snapshot_diff_content_pagination_and_read_only(self):
+        a=self.state['history'][0]['last_packet'];b=self.state['packets']-1
+        params={'from_packet':a,'to_packet':b}
+        service=self.state['services'][0]
+        preview=self.core.call('preview_rename',{'id':service['source_id'],'service_id':service['id'],'name':'Diff preserves preview'})
+        before=self.core.call('query');result=self.core.call('diff_snapshots',params)
+        self.assertEqual(result['revision'],before['revision']);self.assertEqual(result['source'],before['source'])
+        self.assertEqual(result['summary']['tables']['changed'],1)
+        self.assertEqual(result['summary']['services']['changed'],3)
+        self.assertEqual(result['summary']['events']['changed'],0)
+        sports=next(c for c in result['changes'] if c['kind']=='services' and c['identity']['service_id']==103)
+        self.assertEqual(sports['before']['value']['name'],'Sports HD');self.assertEqual(sports['after']['value']['name'],'Sports UHD')
+        self.assertIn('name',sports['changed_fields']);self.assertIn('logical_channel_number',sports['changed_fields'])
+        self.assertEqual(sports['after']['evidence'][0]['id'],sports['after']['value']['source_id'])
+        self.assertEqual({e['table_id'] for e in sports['after']['evidence']},{0,2,0x42})
+        self.assertNotIn('history',result);self.assertNotIn('density',result)
+        for change in result['changes']:
+            for side in ['before','after']:
+                if change[side]:
+                    self.assertTrue(all(e['last_packet']<=change[side]['at_packet'] for e in change[side]['evidence']))
+        rows=[];offset=0
+        while offset is not None:
+            page=self.core.call('diff_snapshots',{**params,'offset':offset,'limit':1})
+            self.assertEqual(page['summary'],result['summary']);self.assertEqual(page['total_changes'],result['total_changes'])
+            rows+=page['changes'];offset=page['next_offset']
+        self.assertEqual(rows,result['changes']);self.assertEqual(self.core.call('diff_snapshots',params),result)
+        filtered=self.core.call('diff_snapshots',{**params,'kind':'services'})
+        self.assertEqual(filtered['summary'],result['summary']);self.assertEqual(filtered['total_changes'],3)
+        self.assertTrue(all(c['kind']=='services' for c in filtered['changes']))
+        empty=self.core.call('diff_snapshots',{**params,'offset':10000})
+        self.assertEqual(empty['changes'],[]);self.assertIsNone(empty['next_offset'])
+        repeated=self.core.call('diff_snapshots',{'from_packet':1000,'to_packet':2000})
+        self.assertEqual(repeated['total_changes'],0)
+        same=self.core.call('diff_snapshots',{'from_packet':b,'to_packet':b})
+        self.assertEqual(same['changes'],[]);self.assertEqual(same['total_changes'],0)
+        self.assertEqual(self.core.call('query'),before)
+        exported=self.core.call('export',{'path':self.output('after-diff.bin'),'format':'bin','preview_token':preview['token']})
+        self.assertEqual(exported['edit']['token'],preview['token'])
+
+    def snapshot_fixture(self):
+        from make_fixture import section,descriptor,word,crc
+        def sdt(version,services,onid=2,tsid=1):
+            payload=word(onid)+b'\xff'
+            for sid,name in services:
+                name=name.encode();desc=descriptor(0x48,b'\x01\x00'+bytes([len(name)])+name)
+                payload+=word(sid)+b'\xff'+word(0x8000+len(desc))+desc
+            return section(0x42,tsid,version,payload)
+        def eit(version,events,onid=2,tsid=1,tid=0x4e):
+            payload=word(tsid)+word(onid)+bytes([0,tid])
+            for eid,title in events:
+                title=title.encode();desc=descriptor(0x4d,b'eng'+bytes([len(title)])+title+b'\x00')
+                payload+=word(eid)+word(61000)+bytes([9,0,0,1,0,0])+word(0x8000+len(desc))+desc
+            return section(tid,101,version,payload)
+        pairs=[(0x1fff,None),(0,section(0,1,0,word(101)+word(0xe100))),
+               (0x100,section(2,101,0,word(0xe200)+word(0xf000))),
+               (0x11,sdt(0,[(101,'Alpha'),(102,'Removed')])),(0x12,eit(0,[(1,'Old event')])),
+               (0x11,sdt(1,[(101,'Beta'),(103,'Added')])),
+               (0x100,section(2,101,1,word(0xe201)+word(0xf000))),
+               (0x12,eit(1,[(1,'New event'),(2,'Added event')])),
+               (0x12,eit(0,[(1,'Different TS')],tsid=2)),
+               (0x12,eit(0,[(1,'Different network')],onid=3)),
+               (0x11,sdt(0,[(101,'Other network service')],onid=3)),
+               (0x12,eit(0,[(1,'Schedule event')],tid=0x50))]
+        bad=bytearray(sdt(2,[(101,'Bad CRC')]));bad[-1]^=1;pairs.append((0x11,bytes(bad)))
+        nxt=bytearray(sdt(2,[(101,'Next only')]));nxt[5]&=254;nxt[-4:]=crc(nxt[:-4]).to_bytes(4,'big');pairs.append((0x11,bytes(nxt)))
+        counters={};packets=[]
+        for pid,raw in pairs:
+            if raw is None:packets.append(bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184);continue
+            cc=counters.get(pid,0);counters[pid]=(cc+1)%16
+            self.assertLessEqual(len(raw),183)
+            packets.append(bytes([0x47,0x40|(pid>>8),pid&255,0x10|cc,0])+raw+b'\xff'*(183-len(raw)))
+        path=self.output('snapshot-diff.ts');Path(path).write_bytes(b''.join(packets))
+        return self.core.call('analyze',{'path':path,'standards':'dvb'})
+
+    def test_snapshot_diff_added_removed_changed_and_network_identity(self):
+        self.snapshot_fixture()
+        result=self.core.call('diff_snapshots',{'from_packet':4,'to_packet':7})
+        self.assertEqual(result['summary']['services'],{'added':1,'removed':1,'changed':1,'unchanged':0})
+        self.assertEqual(result['summary']['events'],{'added':1,'removed':0,'changed':1,'unchanged':0})
+        event=next(c for c in result['changes'] if c['kind']=='events' and c['change']=='changed')
+        self.assertEqual(event['changed_fields'],['title']);self.assertEqual(event['before']['value']['title'],'Old event')
+        service=next(c for c in result['changes'] if c['kind']=='services' and c['change']=='changed')
+        self.assertIn('components',service['changed_fields']);self.assertEqual(service['after']['value']['components']['pcr_pid'],0x201)
+        reverse=self.core.call('diff_snapshots',{'from_packet':7,'to_packet':4})
+        indexed={(c['kind'],c['key']):c for c in reverse['changes']}
+        for forward in result['changes']:
+            backward=indexed[(forward['kind'],forward['key'])]
+            self.assertEqual(backward['before'],forward['after']);self.assertEqual(backward['after'],forward['before'])
+            self.assertEqual(backward['change'],{'added':'removed','removed':'added','changed':'changed'}[forward['change']])
+        late=self.core.call('query',{'at_packet':11})
+        self.assertEqual({(s['onid'],s['id']) for s in late['services']},{(2,101),(2,103),(3,101)})
+        self.assertEqual(len(late['events']),5)
+        target=next(s for s in late['services'] if s['onid']==2 and s['id']==101)
+        preview=self.core.call('preview_rename',{'id':target['source_id'],'service_id':101,'name':'Explicit target'})
+        with self.assertRaisesRegex(RuntimeError,'Ambiguous SDT edit'):
+            self.core.call('export',{'path':self.output('ambiguous.bin'),'format':'bin','at_packet':11,'preview_token':preview['token']})
+        self.assertFalse(Path(self.output('ambiguous.bin')).exists())
+        # Before the competing network identity appeared, the same exact target
+        # and preview remain unambiguous and usable.
+        self.core.call('export',{'path':self.output('unambiguous.bin'),'format':'bin','at_packet':7,'preview_token':preview['token']})
+        networks=self.core.call('diff_snapshots',{'from_packet':7,'to_packet':11})
+        self.assertEqual(networks['summary']['services']['added'],1);self.assertEqual(networks['summary']['services']['removed'],0)
+        self.assertEqual(networks['summary']['events']['added'],3);self.assertEqual(networks['summary']['events']['removed'],0)
+        self.assertEqual(len({c['key'] for c in networks['changes'] if c['kind']=='events'}),3)
+        excluded=self.core.call('diff_snapshots',{'from_packet':11,'to_packet':13})
+        self.assertEqual(excluded['total_changes'],0)
+        earliest=self.core.call('diff_snapshots',{'from_packet':0,'to_packet':4})
+        self.assertTrue(all(c['change']=='added' and c['before'] is None for c in earliest['changes']))
+        for c in earliest['changes']:
+            self.assertTrue(all(e['last_packet']<=4 for e in c['after']['evidence']))
+
+    def test_snapshot_diff_generation_completion_and_version_reuse(self):
+        from make_fixture import section,descriptor,word,crc
+        def part(version,number,name):
+            desc=descriptor(0x48,b'\x01\x00'+bytes([len(name)])+name)
+            raw=bytearray(section(0x42,1,version,word(2)+b'\xff'+word(100+number)+b'\xff'+word(0x8000+len(desc))+desc))
+            raw[6]=number;raw[7]=1;raw[-4:]=crc(raw[:-4]).to_bytes(4,'big');return bytes(raw)
+        # The intervening generation never observed section 1. A reused version
+        # must still not resurrect that old sibling when section 0 reappears.
+        parts=[part(0,0,b'Old A'),part(0,1,b'Old B'),part(31,0,b'Interim A'),part(0,0,b'New A'),part(0,1,b'New B')]
+        path=self.output('version-reuse.ts');Path(path).write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i,raw in enumerate(parts)))
+        state=self.core.call('analyze',{'path':path})
+        partial=self.core.call('query',{'at_packet':3});self.assertEqual(partial['services'],[])
+        rid=next(t['id'] for t in state['tables'] if t['first_packet']==3)
+        detail=self.core.call('inspect',{'id':rid,'at_packet':3});self.assertFalse(detail['native_table_complete'])
+        with self.assertRaisesRegex(RuntimeError,'Incomplete'):self.core.call('export',{'path':self.output('partial.bin'),'format':'bin','at_packet':3})
+        changed=self.core.call('diff_snapshots',{'from_packet':1,'to_packet':3})
+        self.assertEqual(changed['summary']['services']['removed'],2)
+        self.assertTrue(any(c['kind']=='tables' and c['after'] and not c['after']['value']['complete_group'] for c in changed['changes']))
+        completed=self.core.call('diff_snapshots',{'from_packet':3,'to_packet':4})
+        self.assertEqual(completed['summary']['services']['added'],2)
+        self.assertEqual([s['name'] for s in self.core.call('query',{'at_packet':4})['services']],['New A','New B'])
+
+    def test_snapshot_diff_page_bound_and_empty_signalling(self):
+        from make_fixture import section,descriptor,word
+        null=bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184
+        path=self.output('many-networks.ts');packets=[null]
+        desc=descriptor(0x48,b'\x01\x00\x04Test')
+        for onid in range(230):
+            raw=section(0x42,1,0,word(onid)+b'\xff'+word(101)+b'\xff'+word(0x8000+len(desc))+desc)
+            packets.append(bytes([0x47,0x40,0x11,0x10|(onid%16),0])+raw+b'\xff'*(183-len(raw)))
+        Path(path).write_bytes(b''.join(packets));self.core.call('analyze',{'path':path})
+        first=self.core.call('diff_snapshots',{'from_packet':0,'to_packet':230,'kind':'services','limit':200})
+        self.assertEqual(first['total_changes'],230);self.assertEqual(len(first['changes']),200);self.assertEqual(first['next_offset'],200)
+        second=self.core.call('diff_snapshots',{'from_packet':0,'to_packet':230,'kind':'services','limit':200,'offset':200})
+        self.assertEqual(len(second['changes']),30);self.assertIsNone(second['next_offset'])
+        identities=[c['identity']['original_network_id'] for c in first['changes']+second['changes']]
+        self.assertEqual(set(identities),set(range(230)));self.assertEqual(len(identities),len(set(identities)))
+        Path(path).write_bytes(null*2);self.core.call('analyze',{'path':path})
+        empty=self.core.call('diff_snapshots',{'from_packet':0,'to_packet':1})
+        self.assertEqual(empty['total_changes'],0);self.assertEqual(empty['changes'],[])
+        self.assertTrue(all(sum(counts.values())==0 for counts in empty['summary'].values()))
+
+    def test_snapshot_diff_rejects_invalid_requests_and_failed_sessions(self):
+        valid={'from_packet':0,'to_packet':self.state['packets']-1}
+        for params,reason in [({},'Required argument'),({'from_packet':0},'Required argument'),({**valid,'from_packet':-1},'Below minimum'),({**valid,'to_packet':1.5},'Wrong type'),({**valid,'limit':0},'Below minimum'),({**valid,'limit':201},'Above maximum'),({**valid,'offset':-1},'Below minimum'),({**valid,'kind':'unknown'},'Invalid choice'),({**valid,'other':1},'Unknown argument'),({**valid,'from_packet':self.state['packets']},'packet range'),({**valid,'to_packet':9007199254740992},'Above maximum')]:
+            with self.subTest(params=params),self.assertRaisesRegex(RuntimeError,reason):self.core.call('diff_snapshots',params)
+        with Core() as fresh:
+            with self.assertRaisesRegex(RuntimeError,'successful analysis'):fresh.call('diff_snapshots',{'from_packet':0,'to_packet':0})
+        with self.assertRaises(RuntimeError):self.core.call('analyze',{'path':self.output('missing.ts')})
+        with self.assertRaisesRegex(RuntimeError,'successful analysis'):self.core.call('diff_snapshots',valid)
 
     def test_machine_argument_validation(self):
         with self.assertRaisesRegex(RuntimeError,'Below minimum'):self.core.call('query',{'at_packet':-1})

@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{io::{BufRead,BufReader,Write},process::{Child,ChildStdin,Command,Stdio},sync::Mutex,time::Instant};
+use std::{io::{BufRead,BufReader,Read,Write},process::{Child,ChildStdin,Command,Stdio},sync::{Arc,Mutex},time::{Duration,Instant}};
 use tauri::{Emitter,Manager};
 use serde_json::{json,Value};
 struct Core { child:Mutex<Child>, input:Mutex<ChildStdin>, started:Instant, root:String, trace:Option<String> }
@@ -29,8 +29,56 @@ fn contains_reference(value: &Value, url: &str) -> bool {
 fn is_https_reference(url: &str) -> bool {
     url.starts_with("https://") && !url.chars().any(|c| c.is_control())
 }
+// A successful spawn only means the OS helper started. Report its failure instead
+// of silently swallowing it. Some helpers stay alive with a browser; bound the
+// confirmation wait without killing that browser, and reap it in the background.
+fn run_reference_launcher(mut command: Command, timeout: Duration) -> Result<(), String> {
+    let mut child = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped())
+        .spawn().map_err(|e| format!("Could not start the desktop browser launcher: {e}"))?;
+    // Drain stderr continuously so a noisy helper cannot block on a full pipe.
+    // Retain at most 512 bytes, and never wait indefinitely for inherited pipes.
+    let diagnostics = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let captured = Arc::clone(&diagnostics);
+    let mut stderr = child.stderr.take().expect("piped launcher stderr");
+    let reader = std::thread::spawn(move || {
+        let mut buffer = [0u8; 4096];
+        while let Ok(count) = stderr.read(&mut buffer) {
+            if count == 0 { break; }
+            if let Ok(mut bytes) = captured.lock() {
+                let keep = count.min(512usize.saturating_sub(bytes.len()));
+                bytes.extend_from_slice(&buffer[..keep]);
+            }
+        }
+    });
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() { return Ok(()); }
+                let read_deadline = Instant::now() + Duration::from_millis(100);
+                while !reader.is_finished() && Instant::now() < read_deadline {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                let detail = diagnostics.lock().map(|bytes| String::from_utf8_lossy(&bytes)
+                    .chars().map(|c| if c.is_control() { ' ' } else { c }).collect::<String>()
+                    .split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+                return Err(format!("The desktop browser launcher failed ({status}){}{}",
+                    if detail.is_empty() { "" } else { ": " }, detail));
+            },
+            Ok(None) if started.elapsed() < timeout => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                std::thread::spawn(move || { let _ = child.wait(); });
+                return Err("The desktop browser launcher is still running; opening could not be confirmed".into());
+            },
+            Err(error) => {
+                std::thread::spawn(move || { let _ = child.wait(); });
+                return Err(format!("Could not check the desktop browser launcher: {error}"));
+            },
+        }
+    }
+}
 #[tauri::command]
-fn open_reference(url: String, core: tauri::State<Core>) -> Result<(), String> {
+async fn open_reference(url: String, core: tauri::State<'_, Core>) -> Result<(), String> {
     if !is_https_reference(&url) {
         return Err("Only HTTPS standards references are allowed".into());
     }
@@ -46,10 +94,10 @@ fn open_reference(url: String, core: tauri::State<Core>) -> Result<(), String> {
     let mut command = Command::new("open");
     #[cfg(all(unix, not(target_os = "macos")))]
     let mut command = Command::new("xdg-open");
-    let child = command.arg(&url).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
-        .spawn().map_err(|e| e.to_string())?;
-    std::thread::spawn(move || { let mut child = child; let _ = child.wait(); });
-    Ok(())
+    command.arg(&url);
+    tauri::async_runtime::spawn_blocking(move || run_reference_launcher(command, Duration::from_secs(5)))
+        .await.map_err(|error| format!("Browser launcher task failed: {error}"))?
+
 }
 fn main(){
     let started=Instant::now();
@@ -69,8 +117,56 @@ fn main(){
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_reference, is_https_reference};
+    use super::{contains_reference, is_https_reference, run_reference_launcher};
+    use std::{process::Command, time::{Duration, Instant}};
     use serde_json::json;
+
+    fn exit_command(code: u8) -> Command {
+        #[cfg(windows)]
+        { let mut command = Command::new("cmd"); command.args(["/C", &format!("exit {code}")]); command }
+        #[cfg(not(windows))]
+        { let mut command = Command::new("sh"); command.args(["-c", &format!("exit {code}")]); command }
+    }
+
+    #[test]
+    fn launcher_accepts_successful_helper_exit() {
+        assert!(run_reference_launcher(exit_command(0), Duration::from_secs(2)).is_ok());
+    }
+
+    #[test]
+    fn launcher_reports_nonzero_helper_exit() {
+        let error = run_reference_launcher(exit_command(7), Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("launcher failed"), "{error}");
+        assert!(error.contains('7'), "{error}");
+    }
+
+    #[test]
+    fn launcher_bounds_and_drains_failure_diagnostics() {
+        let text = "x".repeat(6000);
+        #[cfg(windows)]
+        let command = { let mut c = Command::new("cmd"); c.args(["/C", &format!("echo {text} 1>&2 & exit 7")]); c };
+        #[cfg(not(windows))]
+        let command = { let mut c = Command::new("sh"); c.args(["-c", &format!("printf '{text}' >&2; exit 7")]); c };
+        let error = run_reference_launcher(command, Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("xxxxxxxx"), "{error}");
+        assert!(error.len() < 650, "{} bytes", error.len());
+    }
+
+    #[test]
+    fn launcher_reports_missing_helper() {
+        let error = run_reference_launcher(Command::new("showpsisi-nonexistent-launcher-test"), Duration::from_secs(2)).unwrap_err();
+        assert!(error.contains("Could not start"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn launcher_timeout_is_bounded_and_not_success() {
+        let mut command = Command::new("sh"); command.args(["-c", "sleep 0.2"]);
+        let started = Instant::now();
+        let error = run_reference_launcher(command, Duration::from_millis(25)).unwrap_err();
+        assert!(error.contains("opening could not be confirmed"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 
     #[test]
     fn reference_lookup_requires_exact_url_field() {

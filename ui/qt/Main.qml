@@ -26,9 +26,26 @@ ApplicationWindow {
     property color ink: "#cccccc"
     property color muted: "#969696"
     property color blue: "#3794ff"
+    property color addedColor: "#b5cea8"
+    property color removedColor: "#f48771"
+    property color changedColor: "#dcdcaa"
+    property var savedLayout: core.loadLayout()
+    property bool layoutReady: false
+    property var comparison: ({})
+    property var selectedChange: null
+    property string comparisonSide: "after"
+    property string comparisonError: ""
+    property bool compactComparison: recordPane.width < 420 || recordPane.height < 520
+    property bool compactInspector: inspectorPane.height < 520
     property var analysisState: core.state
     property var detail: core.detail
     property string tab: "Services"
+    onTabChanged: {
+        if (tab !== "Changes" && selectedChange) {
+            selectedChange = null;
+            defaultInspect();
+        }
+    }
     property string inspectorView: "Structure"
     property string selected: ""
     property int selectedService: -1
@@ -37,6 +54,7 @@ ApplicationWindow {
     property string notice: ""
     property string artifactDir: core.env("SHOWPSISI_ARTIFACT_DIR") || core.root + "/artifacts"
     property string snapshotTarget: ""
+    property int snapshotTargetService: -1
     property var collapsed: ({
             header: true
         })
@@ -90,11 +108,13 @@ ApplicationWindow {
     }
     property var eventRows: analysisState.events || []
     property var issues: analysisState.diagnostics || []
-    property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : issues
+    property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
-        return matchesRecord(row, recordSearch.text);
+        return tab === "Changes" ? searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
     })
     property bool selectionHidden: !!selected && !rows.some(function (row) {
+        if (tab === "Changes")
+            return !!selectedChange && row.kind === selectedChange.kind && row.key === selectedChange.key;
         return tab === "Services" ? row.source_id === selected && row.id === selectedService : (row.source_id || row.id) === selected;
     })
     function searchTerms(text) {
@@ -350,7 +370,81 @@ ApplicationWindow {
         next[path] = row ? !row.closed : !next[path];
         collapsed = next;
     }
-    function inspect(id, sid) {
+    function rememberLayout() {
+        if (!layoutReady)
+            return;
+        let value = { version: 1, explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height };
+        if (!core.saveLayout(value))
+            notice = "Layout could not be saved. The current layout remains usable.";
+    }
+    function resetLayout() {
+        explorerPane.SplitView.preferredWidth = 180;
+        inspectorPane.SplitView.preferredWidth = 520;
+        timelinePane.SplitView.preferredHeight = 105;
+        notice = core.resetLayout() ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.";
+    }
+    function resizeInspector(delta) {
+        inspectorPane.SplitView.preferredWidth = Math.max(330, Math.min(workspace.width - explorerPane.width - 322, inspectorPane.width + delta));
+        layoutSaveTimer.restart();
+    }
+    function resizeTimeline(delta) {
+        timelinePane.SplitView.preferredHeight = Math.max(105, Math.min(350, verticalWorkspace.height - 306, timelinePane.height + delta));
+        layoutSaveTimer.restart();
+    }
+    function currentPacket() {
+        return analysisState.selected_packet === null || analysisState.selected_packet === undefined ? Math.max(0, Number(analysisState.packets || 1) - 1) : analysisState.selected_packet;
+    }
+    function openComparison() {
+        tab = "Changes";
+        if (!fromPacket.text && analysisState.complete) {
+            fromPacket.text = String((analysisState.history || []).length ? analysisState.history[0].last_packet : 0);
+            toPacket.text = String(currentPacket());
+        }
+        fromPacket.forceActiveFocus();
+    }
+    function validPacket(text) {
+        return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) < Number(analysisState.packets || 0);
+    }
+    function compareSnapshots(offset) {
+        if (core.busy || core.comparing || !analysisState.complete || !validPacket(fromPacket.text) || !validPacket(toPacket.text))
+            return;
+        comparison = {};
+        if (selectedChange)
+            defaultInspect();
+        selectedChange = null;
+        comparisonError = "";
+        recordSearch.clear();
+        core.send("diff_snapshots", {from_packet: Number(fromPacket.text), to_packet: Number(toPacket.text), kind: changeKind.currentValue, offset: offset || 0, limit: 100});
+    }
+    function changeValue(row) {
+        return (row.after || row.before || {}).value || {};
+    }
+    function changeTitle(row) {
+        let value = changeValue(row);
+        return row.change.toUpperCase() + " · " + row.kind + " · " + (value.name || value.title || (row.kind === "tables" ? "Table " + hex(value.table_id, 2) : "SID " + hex(value.service_id === undefined ? value.id : value.service_id)));
+    }
+    function changeFields(row) {
+        if (!row)
+            return "";
+        return (row.changed_fields || []).map(function (field) {
+            if (field === "payload" && row.kind === "tables")
+                return "Raw section bytes changed · compare A / B in Hex";
+            let before = row.before ? row.before.value[field] : undefined;
+            let after = row.after ? row.after.value[field] : undefined;
+            let render = function (value) { return value === undefined ? "—" : typeof value === "object" ? JSON.stringify(value) : valueText(field, value); };
+            return field + ": " + render(before) + " → " + render(after);
+        }).join("\n");
+    }
+    function inspectChange(row, sideName) {
+        let side = row && row[sideName];
+        if (!side || !(side.evidence || []).length)
+            return;
+        selectedChange = row;
+        comparisonSide = sideName;
+        inspect(side.evidence[0].id, row.kind === "services" ? side.value.id : -1, side.at_packet);
+        notice = "Inspecting " + (sideName === "before" ? "A" : "B") + " at packet " + num(side.at_packet) + ". The current workbench snapshot is unchanged.";
+    }
+    function inspect(id, sid, atPacket) {
         if (!id) {
             notice = "Aggregate diagnostic: no individual section is indexed.";
             return;
@@ -364,7 +458,9 @@ ApplicationWindow {
         let params = {
             id: id
         };
-        if (analysisState.selected_packet !== undefined && analysisState.selected_packet !== null)
+        if (atPacket !== undefined && atPacket !== null)
+            params.at_packet = atPacket;
+        else if (analysisState.selected_packet !== undefined && analysisState.selected_packet !== null)
             params.at_packet = analysisState.selected_packet;
         core.send("inspect", params);
     }
@@ -375,6 +471,11 @@ ApplicationWindow {
         selected = "";
         selectedService = -1;
         preview = {};
+        comparison = {};
+        selectedChange = null;
+        comparisonError = "";
+        fromPacket.clear();
+        toPacket.clear();
         filter = "";
         recordSearch.clear();
         treeSearch.clear();
@@ -386,8 +487,10 @@ ApplicationWindow {
             extra_pids: extraPidsValue
         });
     }
-    function snapshot(packet, id) {
+    function snapshot(packet, id, sid) {
+        selectedChange = null;
         snapshotTarget = id || "";
+        snapshotTargetService = sid === undefined ? -1 : sid;
         selected = "";
         selectedService = -1;
         preview = {};
@@ -415,12 +518,21 @@ ApplicationWindow {
         }) || (detail.services || [])[0];
     }
     function activate(row) {
+        if (tab === "Changes") {
+            inspectChange(row, row.after ? "after" : "before");
+            return;
+        }
+        selectedChange = null;
         inspect(tab === "Services" || tab === "EPG" ? row.source_id : row.id, tab === "Services" ? row.id : undefined);
     }
     function rowTitle(row) {
+        if (tab === "Changes")
+            return changeTitle(row);
         return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? row.name + " · PID " + hex(row.pid) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
     }
     function rowSubtitle(row) {
+        if (tab === "Changes")
+            return (row.changed_fields || []).join(", ") || "Presence changed · select to inspect source evidence";
         return tab === "Services" ? (row.provider || "No provider") + " · SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) + (row.group ? " · " + row.group : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations" : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
     }
     component PlainLabel: Label {
@@ -492,6 +604,8 @@ ApplicationWindow {
         function onResponse(method, result) {
             if (result.message) {
                 notice = result.message;
+                if (method === "diff_snapshots")
+                    comparisonError = result.message;
                 return;
             }
             if (method === "analyze") {
@@ -501,10 +615,19 @@ ApplicationWindow {
             }
             if (method === "query") {
                 if (snapshotTarget)
-                    inspect(snapshotTarget);
+                    inspect(snapshotTarget, snapshotTargetService);
                 else
                     defaultInspect();
                 snapshotTarget = "";
+                snapshotTargetService = -1;
+            }
+            if (method === "diff_snapshots") {
+                comparison = result;
+                notice = "Compared A → B · " + num(result.total_changes) + " changes · current snapshot unchanged";
+                if (tab === "Changes") {
+                    recordList.currentIndex = rows.length ? 0 : -1;
+                    recordList.forceActiveFocus();
+                }
             }
             if (method === "preview_rename") {
                 preview = result;
@@ -691,23 +814,211 @@ ApplicationWindow {
         }
     }
     Timer {
+        id: layoutSaveTimer
+        interval: 100
+        onTriggered: rememberLayout()
+    }
+    Timer {
+        id: layoutTestTimer
+        interval: 250
+        repeat: true
+        property int phase: 0
+        property real originalInspector: 0
+        property real originalTimeline: 0
+        property bool dragged: false
+        onTriggered: {
+            let mode = core.env("SHOWPSISI_SCRIPT");
+            if (phase === 0) {
+                originalInspector = inspectorPane.width;
+                originalTimeline = timelinePane.height;
+                if (mode === "layout-set") {
+                    core.drag("inspectorDivider", -60, 0);
+                    core.drag("timelineDivider", 0, -40);
+                } else if (mode === "layout-reset") {
+                    core.click("resetLayout");
+                } else if (mode === "layout-small") {
+                    win.width = 1000;
+                    win.height = 680;
+                }
+                phase++;
+                return;
+            }
+            if (phase === 1 && mode === "layout-set") {
+                dragged = inspectorPane.width > originalInspector + 30 && timelinePane.height > originalTimeline + 20;
+                core.key("Alt+Left");
+                core.key("Alt+Up");
+                phase++;
+                return;
+            }
+            core.testResult(JSON.stringify({
+                passed: recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height,
+                records: recordPane.width, workspace: workspace.width, dragged: dragged,
+                saved: core.loadLayout(),
+                invalid_rejected: !core.saveLayout({version:1,explorer:-1,inspector:520,timeline:105}) && !core.saveLayout({version:99,explorer:180,inspector:520,timeline:105})
+            }));
+            if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+            stop();
+        }
+    }
+    Timer {
+        id: comparisonTestTimer
+        interval: 200
+        repeat: true
+        property real phase: 0
+        property var checks: ({})
+        property var changedService: null
+        property var initialPacket: null
+        onTriggered: {
+            if (!analysisState.complete || core.busy || core.inspecting || core.comparing)
+                return;
+            if (phase === 0) {
+                core.click("history_v1");
+                phase++;
+            } else if (phase === 1) {
+                if (detail.version !== 1) return;
+                core.click("compareSnapshots");
+                core.click("captureA");
+                checks.capture_a = Number(fromPacket.text) === analysisState.selected_packet;
+                core.click("latest");
+                phase++;
+            } else if (phase === 2) {
+                if (analysisState.selected_packet !== null && analysisState.selected_packet !== undefined) return;
+                core.click("captureB");
+                checks.capture_b = Number(toPacket.text) === Number(analysisState.packets) - 1;
+                initialPacket = analysisState.selected_packet;
+                core.click("runComparison");
+                checks.pending_controls = core.comparing && !core.click("runComparison") && !core.click("captureA") && !core.click("captureB") && !fromPacket.enabled && !toPacket.enabled;
+                phase++;
+            } else if (phase === 3) {
+                if (!comparison.source) return;
+                changedService = (comparison.changes || []).find(function (row) { return row.kind === "services" && (row.changed_fields || []).indexOf("name") >= 0; });
+                checks.has_changes = !!changedService && comparison.total_changes > 0;
+                if (!changedService) { core.testResult(JSON.stringify({passed:false,checks:checks,comparison:comparison})); stop(); return; }
+                checks.controls_exposed = ["fromPacket", "toPacket", "captureA", "captureB", "runComparison"].every(function (name) { return core.isExposed(name); });
+                checks.results_focus = recordList.activeFocus;
+                checks.results_height = recordList.height >= 100;
+                core.key("Ctrl+K");
+                recordSearch.text = changedService.after.value.name;
+                core.key("Return");
+                checks.search_to_results = recordList.activeFocus && recordList.currentIndex === 0;
+                core.key("Return");
+                checks.keyboard_selection = !!selectedChange && selectedChange.key === changedService.key;
+                recordSearch.clear();
+                let index = comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
+                recordList.positionViewAtIndex(index, ListView.Contain);
+                phase = 3.5;
+            } else if (phase === 3.5) {
+                let name = "record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
+                checks.change_row_exposed = core.isExposed(name);
+                checks.change_row_click = core.click(name);
+                core.click("inspectBefore");
+                phase = 4;
+            } else if (phase === 4) {
+                checks.before_cutoff = detail.native_table_at_packet === Number(fromPacket.text);
+                checks.before_name = chosenService().name === changedService.before.value.name;
+                checks.no_snapshot_mutation = analysisState.selected_packet === initialPacket;
+                checks.inspector_controls_exposed = ["inspectBefore", "inspectAfter", "inspectionCutoff", "useComparisonSnapshot"].every(function (name) { return core.isExposed(name); });
+                core.click("inspectAfter");
+                phase++;
+            } else if (phase === 5) {
+                checks.after_cutoff = detail.native_table_at_packet === Number(toPacket.text);
+                checks.after_name = chosenService().name === changedService.after.value.name;
+                checks.tree_height = tree.height >= 90;
+                core.key("F6");
+                checks.inspector_to_results = recordList.activeFocus;
+                core.key("F6");
+                checks.results_to_tree = tree.activeFocus;
+                core.key("Ctrl+Shift+K");
+                let treeShortcut = treeSearch.activeFocus;
+                core.key("Return");
+                checks.tree_search_to_tree = treeShortcut && tree.activeFocus;
+                if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+                core.click("tab_Services");
+                checks.exit_preserves_snapshot = !selectedChange && analysisState.selected_packet === initialPacket;
+                core.click("tab_Changes");
+                toPacket.text = fromPacket.text;
+                toPacket.forceActiveFocus();
+                core.key("Return");
+                checks.cutoff_enter_compares = core.comparing;
+                phase++;
+            } else if (phase === 6) {
+                if (!comparison.source) return;
+                checks.same_cutoff_empty = comparison.total_changes === 0 && rows.length === 0;
+                fromPacket.text = "-1";
+                checks.invalid_cutoff = !core.click("runComparison") && !comparison.source;
+                fromPacket.text = String(Number(analysisState.packets) - 1);
+                toPacket.text = String((analysisState.history || [])[0].last_packet);
+                core.click("runComparison");
+                phase++;
+            } else if (phase === 7) {
+                if (!comparison.source) return;
+                checks.reverse = comparison.from_packet > comparison.to_packet && comparison.total_changes > 0;
+                changedService = comparison.changes.find(function (row) { return row.kind === "services" && (row.changed_fields || []).indexOf("name") >= 0; });
+                recordList.positionViewAtIndex(comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }), ListView.Contain);
+                phase = 7.5;
+            } else if (phase === 7.5) {
+                core.click("record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }));
+                phase = 8;
+            } else if (phase === 8) {
+                core.click("useComparisonSnapshot");
+                phase++;
+            } else if (phase === 9) {
+                checks.explicit_use_snapshot = tab === "Services" && analysisState.selected_packet === changedService.after.at_packet && detail.native_table_at_packet === changedService.after.at_packet;
+                scan();
+                phase++;
+            } else {
+                checks.rescan_clears = !comparison.source && !selectedChange && !fromPacket.text && !toPacket.text;
+                core.testResult(JSON.stringify({passed:Object.keys(checks).every(function (key) { return checks[key]; }),checks:checks}));
+                stop();
+            }
+        }
+    }
+    Timer {
         id: plainTextTimer
         interval: 200
         repeat: true
-        property bool hoveredRecord: false
+        property int phase: 0
+        property bool baselinePassed: false
         onTriggered: {
-            if (!analysisState.complete || core.inspecting || !detail.id || !serviceRows.length)
+            if (!analysisState.complete || core.inspecting || core.comparing || !detail.id || !serviceRows.length)
                 return;
-            if (!hoveredRecord) {
+            if (phase === 0) {
                 notice = serviceRows[0].name;
                 core.hover("service_" + serviceRows[0].id);
                 statusTooltip.open();
-                hoveredRecord = true;
+                phase++;
+                return;
+            }
+            if (phase === 1) {
+                let baseline = core.textSafetyReport("<img");
+                baselinePassed = baseline.matched_text_items >= 3 && baseline.tooltip_text_items >= 1 && baseline.unsafe_text_items === 0;
+                openComparison();
+                fromPacket.text = "0";
+                toPacket.text = String(Number(analysisState.packets) - 1);
+                compareSnapshots(0);
+                phase++;
+                return;
+            }
+            if (phase === 2) {
+                if (!comparison.source) return;
+                let index = comparison.changes.findIndex(function (row) { return row.kind === "services" && String(changeValue(row).name).indexOf("<img") >= 0; });
+                if (index < 0) { core.testResult(JSON.stringify({passed:false,comparison_literal:false})); stop(); return; }
+                recordList.positionViewAtIndex(index, ListView.Center);
+                activate(comparison.changes[index]);
+                phase++;
+                return;
+            }
+            if (phase === 3) {
+                notice = serviceRows[0].name;
+                statusTooltip.open();
+                phase++;
                 return;
             }
             let report = core.textSafetyReport("<img");
             report.literal_name = serviceRows[0].name.indexOf("<b>name</b>") >= 0;
-            report.passed = report.literal_name && report.matched_text_items >= 3 && report.tooltip_text_items >= 1 && report.unsafe_text_items === 0;
+            report.comparison_literal = !!selectedChange && changeTitle(selectedChange).indexOf("<b>name</b>") >= 0;
+            report.passed = baselinePassed && report.comparison_literal && report.literal_name && report.matched_text_items >= 3 && report.tooltip_text_items >= 1 && report.unsafe_text_items === 0;
             core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             core.testResult(JSON.stringify(report));
             stop();
@@ -720,6 +1031,11 @@ ApplicationWindow {
     }
     Component.onCompleted: {
         core.mark("ui_ready");
+        if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
+            width = 1000;
+            height = 680;
+        }
+        Qt.callLater(function () { layoutReady = true; });
         let requestedStandard = core.env("SHOWPSISI_STANDARDS");
         if (requestedStandard) {
             let choice = standardChoice.indexOfValue(requestedStandard);
@@ -732,13 +1048,39 @@ ApplicationWindow {
             plainTextTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "inspect-error")
             inspectFailureTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT").indexOf("layout-") === 0)
+            layoutTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "comparison")
+            comparisonTestTimer.start();
     }
+    onClosing: if (layoutSaveTimer.running) rememberLayout()
 
     Shortcut {
         sequence: "Ctrl+K"
         onActivated: {
             recordSearch.forceActiveFocus();
             recordSearch.selectAll();
+        }
+    }
+    Shortcut { sequence: "Alt+Left"; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Alt+Right"; onActivated: resizeInspector(-24) }
+    Shortcut { sequence: "Alt+Up"; onActivated: resizeTimeline(24) }
+    Shortcut { sequence: "Alt+Down"; onActivated: resizeTimeline(-24) }
+    Shortcut {
+        sequence: "F6"
+        onActivated: {
+            if (recordList.activeFocus || recordSearch.activeFocus) {
+                inspectorView = "Structure";
+                tree.forceActiveFocus();
+            } else recordList.forceActiveFocus();
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+K"
+        onActivated: {
+            inspectorView = "Structure";
+            treeSearch.forceActiveFocus();
+            treeSearch.selectAll();
         }
     }
     Shortcut {
@@ -812,6 +1154,15 @@ ApplicationWindow {
                 text: (analysisState.detected_standards || "LOCAL") + " · Qt Quick"
                 color: muted
                 font.pixelSize: 11
+            }
+            Action {
+                objectName: "resetLayout"
+                text: "Reset layout"
+                onClicked: resetLayout()
+                SafeTip {
+                    visible: anchorControl.hovered
+                    text: "Drag the dividers to resize. Alt+Left/Right resizes the inspector; Alt+Up/Down resizes the timeline. Changes are saved on this computer."
+                }
             }
             Action {
                 objectName: "agentApi"
@@ -960,12 +1311,32 @@ ApplicationWindow {
             }
         }
         SplitView {
+            id: verticalWorkspace
             Layout.fillWidth: true
             Layout.fillHeight: true
+            orientation: Qt.Vertical
+            onResizingChanged: if (!resizing) layoutSaveTimer.restart()
+            handle: Rectangle {
+                objectName: "timelineDivider"
+                implicitHeight: 6
+                color: SplitHandle.pressed ? blue : SplitHandle.hovered ? "#555555" : "#252526"
+            }
+        SplitView {
+            id: workspace
+            SplitView.fillHeight: true
+            SplitView.minimumHeight: tab === "Changes" ? 380 : 300
             orientation: Qt.Horizontal
+            onResizingChanged: if (!resizing) layoutSaveTimer.restart()
+            handle: Rectangle {
+                objectName: x < workspace.width / 3 ? "explorerDivider" : "inspectorDivider"
+                implicitWidth: 6
+                color: SplitHandle.pressed ? blue : SplitHandle.hovered ? "#555555" : "#252526"
+            }
             Card {
-                SplitView.preferredWidth: 180
+                id: explorerPane
+                SplitView.preferredWidth: savedLayout.explorer
                 SplitView.minimumWidth: 150
+                SplitView.maximumWidth: 480
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 8
@@ -1024,6 +1395,7 @@ ApplicationWindow {
                 }
             }
             Card {
+                id: recordPane
                 SplitView.fillWidth: true
                 SplitView.minimumWidth: 310
                 ColumnLayout {
@@ -1033,7 +1405,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         spacing: 0
                         Repeater {
-                            model: ["Services", "Tables", "EPG", "Issues"]
+                            model: ["Services", "Tables", "EPG", "Issues", "Changes"]
                             NavItem {
                                 required property string modelData
                                 objectName: "tab_" + modelData
@@ -1041,7 +1413,13 @@ ApplicationWindow {
                                 implicitHeight: 35
                                 highlighted: tab === modelData
                                 focusPolicy: Qt.StrongFocus
-                                onClicked: tab = modelData
+                                onClicked: {
+                                    if (modelData === "Changes") openComparison();
+                                    else {
+                                        tab = modelData;
+                                        if (selectedChange) { selectedChange = null; defaultInspect(); }
+                                    }
+                                }
                                 SafeTip {
                                     visible: anchorControl.hovered
                                     text: explanation(modelData)
@@ -1060,7 +1438,7 @@ ApplicationWindow {
                         Layout.rightMargin: 8
                         Layout.topMargin: 8
                         implicitHeight: 30
-                        placeholderText: "Search names, PID or SID…  Ctrl+K"
+                        placeholderText: tab === "Changes" ? "Search this change page…  Ctrl+K" : "Search names, PID or SID…  Ctrl+K"
                         placeholderTextColor: muted
                         selectByMouse: true
                         Accessible.name: "Search records by name, packet identifier or service identifier"
@@ -1069,6 +1447,129 @@ ApplicationWindow {
                             recordList.forceActiveFocus();
                             if (rows.length)
                                 recordList.currentIndex = 0;
+                        }
+                    }
+                    ColumnLayout {
+                        visible: tab === "Changes"
+                        Layout.fillWidth: true
+                        Layout.margins: 8
+                        spacing: 6
+                        RowLayout {
+                            Layout.fillWidth: true
+                            PlainLabel { text: "A"; color: muted; Layout.preferredWidth: 14 }
+                            TextField {
+                                id: fromPacket
+                                objectName: "fromPacket"
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                placeholderText: "Packet cutoff"
+                                enabled: !core.comparing
+                                selectByMouse: true
+                                onTextChanged: comparison = {}
+                                Accessible.name: "Snapshot A inclusive packet cutoff"
+                                onAccepted: compareSnapshots(0)
+                                Keys.onEscapePressed: recordList.forceActiveFocus()
+                            }
+                            Action {
+                                objectName: "captureA"
+                                text: "Use current"
+                                enabled: !!analysisState.complete && !core.busy && !core.comparing
+                                onClicked: { fromPacket.text = String(currentPacket()); comparison = {}; }
+                                SafeTip { visible: anchorControl.hovered; text: "Set A to the selected history snapshot, or the final packet in Latest view." }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            PlainLabel { text: "B"; color: muted; Layout.preferredWidth: 14 }
+                            TextField {
+                                id: toPacket
+                                objectName: "toPacket"
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                placeholderText: "Packet cutoff"
+                                enabled: !core.comparing
+                                selectByMouse: true
+                                onTextChanged: comparison = {}
+                                Accessible.name: "Snapshot B inclusive packet cutoff"
+                                onAccepted: compareSnapshots(0)
+                                Keys.onEscapePressed: recordList.forceActiveFocus()
+                            }
+                            Action {
+                                objectName: "captureB"
+                                text: "Use current"
+                                enabled: !!analysisState.complete && !core.busy && !core.comparing
+                                onClicked: { toPacket.text = String(currentPacket()); comparison = {}; }
+                                SafeTip { visible: anchorControl.hovered; text: "Set B to the selected history snapshot, or the final packet in Latest view." }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ComboBox {
+                                id: changeKind
+                                objectName: "changeKind"
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                textRole: "label"
+                                valueRole: "value"
+                                model: [{label:"All changes",value:"all"},{label:"Services",value:"services"},{label:"Tables",value:"tables"},{label:"Events",value:"events"}]
+                                enabled: !core.comparing
+                                onActivated: comparison = {}
+                                Accessible.name: "Snapshot change category"
+                            }
+                            Action {
+                                objectName: "runComparison"
+                                text: core.comparing ? "Comparing…" : "Compare"
+                                primary: true
+                                enabled: !core.busy && !core.comparing && !!analysisState.complete && validPacket(fromPacket.text) && validPacket(toPacket.text)
+                                onClicked: compareSnapshots(0)
+                            }
+                        }
+                        PlainLabel {
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            font.pixelSize: 11
+                            color: comparisonError ? removedColor : muted
+                            text: comparisonError || (!analysisState.complete ? "Analyze a source first." : !validPacket(fromPacket.text) || !validPacket(toPacket.text) ? "Enter whole packet indexes from 0 to " + num(Number(analysisState.packets) - 1) + "." : comparison.source ? "A " + num(comparison.from_packet) + " → B " + num(comparison.to_packet) + " · " + num(comparison.total_changes) + " changes" : "Choose A and B, then Compare. Observed valid-current state only.")
+                            SafeTip { visible: comparisonContextHover.hovered; text: (comparison.source || "") + "\nObserved valid-current state. Absence does not prove a service stopped broadcasting.\n" + Object.keys(comparison.scope || {}).map(function (key) { return key + ": " + comparison.scope[key]; }).join("\n") }
+                            HoverHandler { id: comparisonContextHover }
+                        }
+                        PlainLabel {
+                            visible: !!comparison.source && !compactComparison
+                            text: comparison.source || ""
+                            Layout.fillWidth: true
+                            elide: Text.ElideMiddle
+                            font.pixelSize: 11
+                            color: muted
+                            SafeTip { visible: sourceHover.hovered; text: comparison.source || "" }
+                            HoverHandler { id: sourceHover }
+                        }
+                        PlainLabel {
+                            visible: !!comparison.summary
+                            Layout.fillWidth: true
+                            wrapMode: compactComparison ? Text.NoWrap : Text.Wrap
+                            elide: Text.ElideRight
+                            font.pixelSize: 11
+                            color: changedColor
+                            text: Object.keys(comparison.summary || {}).map(function (kind) { let count = comparison.summary[kind]; return kind + ": +" + count.added + " / −" + count.removed + " / ~" + count.changed; }).join("  ·  ")
+                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorControl.text }
+                            HoverHandler { id: comparisonSummaryHover }
+                        }
+                        PlainLabel {
+                            visible: !!comparison.source && !compactComparison
+                            Layout.fillWidth: true
+                            wrapMode: Text.Wrap
+                            font.pixelSize: 11
+                            color: muted
+                            text: "Observed valid-current state. Absence does not prove a service stopped broadcasting."
+                            SafeTip { visible: scopeHover.hovered; text: Object.keys(comparison.scope || {}).map(function (key) { return key + ": " + comparison.scope[key]; }).join("\n") }
+                            HoverHandler { id: scopeHover }
+                        }
+                        RowLayout {
+                            visible: !!comparison.source && comparison.total_changes > 100
+                            Layout.fillWidth: true
+                            Action { text: "Previous"; enabled: !core.comparing && Number(comparison.offset) > 0; onClicked: compareSnapshots(Math.max(0, comparison.offset - 100)) }
+                            PlainLabel { text: (Number(comparison.offset || 0) + 1) + "–" + Math.min(Number(comparison.offset || 0) + 100, Number(comparison.total_changes || 0)); color: muted; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter }
+                            Action { text: "Next"; enabled: !core.comparing && comparison.next_offset !== null && comparison.next_offset !== undefined; onClicked: compareSnapshots(comparison.next_offset) }
                         }
                     }
                     PlainLabel {
@@ -1097,7 +1598,7 @@ ApplicationWindow {
                         keyNavigationEnabled: true
                         activeFocusOnTab: true
                         boundsBehavior: Flickable.StopAtBounds
-                        ScrollBar.vertical: ScrollBar {}
+                        ScrollBar.vertical: ScrollBar { policy: tab === "Changes" ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded }
                         Keys.onReturnPressed: if (currentIndex >= 0)
                             activate(rows[currentIndex])
                         Keys.onSpacePressed: if (currentIndex >= 0)
@@ -1110,7 +1611,7 @@ ApplicationWindow {
                             width: ListView.view.width
                             height: tab === "Issues" ? 88 : 58
                             focusPolicy: Qt.StrongFocus
-                            highlighted: tab === "Services" ? selected === modelData.source_id && selectedService === modelData.id : selected === (modelData.source_id || modelData.id)
+                            highlighted: tab === "Changes" ? !!selectedChange && selectedChange.key === modelData.key && selectedChange.kind === modelData.kind : tab === "Services" ? selected === modelData.source_id && selectedService === modelData.id : selected === (modelData.source_id || modelData.id)
                             background: Rectangle {
                                 color: recordDelegate.highlighted ? "#04395e" : recordDelegate.hovered ? "#2a2d2e" : "transparent"
                                 border.color: recordDelegate.activeFocus ? blue : "transparent"
@@ -1120,7 +1621,7 @@ ApplicationWindow {
                                 PlainLabel {
                                     text: rowTitle(modelData)
                                     width: parent.width
-                                    color: modelData.valid === false ? "#f48771" : tab === "Issues" ? "#cca700" : ink
+                                    color: tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? "#cca700" : ink
                                     elide: Text.ElideRight
                                     font.pixelSize: 12
                                 }
@@ -1149,19 +1650,21 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.busy ? "Scanning source…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.busy ? "Scanning source…" : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
                 }
             }
             Card {
-                SplitView.preferredWidth: 520
+                id: inspectorPane
+                SplitView.preferredWidth: savedLayout.inspector
                 SplitView.minimumWidth: 330
+                SplitView.maximumWidth: 1600
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 10
-                    spacing: 8
+                    spacing: compactInspector ? 5 : 8
                     RowLayout {
                         Layout.fillWidth: true
                         TinyLabel {
@@ -1172,6 +1675,52 @@ ApplicationWindow {
                             text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
                             color: detail.valid === false ? "#f48771" : muted
                             font.pixelSize: 11
+                        }
+                    }
+                    ColumnLayout {
+                        visible: !!selectedChange
+                        Layout.fillWidth: true
+                        spacing: 5
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Action {
+                                objectName: "inspectBefore"
+                                text: "A · Before"
+                                primary: comparisonSide === "before"
+                                enabled: !!selectedChange && !!selectedChange.before && !core.busy
+                                onClicked: inspectChange(selectedChange, "before")
+                            }
+                            Action {
+                                objectName: "inspectAfter"
+                                text: "B · After"
+                                primary: comparisonSide === "after"
+                                enabled: !!selectedChange && !!selectedChange.after && !core.busy
+                                onClicked: inspectChange(selectedChange, "after")
+                            }
+                            Item { Layout.fillWidth: true }
+                            Action {
+                                objectName: "useComparisonSnapshot"
+                                text: "Use snapshot"
+                                enabled: !!selectedChange && !core.inspecting && !core.busy
+                                onClicked: {
+                                    let row = selectedChange, side = row[comparisonSide];
+                                    tab = row.kind === "services" ? "Services" : row.kind === "events" ? "EPG" : "Tables";
+                                    recordSearch.clear();
+                                    snapshot(side.at_packet, side.evidence[0].id, row.kind === "services" ? side.value.id : -1);
+                                }
+                                SafeTip { visible: anchorControl.hovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
+                            }
+                        }
+                        PlainLabel {
+                            text: changeFields(selectedChange) || "Section presence changed between A and B. Inspect the available side."
+                            Layout.fillWidth: true
+                            maximumLineCount: compactInspector ? 2 : 3
+                            wrapMode: Text.WrapAnywhere
+                            elide: Text.ElideRight
+                            font.pixelSize: 11
+                            color: changedColor
+                            SafeTip { visible: changeHover.hovered; text: changeFields(selectedChange) }
+                            HoverHandler { id: changeHover }
                         }
                     }
                     PlainLabel {
@@ -1190,13 +1739,14 @@ ApplicationWindow {
                     }
                     PlainLabel {
                         text: detail.native_decode_status ? "TSDuck: " + detail.native_decode_status + (detail.native_table_complete === false ? " · section fragment" : "") : ""
-                        visible: !!text
+                        visible: !!text && !compactInspector
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: muted
                         font.pixelSize: 11
                     }
                     PlainLabel {
+                        objectName: "inspectionCutoff"
                         visible: detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
                         text: "Assembly cutoff · packet " + num(detail.native_table_at_packet)
                         Layout.fillWidth: true
@@ -1208,7 +1758,7 @@ ApplicationWindow {
                         }
                         SafeTip {
                             visible: cutoffHover.hovered
-                            text: detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff"
+                            text: (detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff") + "\nTSDuck: " + (detail.native_decode_status || "not available") + "\nFirst evidence packet: " + num(detail.first_packet)
                         }
                     }
                     RowLayout {
@@ -1234,7 +1784,7 @@ ApplicationWindow {
                         visible: inspectorView === "Structure"
                         Layout.fillWidth: true
                         implicitHeight: 30
-                        placeholderText: "Find a field or value…"
+                        placeholderText: "Find a field…  Ctrl+Shift+K"
                         placeholderTextColor: muted
                         selectByMouse: true
                         Accessible.name: "Search inspector fields and values with ancestor context"
@@ -1373,6 +1923,7 @@ ApplicationWindow {
                     }
                     PlainLabel {
                         text: detail.first_packet !== undefined ? "Evidence · packet " + num(detail.first_packet) + " · offsets refer to raw section bytes" : ""
+                        visible: !compactInspector
                         color: muted
                         font.pixelSize: 11
                         Layout.fillWidth: true
@@ -1387,9 +1938,10 @@ ApplicationWindow {
                     }
                     Action {
                         objectName: "rename"
+                        visible: !selectedChange
                         text: "Rename service…"
                         Layout.fillWidth: true
-                        enabled: !core.busy && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
+                        enabled: !selectedChange && !core.busy && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
                         onClicked: {
                             preview = {};
                             renameName.text = chosenService().name || "";
@@ -1400,8 +1952,10 @@ ApplicationWindow {
             }
         }
         Card {
-            Layout.fillWidth: true
-            height: 105
+            id: timelinePane
+            SplitView.preferredHeight: savedLayout.timeline
+            SplitView.minimumHeight: 105
+            SplitView.maximumHeight: 350
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 9
@@ -1416,6 +1970,13 @@ ApplicationWindow {
                         text: analysisState.selected_packet === null || analysisState.selected_packet === undefined ? "Latest observed state" : "Snapshot @ " + num(analysisState.selected_packet)
                         color: muted
                         font.pixelSize: 11
+                    }
+                    Action {
+                        objectName: "compareSnapshots"
+                        text: "Compare A / B"
+                        implicitHeight: 24
+                        enabled: !core.busy && !!analysisState.complete
+                        onClicked: openComparison()
                     }
                     Action {
                         objectName: "latest"
@@ -1468,6 +2029,7 @@ ApplicationWindow {
                     }
                 }
             }
+        }
         }
         Rectangle {
             Layout.fillWidth: true

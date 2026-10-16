@@ -4,6 +4,8 @@ Build showpsisi-qt first. Optional SHOWPSISI_QT and SHOWPSISI_CORE select
 binaries. A missing Qt binary skips the test; an installed but broken one fails.
 """
 import json
+import hashlib
+import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
 import os
@@ -266,6 +268,83 @@ for line in sys.stdin:
                 report = self.run_script('layout-read', directory, settings=settings, auto=False)
                 self.assertEqual(report['saved'], {'version': 1, 'explorer': 180, 'inspector': 520, 'timeline': 105})
                 self.assertAlmostEqual(report['inspector'], 520, delta=1)
+
+    def check_export_destinations(self, directory, resource_root=None):
+        directory = Path(directory)
+        destination = directory / 'chosen-output'
+        destination.mkdir()
+        existing_manifest = destination / 'manifest-only.ts.manifest.json'
+        existing_manifest.write_bytes(b'preserve existing manifest')
+        source = ROOT / 'samples/generated/lab.ts'
+        before = hashlib.sha256(source.read_bytes()).hexdigest()
+        overrides = {'SHOWPSISI_EXPORT_TEST_DIR': str(destination), 'SHOWPSISI_TEST_SIZE': 'compact'}
+        if resource_root:
+            overrides['SHOWPSISI_ROOT'] = str(resource_root)
+        report = self.run_script('export-destination', directory, overrides=overrides)
+        self.assertTrue(all(report['checks'].values()), report)
+        self.assertGreaterEqual(len(report['checks']), 20)
+        self.assertFalse((destination / 'cancelled.ts').exists())
+        self.assertFalse((destination / 'wrong.bin').exists())
+        self.assertFalse((destination / 'stale.bin').exists())
+        self.assertFalse((destination / 'manifest-only.ts').exists())
+        self.assertEqual(existing_manifest.read_bytes(), b'preserve existing manifest')
+        self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), before)
+        for format_, name in [('ts', 'chosen λ.ts'), ('bin', 'raw-sections.bin')]:
+            path = destination / name
+            data = path.read_bytes()
+            manifest = json.loads(Path(str(path) + '.manifest.json').read_text(encoding='utf-8'))
+            self.assertEqual(Path(manifest['path']), path)
+            self.assertEqual(Path(manifest['source']), source)
+            self.assertEqual(manifest['format'], format_)
+            self.assertFalse(manifest['has_media'])
+            self.assertFalse(manifest['has_pcr'])
+            self.assertEqual(manifest['bytes'], len(data))
+            self.assertEqual(manifest['edit']['after'], 'Qt destination edit')
+            if format_ == 'ts':
+                self.assertEqual(len(data) % 188, 0)
+                self.assertTrue(all(data[index] == 0x47 for index in range(0, len(data), 188)))
+            else:
+                self.assertEqual(manifest['cycles'], 1)
+                self.assertEqual(manifest['null_packets_per_cycle'], 0)
+                self.assertEqual(len(data), sum(section['bytes'] for section in manifest['sections']))
+                self.assertIn(b'Qt destination edit', data)
+                for section in manifest['sections']:
+                    raw = data[section['bin_offset']:section['bin_offset'] + section['bytes']]
+                    self.assertEqual(((raw[1] & 15) << 8 | raw[2]) + 3, len(raw))
+        env = native_environment()
+        request = json.dumps({'id': 1, 'method': 'analyze', 'params': {'path': str(destination / 'chosen λ.ts')}}) + '\n'
+        result = subprocess.run([env['SHOWPSISI_CORE'], '--root', str(resource_root or ROOT)],
+                                input=request, text=True, encoding='utf-8', env=env,
+                                capture_output=True, check=True, timeout=15)
+        terminal = next(json.loads(line) for line in result.stdout.splitlines() if json.loads(line).get('id') == 1)
+        self.assertNotIn('error', terminal)
+        state = terminal['result']
+        self.assertIn('Qt destination edit', [service['name'] for service in state['services']])
+        self.assertFalse(any(issue['code'] == 'crc32' for issue in state['diagnostics']))
+
+    def test_save_dialog_cancellation_formats_and_external_destinations(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-save-') as directory:
+            self.check_export_destinations(directory)
+
+    def test_save_uses_external_destination_with_separate_resource_root(self):
+        # POSIX additionally enforces a read-only application root. Windows
+        # exercises the same separate-root flow without claiming ACL coverage.
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-portable-') as directory:
+            resource_root = Path(directory) / 'read-only-app'
+            resource_root.mkdir()
+            for name in ('api', 'extensions', 'references'):
+                shutil.copytree(ROOT / name, resource_root / name)
+            paths = list(resource_root.rglob('*')) + [resource_root]
+            try:
+                if os.name != 'nt':
+                    for path in paths:
+                        path.chmod(0o555 if path.is_dir() else 0o444)
+                    self.assertFalse(os.access(resource_root, os.W_OK), 'Read-only test requires an unprivileged test process')
+                self.check_export_destinations(directory, resource_root)
+                self.assertFalse((resource_root / 'artifacts').exists())
+            finally:
+                for path in paths:
+                    path.chmod(0o755 if path.is_dir() else 0o644)
 
     def test_native_interaction_smoke(self):
         self.run_native_smoke('auto')

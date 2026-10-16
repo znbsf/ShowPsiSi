@@ -41,6 +41,10 @@ function Set-NativeEnvironment {
     $env:PYTHONUTF8 = '1'
     $env:QT_QPA_PLATFORM = 'offscreen'
     $env:QT_QUICK_BACKEND = 'software'
+    # Windows qoffscreen uses FreeType, not qwindows' system font database.
+    # Point it at the runner's existing fonts instead of Qt's empty lib/fonts.
+    # https://github.com/qt/qtbase/blob/v6.7.3/src/gui/text/freetype/qfreetypefontdatabase.cpp
+    $env:QT_QPA_FONTDIR = Join-Path $env:WINDIR 'Fonts'
     # A GUI-subsystem executable otherwise writes diagnostics to the debugger.
     $env:QT_FORCE_STDERR_LOGGING = '1'
 }
@@ -111,6 +115,8 @@ try {
             Invoke-Checked 'python' @('scripts/ci/windows_native_checks.py', '--artifacts', $Artifacts, '--engine')
         }
         'QtTests' {
+            Assert-File (Join-Path $env:QT_QPA_FONTDIR 'segoeui.ttf')
+            Write-Host "Offscreen FreeType fonts: $env:QT_QPA_FONTDIR"
             Invoke-Checked 'python' @('scripts/ci/windows_native_checks.py', '--artifacts', $Artifacts, '--qt')
         }
         'Diagnostics' {

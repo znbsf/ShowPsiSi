@@ -38,6 +38,7 @@ ApplicationWindow {
     property bool compactComparison: recordPane.width < 420 || recordPane.height < 520
     property bool compactInspector: inspectorPane.height < 520
     property var analysisState: core.state
+    property bool backendReady: core.available && !core.busy
     property var detail: core.detail
     property string tab: "Services"
     onTabChanged: {
@@ -406,7 +407,7 @@ ApplicationWindow {
         return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) < Number(analysisState.packets || 0);
     }
     function compareSnapshots(offset) {
-        if (core.busy || core.comparing || !analysisState.complete || !validPacket(fromPacket.text) || !validPacket(toPacket.text))
+        if (!backendReady || core.comparing || !analysisState.complete || !validPacket(fromPacket.text) || !validPacket(toPacket.text))
             return;
         comparison = {};
         if (selectedChange)
@@ -436,6 +437,7 @@ ApplicationWindow {
         }).join("\n");
     }
     function inspectChange(row, sideName) {
+        if (!backendReady) return;
         let side = row && row[sideName];
         if (!side || !(side.evidence || []).length)
             return;
@@ -445,6 +447,7 @@ ApplicationWindow {
         notice = "Inspecting " + (sideName === "before" ? "A" : "B") + " at packet " + num(side.at_packet) + ". The current workbench snapshot is unchanged.";
     }
     function inspect(id, sid, atPacket) {
+        if (!backendReady || !analysisState.complete) return;
         if (!id) {
             notice = "Aggregate diagnostic: no individual section is indexed.";
             return;
@@ -464,23 +467,36 @@ ApplicationWindow {
             params.at_packet = analysisState.selected_packet;
         core.send("inspect", params);
     }
-    function scan() {
-        if (core.busy || !source.text.trim() || extraPidsValue === null)
-            return;
+    function clearWorkspaceIntentions() {
         inspected = false;
         selected = "";
         selectedService = -1;
+        snapshotTarget = "";
+        snapshotTargetService = -1;
         preview = {};
         comparison = {};
         selectedChange = null;
         comparisonError = "";
         fromPacket.clear();
         toPacket.clear();
+        renameDialog.close();
+        specificationDialog.close();
+        apiDialog.close();
+    }
+    function cancelScan() {
+        if (!core.available || !core.busy || core.cancelling) return;
+        core.cancelAnalysis();
+        notice = "Cancelling scan… Waiting for the worker to stop.";
+    }
+    function scan() {
+        if (!backendReady || !source.text.trim() || extraPidsValue === null)
+            return;
+        clearWorkspaceIntentions();
         filter = "";
         recordSearch.clear();
         treeSearch.clear();
         tab = "Services";
-        notice = "";
+        notice = "Scanning source…";
         core.send("analyze", {
             path: source.text.trim(),
             standards: standardChoice.currentValue,
@@ -488,6 +504,7 @@ ApplicationWindow {
         });
     }
     function snapshot(packet, id, sid) {
+        if (!backendReady || !analysisState.complete) return;
         selectedChange = null;
         snapshotTarget = id || "";
         snapshotTargetService = sid === undefined ? -1 : sid;
@@ -500,6 +517,7 @@ ApplicationWindow {
         notice = packet < 0 ? "Latest observed state" : "Snapshot at packet " + num(packet);
     }
     function defaultInspect() {
+        if (!backendReady || !analysisState.complete) return;
         let first = serviceRows[0];
         if (first) {
             inspect(first.source_id, first.id);
@@ -575,7 +593,7 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 2
-            color: control.primary ? (control.hovered ? "#1684bb" : "#007acc") : (control.hovered ? "#333333" : "#252526")
+            color: !control.enabled ? "#252526" : control.primary ? (control.hovered ? "#1684bb" : "#007acc") : (control.hovered ? "#333333" : "#252526")
             border.color: control.activeFocus ? blue : "#454545"
         }
     }
@@ -601,7 +619,20 @@ ApplicationWindow {
     }
     Connections {
         target: core
+        function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
+        function onAvailabilityChanged() {
+            if (core.availability === "disconnected") {
+                autoTimer.stop();
+                fileDialog.close();
+                notice = "Backend disconnected. Restart the application to continue.";
+            }
+        }
         function onResponse(method, result) {
+            if (method === "cancel_analysis") return;
+            if (method === "analyze" && result.code === "analysis_cancelled") {
+                notice = "Scan cancelled · source unchanged · analyze again when ready";
+                return;
+            }
             if (result.message) {
                 notice = result.message;
                 if (method === "diff_snapshots")
@@ -609,6 +640,10 @@ ApplicationWindow {
                 return;
             }
             if (method === "analyze") {
+                if (result.cancel_requested) {
+                    notice = "Scan finished before cancellation took effect · source unchanged";
+                    return;
+                }
                 defaultInspect();
                 inspected = true;
                 notice = "Scan complete · source unchanged";
@@ -1024,10 +1059,120 @@ ApplicationWindow {
             stop();
         }
     }
+    // Native integration exercises the same controls and bridge as the workbench.
+    Timer {
+        id: lifecycleTestTimer
+        interval: 100
+        repeat: true
+        property int phase: 0
+        property int settledTicks: 0
+        property int waitingTicks: 0
+        property var checks: ({})
+        function finish() {
+            let passed = Object.keys(checks).length > 0 && Object.keys(checks).every(function (name) { return !!checks[name]; });
+            if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+            core.testResult(JSON.stringify({passed:passed,checks:checks,state:analysisState,notice:notice,error:core.error,availability:core.availability}));
+            stop();
+        }
+        function cleanIntentions() {
+            return selected === "" && selectedService === -1 && !selectedChange && !Object.keys(comparison).length &&
+                !Object.keys(preview).length && snapshotTarget === "" && snapshotTargetService === -1 &&
+                !Object.keys(detail).length && !core.inspecting && !core.comparing && !renameDialog.visible;
+        }
+        onTriggered: {
+            let mode = core.env("SHOWPSISI_SCRIPT");
+            if (mode.indexOf("lifecycle-death") === 0 || mode === "lifecycle-startup") {
+                if (phase === 0 && mode === "lifecycle-death") {
+                    if (!analysisState.complete || !detail.native_table || core.inspecting) return;
+                    core.click("rename");
+                    renameName.text = "Backend lifecycle preview";
+                    core.click("preview");
+                    phase = 1;
+                    return;
+                }
+                if (phase === 1 && mode === "lifecycle-death") {
+                    if (!preview.token) return;
+                    checks.had_evidence_and_preview = !!detail.native_table && !!analysisState.complete && !!preview.token;
+                    core.mark("backend_death_ready");phase = 2;return;
+                }
+                if (phase === 0 && mode === "lifecycle-death-active") {
+                    if (!core.busy || !analysisState.observations) return;
+                    checks.was_scanning = !analysisState.complete;
+                    core.mark("backend_death_ready");phase = 2;return;
+                }
+                if (core.availability !== "disconnected") return;
+                checks.disconnected = !core.available && !core.busy && !core.cancelling;
+                checks.no_cached_evidence = !Object.keys(analysisState).length && cleanIntentions();
+                checks.actions_disabled = !core.click("analyzeSource") && !core.click("agentApi") && !core.click("rename") && !core.click("preview") && !core.click("export") && !core.click("latest") && !core.click("runComparison") && !core.click("openSource");
+                checks.restart_guidance = core.error.indexOf("Restart the application") >= 0;
+                core.key("Ctrl+Return");
+                if (++settledTicks >= 4) { checks.no_replay = !core.busy && !core.available; finish(); }
+                return;
+            }
+            if (phase === 0 && (mode === "lifecycle-stale" || mode === "lifecycle-complete-race")) {
+                if (!analysisState.complete || !core.inspecting) return;
+                checks.pending_old_inspect = true;
+                scan();phase = 1;return;
+            }
+            if (phase <= 1) {
+                if (!core.busy || !analysisState.observations) return;
+                checks.accepted_progress = analysisState.source.indexOf("poison") < 0 && !detail.id;
+                if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT") + ".scanning.png");
+                // These pending UI intentions must not survive a cancellation.
+                snapshotTarget = "old-pending-section";snapshotTargetService = 101;
+                selected = "old-selection";selectedService = 101;
+                preview = {token:"old-preview"};comparison = {source:"old-comparison"};
+                selectedChange = {key:"old-change"};
+                checks.cancel_exposed = core.isExposed("cancelAnalysis");
+                cancelButton.forceActiveFocus();
+                core.key("Space");
+                checks.cancelling = core.busy && core.cancelling;
+                checks.cleared_intentions = cleanIntentions();
+                checks.no_parallel_scan = !core.click("analyzeSource") && !core.click("cancelAnalysis");
+                core.key("Ctrl+Return");
+                checks.shortcut_locked = core.busy && core.cancelling;
+                core.mark("cancel_control_checked");
+                phase = 2;return;
+            }
+            if (phase === 2) {
+                if (core.busy) {
+                    ++waitingTicks;
+                    if (mode === "lifecycle-stale" || mode === "lifecycle-complete-race")
+                        checks.ack_did_not_settle = waitingTicks >= 2 && core.cancelling && analysisState.source.indexOf("poison") < 0;
+                    return;
+                }
+                if (++settledTicks < 5) return; // Let deliberately late fixture frames arrive.
+                if (mode === "lifecycle-complete-race") {
+                    checks.honest_completion_race = !!analysisState.complete && analysisState.analysis_status === "complete";
+                    checks.no_auto_inspect = cleanIntentions();
+                    checks.no_false_cancellation = notice.indexOf("Scan finished before cancellation took effect") === 0 && !inspected;
+                } else {
+                    checks.cancelled = analysisState.analysis_status === "cancelled" && !analysisState.complete;
+                    checks.empty_evidence = !serviceRows.length && !(analysisState.tables || []).length && !issues.length && cleanIntentions();
+                    checks.no_false_completion = notice.indexOf("Scan cancelled") === 0 && !inspected;
+                }
+                checks.not_disconnected = core.available && !core.cancelling && !core.error;
+                core.mark("cancelled_state_checked");
+                if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT") + ".cancelled.png");
+                checks.can_rescan = core.click("analyzeSource");
+                phase = 3;return;
+            }
+            if (phase === 3) {
+                if (core.busy || core.inspecting || !analysisState.complete || !detail.id) return;
+                checks.rescan_completed = analysisState.source.indexOf("poison") < 0 && (mode === "lifecycle-stale" || mode === "lifecycle-complete-race" || serviceRows.length === 6);
+                checks.inspected_new_scan = !!detail.id && detail.id !== "poison" && inspected;
+                checks.normal_completion = notice.indexOf("Scan complete") === 0 && !core.error;
+                finish();
+            }
+        }
+    }
     Timer {
         id: autoTimer
         interval: Math.max(1, autoDelay)
-        onTriggered: scan()
+        onTriggered: {
+            if (core.availability === "starting") restart();
+            else scan();
+        }
     }
     Component.onCompleted: {
         core.mark("ui_ready");
@@ -1052,6 +1197,8 @@ ApplicationWindow {
             layoutTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "comparison")
             comparisonTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
+            lifecycleTestTimer.start();
     }
     onClosing: if (layoutSaveTimer.running) rememberLayout()
 
@@ -1085,11 +1232,17 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+O"
+        enabled: backendReady
         onActivated: fileDialog.open()
     }
     Shortcut {
         sequence: "Ctrl+Return"
         onActivated: scan()
+    }
+    Shortcut {
+        sequence: "Ctrl+."
+        enabled: core.available && core.busy && !core.cancelling
+        onActivated: cancelScan()
     }
     FileDialog {
         id: fileDialog
@@ -1151,7 +1304,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
             }
             PlainLabel {
-                text: (analysisState.detected_standards || "LOCAL") + " · Qt Quick"
+                text: (core.availability === "disconnected" ? "DISCONNECTED" : core.cancelling ? "CANCELLING" : core.busy ? "SCANNING" : analysisState.analysis_status === "cancelled" ? "CANCELLED" : analysisState.detected_standards || "LOCAL") + " · Qt Quick"
                 color: muted
                 font.pixelSize: 11
             }
@@ -1167,6 +1320,7 @@ ApplicationWindow {
             Action {
                 objectName: "agentApi"
                 text: "Agent API"
+                enabled: backendReady
                 onClicked: core.send("capabilities", {})
             }
         }
@@ -1188,7 +1342,7 @@ ApplicationWindow {
                 objectName: "standards"
                 Layout.preferredWidth: 136
                 implicitHeight: 30
-                enabled: !core.busy
+                enabled: backendReady
                 textRole: "label"
                 valueRole: "value"
                 model: [
@@ -1235,7 +1389,7 @@ ApplicationWindow {
                 placeholderText: "Extra PIDs: 0x30, 100"
                 placeholderTextColor: muted
                 selectByMouse: true
-                enabled: !core.busy
+                enabled: backendReady
                 Accessible.name: "Additional packet identifiers, comma separated"
                 SafeTip {
                     visible: anchorControl.hovered
@@ -1245,6 +1399,7 @@ ApplicationWindow {
             }
             TextField {
                 id: source
+                enabled: backendReady
                 Layout.fillWidth: true
                 text: core.sample
                 selectByMouse: true
@@ -1253,7 +1408,9 @@ ApplicationWindow {
                 onAccepted: scan()
             }
             Action {
+                objectName: "openSource"
                 text: "Open…"
+                enabled: backendReady
                 onClicked: fileDialog.open()
                 SafeTip {
                     visible: anchorControl.hovered
@@ -1261,10 +1418,22 @@ ApplicationWindow {
                 }
             }
             Action {
-                text: core.busy ? "Scanning…" : "Analyze"
+                objectName: "analyzeSource"
+                text: "Analyze"
                 primary: true
-                enabled: !core.busy && source.text.trim().length > 0 && extraPidsValue !== null
+                visible: !core.busy
+                enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null
                 onClicked: scan()
+            }
+            Action {
+                id: cancelButton
+                objectName: "cancelAnalysis"
+                text: core.cancelling ? "Cancelling…" : "Cancel"
+                visible: core.busy
+                enabled: core.available && !core.cancelling
+                onClicked: cancelScan()
+                Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
+                SafeTip { visible: anchorControl.hovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
             }
         }
         PlainLabel {
@@ -1463,7 +1632,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 implicitHeight: 28
                                 placeholderText: "Packet cutoff"
-                                enabled: !core.comparing
+                                enabled: backendReady && !core.comparing
                                 selectByMouse: true
                                 onTextChanged: comparison = {}
                                 Accessible.name: "Snapshot A inclusive packet cutoff"
@@ -1473,7 +1642,7 @@ ApplicationWindow {
                             Action {
                                 objectName: "captureA"
                                 text: "Use current"
-                                enabled: !!analysisState.complete && !core.busy && !core.comparing
+                                enabled: backendReady && !!analysisState.complete && !core.comparing
                                 onClicked: { fromPacket.text = String(currentPacket()); comparison = {}; }
                                 SafeTip { visible: anchorControl.hovered; text: "Set A to the selected history snapshot, or the final packet in Latest view." }
                             }
@@ -1487,7 +1656,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 implicitHeight: 28
                                 placeholderText: "Packet cutoff"
-                                enabled: !core.comparing
+                                enabled: backendReady && !core.comparing
                                 selectByMouse: true
                                 onTextChanged: comparison = {}
                                 Accessible.name: "Snapshot B inclusive packet cutoff"
@@ -1497,7 +1666,7 @@ ApplicationWindow {
                             Action {
                                 objectName: "captureB"
                                 text: "Use current"
-                                enabled: !!analysisState.complete && !core.busy && !core.comparing
+                                enabled: backendReady && !!analysisState.complete && !core.comparing
                                 onClicked: { toPacket.text = String(currentPacket()); comparison = {}; }
                                 SafeTip { visible: anchorControl.hovered; text: "Set B to the selected history snapshot, or the final packet in Latest view." }
                             }
@@ -1512,7 +1681,7 @@ ApplicationWindow {
                                 textRole: "label"
                                 valueRole: "value"
                                 model: [{label:"All changes",value:"all"},{label:"Services",value:"services"},{label:"Tables",value:"tables"},{label:"Events",value:"events"}]
-                                enabled: !core.comparing
+                                enabled: backendReady && !core.comparing
                                 onActivated: comparison = {}
                                 Accessible.name: "Snapshot change category"
                             }
@@ -1520,7 +1689,7 @@ ApplicationWindow {
                                 objectName: "runComparison"
                                 text: core.comparing ? "Comparing…" : "Compare"
                                 primary: true
-                                enabled: !core.busy && !core.comparing && !!analysisState.complete && validPacket(fromPacket.text) && validPacket(toPacket.text)
+                                enabled: backendReady && !core.comparing && !!analysisState.complete && validPacket(fromPacket.text) && validPacket(toPacket.text)
                                 onClicked: compareSnapshots(0)
                             }
                         }
@@ -1567,9 +1736,9 @@ ApplicationWindow {
                         RowLayout {
                             visible: !!comparison.source && comparison.total_changes > 100
                             Layout.fillWidth: true
-                            Action { text: "Previous"; enabled: !core.comparing && Number(comparison.offset) > 0; onClicked: compareSnapshots(Math.max(0, comparison.offset - 100)) }
+                            Action { text: "Previous"; enabled: backendReady && !core.comparing && Number(comparison.offset) > 0; onClicked: compareSnapshots(Math.max(0, comparison.offset - 100)) }
                             PlainLabel { text: (Number(comparison.offset || 0) + 1) + "–" + Math.min(Number(comparison.offset || 0) + 100, Number(comparison.total_changes || 0)); color: muted; Layout.fillWidth: true; horizontalAlignment: Text.AlignHCenter }
-                            Action { text: "Next"; enabled: !core.comparing && comparison.next_offset !== null && comparison.next_offset !== undefined; onClicked: compareSnapshots(comparison.next_offset) }
+                            Action { text: "Next"; enabled: backendReady && !core.comparing && comparison.next_offset !== null && comparison.next_offset !== undefined; onClicked: compareSnapshots(comparison.next_offset) }
                         }
                     }
                     PlainLabel {
@@ -1650,7 +1819,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.busy ? "Scanning source…" : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
@@ -1687,21 +1856,21 @@ ApplicationWindow {
                                 objectName: "inspectBefore"
                                 text: "A · Before"
                                 primary: comparisonSide === "before"
-                                enabled: !!selectedChange && !!selectedChange.before && !core.busy
+                                enabled: backendReady && !!selectedChange && !!selectedChange.before
                                 onClicked: inspectChange(selectedChange, "before")
                             }
                             Action {
                                 objectName: "inspectAfter"
                                 text: "B · After"
                                 primary: comparisonSide === "after"
-                                enabled: !!selectedChange && !!selectedChange.after && !core.busy
+                                enabled: backendReady && !!selectedChange && !!selectedChange.after
                                 onClicked: inspectChange(selectedChange, "after")
                             }
                             Item { Layout.fillWidth: true }
                             Action {
                                 objectName: "useComparisonSnapshot"
                                 text: "Use snapshot"
-                                enabled: !!selectedChange && !core.inspecting && !core.busy
+                                enabled: backendReady && !!selectedChange && !core.inspecting
                                 onClicked: {
                                     let row = selectedChange, side = row[comparisonSide];
                                     tab = row.kind === "services" ? "Services" : row.kind === "events" ? "EPG" : "Tables";
@@ -1941,7 +2110,7 @@ ApplicationWindow {
                         visible: !selectedChange
                         text: "Rename service…"
                         Layout.fillWidth: true
-                        enabled: !selectedChange && !core.busy && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
+                        enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
                         onClicked: {
                             preview = {};
                             renameName.text = chosenService().name || "";
@@ -1975,14 +2144,14 @@ ApplicationWindow {
                         objectName: "compareSnapshots"
                         text: "Compare A / B"
                         implicitHeight: 24
-                        enabled: !core.busy && !!analysisState.complete
+                        enabled: backendReady && !!analysisState.complete
                         onClicked: openComparison()
                     }
                     Action {
                         objectName: "latest"
                         text: "Latest"
                         implicitHeight: 24
-                        enabled: !core.busy && !!analysisState.source
+                        enabled: backendReady && !!analysisState.complete
                         onClicked: snapshot(-1)
                     }
                 }
@@ -2022,7 +2191,7 @@ ApplicationWindow {
                                 objectName: "history_v" + modelData.version
                                 text: modelData.label + " @ " + num(modelData.first_packet)
                                 implicitHeight: 24
-                                enabled: !core.busy
+                                enabled: backendReady
                                 onClicked: snapshot(modelData.last_packet, modelData.id)
                             }
                         }
@@ -2040,7 +2209,7 @@ ApplicationWindow {
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 PlainLabel {
-                    text: core.error || notice || "Ready · all processing stays on this machine"
+                    text: core.error || (core.availability === "starting" ? "Starting backend…" : notice) || "Ready · all processing stays on this machine"
                     color: core.error ? "#ffffff" : muted
                     font.pixelSize: 11
                     Layout.fillWidth: true
@@ -2163,7 +2332,7 @@ ApplicationWindow {
                 objectName: "preview"
                 text: "Preview change"
                 primary: true
-                enabled: renameName.text.trim().length > 0 && !!chosenService()
+                enabled: backendReady && !!analysisState.complete && renameName.text.trim().length > 0 && !!chosenService()
                 onClicked: {
                     preview = {};
                     core.send("preview_rename", {
@@ -2182,7 +2351,7 @@ ApplicationWindow {
             Action {
                 objectName: "export"
                 text: "Export SI-only TS + manifest"
-                enabled: !!preview.token && preview.after === renameName.text
+                enabled: backendReady && !!analysisState.complete && !!preview.token && preview.after === renameName.text
                 onClicked: {
                     let p = {
                         path: artifactDir + "/qt-export-" + Date.now() + ".ts",

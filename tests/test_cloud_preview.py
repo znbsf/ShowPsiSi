@@ -51,6 +51,23 @@ class BridgeTests(unittest.TestCase):
                     return
         self.fail('Native comparison response was not delivered')
 
+    def test_cancellation_request_reaches_native_backend(self):
+        self.invoke('request', {'message': {'id': 42, 'method': 'cancel_analysis',
+                    'params': {'request_id': 'not-running'}}})
+        cursor = 0
+        for _ in range(4):
+            with self.request('/__bridge/events?after=' + str(cursor)) as response:
+                batch = json.load(response)
+            for item in batch['messages']:
+                cursor = item['seq']
+                if item['payload'].get('id') == 42:
+                    result = item['payload']['result']
+                    self.assertFalse(result['requested'])
+                    self.assertEqual(result['reason'], 'not_running')
+                    self.assertEqual(result['request_id'], 'not-running')
+                    return
+        self.fail('Native cancellation acknowledgement was not delivered')
+
     def test_engine_exit_event_and_startup_state(self):
         self.assertTrue(self.invoke('environment')['backend_alive'])
         self.bridge.proc.kill()

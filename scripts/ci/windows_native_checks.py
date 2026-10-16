@@ -1,4 +1,4 @@
-"""Strict CI runner with persistent Windows loader, Qt smoke, and test evidence.
+"""Strict native CI runner with persistent loader, Qt smoke, and test evidence.
 
 The regular test files remain the source of assertions. This wrapper additionally
 rejects zero/skip-only coverage and retains a real Qt smoke's screenshot/trace.
@@ -23,27 +23,27 @@ def required_binary(variable):
     return Path(value).resolve()
 
 
-def engine_probe(artifacts):
+def engine_probe(artifacts, variable="SHOWPSISI_CORE", prefix="engine-probe"):
     """Catch Windows DLL startup failures before they become JSON/pipe errors."""
-    binary = required_binary("SHOWPSISI_CORE")
+    binary = required_binary(variable)
     completed = subprocess.run(
         [str(binary), "--root", str(ROOT)], cwd=ROOT,
         input='{"id":1,"method":"capabilities","params":{}}\n',
         capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
-    (artifacts / "engine-probe.stdout.jsonl").write_text(completed.stdout, encoding="utf-8")
-    (artifacts / "engine-probe.stderr.log").write_text(completed.stderr, encoding="utf-8")
+    (artifacts / f"{prefix}.stdout.jsonl").write_text(completed.stdout, encoding="utf-8")
+    (artifacts / f"{prefix}.stderr.log").write_text(completed.stderr, encoding="utf-8")
     status = {
         "binary": str(binary), "exit_code": completed.returncode,
         "exit_hex": f"0x{completed.returncode & 0xFFFFFFFF:08X}",
     }
-    (artifacts / "engine-probe-status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
+    (artifacts / f"{prefix}-status.json").write_text(json.dumps(status, indent=2), encoding="utf-8")
     print("Native startup:", status, flush=True)
     if completed.returncode:
         raise RuntimeError(
             f"Native startup failed ({status['exit_hex']}). "
-            "0xC0000135 means a missing DLL; 0xC000007B an invalid architecture. "
-            "See engine-probe.stderr.log and Diagnostics.log's dumpbin dependencies.\n"
+            "On Windows, 0xC0000135 means a missing DLL; 0xC000007B an invalid architecture. "
+            f"See {prefix}.stderr.log and Diagnostics.log's dumpbin dependencies.\n"
             + completed.stderr
         )
     responses = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
@@ -141,11 +141,15 @@ def main():
     artifacts = args.artifacts.resolve()
     artifacts.mkdir(parents=True, exist_ok=True)
     engine_probe(artifacts)
+    # The deterministic cancellation seam is a separate opt-in executable.
+    # Ordinary tests and the retained UI smoke must keep using production core.
+    engine_probe(artifacts, "SHOWPSISI_TEST_CORE", "cancellation-helper-probe")
     if args.qt:
         qt_smoke(artifacts)
         patterns = ["test_qt_ui.py"]
     else:
-        patterns = ["test_engine.py", "test_protocol_coverage.py", "test_cloud_preview.py"]
+        patterns = ["test_engine.py", "test_protocol_coverage.py", "test_cloud_preview.py",
+                    "test_cancellation.py", "test_mcp_cancellation.py"]
     results = [run_suite(pattern, artifacts) for pattern in patterns]
     if not all(results):
         raise SystemExit("Native regression failed, discovered zero executable tests, or unexpectedly skipped coverage. See logs above.")

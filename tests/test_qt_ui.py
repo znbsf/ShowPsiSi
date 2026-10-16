@@ -9,6 +9,8 @@ import threading
 import os
 from pathlib import Path
 import subprocess
+import signal
+import sys
 import tempfile
 import time
 import unittest
@@ -35,7 +37,7 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
-    def run_script(self, script, directory, settings=None, auto=True):
+    def run_script(self, script, directory, settings=None, auto=True, overrides=None, on_running=None):
         binary = Path(os.environ.get('SHOWPSISI_QT', ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))
         if not binary.exists():
             self.skipTest('Build the native Qt target or set SHOWPSISI_QT')
@@ -46,11 +48,14 @@ class NativeQtTests(unittest.TestCase):
                    SHOWPSISI_TEST_SIZE='compact' if script == 'comparison-small' else '',
                    SHOWPSISI_SCREENSHOT=str(screenshot), SHOWPSISI_AUTO='1' if auto else '0',
                    SHOWPSISI_SETTINGS_PATH=str(settings or directory / 'settings.ini'))
+        env.update(overrides or {})
         with (directory / (script + '.log')).open('w+', encoding='utf-8') as log:
             process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
             try:
                 deadline = time.monotonic() + 25
                 while not result.exists() and process.poll() is None and time.monotonic() < deadline:
+                    if on_running:
+                        on_running(process)
                     time.sleep(0.1)
             finally:
                 process.terminate()
@@ -67,6 +72,152 @@ class NativeQtTests(unittest.TestCase):
         for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
             self.assertNotIn(error, diagnostics)
         return report
+
+    def cancellation_helper(self):
+        """Resolve the opt-in helper; it is never substituted for production tests."""
+        production = Path(native_environment()['SHOWPSISI_CORE'])
+        helper = Path(os.environ.get('SHOWPSISI_TEST_CORE', production.with_name('showpsisi-core-test' + EXE)))
+        self.assertTrue(helper.is_file(), 'Build with -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON or set SHOWPSISI_TEST_CORE')
+        return helper
+
+    def test_cancel_active_scan_then_rescan_real_engine(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-cancel-') as directory:
+            gate = Path(directory) / 'pause'
+            trace = Path(directory) / 'trace.jsonl'
+            report = self.run_script('lifecycle-cancel', directory, overrides={
+                'SHOWPSISI_CORE': str(self.cancellation_helper()),
+                'SHOWPSISI_TEST_GATE': str(gate), 'SHOWPSISI_TEST_STAGE': 'after_progress',
+                'SHOWPSISI_TRACE': str(trace), 'SHOWPSISI_TEST_SIZE': 'compact'})
+            self.assertTrue(gate.with_suffix('.ready').exists(), 'The real analyzer did not reach its deterministic checkpoint')
+            self.assertTrue(all(report['checks'].values()), report)
+            self.assertGreaterEqual(len(report['checks']), 14)
+            events = [json.loads(line)['event'] for line in trace.read_text().splitlines()]
+            cancelled = events.index('cancelled_state_checked')
+            self.assertNotIn('complete_paint', events[:cancelled], 'Cancelled analysis painted as complete')
+            self.assertEqual(events.count('analyze_requested'), 2)
+            self.assertEqual(events.count('cancel_requested'), 1)
+
+    def test_stale_progress_results_and_cancel_ack_do_not_settle_scan(self):
+        # Adversarial protocol fixture: proves transport correlation, not TS parsing.
+        # The explicit argv configuration is trusted local launch input, never
+        # metadata from a transport stream, and QProcess does not invoke a shell.
+        fixture = r'''import json, sys, time
+
+def emit(value):
+    print(json.dumps(value), flush=True)
+
+def state(source, complete=False, status='analyzing'):
+    return dict(source=source, complete=complete, analysis_status=status, observations=1,
+                packets=100, services=[], tables=[dict(id='section',name='SDT',pid=17,version=1,section=0,last_section=0,bytes=1,count=1)],
+                diagnostics=[], events=[], history=[])
+
+count, active, old_inspect, old_analyze = 0, None, None, None
+for line in sys.stdin:
+    request = json.loads(line)
+    identity, method = request['id'], request['method']
+    if method == 'analyze':
+        count += 1
+        if count == 1:
+            old_analyze = identity
+            emit(dict(id=identity,result=state('initial.ts',True,'complete')))
+        elif count == 2:
+            active = identity
+            emit(dict(id=old_inspect,result=dict(id='poison',name='SDT')))
+            emit(dict(id=old_analyze,result=state('poison-old-result',True,'complete')))
+            emit(dict(event='progress',request_id=identity,state=state('active.ts')))
+            emit(dict(event='other',request_id=identity,state=state('poison-event')))
+            emit(dict(event='progress',request_id=old_analyze,state=state('poison-old-progress')))
+            emit(dict(event='progress',request_id=str(identity),state=state('poison-id-type')))
+        else:
+            emit(dict(event='progress',request_id=active,state=state('poison-after-rescan')))
+            emit(dict(id=identity,result=state('new-scan.ts',True,'complete')))
+    elif method == 'inspect':
+        if count == 1:
+            old_inspect = identity
+        else:
+            emit(dict(id=identity,result=dict(id='new-section',name='SDT',version=1,valid=True)))
+    elif method == 'cancel_analysis':
+        assert request['params']['request_id'] == active
+        emit(dict(id=identity,result=dict(request_id=active,requested=sys.argv[-1] != 'complete-race',reason='not_running')))
+        emit(dict(event='progress',request_id=active,state=state('poison-while-cancelling')))
+        time.sleep(0.4)
+        cancelled=state('active.ts',False,'cancelled')
+        cancelled.update(observations=0,tables=[])
+        if sys.argv[-1] == 'complete-race':
+            emit(dict(id=active,result=state('active.ts',True,'complete')))
+        else:
+            emit(dict(id=active,error=dict(code='analysis_cancelled',message='Analysis cancelled',data=dict(state=cancelled))))
+        time.sleep(0.1)
+        emit(dict(id=active,result=state('poison-late-success',True,'complete')))
+        emit(dict(event='progress',request_id=active,state=state('poison-late-progress')))
+'''
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-stale-') as directory:
+            path = Path(directory) / 'protocol_fixture.py'
+            path.write_text(fixture, encoding='utf-8')
+            for mode in ('stale', 'complete-race'):
+                with self.subTest(mode=mode):
+                    report = self.run_script('lifecycle-' + mode, directory, overrides={
+                        'SHOWPSISI_CORE': sys.executable,
+                        'SHOWPSISI_CORE_ARGS_JSON': json.dumps(['-u', str(path), mode]),
+                        'SHOWPSISI_TEST_SIZE': 'compact'})
+                    self.assertTrue(report['checks']['pending_old_inspect'], report)
+                    self.assertTrue(report['checks']['ack_did_not_settle'], report)
+                    self.assertTrue(all(report['checks'].values()), report)
+
+    def check_real_backend_death(self, directory, active=False):
+        trace = Path(directory) / 'death-trace.jsonl'
+        overrides = {'SHOWPSISI_TRACE': str(trace)}
+        if active:
+            overrides.update(SHOWPSISI_CORE=str(self.cancellation_helper()),
+                             SHOWPSISI_TEST_GATE=str(Path(directory) / 'gate'),
+                             SHOWPSISI_TEST_STAGE='after_progress')
+        killed = []
+
+        def kill_only_test_child(process):
+            if killed or not trace.exists():
+                return
+            events = []
+            for line in trace.read_text(encoding='utf-8').splitlines():
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass  # The last line can still be in flight.
+            if not any(event['event'] == 'backend_death_ready' for event in events):
+                return
+            child = next(event['backend_pid'] for event in events if event['event'] == 'backend_started')
+            self.assertGreater(child, 0)
+            self.assertIsNone(process.poll())
+            os.kill(int(child), signal.SIGTERM)
+            killed.append(int(child))
+
+        report = self.run_script('lifecycle-death-active' if active else 'lifecycle-death', directory,
+                                 overrides=overrides, on_running=kill_only_test_child)
+        self.assertEqual(len(killed), 1)
+        events = [json.loads(line)['event'] for line in trace.read_text().splitlines()]
+        self.assertEqual(events.count('backend_started'), 1, 'The UI automatically restarted its backend')
+        self.assertTrue(all(report['checks'].values()), report)
+
+    def test_backend_death_clears_completed_evidence_and_edit_preview(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-death-') as directory:
+            self.check_real_backend_death(directory)
+
+    def test_backend_death_during_actual_scan(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-death-active-') as directory:
+            self.check_real_backend_death(directory, active=True)
+
+    def test_startup_failure_and_invalid_launch_arguments_are_disconnected(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-startup-') as directory:
+            result = Path(directory) / 'lifecycle-startup.json'
+            for arguments in (None, '{invalid', '[1]', '{}', '["\\u0000"]'):
+                with self.subTest(arguments=arguments):
+                    overrides = {'SHOWPSISI_CORE': str(Path(directory) / ('missing-core' + EXE))}
+                    if arguments is not None:
+                        overrides['SHOWPSISI_CORE_ARGS_JSON'] = arguments
+                    result.unlink(missing_ok=True)
+                    report = self.run_script('lifecycle-startup', directory, overrides=overrides)
+                    self.assertTrue(all(report['checks'].values()), report)
+                    if arguments is not None:
+                        self.assertIn('Invalid SHOWPSISI_CORE_ARGS_JSON', report['error'])
 
     def test_snapshot_comparison_and_evidence_cutoffs(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-comparison-') as directory:

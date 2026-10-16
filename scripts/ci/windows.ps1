@@ -35,6 +35,7 @@ function Assert-File([string]$Path) {
 function Set-NativeEnvironment {
     $env:SHOWPSISI_ROOT = $Root
     $env:SHOWPSISI_CORE = Join-Path $Bin 'showpsisi-core.exe'
+    $env:SHOWPSISI_TEST_CORE = Join-Path $Bin 'showpsisi-core-test.exe'
     $env:SHOWPSISI_QT = Join-Path $Bin 'showpsisi-qt.exe'
     $env:TSPLUGINS_PATH = Join-Path $Sdk 'bin'
     $env:PATH = "$Bin;$Qt/bin;$Sdk/bin;$env:PATH"
@@ -100,9 +101,10 @@ try {
             Assert-File (Join-Path $Sdk 'include/tsduck.h')
             Assert-File (Join-Path $Qt 'lib/cmake/Qt6/Qt6Config.cmake')
             Invoke-Checked 'cmake' @('--version')
-            Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
+            Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', '-DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
             Invoke-Checked 'cmake' @('--build', $Build, '--config', 'Release', '--parallel', '2', '--verbose')
             Assert-File $env:SHOWPSISI_CORE
+            Assert-File $env:SHOWPSISI_TEST_CORE
             Assert-File $env:SHOWPSISI_QT
             # Preserve the SDK's lookup files beside the copied TSDuck DLL. A DLL
             # alone can start successfully while native XML/name decoding fails.
@@ -137,7 +139,7 @@ try {
                 if ($Vs) {
                     $Dumpbin = Get-ChildItem "$Vs/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
                     if ($Dumpbin) {
-                        foreach ($File in @($env:SHOWPSISI_CORE, $env:SHOWPSISI_QT, "$Bin/tsduck.dll", "$Bin/Qt6Core.dll", "$Bin/platforms/qoffscreen.dll", "$Sdk/bin/tsduck.dll", "$Sdk/bin/tsp.exe", "$Qt/bin/Qt6Core.dll", "$Qt/bin/qmake.exe")) {
+                        foreach ($File in @($env:SHOWPSISI_CORE, $env:SHOWPSISI_TEST_CORE, $env:SHOWPSISI_QT, "$Bin/tsduck.dll", "$Bin/Qt6Core.dll", "$Bin/platforms/qoffscreen.dll", "$Sdk/bin/tsduck.dll", "$Sdk/bin/tsp.exe", "$Qt/bin/Qt6Core.dll", "$Qt/bin/qmake.exe")) {
                             if (Test-Path -LiteralPath $File) { & $Dumpbin.FullName /DEPENDENTS $File }
                         }
                     }

@@ -7,3 +7,5 @@ The C++/TSDuck engine owns parsing, provenance, edit validation and export. Qt a
 Keep UI design editor-like: compact dark neutral surfaces, visible focus, semantic field colors, hexadecimal identifiers with correct widths, readable acronym explanations, and navigable trees. Both UIs must retain existing functionality. Do not substitute screenshots or mocked data for functional verification.
 
 SDKs, generated files, samples and artifacts stay ignored. Tests should be reproducible without owner-machine paths. Document environment-specific validation boundaries rather than claiming a platform passed.
+
+For scan lifecycle changes, read docs/ANALYSIS_CANCELLATION.md. Engine state remains single-owner; cancellation control may set only the matching analysis flag. Test-only gates must be compile-time excluded from the production binary. Do not infer successful Windows UI interaction from a compile artifact or offscreen test alone.

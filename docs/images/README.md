@@ -18,3 +18,5 @@ Additional 1100 px, 900 px, and 520 px responsive captures are generated under
 - `qt-comparison.png`: current compiled Qt A/B comparison with packet-bound evidence; software-rendered native test capture. The populated1000×680 companion and interaction JSON remain in ignored validation artifacts.
 - `web-comparison.png`: current Chromium/native-engine A/B comparison. It is not evidence of native Tauri.
 - The refreshed `tauri-linux-workbench.png` shows the actual compiled Linux Tauri comparison. Native reference-launch failure and successful Copy URL were also exercised; successful OS browser navigation is not claimed.
+
+- `tauri-linux-cancellation.png`: actual Linux native client waiting for cancellation of the deliberately paused, compile-only test engine. It verifies visible pending state, not latency; production scan/rescan and source hashes are recorded separately in NATIVE_TAURI_VALIDATION.md.

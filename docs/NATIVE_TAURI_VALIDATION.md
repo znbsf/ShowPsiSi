@@ -89,3 +89,72 @@ Final build identities:
 - Native engine: `3bab3ff812b92ea1ed31aa7ab85f572f5133d8c30f6602022bb02e89a65cd97b`
 
 Ignored local evidence: `artifacts/native-tauri-next-validation.json`, `native-next-cargo-{test,build}.log`, `native-next-run-*.{before,after}.sha256`, layout/reopen/narrow/comparison/reference screenshots, `native-reference-launcher.log`, and process snapshots. The earlier `native-tauri-validation.json` remains baseline evidence, not the identity of this final build.
+
+## Cooperative cancellation iteration
+
+Validated on 2026-10-16 UTC on the assistant's own Linux cloud desktop, using the
+same sandbox-preserving WebKitGTK launcher above. The final embedded Web assets
+were rebuilt after independent review fixed failed-scan cleanup and late/foreign
+progress handling. No Rust bridge changes, owner computer, Windows WebView2 or
+macOS runtime were involved in this iteration.
+
+### Native interaction and fixture boundary
+
+- The actual native app displayed Cancel while analyzing the real generated
+  `samples/generated/lab.ts`. For deterministic interruption, this run selected
+  the separately compiled `showpsisi-core-test` executable with its one-shot
+  `after_progress` checkpoint; the production executable has no such gate.
+- After the checkpoint, only that app's identified helper child was temporarily
+  stopped with SIGSTOP. Clicking Cancel immediately cleared partial records and
+  showed disabled Cancelling and Analyze controls. SIGCONT then allowed the real
+  cancellation request to run. The app received its `analysis_cancelled` terminal
+  response and showed Analysis cancelled, zero records, source unchanged and an
+  enabled Analyze button. The deliberate pause is not cancellation-latency evidence.
+- Focus returned to Analyze. Pressing Enter rescanned successfully in the same
+  native/helper process, with six services, 18 distinct payloads, 2,495 observations,
+  the expected two CRC failures and the SDT v3 inspector. The one-shot checkpoint
+  did not affect this rescan.
+- A separate final native launch selected the ordinary production core, without
+  any test gate or process pause. Initial scan and a second Analyze click both
+  returned the same six-service result and working section inspection.
+
+![Actual Linux Tauri pending cancellation, real engine with a deliberate test-only pause](images/tauri-linux-cancellation.png)
+
+The screenshot is the actual 1,180 × 812 native client capture, re-encoded to PNG
+without adding or replacing interface content. Browser-only tests separately
+cover cancellation before analysis, after progress and immediately before
+completion; cancellation/completion races; original-terminal waiting; failed
+cancellation delivery and retry; stale inspection/query/comparison/edit replies;
+unknown or malformed events; same-batch terminal then late progress; failed-scan
+cleanup; keyboard focus; and 520/761/900 px layouts. Their positive results come
+from the native engine; invalid-event tests explicitly inject malformed envelopes.
+
+### Final verification and integrity
+
+- Locked Rust tests: **7 passed**; final debug native executable rebuilt successfully.
+- Final real-engine Chromium suite: **24 passed**, no skipped tests, exit code 0.
+  Chromium's sandbox was explicitly enabled. A restricted-shell launch initially
+  failed before any test because its socket operations were unavailable; the
+  supported cloud desktop launch ran the complete suite successfully.
+- Both final native runs closed normally with exit code 0 and empty stderr.
+  Their Tauri, core and launcher processes were absent in the final process
+  snapshot. WebKit network/web helper entries had exited and remained defunct,
+  reparented to PID 1 awaiting host reaping; they were not running workers. No
+  unrelated process was terminated.
+- Source SHA-256 matched before and after both final native runs:
+  `528c8cd44e1289e8f1d3f59a457bb9247d1f9716df21a4f30c6c6d18cb37ff96`.
+
+Final identities:
+
+- Native executable: `a38a5341dd3319b2749952bddbc09935c77044610afc00c56bcd3dd2f92817b9`
+- Embedded `app.js`: `0d965fe1c37b3f722712a979782de578cb042b41d9933b88c22b14e02ab6397a`
+- Embedded `style.css`: `bd580cf012111ce50acbe2ba6b156db5ca1b68444d2cb79d59dd4691e6e90744`
+- Production engine: `1351929f70a6e8c01ab9ed72d08dcfea47951c051a45961095a61206dc56b213`
+- Separate gated test engine: `af8507d6a7bf362e67f13207be576e0a5afe9656ea1ff2e41fb4359fdca80e0f`
+
+Ignored evidence: `artifacts/native-tauri-cancellation-validation.json`,
+`native-cancellation-{gated,production}.*`, `native-cancellation-cargo-*.log`,
+`native-cancellation-final-processes.log`, `web-cancellation.log`,
+`web-cancellation-exit.txt`, `web-cancellation-final.inputs.sha256` and
+`web-ui-tests/cancellation-pending-narrow.png`. These results do not establish
+Windows/macOS interaction, installers, external-browser launching or performance.

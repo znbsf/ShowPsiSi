@@ -30,6 +30,12 @@
 #include <cstdio>
 #include <set>
 #include <tuple>
+#include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <memory>
+#include <mutex>
+#include <thread>
 
 using J = nlohmann::json;
 using Bytes = std::vector<uint8_t>;
@@ -42,7 +48,76 @@ static std::string hex(const Bytes& b) { return hex(b.data(),b.size()); }
 static std::string fingerprint(const Bytes& b) { uint64_t h=14695981039346656037ULL; for(auto c:b) { h^=c; h*=1099511628211ULL; } std::ostringstream o; o<<std::hex<<h; return o.str(); }
 static J readJson(const fs::path& p) { std::ifstream in(p); if(!in) throw std::runtime_error("Cannot open "+p.u8string()); J j; in>>j; return j; }
 static std::string tableName(int tid) { switch(tid) {case 0:return "PAT";case 1:return "CAT";case 2:return "PMT";case 0x40:case 0x41:return "NIT";case 0x42:case 0x46:return "SDT";case 0x4a:return "BAT";case 0x70:return "TDT";case 0x73:return "TOT";} if(tid>=0x4e&&tid<=0x6f)return "EIT"; return "Private / other"; }
-static void emit(const J& j) { std::cout<<j.dump(-1,' ',false,J::error_handler_t::replace)<<'\n'<<std::flush; }
+static void emit(const J& j) {
+    const std::string line=j.dump(-1,' ',false,J::error_handler_t::replace);
+    static std::mutex outputMutex;
+    std::lock_guard<std::mutex> lock(outputMutex);std::cout<<line<<'\n'<<std::flush;
+}
+
+// Only this small control object is shared with the input thread. Engine and
+// every TSDuck object stay on the owner thread, including final state cleanup.
+struct AnalysisControl {
+    std::atomic<bool> cancelled{false};
+    std::mutex mutex;
+    bool finished=false;
+    bool requestCancellation() {
+        std::lock_guard<std::mutex> lock(mutex);
+        if(finished)return false;
+        cancelled.store(true);return true;
+    }
+    bool finish() {
+        std::lock_guard<std::mutex> lock(mutex);
+        finished=true;return cancelled.load();
+    }
+};
+struct CancelledAnalysis : std::exception {
+    const char* what() const noexcept override { return "Analysis cancelled"; }
+};
+static void checkCancelled(const std::shared_ptr<AnalysisControl>& control) {
+    if(control&&control->cancelled.load())throw CancelledAnalysis();
+}
+#ifdef SHOWPSISI_TESTING
+// Supplied only by the separately built test executable. No runtime gate or
+// environment-variable handling is compiled into the production executable.
+static std::function<void(const char*,const std::shared_ptr<AnalysisControl>&)> testCheckpoint;
+#define TEST_CHECKPOINT(stage, control) do { if(testCheckpoint)testCheckpoint(stage,control); } while(false)
+#else
+#define TEST_CHECKPOINT(stage, control) ((void)0)
+#endif
+
+static bool schemaType(const J& value,const std::string& type) {
+    return type=="string"?value.is_string():type=="integer"?value.is_number_integer():
+        type=="number"?value.is_number():type=="array"?value.is_array():
+        type=="object"?value.is_object():type=="boolean"?value.is_boolean():false;
+}
+static void validateValue(const J& value,const J& rule,const std::string& name) {
+    const auto& types=rule.at("type");bool matches=false;
+    if(types.is_array()){for(const auto& type:types)matches|=schemaType(value,type.get<std::string>());}
+    else matches=schemaType(value,types.get<std::string>());
+    if(!matches)throw std::runtime_error("Wrong type: "+name);
+    if(rule.contains("minimum")&&value.get<double>()<rule["minimum"].get<double>())throw std::runtime_error("Below minimum: "+name);
+    if(rule.contains("maximum")&&value.get<double>()>rule["maximum"].get<double>())throw std::runtime_error("Above maximum: "+name);
+    if(rule.contains("enum")&&std::find(rule["enum"].begin(),rule["enum"].end(),value)==rule["enum"].end())throw std::runtime_error("Invalid choice: "+name);
+    if(value.is_array()){
+        if(rule.contains("maxItems")&&value.size()>rule["maxItems"].get<size_t>())throw std::runtime_error("Too many items: "+name);
+        if(rule.contains("items"))for(const auto& item:value)validateValue(item,rule["items"],name+" entry");
+    }
+}
+// Pure validation over an immutable catalog is safe in the input reader. It
+// prevents invalid analyses from ever being registered as cancellable work.
+static void validateArguments(const J& catalog,const std::string& method,const J& args) {
+    if(!args.is_object())throw std::runtime_error("params must be an object");
+    for(const auto& tool:catalog.at("tools"))if(tool.at("name")==method){
+        const auto& schema=tool.at("inputSchema");
+        for(const auto& field:schema.value("required",J::array()))if(!args.contains(field.get<std::string>()))throw std::runtime_error("Required argument: "+field.get<std::string>());
+        for(auto it=args.begin();it!=args.end();++it){
+            if(!schema.at("properties").contains(it.key()))throw std::runtime_error("Unknown argument: "+it.key());
+            validateValue(it.value(),schema["properties"][it.key()],it.key());
+        }
+        return;
+    }
+    throw std::runtime_error("Unknown method: "+method);
+}
 
 static std::string standardsNames(ts::Standards mask) {
     std::string names;
@@ -93,7 +168,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     std::unordered_map<std::string,std::string> previous;
     uint64_t packets=0,totalBytes=0,observations=0,crcErrors=0; size_t stride=188,prefix=0;
     double bitrate=0,firstMs=-1,totalMs=0; Clock::time_point began;
-    std::string standardsContext="auto";
+    std::string standardsContext="auto",analysisStatus="idle";
     J requestId; std::function<void()> onFirst; bool complete=false; size_t revision=0;
     J pending=J::object(), demuxStatus=J::object(); std::vector<std::pair<unsigned,Bytes>> patchSections;
     // A DVB table identity includes the network/transport identifiers in its
@@ -324,18 +399,20 @@ public:
         receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),true);
     }
     void handleInvalidSection(ts::SectionDemux&,const ts::DemuxedData& s) override { receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),false); }
-    J state(uint64_t at=UINT64_MAX) {
-        J out={{"source",source.u8string()},{"file_name",source.filename().u8string()},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",complete?totalMs:ms(began)}}}};
+    J state(uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) {
+        checkCancelled(control);
+        J out={{"source",source.u8string()},{"file_name",source.filename().u8string()},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
         const auto selected=latest(at);
         for(const auto& r:records) {
+            checkCancelled(control);
             auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at);if(stop==r.ends.begin())continue;
             out["tables"].push_back(summary(r,at));
             for(auto d:r.issues) { d["id"]=r.id;d["pid"]=r.pid;d["packet"]=r.positions.front();d["count"]=size_t(stop-r.ends.begin());out["diagnostics"].push_back(d); }
         }
-        const auto derived=derivedSnapshot(selected);out["services"]=derived["services"];out["events"]=derived["events"];
+        checkCancelled(control);const auto derived=derivedSnapshot(selected);checkCancelled(control);out["services"]=derived["services"];out["events"]=derived["events"];
         constexpr size_t bins=80; std::vector<uint64_t> counts(bins,0),bad(bins,0); uint64_t denominator=std::max<uint64_t>(1,totalBytes/stride);
-        for(const auto& r:records)for(auto pos:r.positions){size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
+        for(const auto& r:records)for(auto pos:r.positions){checkCancelled(control);size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         if(demuxStatus.value("discontinuities",uint64_t(0))>0)out["diagnostics"].push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities on monitored PSI/SI PIDs (aggregate; packet locations not yet retained)"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
@@ -427,10 +504,17 @@ public:
         if(offset<total&&out["changes"].size()<total-offset)out["next_offset"]=offset+out["changes"].size();
         return out;
     }
-    J analyze(const J& args,const J& rid) {
+    void clearEvidence() {
+        records.clear();ids.clear();history=J::array();previous.clear();pending=J::object();patchSections.clear();
+        observations=crcErrors=0;demuxStatus=J::object();
+    }
+    J analyze(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
         // A new scan owns a new revision even when opening or framing fails.
         // Never allow old evidence or preview tokens to acquire a new source label.
-        records.clear();ids.clear();history=J::array();previous.clear();pending=J::object();patchSections.clear();++revision;
+        clearEvidence();++revision;analysisStatus="analyzing";
+        source.clear();packets=totalBytes=0;complete=false;
+        firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;began=Clock::now();requestId=rid;
+        try {
         extension=configuredExtension;standardsContext=args.value("standards",std::string("auto"));
         ts::Standards standards=ts::Standards::MPEG;
         if(standardsContext=="dvb")standards|=ts::Standards::DVB;
@@ -442,15 +526,17 @@ public:
         duck.resetStandards(standards);duck.resetRegistrationIds();duck.setDefaultCharsetIn(nullptr);duck.setDefaultCharsetOut(nullptr);duck.setTimeReference(u"UTC");
         if(standardsContext=="isdb-japan"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"ARIB-STD-B24"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"ARIB-STD-B24"));duck.setTimeReference(u"JST");}
         if(standardsContext=="isdb-brazil"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setTimeReference(u"UTC-3");}
-        source.clear();packets=totalBytes=observations=crcErrors=0;demuxStatus=J::object();complete=false;
-        firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;bitrate=args.value("bitrate",0.0);began=Clock::now();requestId=rid;
+        bitrate=args.value("bitrate",0.0);
         source=fs::absolute(fs::u8path(args.at("path").get<std::string>()));
+        TEST_CHECKPOINT("before_analysis",control);
+        checkCancelled(control);
         // This API scans bounded local files, not blocking pipes or device streams.
         // status follows symlinks, so ordinary links to regular files remain valid.
         std::error_code sourceError;
         if(!fs::is_regular_file(source,sourceError))throw std::runtime_error("Source must be a regular local file");
         std::ifstream in(source,std::ios::binary);
         if(!in)throw std::runtime_error("Cannot read source file");totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
+        checkCancelled(control);
         std::vector<uint8_t> probe(5*204);in.read(reinterpret_cast<char*>(probe.data()),probe.size());size_t got=size_t(in.gcount());in.clear();in.seekg(0);
         bool framing=false;
         for(size_t width:{size_t(188),size_t(192),size_t(204)}) { size_t off=width==192?4:0;bool ok=true;for(size_t i=0;i<5&&off+i*width<got;i++)ok&=probe[off+i*width]==0x47;if(ok){stride=width;prefix=off;framing=true;break;} }
@@ -461,18 +547,42 @@ public:
         for(const auto& pid:args.value("extra_pids",J::array())){if(!pid.is_number_integer()||pid<0||pid>8191)throw std::runtime_error("extra_pids entries must be integers in 0..8191");demux.addPID(pid.get<unsigned>());}
         for(auto pid:extension.value("extra_pids",J::array()))demux.addPID(pid.get<unsigned>());
         demux.setInvalidSectionHandler(this);demux.setCurrentNext(true,true);demux.trackInvalidSectionVersions(true);
-        onFirst=[&](){emit({{"event","progress"},{"request_id",rid},{"state",state()}});};
+        auto progress=[&](){
+            checkCancelled(control);TEST_CHECKPOINT("before_progress",control);checkCancelled(control);
+            J snapshot=state(UINT64_MAX,control);checkCancelled(control);
+            emit({{"event","progress"},{"request_id",rid},{"state",std::move(snapshot)}});
+            TEST_CHECKPOINT("after_progress",control);checkCancelled(control);
+        };
+        onFirst=progress;
         std::vector<uint8_t> block(stride*8192);auto lastNotify=Clock::now();
-        try { while(in) {
+        while(in) {
+            checkCancelled(control);TEST_CHECKPOINT("before_read",control);checkCancelled(control);
             in.read(reinterpret_cast<char*>(block.data()),block.size());size_t n=size_t(in.gcount());
-            for(size_t p=0;p+stride<=n;p+=stride){ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);++packets;demux.feedPacket(packet);}
-            if(ms(lastNotify)>=100) {emit({{"event","progress"},{"request_id",rid},{"state",state()}});lastNotify=Clock::now();}
+            for(size_t p=0;p+stride<=n;p+=stride){
+                // The file read is bounded to 8192 packets; SDK feed checkpoints
+                // every 256 packets bound additional work without a lock per feed.
+                if((p/stride)%256==0)checkCancelled(control);
+                ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);++packets;demux.feedPacket(packet);
+            }
+            if(ms(lastNotify)>=100){progress();lastNotify=Clock::now();}
         }
-        } catch(...) {onFirst=nullptr;totalMs=ms(began);throw;}
-        onFirst=nullptr;if(in.bad())throw std::runtime_error("Source read failed; analysis is incomplete");complete=true;totalMs=ms(began);
+        onFirst=nullptr;checkCancelled(control);
+        if(in.bad())throw std::runtime_error("Source read failed; analysis is incomplete");
         ts::SectionDemux::Status status(demux);demuxStatus={{"wrong_crc",status.wrong_crc},{"discontinuities",status.discontinuities},{"invalid_ts",status.invalid_ts},{"invalid_length",status.inv_sect_length},{"truncated_sections",status.truncated_sect}};
-        J out=state();
-        out["trailing_bytes"]=totalBytes%stride;return out;
+        TEST_CHECKPOINT("before_complete",control);
+        // This is the linearization point: a cancellation accepted before it
+        // always wins, and one arriving afterwards must report not_running.
+        if(control&&control->finish())throw CancelledAnalysis();
+        complete=true;analysisStatus="complete";totalMs=ms(began);
+        TEST_CHECKPOINT("after_complete",control);
+        J out=state();out["trailing_bytes"]=totalBytes%stride;return out;
+        } catch(...) {
+            onFirst=nullptr;totalMs=ms(began);complete=false;
+            const bool cancelled=control&&control->finish();
+            clearEvidence();analysisStatus=cancelled?"cancelled":"failed";
+            if(cancelled)throw CancelledAnalysis();
+            throw;
+        }
     }
     J inspect(const J& args) {
         std::string id=args.at("id");if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
@@ -591,29 +701,16 @@ public:
         J offsets=J::array();size_t offset=0;for(const auto& [pid,b]:output){offsets.push_back({{"pid",pid},{"bin_offset",offset},{"bytes",b.size()},{"fingerprint_fnv1a",fingerprint(b)}});offset+=b.size();}receipt["sections"]=offsets;
         ExportFile manifest(fs::u8path(path.u8string()+".manifest.json"));const std::string text=receipt.dump(2)+"\n";manifest.write(text.data(),text.size());manifest.close();out.commit();manifest.commit();return receipt;
     }
-    J dispatch(const std::string& method,const J& args,const J& rid) {
-        if(!args.is_object())throw std::runtime_error("params must be an object");
-        const auto catalog=readJson(root/"api/tools.json");
-        for(const auto& tool:catalog.at("tools"))if(tool.at("name")==method){
-            const auto& schema=tool.at("inputSchema");
-            for(const auto& field:schema.value("required",J::array()))if(!args.contains(field.get<std::string>()))throw std::runtime_error("Required argument: "+field.get<std::string>());
-            for(auto it=args.begin();it!=args.end();++it){
-                if(!schema.at("properties").contains(it.key()))throw std::runtime_error("Unknown argument: "+it.key());
-                const auto& rule=schema["properties"][it.key()];std::string type=rule.at("type");const auto& v=it.value();
-                if((type=="string"&&!v.is_string())||(type=="integer"&&!v.is_number_integer())||(type=="number"&&!v.is_number())||(type=="array"&&!v.is_array()))throw std::runtime_error("Wrong type: "+it.key());
-                if(rule.contains("maxItems")&&v.is_array()&&v.size()>rule["maxItems"].get<size_t>())throw std::runtime_error("Too many items: "+it.key());
-                if(rule.contains("minimum")&&v.get<double>()<rule["minimum"].get<double>())throw std::runtime_error("Below minimum: "+it.key());
-                if(rule.contains("maximum")&&v.get<double>()>rule["maximum"].get<double>())throw std::runtime_error("Above maximum: "+it.key());
-                if(rule.contains("enum")&&std::find(rule["enum"].begin(),rule["enum"].end(),v)==rule["enum"].end())throw std::runtime_error("Invalid choice: "+it.key());
-            }
-        }
+    J dispatch(const std::string& method,const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control=nullptr) {
+        // runCore validates against its immutable startup catalog before queueing.
+        // Re-reading mutable schemas here could invalidate an accepted analysis.
         if(method=="capabilities"){
             J result=readJson(root/"api/tools.json");ts::UStringList tables,descriptors;
             ts::PSIRepository::Instance().getRegisteredTableNames(tables);ts::PSIRepository::Instance().getRegisteredDescriptorNames(descriptors);
             J registry={{"table_names",J::array()},{"descriptor_names",J::array()},{"table_count",tables.size()},{"descriptor_count",descriptors.size()},{"note","Registered decoders, not a guarantee that every payload or regional variant is supported. Explicit standards context resolves ambiguous identifiers."}};
             for(const auto& name:tables)registry["table_names"].push_back(name.toUTF8());for(const auto& name:descriptors)registry["descriptor_names"].push_back(name.toUTF8());result["native_registry"]=registry;return result;
         }
-        if(method=="analyze")return analyze(args,rid);
+        if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return state(args.value("at_packet",UINT64_MAX));
         if(method=="diff_snapshots")return diffSnapshots(args);
         if(method=="inspect")return inspect(args);
@@ -661,14 +758,102 @@ public:
     }
 };
 
-int main(int argc,char**argv) {
+struct QueuedRequest {
+    J id,args;
+    std::string method,key;
+    std::shared_ptr<AnalysisControl> control;
+};
+
+static int runCore(int argc,char**argv) {
+    std::cin.tie(nullptr);
     fs::path root=fs::current_path();for(int i=1;i+1<argc;i++)if(std::string(argv[i])=="--root")root=fs::u8path(argv[++i]);
     try {
-        Engine engine(root);std::string line;
-        while(std::getline(std::cin,line)) {
-            J id=nullptr;
-            try { J request=J::parse(line);id=request.value("id",J());J result=engine.dispatch(request.at("method"),request.value("params",J::object()),id);emit({{"id",id},{"result",result}}); }
-            catch(const std::exception& e){emit({{"id",id},{"error",{{"code","request_failed"},{"message",e.what()}}}});}
+        Engine engine(root);
+        // The reader validates JSON and schemas only. No Engine/TSDuck calls or
+        // state access are permitted there, even for a cancellation response.
+        const J catalog=readJson(root/"api/tools.json");
+        constexpr size_t queueCapacity=64;
+        std::mutex mutex;std::condition_variable ready;bool inputEnded=false;
+        std::deque<QueuedRequest> queue;
+        std::map<std::string,std::shared_ptr<AnalysisControl>> analyses;
+        std::thread reader([&](){
+            std::string line;
+            while(std::getline(std::cin,line)) {
+                J id=nullptr;
+                try {
+                    J request=J::parse(line);
+                    if(!request.is_object())throw std::runtime_error("request must be an object");
+                    id=request.value("id",J());
+                    const std::string method=request.at("method").get<std::string>();
+                    J args=request.value("params",J::object());
+                    validateArguments(catalog,method,args);
+                    if(method=="cancel_analysis"){
+                        const J target=args.at("request_id");std::shared_ptr<AnalysisControl> control;
+                        {std::lock_guard<std::mutex> lock(mutex);auto found=analyses.find(target.dump());if(found!=analyses.end())control=found->second;}
+                        const bool requested=control&&control->requestCancellation();
+                        J result={{"request_id",target},{"requested",requested}};
+                        if(!requested)result["reason"]="not_running";
+                        emit({{"id",id},{"result",result}});continue;
+                    }
+                    QueuedRequest work{id,std::move(args),method,"",nullptr};
+                    std::string reject;
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if(queue.size()>=queueCapacity)reject="queue_full";
+                        else {
+                            if(method=="analyze"){
+                                work.control=std::make_shared<AnalysisControl>();
+                                // Legacy missing/null ids still run, but cannot
+                                // be targeted. Scalar integer/string ids can.
+                                if(id.is_string()||id.is_number_integer()){
+                                    work.key=id.dump();
+                                    if(analyses.count(work.key))reject="duplicate_request_id";
+                                    else analyses.emplace(work.key,work.control);
+                                }
+                            }
+                            if(reject.empty())queue.push_back(std::move(work));
+                        }
+                    }
+                    if(!reject.empty())emit({{"id",id},{"error",{{"code",reject},{"message",reject=="queue_full"?"Ordinary request queue is full (64 waiting requests)":"An analysis with this request id is already queued or running"}}}});
+                    else ready.notify_one();
+                } catch(const std::exception& e){emit({{"id",id},{"error",{{"code","request_failed"},{"message",e.what()}}}});}
+            }
+            {std::lock_guard<std::mutex> lock(mutex);inputEnded=true;}
+            ready.notify_one();
+        });
+        for(;;){
+            QueuedRequest work;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                ready.wait(lock,[&]{return inputEnded||!queue.empty();});
+                if(queue.empty())break;
+                work=std::move(queue.front());queue.pop_front();
+            }
+            J terminal;
+            try {
+                J result=engine.dispatch(work.method,work.args,work.id,work.control);
+                terminal={{"id",work.id},{"result",std::move(result)}};
+            } catch(const CancelledAnalysis& e){
+                terminal={{"id",work.id},{"error",{{"code","analysis_cancelled"},{"message",e.what()},{"data",{{"state",engine.state()}}}}}};
+            } catch(const std::exception& e){
+                terminal={{"id",work.id},{"error",{{"code","request_failed"},{"message",e.what()}}}};
+            }
+            if(work.control){
+                work.control->finish();
+                std::lock_guard<std::mutex> lock(mutex);
+                auto found=analyses.find(work.key);
+                if(found!=analyses.end()&&found->second==work.control)analyses.erase(found);
+            }
+            // Retire the registry entry before publishing the response, so a
+            // client can immediately reuse a completed ID without a false duplicate.
+            emit(terminal);
+            if(work.method=="analyze")TEST_CHECKPOINT("after_terminal",work.control);
         }
+        // EOF is not cancellation: every accepted FIFO request is drained first.
+        reader.join();
     } catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}
+    return 0;
 }
+#ifndef SHOWPSISI_TESTING
+int main(int argc,char**argv) { return runCore(argc,argv); }
+#endif

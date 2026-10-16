@@ -95,6 +95,11 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Limit section occurrences and native table assembly to observations at or before this packet. Rejects sections not yet observed. Omitted: all occurrences; native table assembled at inspected section last occurrence."
           }
         },
         "required": [

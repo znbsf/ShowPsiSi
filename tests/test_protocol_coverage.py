@@ -13,6 +13,7 @@ from core_client import Core
 
 # Generated from the pinned SDK XML model using tstabcomp. CRC is part of bytes.
 FIXTURES = {
+    'DELIVERY_NIT': (0x10, '40f06f004dc10000f000f06200010002f014430b0115380001928e022000027905dffc002a0700020002f01c5a0b03dfd2401f8112ffffffff7f0d040300090394000c03f83c400000030002f00d440b04500000fff2050069000f00040002f00d430b01195400019281027500030fb4dffc'),
     'MGT': (0x1ffb, 'c7f0190000c100000000010000e123e000000000f000f0001ba35769'),
     'TVCT': (0x123, 'c8f02d0001c100000001004c00410042002d004800440000f01c010400000000000100650dc20065fc00fc0038fd04e2'),
     'STT': (0x1ffb, 'cdf0110000c1000000566d3e8012600070dc0b4b'),
@@ -126,6 +127,67 @@ class ProtocolCoverageTests(unittest.TestCase):
         self.assertEqual(len(details), 2)
         self.assertTrue(all(d['native_table']['name'] == 'generic_long_table' for d in details))
         self.assertTrue(all(d['references'] == [] for d in details))
+    def test_dvb_s_s2_t_t2_c_delivery_fields_and_references(self):
+        _, details = self.analyze(['DELIVERY_NIT'], 'dvb')
+        nit = self.assert_native(details, 'NIT')
+        transports = {int(n['attributes']['transport_stream_id'], 0): n['children'] for n in nit['children']}
+        def descriptor(tsid, name):
+            node = next(n for n in transports[tsid] if n['name'] == name)
+            self.assertTrue(any(r['id'] == 'dvb-si' and r['url'].startswith('https://www.etsi.org/') for r in node['references']))
+            return node
+        def number(value):
+            return int(value.replace(',', ''), 0)
+        satellite = descriptor(1, 'satellite_delivery_system_descriptor')['attributes']
+        self.assertEqual(number(satellite['frequency']), 11538000000)
+        self.assertEqual(number(satellite['symbol_rate']), 22000000)
+        self.assertEqual(satellite['modulation_system'], 'DVB-S2')
+        self.assertEqual(satellite['modulation_type'], '8PSK')
+        self.assertEqual(satellite['roll_off'], '0.25')
+        s2 = descriptor(1, 'S2_satellite_delivery_system_descriptor')['attributes']
+        self.assertEqual(number(s2['scrambling_sequence_index']), 42)
+        self.assertEqual(number(s2['input_stream_identifier']), 7)
+        terrestrial = descriptor(2, 'terrestrial_delivery_system_descriptor')['attributes']
+        self.assertEqual(number(terrestrial['centre_frequency']), 650000000)
+        self.assertEqual(terrestrial['bandwidth'], '8MHz')
+        self.assertEqual(terrestrial['constellation'], '64-QAM')
+        self.assertEqual(terrestrial['transmission_mode'], '8k')
+        t2 = descriptor(2, 'T2_delivery_system_descriptor')
+        self.assertEqual(number(t2['attributes']['plp_id']), 3)
+        self.assertEqual(number(t2['attributes']['t2_system_id']), 9)
+        extension = next(n for n in t2['children'] if n['name'] == 'extension')
+        self.assertEqual(extension['attributes']['bandwidth'], '8MHz')
+        self.assertEqual(extension['attributes']['transmission_mode'], '32k')
+        self.assertEqual(extension['attributes']['guard_interval'], '1/128')
+        frequency = extension['children'][0]['children'][0]['attributes']['value']
+        self.assertEqual(number(frequency), 666000000)
+        cable = descriptor(3, 'cable_delivery_system_descriptor')['attributes']
+        self.assertEqual(number(cable['frequency']), 450000000)
+        self.assertEqual(number(cable['symbol_rate']), 6900000)
+        self.assertEqual(cable['modulation'], '256-QAM')
+        dvbs = descriptor(4, 'satellite_delivery_system_descriptor')['attributes']
+        self.assertEqual(number(dvbs['frequency']), 11954000000)
+        self.assertEqual(number(dvbs['symbol_rate']), 27500000)
+        self.assertEqual(dvbs['modulation_system'], 'DVB-S')
+        self.assertEqual(dvbs['modulation_type'], 'QPSK')
+        # Both the flattened descriptor list and native hierarchy retain semantic decoding.
+        self.assertEqual(len(details[0]['descriptors']), 6)
+        self.assertTrue(all(d['native_decoded'] and d['references'] for d in details[0]['descriptors']))
+    def test_pat_program_zero_discovers_nondefault_nit_pid(self):
+        from make_fixture import section, word
+        pat = section(0, 1, 0, word(0) + word(0xe000 | 0x135))
+        nit = bytes.fromhex(FIXTURES['DELIVERY_NIT'][1])
+        packets = []
+        for cc in range(3):
+            for pid, raw in [(0, pat), (0x135, nit)]:
+                packets.append(bytes([0x47, 0x40 | (pid >> 8), pid & 255, 0x10 | cc, 0]) + raw + b'\xff' * (183-len(raw)))
+        path = Path(self.tmp.name) / 'network-discovery.ts'
+        path.write_bytes(b''.join(packets))
+        state = self.core.call('analyze', {'path': str(path), 'standards': 'dvb'})
+        tables = [t for t in state['tables'] if t['pid'] == 0x135]
+        self.assertEqual(len(tables), 1)
+        detail = self.core.call('inspect', {'id': tables[0]['id']})
+        self.assert_native([detail], 'NIT')
+        self.assertEqual(state['crc_errors'], 0)
     def test_standards_choice_is_validated(self):
         with self.assertRaises(RuntimeError):
             self.analyze(['BIT'], 'invented-standard')

@@ -164,6 +164,69 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('[data-view="xml"]').click()
         self.assertIn('SDT',self.page.locator('[aria-label="TSDuck XML"]').inner_text())
 
+    def test_backend_exit_settles_pending_and_dead_startup(self):
+        import signal
+        if not hasattr(signal,'SIGSTOP'):
+            self.skipTest('Deterministic in-flight process pause requires POSIX SIGSTOP')
+        # Pause only this test's owned child, guaranteeing real requests are in
+        # flight before killing it. No fake bridge responses or other PIDs.
+        self.bridge.proc.send_signal(signal.SIGSTOP)
+        self.page.evaluate('() => {window.lifecycleResult=null;window.showpsisi.call("capabilities").then(()=>window.lifecycleResult="unexpected success",error=>window.lifecycleResult=String(error));}')
+        self.page.locator('#scan').click()
+        self.page.wait_for_function('() => document.querySelector("#scan").disabled')
+        self.bridge.proc.kill()
+        self.bridge.proc.wait(timeout=5)
+        self.page.wait_for_function('() => window.lifecycleResult !== null')
+        self.assertRegex(self.page.evaluate('window.lifecycleResult').lower(),r'backend|stopped|disconnected')
+        self.page.wait_for_function('() => /stopped|disconnected|unavailable/i.test(document.querySelector("#notice").textContent)')
+        self.assertTrue(self.page.locator('#scan').is_disabled())
+        self.assertNotIn('Scanning',self.page.locator('#scan').inner_text())
+        self.assertNotIn('Analyzing',self.page.locator('#scan').inner_text())
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),{})
+        retry=self.page.locator('#retry-inspect')
+        self.assertTrue(retry.count()==0 or retry.is_disabled(),'Disconnected backend must not offer an active retry')
+        self.page.screenshot(path=str(self.artifacts/'backend-exit.png'),full_page=True)
+        self.page.reload()
+        self.page.wait_for_function('() => /stopped|disconnected|unavailable/i.test(document.querySelector("#notice").textContent)')
+        self.assertTrue(self.page.locator('#scan').is_disabled())
+        self.assertRegex(self.page.locator('#runtime').inner_text().lower(),r'disconnected|unavailable|stopped')
+
+    def test_historical_inspection_keeps_native_siblings_at_cutoff(self):
+        from make_fixture import section,descriptor,word,crc
+        def sdt(number,name):
+            desc=descriptor(0x48,b'\x01\x00'+bytes([len(name)])+name)
+            raw=bytearray(section(0x42,1,1,word(2)+b'\xff'+word(100+number)+b'\xff'+word(0x8000+len(desc))+desc))
+            raw[6]=number;raw[7]=1;raw[-4:]=crc(raw[:-4]).to_bytes(4,'big')
+            return bytes(raw)
+        parts=[sdt(0,b'A'),sdt(1,b'Old B'),sdt(0,b'A'),sdt(1,b'New B'),sdt(0,b'A')]
+        fixture=self.output/'historical-inspection.ts'
+        fixture.write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i,raw in enumerate(parts)))
+        self.analyze(fixture)
+        aid=self.page.evaluate('window.showpsisi.getState().services.find(service=>service.name==="A").source_id')
+        self.page.evaluate('id=>window.showpsisi.snapshot(1,id)',aid)
+        self.page.wait_for_function('() => window.showpsisi.getDetail().native_table_at_packet === 1')
+        detail=self.page.evaluate('window.showpsisi.getDetail()')
+        def names(value):
+            return [node['children'][0]['attributes']['service_name'] for node in value['native_table']['children'] if node['name']=='service']
+        self.assertEqual(names(detail),['A','Old B'])
+        self.assertEqual(detail['count'],1)
+        self.assertEqual(detail['last_packet'],0)
+        self.assertEqual(detail['occurrences'],[0])
+        self.page.locator('#tree-search').fill('Old B')
+        self.assertIn('Old B',self.page.locator('#tree-area').inner_text())
+        self.assertNotIn('New B',self.page.locator('#tree-area').inner_text())
+        for view in ('hex','xml','references','tree'):
+            self.page.locator('[data-view="'+view+'"]').click()
+            self.assertIn('packet 1',self.page.locator('#native-assembly-evidence').inner_text())
+            self.assertEqual(names(self.page.evaluate('window.showpsisi.getDetail()')),['A','Old B'])
+        self.page.evaluate('id=>window.showpsisi.snapshot(0,id)',aid)
+        self.page.wait_for_function('() => window.showpsisi.getDetail().native_table_at_packet === 0')
+        self.assertFalse(self.page.evaluate('window.showpsisi.getDetail().native_table_complete'))
+        self.assertNotIn('native_table',self.page.evaluate('window.showpsisi.getDetail()'))
+        self.page.evaluate('id=>window.showpsisi.snapshot(-1,id)',aid)
+        self.page.wait_for_function('() => window.showpsisi.getDetail().native_table_at_packet === 4')
+        self.assertEqual(names(self.page.evaluate('window.showpsisi.getDetail()')),['A','New B'])
+
     def test_standards_context_and_invalid_extra_pids(self):
         for standard in ('atsc','isdb-japan'):
             self.page.locator('#standards').select_option(standard)

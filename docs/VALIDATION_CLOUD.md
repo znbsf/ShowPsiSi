@@ -7,7 +7,7 @@ Date: 2026-10-16 UTC. Base: `a79ce16ff04e7f418c366db247eb6afce11b495a`.
 - GCC 14.2 compiled the C++17 engine against official TSDuck 3.39-3956 Linux SDK.
 - CMake built native Qt 6.7.3 with Quick/QuickControls2. Qt smoke used the compiled
   C++ bridge and backend, offscreen software rendering, and real control events.
-- 22 engine, 7 protocol, 3 HTTP bridge, 8 browser and 2 native Qt tests passed.
+- 25 engine, 9 protocol, 4 HTTP bridge, 10 browser, 4 native Qt and 2 Rust tests passed (54 total).
 - UHF22 sample SHA-256: `24143de80d28461d084dfb75279da520f335de36b7c35f6398ed6d510daa5937`.
 - `docs/images/qt-workbench.png` is native Qt; `web-workbench.png` and
   `web-references.png` are Chromium with the real C++ engine. They are not mockups
@@ -35,7 +35,12 @@ Run commands are in `tests/README.md`, `scripts/check.sh` and
 
 ## Remaining validation boundaries
 
-Native Tauri build, native file dialogs, OS external-browser commands, new Windows
-builds and macOS are not verified by browser tests. Linux software-rendered Qt is
+Native Linux Tauri was separately built and exercised, including GTK file dialogs and export/readback; see NATIVE_TAURI_VALIDATION.md. OS external-browser launching, new Windows builds and macOS remain unverified. Linux software-rendered Qt is
 not a GPU-performance test. A decoder's registry entry does not establish every
 standard edition or operator variation is supported. See PROTOCOL_COVERAGE.md.
+
+## Second review loop
+
+Added Qt search parity and PlainText enforcement for stream-derived labels and tooltips, with a real encoded markup fixture and HTTP trap. Historical native-tree assembly now accepts a packet cutoff and rejects future/superseded evidence. Native/backend EOF settles pending requests and disables disconnected actions; regular-file guards prevent named pipes/devices from hanging analysis. Native Tauri's missing default PNG icon was fixed and the locked Linux build/runtime verified.
+
+The first remote CI run passed at commit `9a8d6a8`. The workflow now also builds/tests native Qt and the Tauri shell; its final status must be checked on the newest PR commit.

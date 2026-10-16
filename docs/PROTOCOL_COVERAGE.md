@@ -27,7 +27,7 @@ inventory of the actually linked decoder registry. Future SDK versions may diffe
 | Family | Applicable transport-stream decoding | Evidence and limits |
 | --- | --- | --- |
 | MPEG systems | PAT, CAT, PMT, TSDT; registered MPEG descriptors and extension descriptors | Core fixture tests exercise PAT/PMT/CAT. Generic registry decoding supplies additional table/descriptor fields. |
-| DVB-S/S2/S2X, DVB-T/T2, DVB-C/C2 | Common DVB SI such as NIT, BAT, SDT, EIT, TDT/TOT; registered satellite, terrestrial, cable and generation-specific delivery-system descriptors | Existing DVB synthetic fixture and optional recorded terrestrial sample; delivery-specific descriptor availability is SDK-level unless individually tested. The RF modes are not distinct table parsers. |
+| DVB-S/S2/S2X, DVB-T/T2, DVB-C/C2 | Common DVB SI such as NIT, BAT, SDT, EIT, TDT/TOT; registered satellite, terrestrial, cable and generation-specific delivery-system descriptors | Pinned-compiler synthetic NIT tests assert DVB-S/S2, DVB-T/T2 and DVB-C delivery parameters plus official references. The optional recorded terrestrial sample remains additional evidence. S2X/C2 and untested parameter combinations remain SDK-level. The RF modes are not distinct table parsers. |
 | ATSC transport-stream PSIP | MGT, TVCT/CVCT, ATSC_EIT, ETT, STT, RRT, DCCT, DCCSCT | Added synthetic MGT/TVCT/STT tests, including a TVCT on an MGT-advertised nondefault PID. Other registered models are SDK-available. This does not claim ATSC 3.0 IP/ROUTE/MMT support. |
 | ISDB | Shared MPEG/SI plus BIT, CDT, DCT, DLT, ERT, ITT, LDT, LIT, NBIT, PCAT, SDTT | Added synthetic BIT/CDT/SDTT/LDT/NBIT/ITT API tests. Japan/Brazil character and regional interpretations must not be inferred from the word ISDB alone. |
 | SCTE | Registered splice information and cable emergency alert models/descriptors | SDK-available; no full SCTE broadcast conformance claim. |
@@ -57,8 +57,12 @@ systems or has tested every descriptor combination.
 
 `analyze.standards` selects `auto`, `dvb`, `atsc`, `isdb`,
 `isdb-japan`, `isdb-brazil`, or `scte` (see the live API schema). The SDK's exact
-standard flags are NONE, MPEG, DVB, SCTE, ATSC, ISDB, JAPAN and ABNT. Forced
-ISDB does not by itself prove Japan or Brazil regional settings.
+standard flags are NONE, MPEG, DVB, SCTE, ATSC, ISDB, JAPAN and ABNT. Plain `isdb` selects common ISDB context only. The explicit profiles follow the
+pinned `tstabcomp --help` definitions: `isdb-japan` uses ARIB-STD-B24 and JST;
+`isdb-brazil` uses ISDB+ABNT, RAW-ISO-8859-15 and UTC-3. The core reports
+`text_charset` and `time_reference` and copies them into native decoder contexts.
+These settings interpret stream text/time; they do not identify the actual
+broadcast country from RF data.
 
 Auto mode is best-effort evidence accumulation, not a proof of standard identity.
 Table ID 0xC7 means ATSC MGT or ISDB LDT; 0xC8 means ATSC TVCT or ISDB CDT.
@@ -151,7 +155,7 @@ inside the parsing or packet-analysis path.
 
 ## Validation result
 
-On 2026-10-16, **7 protocol API tests passed** against the rebuilt native core.
+On 2026-10-16, **9 protocol API tests passed** against the rebuilt native core.
 Besides the table fixtures, these check auto-mode fixed-PID evidence, opposite
 ISDB context producing generic ATSC fallback, PDS isolation across descriptor
 loops and files, unknown private byte retention, registry counts, and correct
@@ -163,3 +167,31 @@ The optional official-reference index is 12,490 bytes on disk, with five sources
 191 descriptor associations and 26 table associations. These associations are
 standard-level, not clause-level. CDT/SDTT have no B10 link because their SDK
 headers cite ARIB STD-B21 instead.
+
+## DVB delivery fixture source and measured fields
+
+The following 114-byte NIT was compiled by TSDuck 3.39-3956 `tstabcomp`,
+packetized, and decoded by the real core in `dvb` context. It covers selected
+representative settings, not every delivery-system variant. Assertions check
+frequency, symbol rate, modulation, bandwidth, S2 identifiers, and nested T2
+cell frequency; all six descriptors carry the official ETSI standard-level link.
+A separate test routes this NIT on PID 0x135 discovered from PAT program zero.
+
+```xml
+<tsduck>
+<NIT network_id="77">
+ <transport_stream transport_stream_id="1" original_network_id="2">
+  <satellite_delivery_system_descriptor frequency="11538000000" orbital_position="19.2" west_east_flag="east" polarization="horizontal" modulation_system="DVB-S2" modulation_type="8PSK" symbol_rate="22000000" FEC_inner="2/3" roll_off="0.25"/>
+  <S2_satellite_delivery_system_descriptor backwards_compatibility="false" scrambling_sequence_index="42" input_stream_identifier="7"/>
+ </transport_stream>
+ <transport_stream transport_stream_id="2" original_network_id="2">
+  <terrestrial_delivery_system_descriptor centre_frequency="650000000" bandwidth="8MHz" priority="HP" no_time_slicing="true" no_MPE_FEC="true" constellation="64-QAM" hierarchy_information="0" code_rate_HP_stream="2/3" code_rate_LP_stream="1/2" guard_interval="1/8" transmission_mode="8k" other_frequency="false"/>
+  <T2_delivery_system_descriptor plp_id="3" T2_system_id="9"><extension SISO_MISO="SISO" bandwidth="8MHz" guard_interval="1/128" transmission_mode="32k" other_frequency="false" tfs="false"><cell cell_id="12"><centre_frequency value="666000000"/></cell></extension></T2_delivery_system_descriptor>
+ </transport_stream>
+ <transport_stream transport_stream_id="3" original_network_id="2">
+  <cable_delivery_system_descriptor frequency="450000000" FEC_outer="RS" modulation="256-QAM" symbol_rate="6900000" FEC_inner="none"/>
+ </transport_stream>
+ <transport_stream transport_stream_id="4" original_network_id="2"><satellite_delivery_system_descriptor frequency="11954000000" orbital_position="19.2" west_east_flag="east" polarization="horizontal" modulation_system="DVB-S" modulation_type="QPSK" symbol_rate="27500000" FEC_inner="3/4"/></transport_stream>
+</NIT>
+</tsduck>
+```

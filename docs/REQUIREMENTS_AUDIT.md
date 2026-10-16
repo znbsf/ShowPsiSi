@@ -140,3 +140,7 @@ EIT 分段语义另有明确限制，不能把当前 EIT 列表当成完整 EPG 
 5. 对照用户完整原始需求逐项决定哪些是当前里程碑、哪些列入后续；由用户确认视觉偏好和真实接收机行为。
 
 本审计只修改此文档；实现修复由同一任务的其他工作完成。修复后的通过范围仅限上文实际执行的 19 项引擎测试，不能外推为全部需求完成。
+
+## Subsequent integration loop
+
+Beyond the baseline audit, parent review identified and tests now cover historical inspection using future sibling sections, Qt rich-text interpretation of stream names, native/backend EOF leaving promises pending, and special-file inputs that could block before validation. Native Linux Tauri was built and its actual file-dialog/export flow checked, closing the earlier native-shell verification gap for Linux only. Latest consolidated results and remaining boundaries are in STATUS.md and NATIVE_TAURI_VALIDATION.md.

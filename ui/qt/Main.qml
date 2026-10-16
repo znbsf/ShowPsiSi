@@ -40,7 +40,7 @@ ApplicationWindow {
     property var collapsed: ({
             header: true
         })
-    property var treeRows: makeTree(detail, selectedService, collapsed)
+    property var treeRows: treeSearch.text.trim() ? filterTree(makeTree(detail, selectedService, {}, true), treeSearch.text) : makeTree(detail, selectedService, collapsed, false)
     property var serviceRows: analysisState.services || []
     property var tableRows: (analysisState.tables || []).filter(function (t) {
         return !filter || t.name === filter;
@@ -90,9 +90,54 @@ ApplicationWindow {
     }
     property var eventRows: analysisState.events || []
     property var issues: analysisState.diagnostics || []
-    property var rows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : issues
+    property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : issues
+    property var rows: unfilteredRows.filter(function (row) {
+        return matchesRecord(row, recordSearch.text);
+    })
+    property bool selectionHidden: !!selected && !rows.some(function (row) {
+        return tab === "Services" ? row.source_id === selected && row.id === selectedService : (row.source_id || row.id) === selected;
+    })
+    function searchTerms(text) {
+        return text.toLowerCase().trim().split(/\s+/).filter(function (term) {
+            return !!term;
+        });
+    }
+    function matchesRecord(row, text) {
+        let terms = searchTerms(text);
+        if (!terms.length)
+            return true;
+        let values = Object.keys(row).map(function (key) {
+            let value = row[key];
+            return typeof value === "number" ? String(value) + " " + hex(value) + " 0x" + value.toString(16) : typeof value === "string" ? value : "";
+        }).join(" ").toLowerCase();
+        return terms.every(function (term) {
+            return values.indexOf(term) >= 0;
+        });
+    }
+    function filterTree(allRows, text) {
+        let terms = searchTerms(text), keep = {}, ancestors = [];
+        allRows.forEach(function (row, index) {
+            while (ancestors.length && allRows[ancestors[ancestors.length - 1]].depth >= row.depth)
+                ancestors.pop();
+            let value = (row.label + " " + row.value).toLowerCase();
+            if (terms.every(function (term) {
+                return value.indexOf(term) >= 0;
+            })) {
+                keep[index] = true;
+                ancestors.forEach(function (parent) {
+                    keep[parent] = true;
+                });
+            }
+            ancestors.push(index);
+        });
+        return allRows.filter(function (row, index) {
+            return !!keep[index];
+        });
+    }
     property int autoDelay: Number(core.env("SHOWPSISI_AUTO_DELAY_MS") || 0)
     property bool inspected: false
+    property var searchChecks: ({})
+    property bool historyCutoffVerified: false
     property int testStep: 0
     onTestStepChanged: core.mark("test_step_" + testStep)
     function num(n) {
@@ -145,11 +190,11 @@ ApplicationWindow {
             return hex(value, 4) + " (" + value + ")";
         return String(value);
     }
-    function makeTree(section, sid, hidden) {
+    function makeTree(section, sid, hidden, expandAll) {
         let result = [];
         function node(path, label, value, depth) {
             let branch = value !== null && typeof value === "object";
-            let closed = hidden[path] === undefined ? (path.endsWith("/meta") || /^service\/[^/]+\/fields$/.test(path)) : !!hidden[path];
+            let closed = !expandAll && (hidden[path] === undefined ? (path.endsWith("/meta") || /^service\/[^/]+\/fields$/.test(path)) : !!hidden[path]);
             result.push({
                 path: path,
                 label: label,
@@ -183,7 +228,7 @@ ApplicationWindow {
             let service = (section.services || []).find(function (item) {
                 return Number(attributes.service_id) === item.id;
             });
-            let closed = hidden[path] === undefined ? initiallyClosed : !!hidden[path];
+            let closed = !expandAll && (hidden[path] === undefined ? initiallyClosed : !!hidden[path]);
             result.push({
                 path: path,
                 label: value.name + (identity ? " · " + identity : "") + (service && service.name ? " · " + service.name : ""),
@@ -198,7 +243,7 @@ ApplicationWindow {
             let keys = Object.keys(attributes);
             let descriptor = /descriptor$/.test(value.name);
             let attributePath = path + "/attributes";
-            let attributesClosed = hidden[attributePath] === undefined ? !descriptor : !!hidden[attributePath];
+            let attributesClosed = !expandAll && (hidden[attributePath] === undefined ? !descriptor : !!hidden[attributePath]);
             if (keys.length)
                 result.push({
                     path: attributePath,
@@ -245,10 +290,10 @@ ApplicationWindow {
                 value: "",
                 depth: 0,
                 branch: true,
-                closed: !!hidden[path],
+                closed: !expandAll && !!hidden[path],
                 kind: "object"
             });
-            if (!hidden[path]) {
+            if (expandAll || !hidden[path]) {
                 node(path + "/fields", "Service fields", s, 1);
                 (section.descriptors || []).filter(function (d) {
                     return d.service_id === s.id;
@@ -265,10 +310,10 @@ ApplicationWindow {
                 value: d.length + " B @ " + d.offset,
                 depth: depth,
                 branch: true,
-                closed: !!hidden[path],
+                closed: !expandAll && !!hidden[path],
                 kind: "descriptor"
             });
-            if (!hidden[path]) {
+            if (expandAll || !hidden[path]) {
                 node(path + "/meta", "Descriptor header", {
                     tag: d.tag,
                     length: d.length,
@@ -296,6 +341,8 @@ ApplicationWindow {
         return result;
     }
     function toggle(path) {
+        if (treeSearch.text.trim())
+            return;
         let next = Object.assign({}, collapsed);
         let row = treeRows.find(function (r) {
             return r.path === path;
@@ -314,9 +361,12 @@ ApplicationWindow {
         collapsed = {
             header: true
         };
-        core.send("inspect", {
+        let params = {
             id: id
-        });
+        };
+        if (analysisState.selected_packet !== undefined && analysisState.selected_packet !== null)
+            params.at_packet = analysisState.selected_packet;
+        core.send("inspect", params);
     }
     function scan() {
         if (core.busy || !source.text.trim() || extraPidsValue === null)
@@ -326,6 +376,8 @@ ApplicationWindow {
         selectedService = -1;
         preview = {};
         filter = "";
+        recordSearch.clear();
+        treeSearch.clear();
         tab = "Services";
         notice = "";
         core.send("analyze", {
@@ -371,7 +423,25 @@ ApplicationWindow {
     function rowSubtitle(row) {
         return tab === "Services" ? (row.provider || "No provider") + " · SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) + (row.group ? " · " + row.group : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations" : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
     }
-    component TinyLabel: Label {
+    component PlainLabel: Label {
+        textFormat: Text.PlainText
+    }
+    component SafeTip: ToolTip {
+        id: tip
+        property var anchorControl: parent
+        contentItem: PlainLabel {
+            objectName: "plainTooltipContent"
+            text: tip.text
+            color: ink
+            wrapMode: Text.Wrap
+        }
+        background: Rectangle {
+            color: "#252526"
+            border.color: "#454545"
+            radius: 2
+        }
+    }
+    component TinyLabel: PlainLabel {
         color: muted
         font.pixelSize: 11
         font.letterSpacing: 0.6
@@ -383,7 +453,7 @@ ApplicationWindow {
         leftPadding: 10
         rightPadding: 10
         focusPolicy: Qt.StrongFocus
-        contentItem: Label {
+        contentItem: PlainLabel {
             text: control.text
             color: control.primary ? "white" : ink
             horizontalAlignment: Text.AlignHCenter
@@ -401,7 +471,7 @@ ApplicationWindow {
         id: nav
         implicitHeight: 29
         focusPolicy: Qt.StrongFocus
-        contentItem: Label {
+        contentItem: PlainLabel {
             text: nav.text
             color: nav.highlighted ? "#ffffff" : ink
             verticalAlignment: Text.AlignVCenter
@@ -471,11 +541,15 @@ ApplicationWindow {
                     return;
                 testStep++;
             } else if (testStep === 1) {
-                if (serviceRows[0]?.name !== "World News")
+                if (serviceRows[0]?.name !== "World News" || core.inspecting || detail.version !== 1)
                     return;
+                historyCutoffVerified = detail.native_table_at_packet === analysisState.selected_packet;
+                snapshot(-1);
                 core.click("tab_Issues");
                 testStep++;
             } else if (testStep === 2) {
+                if (analysisState.selected_packet !== null && analysisState.selected_packet !== undefined)
+                    return;
                 if (!core.click("issue_crc32"))
                     return;
                 testStep++;
@@ -530,19 +604,113 @@ ApplicationWindow {
                     return;
                 core.capture(artifactDir + "/qt-specifications.png");
                 specificationDialog.close();
+                testStep++;
+            } else if (testStep === 11) {
+                core.key("Ctrl+K");
+                let keyboardFocus = recordSearch.activeFocus;
+                let originalSelected = selected;
+                let originalService = selectedService;
+                recordSearch.text = "SPORTS";
+                let names = rows.length === 1 && rows[0].id === 103;
+                recordSearch.text = "0x0067";
+                let identifiers = rows.length === 1 && rows[0].id === 103 && matchesRecord({
+                    id: 103
+                }, "103");
+                recordSearch.text = "no-matching-record-qt-test";
+                let empty = rows.length === 0 && selectionHidden && selected === originalSelected && selectedService === originalService;
+                core.key("Escape");
+                let escapeClears = recordSearch.text === "" && rows.length === serviceRows.length;
+                let savedCollapsed = collapsed;
+                collapsed = Object.assign({}, collapsed, {
+                    native: true
+                });
+                let collapsedBefore = JSON.stringify(collapsed);
+                let treeBefore = treeRows.length;
+                treeSearch.text = "Sports UHD";
+                let ancestry = treeRows.some(function (row) {
+                    return row.path === "native";
+                }) && treeRows.some(function (row) {
+                    return row.label.indexOf("service_descriptor") === 0;
+                }) && treeRows.some(function (row) {
+                    return row.label === "service_name" && row.value === "Sports UHD";
+                });
+                treeSearch.text = "no-matching-field-qt-test";
+                let treeEmpty = treeRows.length === 0;
+                treeSearch.clear();
+                let collapseRestored = JSON.stringify(collapsed) === collapsedBefore && treeRows.length === treeBefore;
+                collapsed = savedCollapsed;
+                searchChecks = {
+                    record_names: names,
+                    identifiers: identifiers,
+                    empty_preserves_selection: empty,
+                    keyboard_focus: keyboardFocus,
+                    escape_clears: escapeClears,
+                    tree_ancestry: ancestry,
+                    tree_empty: treeEmpty,
+                    collapse_restored: collapseRestored
+                };
                 core.testResult(JSON.stringify({
                     checks: ["history changes channel name/order", "CRC raw evidence", "rename preview", "signal-only export", "API schema discovery"],
-                    passed: analysisState.standards_context === standardChoice.currentValue && !!detail.native_table && treeRows.some(function (row) {
+                    passed: historyCutoffVerified && Object.keys(searchChecks).every(function (key) {
+                        return searchChecks[key];
+                    }) && analysisState.standards_context === standardChoice.currentValue && !!detail.native_table && treeRows.some(function (row) {
                         return row.kind === "native";
                     }) && parseExtraPids("0x30, 100").join(",") === "48,100" && parseExtraPids("8192") === null,
                     services: serviceRows.length,
                     observations: analysisState.observations,
                     standards_context: analysisState.standards_context,
                     native_tree: !!detail.native_table,
-                    references: specificationLinks.length
+                    references: specificationLinks.length,
+                    search: searchChecks,
+                    history_cutoff: historyCutoffVerified
                 }));
                 stop();
             }
+        }
+    }
+    Timer {
+        id: inspectFailureTimer
+        interval: 150
+        repeat: true
+        property bool requestedFailure: false
+        onTriggered: {
+            if (!requestedFailure) {
+                if (!detail.native_table || core.inspecting)
+                    return;
+                requestedFailure = true;
+                inspect("missing-section-for-native-regression");
+                return;
+            }
+            if (core.inspecting || !core.error)
+                return;
+            core.testResult(JSON.stringify({
+                passed: Object.keys(detail).length === 0 && !detail.native_table && detail.native_table_at_packet === undefined,
+                error: core.error
+            }));
+            stop();
+        }
+    }
+    Timer {
+        id: plainTextTimer
+        interval: 200
+        repeat: true
+        property bool hoveredRecord: false
+        onTriggered: {
+            if (!analysisState.complete || core.inspecting || !detail.id || !serviceRows.length)
+                return;
+            if (!hoveredRecord) {
+                notice = serviceRows[0].name;
+                core.hover("service_" + serviceRows[0].id);
+                statusTooltip.open();
+                hoveredRecord = true;
+                return;
+            }
+            let report = core.textSafetyReport("<img");
+            report.literal_name = serviceRows[0].name.indexOf("<b>name</b>") >= 0;
+            report.passed = report.literal_name && report.matched_text_items >= 3 && report.tooltip_text_items >= 1 && report.unsafe_text_items === 0;
+            core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+            core.testResult(JSON.stringify(report));
+            stop();
         }
     }
     Timer {
@@ -560,8 +728,19 @@ ApplicationWindow {
         }
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "plaintext")
+            plainTextTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "inspect-error")
+            inspectFailureTimer.start();
     }
 
+    Shortcut {
+        sequence: "Ctrl+K"
+        onActivated: {
+            recordSearch.forceActiveFocus();
+            recordSearch.selectAll();
+        }
+    }
     Shortcut {
         sequence: "Ctrl+O"
         onActivated: fileDialog.open()
@@ -591,6 +770,7 @@ ApplicationWindow {
             anchors.fill: parent
             TextArea {
                 id: apiText
+                textFormat: TextEdit.PlainText
                 readOnly: true
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
@@ -608,17 +788,19 @@ ApplicationWindow {
             anchors.leftMargin: 14
             anchors.rightMargin: 14
             spacing: 12
-            Label {
+            PlainLabel {
                 text: "ShowPsiSi"
                 font.weight: Font.DemiBold
                 color: ink
             }
-            Label {
+            PlainLabel {
                 text: "PSI / SI INSPECTOR"
                 color: muted
                 font.pixelSize: 11
-                ToolTip.visible: headerHover.hovered
-                ToolTip.text: "Program Specific Information / Service Information"
+                SafeTip {
+                    visible: headerHover.hovered
+                    text: "Program Specific Information / Service Information"
+                }
                 HoverHandler {
                     id: headerHover
                 }
@@ -626,7 +808,7 @@ ApplicationWindow {
             Item {
                 Layout.fillWidth: true
             }
-            Label {
+            PlainLabel {
                 text: (analysisState.detected_standards || "LOCAL") + " · Qt Quick"
                 color: muted
                 font.pixelSize: 11
@@ -645,7 +827,7 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.margins: 10
             spacing: 8
-            Label {
+            PlainLabel {
                 text: "SOURCE"
                 color: muted
                 font.pixelSize: 11
@@ -689,8 +871,10 @@ ApplicationWindow {
                     }
                 ]
                 Accessible.name: "Broadcast standard context for next scan"
-                ToolTip.visible: hovered
-                ToolTip.text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
+                SafeTip {
+                    visible: anchorControl.hovered
+                    text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
+                }
             }
             TextField {
                 id: extraPids
@@ -702,8 +886,10 @@ ApplicationWindow {
                 selectByMouse: true
                 enabled: !core.busy
                 Accessible.name: "Additional packet identifiers, comma separated"
-                ToolTip.visible: hovered
-                ToolTip.text: "Optional extra packet identifiers, decimal or hexadecimal, from 0 to 8191."
+                SafeTip {
+                    visible: anchorControl.hovered
+                    text: "Optional extra packet identifiers, decimal or hexadecimal, from 0 to 8191."
+                }
                 onAccepted: scan()
             }
             TextField {
@@ -718,8 +904,10 @@ ApplicationWindow {
             Action {
                 text: "Open…"
                 onClicked: fileDialog.open()
-                ToolTip.visible: hovered
-                ToolTip.text: "Open transport stream (Ctrl+O)"
+                SafeTip {
+                    visible: anchorControl.hovered
+                    text: "Open transport stream (Ctrl+O)"
+                }
             }
             Action {
                 text: core.busy ? "Scanning…" : "Analyze"
@@ -728,7 +916,7 @@ ApplicationWindow {
                 onClicked: scan()
             }
         }
-        Label {
+        PlainLabel {
             Layout.leftMargin: 12
             visible: extraPidsValue === null
             text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
@@ -747,17 +935,17 @@ ApplicationWindow {
             Layout.rightMargin: 12
             Layout.bottomMargin: 8
             spacing: 20
-            Label {
+            PlainLabel {
                 text: serviceRows.length + " services"
                 color: ink
                 font.pixelSize: 11
             }
-            Label {
+            PlainLabel {
                 text: num(analysisState.observations) + " section observations"
                 color: muted
                 font.pixelSize: 11
             }
-            Label {
+            PlainLabel {
                 text: issues.length + " issues · " + num(analysisState.crc_errors) + " cyclic redundancy check failures"
                 color: issues.length ? "#cca700" : muted
                 font.pixelSize: 11
@@ -765,7 +953,7 @@ ApplicationWindow {
             Item {
                 Layout.fillWidth: true
             }
-            Label {
+            PlainLabel {
                 text: analysisState.metrics ? Number(analysisState.metrics.scan_ms).toFixed(1) + " ms scan" : "Awaiting source"
                 color: muted
                 font.pixelSize: 11
@@ -786,7 +974,7 @@ ApplicationWindow {
                         text: "EXPLORER"
                         Layout.margins: 7
                     }
-                    Label {
+                    PlainLabel {
                         text: (analysisState.standards_context || "auto").toUpperCase() + " · tables"
                         color: ink
                         Layout.margins: 7
@@ -809,15 +997,17 @@ ApplicationWindow {
                                 filter = modelData === "All tables" ? "" : modelData;
                                 tab = "Tables";
                             }
-                            ToolTip.visible: hovered
-                            ToolTip.text: explanation(modelData)
+                            SafeTip {
+                                visible: anchorControl.hovered
+                                text: explanation(modelData)
+                            }
                         }
                     }
                     TinyLabel {
                         text: "EXTENSION"
                         Layout.margins: 7
                     }
-                    Label {
+                    PlainLabel {
                         text: analysisState.extension_id || "No extension reported"
                         color: muted
                         font.pixelSize: 11
@@ -825,7 +1015,7 @@ ApplicationWindow {
                         wrapMode: Text.WrapAnywhere
                         Layout.margins: 7
                     }
-                    Label {
+                    PlainLabel {
                         text: "Private data specifier scoped"
                         color: muted
                         font.pixelSize: 11
@@ -852,17 +1042,48 @@ ApplicationWindow {
                                 highlighted: tab === modelData
                                 focusPolicy: Qt.StrongFocus
                                 onClicked: tab = modelData
-                                ToolTip.visible: hovered
-                                ToolTip.text: explanation(modelData)
+                                SafeTip {
+                                    visible: anchorControl.hovered
+                                    text: explanation(modelData)
+                                }
                             }
                         }
                         Item {
                             Layout.fillWidth: true
                         }
                     }
-                    Label {
-                        text: (tab === "Tables" ? (filter || "All tables") : tab) + " · " + rows.length
+                    TextField {
+                        id: recordSearch
+                        objectName: "recordSearch"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 8
+                        Layout.rightMargin: 8
+                        Layout.topMargin: 8
+                        implicitHeight: 30
+                        placeholderText: "Search names, PID or SID…  Ctrl+K"
+                        placeholderTextColor: muted
+                        selectByMouse: true
+                        Accessible.name: "Search records by name, packet identifier or service identifier"
+                        Keys.onEscapePressed: clear()
+                        onAccepted: {
+                            recordList.forceActiveFocus();
+                            if (rows.length)
+                                recordList.currentIndex = 0;
+                        }
+                    }
+                    PlainLabel {
+                        text: (tab === "Tables" ? (filter || "All tables") : tab) + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
                         Layout.margins: 10
+                        color: muted
+                        font.pixelSize: 11
+                    }
+                    PlainLabel {
+                        visible: selectionHidden && !!recordSearch.text.trim()
+                        text: "Selected evidence is retained; its record is hidden by this filter."
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 10
+                        Layout.rightMargin: 10
+                        wrapMode: Text.Wrap
                         color: muted
                         font.pixelSize: 11
                     }
@@ -896,14 +1117,14 @@ ApplicationWindow {
                             }
                             contentItem: Column {
                                 spacing: 5
-                                Label {
+                                PlainLabel {
                                     text: rowTitle(modelData)
                                     width: parent.width
                                     color: modelData.valid === false ? "#f48771" : tab === "Issues" ? "#cca700" : ink
                                     elide: Text.ElideRight
                                     font.pixelSize: 12
                                 }
-                                Label {
+                                PlainLabel {
                                     text: rowSubtitle(modelData)
                                     width: parent.width
                                     color: muted
@@ -917,16 +1138,18 @@ ApplicationWindow {
                                 recordList.currentIndex = index;
                                 activate(modelData);
                             }
-                            ToolTip.visible: hovered
-                            ToolTip.text: (tab === "Services" ? "LCN: Logical channel number · SID: Service identifier · PMT: Program Map Table\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData)
+                            SafeTip {
+                                visible: anchorControl.hovered
+                                text: (tab === "Services" ? "LCN: Logical channel number · SID: Service identifier · PMT: Program Map Table\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData)
+                            }
                         }
-                        Label {
+                        PlainLabel {
                             anchors.centerIn: parent
                             width: parent.width - 40
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.busy ? "Scanning source…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.busy ? "Scanning source…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
@@ -945,33 +1168,48 @@ ApplicationWindow {
                             text: "SECTION INSPECTOR"
                             Layout.fillWidth: true
                         }
-                        Label {
+                        PlainLabel {
                             text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
                             color: detail.valid === false ? "#f48771" : muted
                             font.pixelSize: 11
                         }
                     }
-                    Label {
+                    PlainLabel {
                         text: detail.name ? detail.name + " · " + explanation(detail.name) : "Select a section"
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         color: ink
                         font.weight: Font.DemiBold
                     }
-                    Label {
+                    PlainLabel {
                         text: detail.pid !== undefined ? "Packet identifier " + hex(detail.pid) + " · version " + detail.version + " · " + detail.bytes + " B · " + num(detail.count) + " repeats" : "Select a row to view fields and source bytes"
                         color: muted
                         font.pixelSize: 11
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
-                    Label {
+                    PlainLabel {
                         text: detail.native_decode_status ? "TSDuck: " + detail.native_decode_status + (detail.native_table_complete === false ? " · section fragment" : "") : ""
                         visible: !!text
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: muted
                         font.pixelSize: 11
+                    }
+                    PlainLabel {
+                        visible: detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
+                        text: "Assembly cutoff · packet " + num(detail.native_table_at_packet)
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                        color: muted
+                        font.pixelSize: 11
+                        HoverHandler {
+                            id: cutoffHover
+                        }
+                        SafeTip {
+                            visible: cutoffHover.hovered
+                            text: detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff"
+                        }
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -989,6 +1227,31 @@ ApplicationWindow {
                         Item {
                             Layout.fillWidth: true
                         }
+                    }
+                    TextField {
+                        id: treeSearch
+                        objectName: "treeSearch"
+                        visible: inspectorView === "Structure"
+                        Layout.fillWidth: true
+                        implicitHeight: 30
+                        placeholderText: "Find a field or value…"
+                        placeholderTextColor: muted
+                        selectByMouse: true
+                        Accessible.name: "Search inspector fields and values with ancestor context"
+                        Keys.onEscapePressed: clear()
+                        onAccepted: {
+                            tree.forceActiveFocus();
+                            if (treeRows.length)
+                                tree.currentIndex = 0;
+                        }
+                    }
+                    PlainLabel {
+                        visible: inspectorView === "Structure" && !!treeSearch.text.trim()
+                        text: treeRows.length ? "Matching fields with ancestor context · clear to restore collapsed groups" : "No fields or values match this search."
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: muted
+                        font.pixelSize: 11
                     }
                     ListView {
                         id: tree
@@ -1008,7 +1271,7 @@ ApplicationWindow {
                         }
                         Keys.onLeftPressed: {
                             let r = treeRows[currentIndex];
-                            if (r && r.branch && !r.closed)
+                            if (r && r.branch && !r.closed && !treeSearch.text.trim())
                                 toggle(r.path);
                             else if (r) {
                                 for (let i = currentIndex - 1; i >= 0; --i)
@@ -1033,19 +1296,19 @@ ApplicationWindow {
                             focusPolicy: Qt.StrongFocus
                             contentItem: RowLayout {
                                 spacing: 5
-                                Label {
+                                PlainLabel {
                                     text: modelData.branch ? (modelData.closed ? "▸" : "▾") : "·"
                                     color: muted
                                     Layout.preferredWidth: 10
                                 }
-                                Label {
+                                PlainLabel {
                                     text: modelData.label
                                     color: modelData.branch ? "#4ec9b0" : ink
                                     font.pixelSize: 11
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
                                 }
-                                Label {
+                                PlainLabel {
                                     text: modelData.value
                                     color: modelData.kind === "number" ? "#b5cea8" : modelData.kind === "string" ? "#ce9178" : muted
                                     font.family: "monospace"
@@ -1059,8 +1322,10 @@ ApplicationWindow {
                                 if (modelData.branch)
                                     toggle(modelData.path);
                             }
-                            ToolTip.visible: hovered
-                            ToolTip.text: modelData.label + (modelData.value ? ": " + modelData.value : "")
+                            SafeTip {
+                                visible: anchorControl.hovered
+                                text: modelData.label + (modelData.value ? ": " + modelData.value : "")
+                            }
                         }
                     }
                     TinyLabel {
@@ -1073,6 +1338,7 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         clip: true
                         TextArea {
+                            textFormat: TextEdit.PlainText
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap
@@ -1096,16 +1362,16 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         clip: true
                         TextArea {
+                            textFormat: TextEdit.PlainText
                             text: detail.tsduck_xml || "No TSDuck XML is available for this section. Raw evidence remains in Hex."
                             readOnly: true
                             selectByMouse: true
-                            textFormat: TextEdit.PlainText
                             wrapMode: TextEdit.NoWrap
                             font.family: "monospace"
                             font.pixelSize: 11
                         }
                     }
-                    Label {
+                    PlainLabel {
                         text: detail.first_packet !== undefined ? "Evidence · packet " + num(detail.first_packet) + " · offsets refer to raw section bytes" : ""
                         color: muted
                         font.pixelSize: 11
@@ -1146,7 +1412,7 @@ ApplicationWindow {
                         text: "SECTION OCCURRENCES · RED = INVALID"
                         Layout.fillWidth: true
                     }
-                    Label {
+                    PlainLabel {
                         text: analysisState.selected_packet === null || analysisState.selected_packet === undefined ? "Latest observed state" : "Snapshot @ " + num(analysisState.selected_packet)
                         color: muted
                         font.pixelSize: 11
@@ -1171,8 +1437,10 @@ ApplicationWindow {
                             height: 20
                             color: modelData.bad ? "#f48771" : "#3794ff"
                             opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
-                            ToolTip.visible: binHover.hovered
-                            ToolTip.text: modelData.count + " sections / " + modelData.bad + " invalid"
+                            SafeTip {
+                                visible: binHover.hovered
+                                text: modelData.count + " sections / " + modelData.bad + " invalid"
+                            }
                             HoverHandler {
                                 id: binHover
                             }
@@ -1209,19 +1477,22 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
-                Label {
+                PlainLabel {
                     text: core.error || notice || "Ready · all processing stays on this machine"
                     color: core.error ? "#ffffff" : muted
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle
-                    ToolTip.visible: statusHover.hovered
-                    ToolTip.text: text
+                    SafeTip {
+                        id: statusTooltip
+                        visible: statusHover.hovered
+                        text: anchorControl.text
+                    }
                     HoverHandler {
                         id: statusHover
                     }
                 }
-                Label {
+                PlainLabel {
                     text: num(analysisState.packets) + " packets · C++ / TSDuck"
                     color: muted
                     font.pixelSize: 11
@@ -1239,7 +1510,7 @@ ApplicationWindow {
         standardButtons: Dialog.Close
         ColumnLayout {
             anchors.fill: parent
-            Label {
+            PlainLabel {
                 text: "Standard-level references. Exact clauses are not inferred."
                 color: muted
                 Layout.fillWidth: true
@@ -1256,7 +1527,7 @@ ApplicationWindow {
                     required property var modelData
                     width: ListView.view.width - 14
                     spacing: 6
-                    Label {
+                    PlainLabel {
                         text: modelData.title || modelData.id
                         textFormat: Text.PlainText
                         color: ink
@@ -1264,7 +1535,7 @@ ApplicationWindow {
                         wrapMode: Text.Wrap
                         font.bold: true
                     }
-                    Label {
+                    PlainLabel {
                         text: [modelData.version, modelData.scope, modelData.access].filter(function (v) {
                             return !!v;
                         }).join(" · ")
@@ -1274,7 +1545,7 @@ ApplicationWindow {
                         wrapMode: Text.Wrap
                         font.pixelSize: 11
                     }
-                    Label {
+                    PlainLabel {
                         text: modelData.notes || ""
                         textFormat: Text.PlainText
                         color: muted
@@ -1284,10 +1555,10 @@ ApplicationWindow {
                         visible: !!text
                     }
                     TextArea {
+                        textFormat: TextEdit.PlainText
                         text: modelData.url
                         readOnly: true
                         selectByMouse: true
-                        textFormat: TextEdit.PlainText
                         wrapMode: TextEdit.WrapAnywhere
                         width: parent.width
                         font.pixelSize: 11
@@ -1313,7 +1584,7 @@ ApplicationWindow {
         ColumnLayout {
             anchors.fill: parent
             spacing: 12
-            Label {
+            PlainLabel {
                 text: "Single-section SDT · new version and CRC generated"
                 color: muted
                 font.pixelSize: 11
@@ -1340,7 +1611,7 @@ ApplicationWindow {
                     });
                 }
             }
-            Label {
+            PlainLabel {
                 text: preview.token ? preview.before + " → " + preview.after : "Preview the edit before exporting."
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
@@ -1361,7 +1632,7 @@ ApplicationWindow {
                     core.send("export", p);
                 }
             }
-            Label {
+            PlainLabel {
                 text: "Exports a new signaling-only file in artifacts. The source is unchanged."
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap

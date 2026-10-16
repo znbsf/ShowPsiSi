@@ -1,6 +1,6 @@
 # ShowPsiSi development
 
-Read README.md, docs/STATUS.md, docs/ARCHITECTURE.md and docs/REQUIREMENTS_AUDIT.md first. For this iteration's cloud build/test route and known environment issues, read docs/CLOUD_DEVELOPMENT.md. Protocol claims belong in docs/PROTOCOL_COVERAGE.md and must distinguish SDK support from tested application behavior.
+Read README.md, docs/STATUS.md, docs/ARCHITECTURE.md and docs/REQUIREMENTS_AUDIT.md first. For this iteration's cloud build/test route and known environment issues, read docs/CLOUD_DEVELOPMENT.md and docs/NATIVE_TAURI_VALIDATION.md. Protocol claims belong in docs/PROTOCOL_COVERAGE.md and must distinguish SDK support from tested application behavior.
 
 The C++/TSDuck engine owns parsing, provenance, edit validation and export. Qt and Tauri consume the same JSONL API. Preserve evidence and explicit unknowns. Never infer private descriptor meaning from its tag alone.
 

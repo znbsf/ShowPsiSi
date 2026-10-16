@@ -33,6 +33,17 @@ class BridgeTests(unittest.TestCase):
         message=next(item['payload'] for item in batch['messages'] if item['payload'].get('id')==1)
         self.assertEqual(message['result']['name'],'ShowPsiSi')
         self.assertTrue(message['result']['tools'])
+    def test_engine_exit_event_and_startup_state(self):
+        self.assertTrue(self.invoke('environment')['backend_alive'])
+        self.bridge.proc.kill()
+        self.bridge.proc.wait(timeout=5)
+        with self.request('/__bridge/events?after=0') as response:batch=json.load(response)
+        event=next(item['payload'] for item in batch['messages'] if item['payload'].get('event')=='backend_exit')
+        self.assertIn('Restart the application',event['error'])
+        self.assertFalse(self.invoke('environment')['backend_alive'])
+        with self.assertRaises(HTTPError) as error:self.invoke('request',{'message':{'id':1,'method':'capabilities','params':{}}})
+        self.assertEqual(error.exception.code,400)
+
     def test_static_assets_and_environment(self):
         for name in ('app.js','style.css'):
             with self.request('/'+name) as response:self.assertEqual(response.read(),(ROOT/'ui/tauri/web'/name).read_bytes())

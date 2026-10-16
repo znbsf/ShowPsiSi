@@ -23,6 +23,8 @@ Coverage includes real analysis and selection, empty and missing sources, search
 keyboard record/tree navigation, disclosure controls, XML/hex evidence, preview
 invalidation, explicit ATSC/ISDB decoder contexts, invalid extra-PID inputs,
 HTTPS reference links, 1100/900/520 px responsive layouts,
+historical multi-section native assembly cutoffs across every detail view,
+real in-flight backend termination and disconnected/dead-startup handling,
 export/reparse/source preservation, no-overwrite protection, and
 loopback bridge request/path restrictions. Open/save native dialogs are explicitly
 unsupported by the browser bridge. Export correctness is tested over the actual

@@ -1,78 +1,72 @@
-# ShowPsiSi prototype status
+# ShowPsiSi status
 
-Owner: current Codex task. Updated: 2026-10-17 (Asia/Hong_Kong).
+Updated: 2026-10-16 UTC. Development branch: `feat/editor-workbench-integrity`.
+Review: https://github.com/znbsf/ShowPsiSi/pull/1 (draft; not merged or released).
 
-## Scope and acceptance
+## Current result
 
-Build two running Windows prototypes (Qt Quick and Tauri/Web) using the same native C++/TSDuck engine and request protocol. Compare visual interaction, time to first data/completion and the full owned process tree's resource usage. Provide a private-descriptor extension and service-organization rule example. Expose the same engine operations to CLI and MCP clients; edits produce previews and separate outputs.
+Qt Quick and Tauri/Web share one native C++/TSDuck engine and JSONL API. Both have
+an editor-style dark workbench, semantic PSI/SI trees, evidence views, keyboard
+navigation and search. The parser exposes its linked native table/descriptor
+registry, explicit standards/regional context, section-PID discovery and optional
+extra PIDs. An offline metadata index provides verified standard-level links.
 
-Inputs: reproducible synthetic DVB TS including changing SDT versions, private descriptors and invalid CRC, plus two official TSDuck French terrestrial TV recordings. A user-specific sample remains optional; synthetic performance is not representative-stream acceptance.
+This iteration used the assistant's **own Linux cloud computer only**. No owner
+Windows PC, television or phone was accessed. The actual native Linux Qt and
+Tauri/WebKitGTK applications have been built and exercised, including native
+edit/export. Browser validation is separately labeled and never substituted for
+a native-runtime claim.
 
-## Baseline
+## Verified current behavior
 
-Workspace initially empty, not a Git repository; no project runbook/profile or relevant memory result found. TSDuck 3.39-3956 developer library and MSVC 14.29.30133 available. WebView2 available. Qt/Rust not on PATH or in standard SDK locations.
+- 25 engine tests: source preservation, analysis failure reset, exact PAT→PMT
+  binding, snapshot inspection cutoff, regional text, extension validation,
+  export exclusivity/cleanup, framing and regular-file input guards.
+- 9 protocol/reference tests: ATSC and ISDB fixtures; DVB-S/S2/T/T2/C delivery
+  parameters; private PDS isolation, nondefault PID discovery and unknown bytes.
+- 4 HTTP bridge tests and 10 live Chromium/native-engine tests, including backend
+  termination, keyboard/tree interaction, historical snapshots and responsive layout.
+- 4 compiled native Qt tests: real workflows, search, literal untrusted text and
+  tooltips, no remote image fetches, and failure-state cleanup.
+- 2 Rust native-shell allowlist tests. Native GTK source selection, save/export,
+  independent readback, overwrite-warning cancellation and backend-death flows
+  were also checked in the actual application.
+- Both workbenches carry the selected packet cutoff into inspection. A historical
+  view cannot silently assemble a later sibling section.
 
-## Validation plan
+Total automated test cases above: **54**. See [cloud validation](VALIDATION_CLOUD.md),
+[native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
+These are local cloud results; check the PR's latest CI commit separately.
 
-| Layer | Required observation | Status |
-| --- | --- | --- |
-| Native engine | Actual TSDuck callbacks, repeat/version/CRC provenance, matching exports | passed: 10 integration tests; 12 real services match official reference |
-| Extensions | PDS-scoped descriptor decode and organization rule without source change | passed: scope mismatch and alternative sort configuration tested |
-| Agent interface | Discover schemas, query evidence, preview edit, export via CLI/MCP | passed: MCP discovery -> inspect -> Chinese rename -> export -> reparse |
-| Qt Quick | Real compiled application, first-data/completion events, screenshot and interactions | passed: own-window mouse interaction checks; real and synthetic screenshots |
-| Tauri | Real compiled application using WebView2 and same backend, screenshot and interactions | passed: actual WebView2 controls via Playwright, no page errors |
-| Comparison | Release builds, same sample/backend/settings, sequential trials and child-process accounting | passed: 3 alternating trials of final corrected binaries; full raw records in artifacts/benchmark/results.json |
+The SDK currently registers **43 table decoders / 306 descriptor decoders**.
+The 12,490-byte standards index associates 191 descriptor names and 26 table names,
+without bundling PDFs. These counts are not conformance percentages. See
+[protocol coverage](PROTOCOL_COVERAGE.md) for measured, SDK-only and unknown cases.
 
-## Experiment boundaries
+## Remaining boundaries
 
-Dependency downloads and builds are local to this workspace. No global proxy/tool configuration, device operations, or service installation. Initial dependency/build probe budget: one direct attempt plus at most two evidence-driven retries per failing route. Benchmark initially three alternating trials per UI; stop and record invalid environment on rendering failure, parser mismatch, abnormal system contention, or user pause. No unrelated process is stopped. Owned prototype/helper processes must be tracked and stopped after automated measurements.
+- New Windows WebView2 and macOS builds, installers and actual external-browser
+  launching have not been validated in this iteration. Original Windows evidence
+  below does not validate later changes.
+- No RF demodulation, tuner control, complete DTMB-specific signaling guarantee or
+  ATSC 3.0 IP/ROUTE/MMT support.
+- No exhaustive standards conformance, arbitrary descriptor/table edit/remux,
+  live UDP/SRT input, persistent large-file index or production EPG time grid.
+- Exact field-to-byte selection highlighting and persistent layout customization
+  remain future work. Unknown private syntax is retained, never invented.
+- Export output+manifest use exclusive creation and failure cleanup, but are not
+  a crash-atomic transaction spanning two files.
 
-## Outstanding
+## Original Windows prototype evidence
 
-Both prototypes are built locally and runnable with `Launch Qt.cmd` / `Launch Tauri.cmd`. Source, schemas, examples and local SDK bootstrap/build scripts are present. The private source repository is [znbsf/ShowPsiSi](https://github.com/znbsf/ShowPsiSi). A fresh clone requires dependency setup, compilation and fixture generation as described in README. No PR, global service or model integration created.
+The initial `a79ce16` prototype compared Qt Quick 6.7.3 and Tauri/WebView2 using
+TSDuck 3.39-3956. It exercised a generated DVB stream and official French UHF22/UHF33
+recordings, MCP edit/export/readback and three alternating benchmark trials.
+See [BENCHMARK.md](BENCHMARK.md) for those exact binary identities and limits.
+Those historical resource measurements must not be presented as measurements of
+the new workbench. Historical SDK locations and experiment retry budgets do not
+constrain this cloud iteration.
 
-Source distribution includes the two real-stream UI screenshots in `docs/images/` and the benchmark report. SDKs, build outputs, WebView profiles, local test artifacts, generated fixtures and downloaded TS binaries remain outside Git. The `artifacts/` references below describe local validation records, not files included in the repository.
-
-Official samples downloaded from TSDuck: UHF22 (183,939,388 bytes, 12 services) and UHF33 (83,464,668 bytes, 1 service), provenance in `samples/real/provenance.json`. Synthetic fixture has known SDT changes, scoped private descriptors and injected faults.
-
-Independent `tstables` XML readback confirms both GUI exports renamed service 103, incremented SDT to v4, and retained valid CRC. Source remains unchanged. Evidence: `artifacts/export-readback.json`, `artifacts/engine-tests.log`, UI test JSON/screenshots.
-
-No UI winner selected by the user. Current measurements favor Qt for private memory and Tauri for startup time; both load the real sample in roughly 0.2 seconds after Analyze. Read `docs/BENCHMARK.md` for the final build identities, exact metrics and limits.
-
-Human visual preference and real receiver/playback acceptance are pending. Windows only has been built/tested. Private compiled DLL plugins, comprehensive standards validation, arbitrary table editing, full remux with media/PCR, streaming input and a production EPG time grid remain beyond the minimal prototype. These are documented in README; do not treat this baseline as their completion.
-
-All automated helper/prototype process trees are explicitly stopped after each check. No persistent monitor or background service was started. Resume from the existing source and evidence instead of repeating dependency downloads or the earlier UI fixes.
-
-## Cloud workbench iteration — 2026-10-16 UTC
-
-This section supersedes the initial prototype's UI and integrity status, not its
-historical Windows benchmark numbers. Development used the assistant's own Linux
-cloud workspace only. No owner PC, phone or television was accessed.
-
-Delivered: editor-style Qt/Web interfaces, semantic PSI/SI trees and evidence tabs,
-standard/regional context selection, optional section PIDs and discovery,
-registered native decoder inventory, offline standard-reference metadata, and
-analysis/provenance/extension/export-integrity repairs.
-
-Verification at this checkpoint:
-
-- 22 engine integration tests: passed, including the official recorded UHF22 sample.
-- 7 protocol/reference tests: passed (ATSC, ISDB, private namespace and raw fallback).
-- 3 loopback HTTP bridge tests: passed.
-- 8 Chromium + real native engine UI tests: passed, including 1100/900/520px layouts.
-- 2 compiled Qt + real native engine tests: passed (automatic and explicit DVB).
-- Actual screenshots inspected after visual review and corrections; see `docs/images/`.
-- Both shared C++ engine and Qt compile on Linux. Browser tests do not validate the
-  native Tauri binary, WebView2, native save dialogs or external URL opening.
-- New Windows and macOS builds, hardware-rendered performance and installers have
-  not been verified. The original benchmark is not a measurement of this revision.
-
-The standards index is 12,490 bytes of metadata, not PDFs. SDK inventory is 43
-registered tables / 306 descriptors; references associate 191 descriptor names
-and 26 table names at standard level. Neither count is a conformance percentage.
-
-Known next improvements: Qt record/tree-search parity; reliable field-to-byte
-range highlighting; native Tauri/platform regression. Large-file persistent
-indexing, live network/tuner input, arbitrary edit/remux, and comprehensive
-standard conformance remain explicitly outside this validated file-inspector
-checkpoint. Do not silently relabel those as implemented.
+SDKs, binaries, downloaded streams, local profiles and transient evidence remain
+ignored. Source screenshots and reproducible tests are committed. Read
+[CLOUD_DEVELOPMENT.md](CLOUD_DEVELOPMENT.md) before repeating environment diagnosis.

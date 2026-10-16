@@ -50,3 +50,7 @@ Independently opened the regenerated `docs/images/qt-workbench.png`, `docs/image
 - Web's expanded service descriptor presents technical metadata and raw bytes ahead of later sibling descriptors. This is accurate, but deeper trees could benefit from payload-first ordering or collapsible descriptor metadata. The current vertical scroll is legitimate and not horizontal clipping.
 - Field-to-byte highlighting, persistent layout customization and user visual acceptance remain unverified or unimplemented; do not describe them as delivered.
 - The original Qt baseline image path has now been overwritten with the fresh render. The earlier findings above describe the image inspected at 20:18 UTC, not the current file contents. The web baseline remains separately identified above.
+
+## Follow-up parity and safety loop
+
+Qt record and ancestry-preserving field/value search have now been implemented, including Ctrl+K, Escape and retained selection. Native tests also check literal hostile stream text, plain tooltip rendering and no image fetches. Both workbenches pass the selected historical cutoff into inspection; the native tree cannot silently use later sibling sections. Browser/native-shell disconnection handling disables unavailable backend actions rather than leaving an endless loading state. These extend, rather than retroactively alter, the visual checkpoint above.

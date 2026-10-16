@@ -74,6 +74,8 @@ class Bridge:
                 self.messages.append({'seq':self.seq, 'payload':value})
                 self.condition.notify_all()
         with self.condition:
+            self.seq += 1
+            self.messages.append({'seq':self.seq,'payload':{'event':'backend_exit','error':'Native backend stopped. Restart the application.'}})
             self.closed = True
             self.condition.notify_all()
 
@@ -82,7 +84,7 @@ class Bridge:
 
     def invoke(self, command, args):
         if command == 'environment':
-            return dict(root=str(self.output), sample=self.sample, auto='', delay='0', runtime='cloud-browser', driver='Cloud browser / native JSONL', script='')
+            return dict(root=str(self.output), sample=self.sample, auto='', delay='0', runtime='cloud-browser', backend_alive=not self.closed and self.proc.poll() is None, driver='Cloud browser / native JSONL', script='')
         if command == 'milestone':
             with self.condition:
                 self.milestones.append({'event':str(args.get('event',''))[:100], 'time':time.monotonic()})
@@ -100,7 +102,7 @@ class Bridge:
             path = Path(params.get('path','')).resolve()
             if not path.is_relative_to(self.output / 'artifacts'): raise ValueError('Browser exports must stay inside the validation artifacts directory')
         with self.write_lock:
-            if self.closed: raise ValueError('Native engine exited: ' + '\n'.join(self.stderr))
+            if self.closed or self.proc.poll() is not None: raise ValueError('Native engine exited: ' + '\n'.join(self.stderr))
             self.proc.stdin.write(json.dumps(message, ensure_ascii=False)+'\n')
             self.proc.stdin.flush()
         return None

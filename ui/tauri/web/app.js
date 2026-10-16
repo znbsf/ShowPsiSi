@@ -59,6 +59,8 @@ const fieldHelp = {
   private_data_specifier:
     "Private Data Specifier (32 bits): selects private descriptor scope",
   descriptor_tag: "Descriptor identifier (8 bits)",
+  native_table_at_packet:
+    "Latest packet eligible for native multi-section table assembly; later observations are excluded",
   section_byte_offset:
     "Byte offset within this section, not the transport stream file",
   current: "Whether this table applies now rather than next",
@@ -86,6 +88,7 @@ let selected = "",
   queryEpoch = 0,
   activeAnalyze = null;
 let aggregateDiagnostic = null;
+let backendFailure = "";
 let firstPaint = false,
   completePaint = false,
   preview = {},
@@ -113,16 +116,77 @@ $("#app").innerHTML = `
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only transport stream and manifest, without media or PCR.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><div class="actions"><button class="btn" id="export" disabled>Export SI-only TS + manifest</button><button class="btn" id="close-edit">Close</button></div></dialog>
 <dialog id="api-dialog" aria-labelledby="api-title"><h2 id="api-title">Native agent API</h2><pre id="api-text"></pre><button class="btn" id="close-api">Close</button></dialog>`;
 function notice(text, error = false) {
+  if (backendFailure) {
+    text = backendFailure;
+    error = true;
+  }
   $("#notice").textContent = text;
   $("#status-dot").classList.toggle("error", error);
   $("#notice").classList.toggle("error", error);
 }
+function disableBackendActions() {
+  if (!backendFailure) return;
+  document
+    .querySelectorAll(
+      "#scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,[data-history]",
+    )
+    .forEach((element) => {
+      element.disabled = true;
+    });
+  $("#runtime").textContent = "BACKEND DISCONNECTED";
+  $("#snapshot-state").textContent = "DISCONNECTED · CACHED DATA ONLY";
+}
+function disconnectBackend(reason) {
+  if (backendFailure) return;
+  const exportPending = [...pending.values()].some(
+    (job) => job.method === "export",
+  );
+  backendFailure =
+    String(reason || "Native backend stopped. Restart the application.") +
+    (exportPending
+      ? " An in-flight export may have completed; check its destination before retrying after restart."
+      : "");
+  busy = false;
+  loadingDetail = false;
+  activeAnalyze = null;
+  ++inspectEpoch;
+  ++queryEpoch;
+  for (const job of pending.values()) {
+    clearTimeout(job.timer);
+    job.reject(new Error(backendFailure));
+  }
+  pending.clear();
+  preview = {};
+  if (!detail.name) detailError = backendFailure;
+  $("#diff").textContent = backendFailure;
+  render();
+  notice(backendFailure, true);
+}
 function call(method, params = {}) {
+  if (backendFailure) return Promise.reject(new Error(backendFailure));
   const id = ++seq;
   if (method === "analyze") activeAnalyze = id;
   return new Promise((resolve, reject) => {
-    pending.set(id, { method, resolve, reject });
+    // Only idle read requests expire. Analysis may be long-running, and write
+    // timeouts would leave ambiguous outcomes. Backend exit rejects every job.
+    const canTimeout =
+      ["inspect", "query", "capabilities"].includes(method) &&
+      !busy &&
+      ![...pending.values()].some((job) => job.method === "analyze");
+    const timer = canTimeout
+      ? setTimeout(() => {
+          if (!pending.delete(id)) return;
+          reject(
+            new Error(
+              method +
+                " request timed out after 30 seconds. No retry was attempted.",
+            ),
+          );
+        }, 30000)
+      : null;
+    pending.set(id, { method, resolve, reject, timer });
     invoke("request", { message: { id, method, params } }).catch((error) => {
+      clearTimeout(timer);
       pending.delete(id);
       reject(error);
     });
@@ -140,7 +204,7 @@ function selectionReset() {
   openNodes.clear();
 }
 async function scan() {
-  if (busy) return;
+  if (busy || backendFailure) return;
   const path = $("#source").value.trim();
   if (!path) {
     notice("Choose a local transport stream first.", true);
@@ -205,12 +269,14 @@ async function scan() {
   }
 }
 async function inspect(id, sid = -1, key = "") {
+  if (backendFailure) return;
   if (!id) {
     notice("Aggregate diagnostic: packet locations are not indexed.");
     return;
   }
   aggregateDiagnostic = null;
   const epoch = ++inspectEpoch;
+  const atPacket = data.selected_packet;
   selected = id;
   selectedService = sid;
   selectedKey = key || id;
@@ -222,7 +288,10 @@ async function inspect(id, sid = -1, key = "") {
   renderInspector();
   renderList();
   try {
-    const result = await call("inspect", { id });
+    const result = await call("inspect", {
+      id,
+      ...(atPacket != null ? { at_packet: atPacket } : {}),
+    });
     if (epoch !== inspectEpoch) return;
     detail = result;
     openNodes = new Set([
@@ -262,7 +331,7 @@ function defaultInspect() {
   else if (data.tables?.[0]) inspect(data.tables[0].id);
 }
 async function snapshot(packet, id) {
-  if (busy) return;
+  if (busy || backendFailure) return;
   const epoch = ++queryEpoch;
   selectionReset();
   renderInspector();
@@ -341,8 +410,8 @@ function render() {
         `<div class="stat"><span>${label}</span><strong>${value}</strong><small>${sub}</small></div>`,
     )
     .join("");
-  $("#scan").disabled = busy || !native;
-  $("#browse").disabled = busy || !native;
+  $("#scan").disabled = busy || !native || !!backendFailure;
+  $("#browse").disabled = busy || !native || !!backendFailure;
   $("#scan").textContent = busy ? "Analyzing…" : "Analyze";
   $("#source").disabled = busy;
   $("#standards").disabled = busy;
@@ -418,6 +487,7 @@ function render() {
   renderList();
   renderInspector();
   renderTimeline();
+  disableBackendActions();
   if (data.observations && !firstPaint) {
     firstPaint = true;
     requestAnimationFrame(() =>
@@ -709,6 +779,7 @@ function sectionTree() {
     "standards_context",
     "native_decode_status",
     "native_table_complete",
+    "native_table_at_packet",
   ];
   const header = headerKeys
     .filter((k) => detail[k] !== undefined)
@@ -795,6 +866,8 @@ function sectionTree() {
       last_packet: detail.last_packet,
       first_file_offset: detail.first_file_offset,
       offset_note: detail.offset_note,
+      native_table_at_packet: detail.native_table_at_packet,
+      inspection_scope: detail.inspection_scope,
       occurrence_count: detail.occurrences?.length,
       ...(detail.occurrences?.length
         ? {
@@ -998,13 +1071,13 @@ function renderInspector() {
     return;
   }
   if (loadingDetail || detailError || !detail.name) {
-    panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR</div><div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
+    panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR</div><div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError && !backendFailure ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
     $("#retry-inspect")?.addEventListener("click", () =>
       inspect(selected, selectedService, selectedKey),
     );
     return;
   }
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div><div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(detail.name)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? "TSDuck XML" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : "TSDuck XML"}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy ? "" : "disabled"}>Rename service…</button></div>`;
+  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div><div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(detail.name)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? "TSDuck XML" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : "TSDuck XML"}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure ? "" : "disabled"}>Rename service…</button></div>`;
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>
       (el.onclick = () => {
@@ -1067,13 +1140,13 @@ function renderInspector() {
 }
 function renderTimeline() {
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="latest" ${busy || !data.source ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
+    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="latest" ${busy || backendFailure || !data.source ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
       data.history || []
     )
       .slice(historyPage * 40, (historyPage + 1) * 40)
       .map(
         (h, i) =>
-          `<button class="history-point" data-history="${historyPage * 40 + i}" ${busy ? "disabled" : ""}>${esc(h.label)} <span>@ ${num(h.first_packet)}</span></button>`,
+          `<button class="history-point" data-history="${historyPage * 40 + i}" ${busy || backendFailure ? "disabled" : ""}>${esc(h.label)} <span>@ ${num(h.first_packet)}</span></button>`,
       )
       .join(
         "",
@@ -1098,6 +1171,7 @@ function renderTimeline() {
     );
 }
 function openEdit() {
+  if (backendFailure) return;
   preview = {};
   editTarget = {
     id: selected,
@@ -1130,6 +1204,7 @@ function invalidatePreview() {
 }
 $("#rename").oninput = invalidatePreview;
 $("#preview").onclick = async () => {
+  if (backendFailure || !editTarget) return;
   const target = editTarget;
   const name = $("#rename").value;
   const sid = Number($("#edit-service").value);
@@ -1150,15 +1225,15 @@ $("#preview").onclick = async () => {
     preview = result;
     $("#diff").textContent =
       `${result.before} → ${result.after} · version ${result.old_version} → ${result.new_version}`;
-    $("#export").disabled = false;
+    $("#export").disabled = !!backendFailure;
   } catch (error) {
     if (target === editTarget) $("#diff").textContent = String(error);
   } finally {
-    $("#preview").disabled = false;
+    $("#preview").disabled = !!backendFailure;
   }
 };
 $("#export").onclick = async () => {
-  if (!preview.token || !editTarget) return;
+  if (backendFailure || !preview.token || !editTarget) return;
   const target = editTarget,
     token = preview.token;
   $("#export").disabled = true;
@@ -1170,7 +1245,7 @@ $("#export").onclick = async () => {
       },
     });
     if (!path) {
-      if (target === editTarget) $("#export").disabled = false;
+      if (target === editTarget) $("#export").disabled = !!backendFailure;
       return;
     }
     if (target !== editTarget) return;
@@ -1183,7 +1258,7 @@ $("#export").onclick = async () => {
     $("#edit-dialog").close();
   } catch (error) {
     $("#diff").textContent = String(error);
-    $("#export").disabled = false;
+    $("#export").disabled = !!backendFailure;
   }
 };
 $("#scan").onclick = scan;
@@ -1191,6 +1266,7 @@ $("#source").onkeydown = (e) => {
   if (e.key === "Enter") scan();
 };
 $("#browse").onclick = async () => {
+  if (backendFailure) return;
   try {
     const path = await invoke("plugin:dialog|open", {
       options: {
@@ -1284,15 +1360,18 @@ splitter("#split-right", "--inspector-width", 300, 780, -1);
 async function boot() {
   render();
   if (!native?.event?.listen) {
-    $("#runtime").textContent = "BACKEND UNAVAILABLE";
-    notice(
+    disconnectBackend(
       "Native backend unavailable. Launch the Tauri application to analyze real streams.",
-      true,
     );
     return;
   }
   await native.event.listen("core-message", (event) => {
     const msg = event.payload;
+    if (msg.event === "backend_exit") {
+      disconnectBackend(msg.error);
+      return;
+    }
+    if (backendFailure) return;
     if (msg.event) {
       if (busy && msg.request_id === activeAnalyze && msg.state) {
         data = msg.state;
@@ -1303,10 +1382,14 @@ async function boot() {
     const job = pending.get(msg.id);
     if (!job) return;
     pending.delete(msg.id);
+    clearTimeout(job.timer);
     if (msg.error) job.reject(new Error(msg.error.message));
     else job.resolve(msg.result);
   });
   env = await invoke("environment");
+  if (env.backend_alive === false)
+    disconnectBackend("Native backend stopped. Restart the application.");
+  if (backendFailure) return;
   $("#source").value = env.sample || "";
   $("#runtime").textContent =
     env.runtime === "cloud-browser"
@@ -1324,6 +1407,5 @@ window.showpsisi = {
   getDetail: () => detail,
 };
 boot().catch((error) => {
-  $("#runtime").textContent = "CONNECTION FAILED";
-  notice(String(error), true);
+  disconnectBackend("Backend connection failed: " + String(error));
 });

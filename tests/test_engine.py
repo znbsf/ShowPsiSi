@@ -194,6 +194,32 @@ class EngineTests(unittest.TestCase):
                 detail=self.core.call('inspect',{'id':state['tables'][0]['id']})
                 self.assertIn(hour,detail['fields']['utc_time']);self.assertIn(hour,detail['native_table']['attributes']['utc_time']);self.assertIn(charset,state['text_charset'])
 
+    def test_regional_non_ascii_sdt_native_tree_matches_flat_services(self):
+        # Serialized with pinned TSDuck 3.39-3956 tstabcomp --japan / --brazil:
+        # <SDT transport_stream_id="1" original_network_id="2"><service service_id="101">
+        # <service_descriptor service_type="1" service_provider_name="..." service_name="..."/>
+        # </service></SDT>. Retain binary fixtures so normal CI needs no compiler utility.
+        fixtures=[
+            ('isdb-japan','日本テレビ','東京','42f0240001c100000002ff0065fc001348110104456c357e0a467c4b5c2546256c25531f7d86ed'),
+            ('isdb-brazil','São Paulo','Televisão','42f0280001c100000002ff0065fc00174815010954656c65766973e36f0953e36f205061756c6f97069f86'),
+        ]
+        import xml.etree.ElementTree as ET
+        for profile,name,provider,encoded in fixtures:
+            with self.subTest(profile=profile):
+                raw=bytes.fromhex(encoded);path=self.output(profile+'.ts')
+                Path(path).write_bytes(bytes([0x47,0x40,0x11,0x10,0])+raw+b'\xff'*(183-len(raw)))
+                state=self.core.call('analyze',{'path':path,'standards':profile});service=state['services'][0]
+                self.assertEqual((service['name'],service['provider']),(name,provider))
+                detail=self.core.call('inspect',{'id':service['source_id']})
+                native_service=next(node for node in detail['native_table']['children'] if node['name']=='service')
+                native_descriptor=next(node for node in native_service['children'] if node['name']=='service_descriptor')
+                self.assertEqual(native_descriptor['attributes']['service_name'],name)
+                self.assertEqual(native_descriptor['attributes']['service_provider_name'],provider)
+                direct=next(d for d in detail['descriptors'] if d['tag']==0x48)['native']
+                self.assertEqual(direct['attributes'],native_descriptor['attributes'])
+                xml_descriptor=ET.fromstring(detail['tsduck_xml']).find('./SDT/service/service_descriptor')
+                self.assertEqual(xml_descriptor.attrib['service_name'],name);self.assertEqual(xml_descriptor.attrib['service_provider_name'],provider)
+
     def test_native_catalog_tree_and_verified_references(self):
         catalog=self.core.call('capabilities')['native_registry']
         self.assertEqual(catalog['table_count'],len(catalog['table_names']));self.assertEqual(catalog['descriptor_count'],len(catalog['descriptor_names']))
@@ -245,6 +271,46 @@ class EngineTests(unittest.TestCase):
                 path=self.output(str(size)+'.ts');Path(path).write_bytes(framed*6)
                 result=self.core.call('analyze',{'path':path});self.assertEqual(result['packet_size'],size);self.assertEqual(result['packets'],6)
                 details=self.core.call('inspect',{'id':result['tables'][0]['id']});self.assertEqual(details['first_file_offset'],4 if size==192 else 0)
+
+    def test_historical_inspection_never_assembles_future_siblings(self):
+        from make_fixture import section,descriptor,word,crc
+        def sdt(number,name):
+            desc=descriptor(0x48,b'\x01\x00'+bytes([len(name)])+name)
+            raw=bytearray(section(0x42,1,1,word(2)+b'\xff'+word(100+number)+b'\xff'+word(0x8000+len(desc))+desc))
+            raw[6]=number;raw[7]=1;raw[-4:]=crc(raw[:-4]).to_bytes(4,'big');return bytes(raw)
+        parts=[sdt(0,b'A'),sdt(1,b'Old B'),sdt(0,b'A'),sdt(1,b'New B'),sdt(0,b'A')]
+        path=self.output('historical-inspection.ts')
+        Path(path).write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i,raw in enumerate(parts)))
+        state=self.core.call('analyze',{'path':path});old=self.core.call('query',{'at_packet':1})
+        aid=next(s['source_id'] for s in old['services'] if s['name']=='A')
+        def names(detail):return [node['children'][0]['attributes']['service_name'] for node in detail['native_table']['children'] if node['name']=='service']
+        latest=self.core.call('inspect',{'id':aid});self.assertEqual(names(latest),['A','New B']);self.assertEqual(latest['native_table_at_packet'],4)
+        historical=self.core.call('inspect',{'id':aid,'at_packet':1})
+        self.assertEqual(names(historical),['A','Old B']);self.assertEqual(historical['native_table_at_packet'],1)
+        self.assertEqual(historical['occurrences'],[0]);self.assertEqual(historical['count'],1);self.assertEqual(historical['last_packet'],0)
+        incomplete=self.core.call('inspect',{'id':aid,'at_packet':0});self.assertFalse(incomplete['native_table_complete']);self.assertNotIn('native_table',incomplete)
+        future_id=next(s['source_id'] for s in state['services'] if s['name']=='New B')
+        with self.assertRaisesRegex(RuntimeError,'not observed'):self.core.call('inspect',{'id':future_id,'at_packet':1})
+        with self.assertRaisesRegex(RuntimeError,'Below minimum'):self.core.call('inspect',{'id':aid,'at_packet':-1})
+        old_bid=next(s['source_id'] for s in old['services'] if s['name']=='Old B')
+        superseded=self.core.call('inspect',{'id':old_bid,'at_packet':4})
+        self.assertFalse(superseded['native_table_complete']);self.assertIn('superseded',superseded['native_decode_status'])
+
+    def test_nonregular_source_is_rejected_without_blocking(self):
+        import os
+        with self.assertRaisesRegex(RuntimeError,'regular local file'):
+            self.core.call('analyze',{'path':self.tmp.name})
+        state=self.core.call('query');self.assertFalse(state['complete']);self.assertEqual(state['tables'],[])
+        if os.name!='nt' and hasattr(os,'mkfifo'):
+            fifo=self.output('input.pipe');os.mkfifo(fifo)
+            requests=[{'id':1,'method':'analyze','params':{'path':fifo}}, {'id':2,'method':'query','params':{}}]
+            # The process must reject the FIFO before opening it; timeout bounds a regression.
+            run=subprocess.run([self.core.proc.args[0],'--root',str(ROOT)],input=''.join(json.dumps(r)+'\n' for r in requests),capture_output=True,text=True,encoding='utf-8',timeout=5,check=True)
+            responses={r['id']:r for r in map(json.loads,run.stdout.splitlines()) if 'id' in r}
+            self.assertIn('regular local file',responses[1]['error']['message'])
+            self.assertFalse(responses[2]['result']['complete']);self.assertEqual(responses[2]['result']['tables'],[])
+            link=Path(self.output('普通 链接.ts'));link.symlink_to(ROOT/'samples/generated/lab.ts')
+            result=self.core.call('analyze',{'path':str(link)});self.assertTrue(result['complete']);self.assertEqual(len(result['services']),6)
 
     def test_machine_argument_validation(self):
         with self.assertRaisesRegex(RuntimeError,'Below minimum'):self.core.call('query',{'at_packet':-1})

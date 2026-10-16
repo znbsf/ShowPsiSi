@@ -326,7 +326,12 @@ public:
         if(standardsContext=="isdb-brazil"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setTimeReference(u"UTC-3");}
         source.clear();packets=totalBytes=observations=crcErrors=0;demuxStatus=J::object();complete=false;
         firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;bitrate=args.value("bitrate",0.0);began=Clock::now();requestId=rid;
-        source=fs::absolute(fs::u8path(args.at("path").get<std::string>()));std::ifstream in(source,std::ios::binary);
+        source=fs::absolute(fs::u8path(args.at("path").get<std::string>()));
+        // This API scans bounded local files, not blocking pipes or device streams.
+        // status follows symlinks, so ordinary links to regular files remain valid.
+        std::error_code sourceError;
+        if(!fs::is_regular_file(source,sourceError))throw std::runtime_error("Source must be a regular local file");
+        std::ifstream in(source,std::ios::binary);
         if(!in)throw std::runtime_error("Cannot read source file");totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
         std::vector<uint8_t> probe(5*204);in.read(reinterpret_cast<char*>(probe.data()),probe.size());size_t got=size_t(in.gcount());in.clear();in.seekg(0);
         bool framing=false;
@@ -353,17 +358,24 @@ public:
     }
     J inspect(const J& args) {
         std::string id=args.at("id");if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
-        J out=summary(r);out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
-        out["occurrences"]=r.positions;out["occurrence_end_packets"]=r.ends;out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
+        const uint64_t cutoff=args.value("at_packet",r.lastPacket);
+        auto observed=std::upper_bound(r.ends.begin(),r.ends.end(),cutoff);
+        if(observed==r.ends.begin())throw std::runtime_error("Section was not observed at or before selected packet");
+        const size_t occurrenceCount=size_t(observed-r.ends.begin());
+        J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;
+        out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"observed matching-version sections at or before selected packet":"observed matching-version sections at last occurrence of inspected section"}};
+        out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
+        out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
         if(r.valid){
             // Assemble only one observed version/current group at this occurrence.
             std::map<unsigned,const Record*> group;
             for(const auto& candidate:records)if(candidate.valid&&candidate.pid==r.pid&&candidate.tid==r.tid&&candidate.ext==r.ext&&candidate.version==r.version&&candidate.current==r.current&&candidate.last==r.last){
-                auto end=std::upper_bound(candidate.ends.begin(),candidate.ends.end(),r.lastPacket);if(end==candidate.ends.begin())continue;
-                auto found=group.find(candidate.number);if(found==group.end()||*(end-1)>=*std::prev(std::upper_bound(found->second->ends.begin(),found->second->ends.end(),r.lastPacket)))group[candidate.number]=&candidate;
+                auto end=std::upper_bound(candidate.ends.begin(),candidate.ends.end(),cutoff);if(end==candidate.ends.begin())continue;
+                auto found=group.find(candidate.number);if(found==group.end()||*(end-1)>=*std::prev(std::upper_bound(found->second->ends.begin(),found->second->ends.end(),cutoff)))group[candidate.number]=&candidate;
             }
             ts::BinaryTable table;bool full=group.size()==r.last+1;
+            const bool superseded=group.count(r.number)&&group.at(r.number)->id!=r.id;if(superseded)full=false;
             for(unsigned i=0;i<=r.last;i++){auto found=group.find(i);if(found==group.end()){full=false;break;}const auto& part=*found->second;table.addNewSection(part.raw.data(),part.raw.size(),ts::PID(part.pid),ts::CRC32::CHECK);}
             ts::DuckContext tableDuck(&NULLREP);tableDuck.resetStandards(duck.standards());tableDuck.setDefaultCharsetIn(duck.charsetIn());tableDuck.setDefaultCharsetOut(duck.charsetOut());tableDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
             ts::xml::Document document;auto* parent=document.initialize(u"tsduck");
@@ -371,7 +383,7 @@ public:
                 auto* native=table.toXML(tableDuck,parent);out["native_table_complete"]=true;
                 if(native){out["native_table"]=xmlTree(native);const auto name=native->name();out["native_decode_status"]=(name==u"generic_long_table"||name==u"generic_short_table")?"generic raw fallback":"native TSDuck decoder";}
                 out["tsduck_xml"]=document.toString().toUTF8();
-            }else{ts::SectionFile file(duck);file.add(std::make_shared<ts::Section>(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK));out["tsduck_xml"]=file.toXML().toUTF8();out["native_decode_status"]="incomplete table; raw section retained";}
+            }else{ts::SectionFile file(duck);file.add(std::make_shared<ts::Section>(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK));out["tsduck_xml"]=file.toXML().toUTF8();out["native_decode_status"]=superseded?"inspected section superseded at selected packet; raw section retained":"incomplete table; raw section retained";}
         }
         out["references"]=J::array();out["reference_warnings"]=J::array();
         J sources=J::array();

@@ -2,7 +2,7 @@
 
 **Qt Quick 6.7.3** 与 **Tauri 2 / WebView2** 两套工作台，共用 **C++ / TSDuck 3.39-3956** 引擎。用于查看 MPEG-TS 的 PSI/SI 表、描述符、历史证据和安全编辑导出。它不是射频解调器，也不等于完整标准一致性认证工具。
 
-本轮在独立 Linux 云环境开发：原生引擎与 Qt 已构建并测试，Web 工作台用 Chromium 连接真实引擎验证。原有 Windows 运行证据保留；新代码尚需 Windows 原生 Tauri／文件对话框回归。
+本轮在独立 Linux 云环境开发：原生引擎、Qt 和 Linux Tauri 已构建并运行；Chromium 工作台也连接真实引擎验证。Linux 原生打开／保存对话框、编辑导出和回读已验证。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
 
 ## 编辑器式工作台
 
@@ -25,6 +25,12 @@ Qt 原生软件渲染，合成码流：
 Web 工作台，Chromium + 真实原生引擎；不是原生 Tauri 截图：
 
 ![Web 编辑器式工作台](docs/images/web-workbench.png)
+
+### Linux 原生 Tauri
+
+已使用真实文件选择、改名预览、保存和回读验证，详见 [原生验证记录](docs/NATIVE_TAURI_VALIDATION.md)。
+
+![Linux 原生 Tauri 工作台](docs/images/tauri-linux-workbench.png)
 
 ## 直接运行
 
@@ -89,7 +95,7 @@ SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-taur
 
 浏览器 UI 检查使用 Playwright，仅连接测试进程自己的 WebView2 CDP 端口。正式性能测试关闭 CDP。Qt 检查通过自己窗口内的鼠标事件操作实际控件。自动检查完成后清理并确认自己启动的进程树退出。
 
-依赖定位脚本目前按本机路径配置；新机器需调整。Tauri 的 Cargo.lock 已锁定版本；C++ 使用 vendored nlohmann/json 3.11.3。Linux 原生引擎、Qt 和浏览器工作台已有本轮验证，Linux 原生 Tauri 与 macOS 尚未验证，不能称为所有平台完成。
+依赖定位脚本目前按本机路径配置；新机器需调整。Tauri 的 Cargo.lock 已锁定版本；C++ 使用 vendored nlohmann/json 3.11.3。Linux 原生引擎、Qt、Tauri／WebKitGTK 和浏览器工作台已有本轮验证；新 Windows 与 macOS 尚未验证，不能称为所有平台完成。
 
 ## 样流
 

@@ -12,6 +12,8 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QMouseEvent>
+#include <QKeyEvent>
+#include <QKeySequence>
 #include <QQuickItem>
 #include <QFileInfo>
 #include <QJsonParseError>
@@ -77,7 +79,11 @@ public:
         if(!completeFrame&&m_state.value("complete").toBool()){completeFrame=true;mark("complete_paint");emit completedPaint();}
     },Qt::QueuedConnection);}
     Q_INVOKABLE void send(QString method,QVariantMap params={}){
-        if(process.state()==QProcess::NotRunning){backendStopped("Backend is not running. Check SHOWPSISI_CORE and restart the application.");return;}
+        if(process.state()==QProcess::NotRunning){
+            if(method=="inspect"||method=="query"||method=="analyze"){m_detail.clear();emit detailChanged();}
+            if(method=="analyze"){m_state.clear();emit stateChanged();}
+            backendStopped("Backend is not running. Check SHOWPSISI_CORE and restart the application.");return;
+        }
         if(method=="analyze"&&m_busy)return;
         if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
         int id=++sequence;
@@ -98,6 +104,35 @@ public:
     Q_INVOKABLE QString json(QVariant value){return QString::fromUtf8(QJsonDocument::fromVariant(value).toJson(QJsonDocument::Indented));}
     Q_INVOKABLE void capture(QString path){if(window){QDir().mkpath(QFileInfo(path).absolutePath());bool ok=window->grabWindow().save(path);mark(ok?"screenshot_saved":"screenshot_failed");}}
     Q_INVOKABLE bool click(QString name){if(!window)return false;std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem* p)->QQuickItem*{if(p->objectName()==name)return p;for(auto c:p->childItems())if(auto found=find(c))return found;return nullptr;};auto item=find(window->contentItem());if(!item||!item->isVisible()||!item->isEnabled())return false;QPointF pos=item->mapToScene(QPointF(item->width()/2,item->height()/2));QMouseEvent press(QEvent::MouseButtonPress,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QCoreApplication::sendEvent(window,&press);QMouseEvent release(QEvent::MouseButtonRelease,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QCoreApplication::sendEvent(window,&release);return true;}
+    Q_INVOKABLE bool hover(QString name){
+        if(!window)return false;
+        std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem* item)->QQuickItem*{if(item->objectName()==name)return item;for(auto child:item->childItems())if(auto found=find(child))return found;return nullptr;};
+        auto item=find(window->contentItem());if(!item||!item->isVisible())return false;
+        const QPointF pos=item->mapToScene(QPointF(item->width()/2,item->height()/2));
+        QMouseEvent move(QEvent::MouseMove,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::NoButton,Qt::NoButton,Qt::NoModifier);
+        QCoreApplication::sendEvent(window,&move);return true;
+    }
+    Q_INVOKABLE QVariantMap textSafetyReport(QString marker){
+        int matched=0,unsafe=0,tooltips=0;
+        std::function<void(QQuickItem*)> visit=[&](QQuickItem* item){
+            const auto format=item->property("textFormat");
+            if(format.isValid()&&item->property("text").toString().contains(marker)){++matched;if(item->objectName()=="plainTooltipContent"&&item->isVisible())++tooltips;if(format.toInt()!=0)++unsafe;}
+            for(auto child:item->childItems())visit(child);
+        };
+        if(window)visit(window->contentItem());
+        return {{"matched_text_items",matched},{"unsafe_text_items",unsafe},{"tooltip_text_items",tooltips}};
+    }
+    Q_INVOKABLE bool key(QString sequenceText){
+        if(!window)return false;
+        const QKeySequence sequence(sequenceText);
+        if(sequence.isEmpty())return false;
+        const auto combination=sequence[0];
+        QKeyEvent press(QEvent::KeyPress,combination.key(),combination.keyboardModifiers());
+        QCoreApplication::sendEvent(window,&press);
+        QKeyEvent release(QEvent::KeyRelease,combination.key(),combination.keyboardModifiers());
+        QCoreApplication::sendEvent(window,&release);
+        return true;
+    }
     Q_INVOKABLE void testResult(QString text){QFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));if(f.open(QIODevice::WriteOnly))f.write(text.toUtf8());mark("ui_test_done");}
 signals:
     void stateChanged();void detailChanged();void busyChanged();void inspectingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();

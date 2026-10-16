@@ -121,3 +121,33 @@ jobs:
             aqtinstall.log
           if-no-files-found: warn
           retention-days: 14
+  windows-tauri-build:
+    name: Windows Tauri compile and Rust tests
+    runs-on: windows-2022
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native prerequisites and install pinned official Rust
+        run: ./scripts/ci/windows_tauri.ps1 -Phase Setup
+      - name: Compile and execute locked release Rust unit tests
+        timeout-minutes: 20
+        run: ./scripts/ci/windows_tauri.ps1 -Phase Test
+      - name: Build the release Windows Tauri executable
+        timeout-minutes: 10
+        run: ./scripts/ci/windows_tauri.ps1 -Phase Build
+      - name: Collect native compiler and DLL diagnostics
+        if: always()
+        run: ./scripts/ci/windows_tauri.ps1 -Phase Diagnostics
+      - name: Keep Windows Tauri compile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tauri-compile-validation
+          path: artifacts/windows-tauri
+          if-no-files-found: warn
+          retention-days: 14

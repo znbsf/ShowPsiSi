@@ -1,0 +1,41 @@
+const {chromium}=require('playwright');
+const fs=require('node:fs');
+(async()=>{
+ const browser=await chromium.connectOverCDP('http://127.0.0.1:9333');
+ const pages=browser.contexts().flatMap(c=>c.pages());const page=pages.find(p=>p.url().includes('tauri.localhost'))||pages[0];
+ const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+ await page.waitForFunction(()=>window.showpsisi?.getState().complete,{},{timeout:20000});
+ await page.waitForFunction(()=>window.showpsisi?.getDetail().name==='SDT');
+ if(process.env.SHOWPSISI_CAPTURE_REAL==='1'){
+   await page.screenshot({path:'artifacts/tauri-real.png'});
+   const real=await page.evaluate(()=>({services:showpsisi.getState().services.length,events:showpsisi.getState().events.length,observations:showpsisi.getState().observations}));
+   if(real.services!==12)throw new Error('Real stream service count mismatch');
+   await page.getByRole('button',{name:'EPG',exact:true}).click();await page.screenshot({path:'artifacts/tauri-real-epg.png'});
+   fs.writeFileSync('artifacts/real-ui-check.json',JSON.stringify(real,null,2));console.log(JSON.stringify(real));await browser.close();return;
+ }
+ await page.screenshot({path:'artifacts/tauri-web.png'});
+ const initial=await page.evaluate(()=>({services:showpsisi.getState().services.length,observations:showpsisi.getState().observations,detail:showpsisi.getDetail().name}));
+ await page.getByRole('button',{name:'SDT v1',exact:false}).click();
+ await page.waitForFunction(()=>showpsisi.getState().services[0]?.name==='World News');
+ await page.getByRole('button',{name:'Issues 2',exact:false}).click();
+ await page.locator('.issue').first().click();
+ await page.waitForFunction(()=>showpsisi.getDetail().valid===false);
+ await page.screenshot({path:'artifacts/tauri-issues.png'});
+ await page.getByRole('button',{name:'Latest',exact:true}).click();
+ await page.getByRole('button',{name:'Services',exact:true}).click();
+ await page.waitForFunction(()=>showpsisi.getState().services[0]?.name==='Sports UHD');
+ await page.locator('.service').first().click();
+ await page.waitForFunction(()=>showpsisi.getDetail().name==='SDT'&&showpsisi.getDetail().version===3);
+ await page.getByRole('button',{name:'Rename service…'}).click();
+ await page.getByLabel('New service name').fill('UI verified rename');
+ await page.getByRole('button',{name:'Preview change',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#diff').textContent.includes('UI verified rename'));
+ await page.screenshot({path:'artifacts/tauri-edit.png'});
+ await page.getByRole('button',{name:'Export SI-only TS + manifest',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#notice').textContent.startsWith('Exported'));
+ await page.getByRole('button',{name:'Agent API',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('#api-text').textContent.includes('preview_rename'));
+ await page.getByRole('button',{name:'Close',exact:true}).click();
+ fs.writeFileSync('artifacts/tauri-ui-test.json',JSON.stringify({initial,errors,checks:['loaded shared core','history changes channel name/order','CRC raw evidence','rename preview','signal-only export','API schema discovery']},null,2));
+ console.log(JSON.stringify({initial,errors}));await browser.close();
+})().catch(e=>{console.error(e);process.exit(1)});

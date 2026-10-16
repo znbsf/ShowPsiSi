@@ -1,0 +1,244 @@
+
+===============================================================================
+|  TRANSPORT STREAM ANALYSIS REPORT                                           |
+|=============================================================================|
+|  Transport Stream Id: ......... 13 (0x000D)  |  Services: .............. 1  |
+|  Bytes: ........................ 83,464,668  |  PID's: Total: ......... 12  |
+|  TS packets: ...................... 443,961  |         Clear: ......... 12  |
+|     With invalid sync: .................. 0  |         Scrambled: ...... 0  |
+|     With transport error: ............... 0  |         With PCR's: ..... 1  |
+|     Suspect and ignored: ................ 0  |         Unreferenced: ... 0  |
+|-----------------------------------------------------------------------------|
+|  Transport stream bitrate, based on ....... 188 bytes/pkt    204 bytes/pkt  |
+|  User-specified: ......................... 10,310,162 b/s   11,187,622 b/s  |
+|  Estimated based on PCR's: ............... 10,228,532 b/s   11,099,046 b/s  |
+|-----------------------------------------------------------------------------|
+|  Broadcast time: ..................................... 64 sec (1 mn 4 sec)  |
+|  First TDT UTC time stamp: ........................... 2019/01/22 00:12:48  |
+|  Last TDT UTC time stamp: ............................ 2019/01/22 00:12:49  |
+|  First TOT local time stamp: ..................................... Unknown  |
+|  Last TOT local time stamp: ...................................... Unknown  |
+|  TOT country code: ..............................................  Unknown  |
+|-----------------------------------------------------------------------------|
+|  Srv Id  Service Name                              Access          Bitrate  |
+|  0x0D01  France 2 POC DAS ............................. C   10,300,431 b/s  |
+|                                                                             |
+|  Note 1: C=Clear, S=Scrambled                                               |
+|  Note 2: Unless specified otherwise, bitrates are based on 188 bytes/pkt    |
+===============================================================================
+
+
+===============================================================================
+|  SERVICES ANALYSIS REPORT                                                   |
+|=============================================================================|
+|  Global PID's                                                               |
+|  TS packets: 419, PID's: 4 (clear: 4, scrambled: 0)                         |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Global PID's ................................. C        9,730 b/s  |
+|   Subt.  Global PSI/SI PID's (0x00-0x1F) .............. C        9,730 b/s  |
+|  0x0000  PAT .......................................... C        4,435 b/s  |
+|  0x0001  CAT .......................................... C        1,509 b/s  |
+|  0x0011  SDT/BAT ...................................... C        3,042 b/s  |
+|  0x0014  TDT/TOT ...................................... C          743 b/s  |
+|=============================================================================|
+|  Service: 0x0D01 (3329), TS: 0x000D (13), Original Netw: 0x20FA (8442)      |
+|  Service name: France 2 POC DAS, provider: FTV                              |
+|  Service type: 0x01 (Digital television service)                            |
+|  TS packets: 443,542, PID's: 10 (clear: 10, scrambled: 0)                   |
+|  PMT PID: 0x006E (110), PCR PID: 0x0078 (120)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Digital television service ................... C   10,300,431 b/s  |
+|  0x006E  PMT .......................................... C        4,574 b/s  |
+|  0x0078  AVC video (1920x1080, high profile, level 4.0  C    9,838,337 b/s  |
+|  0x0082  E-AC-3 Audio (fra, E-AC-3, stereo (L,R), @48,  C      134,369 b/s  |
+|  0x0083  E-AC-3 Audio (qad, E-AC-3, stereo (L,R), @48,  C      134,299 b/s  |
+|  0x0084  E-AC-3 Audio (qaa, E-AC-3, stereo (L,R), @48,  C      134,299 b/s  |
+|  0x008C  Subtitles (fra, DVB subtitles for hard of hea  C       22,201 b/s  |
+|  0x008E  Subtitles (fra, DVB subtitles, high definitio  C       22,247 b/s  |
+|  0x00A0  SCTE 35 Splice Info .......................... C            0 b/s  |
+|  0x00AA  MPEG-2 Private sections (AIT) ................ C       10,102 b/s  |
+|  0x00AC  DSM-CC Stream Descriptors .................... C            0 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+===============================================================================
+
+
+===============================================================================
+|  PIDS ANALYSIS REPORT                                                       |
+|=============================================================================|
+|  PID: 0x0000 (0)                                                       PAT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 4,435 b/s  Packets: ........... 191  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 5  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 191  |
+|=============================================================================|
+|  PID: 0x0001 (1)                                                       CAT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 1,509 b/s  Packets: ............ 65  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 1  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 65  |
+|=============================================================================|
+|  PID: 0x0011 (17)                                                  SDT/BAT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 3,042 b/s  Packets: ........... 131  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 2  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 131  |
+|=============================================================================|
+|  PID: 0x0014 (20)                                                  TDT/TOT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ....... 743 b/s  Packets: ............ 32  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 1  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 32  |
+|=============================================================================|
+|  PID: 0x006E (110)                                                     PMT  |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 4,574 b/s  Packets: ........... 197  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 3  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 197  |
+|=============================================================================|
+|  PID: 0x0078 (120)                                               AVC video  |
+|  PES stream id: 0xE0 (Video 0)                                              |
+|  1920x1080, high profile, level 4.0, 4:2:0                                  |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 9,838,337 b/s  Packets: ....... 423,644  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 3,540  Unexpect: ....... 165  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ............. 1,861  Packets: ...... 1,635  |
+|                            TSrate: . 10,228,532 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0082 (130)                                      E-AC-3 Audio (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  E-AC-3, stereo (L,R), @48,000 Hz, complete main, bsid 16                   |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 134,369 b/s  Packets: ......... 5,786  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 5,786  Unexpect: ........ 99  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 339  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0083 (131)                                      E-AC-3 Audio (qad)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  E-AC-3, stereo (L,R), @48,000 Hz, complete main, bsid 16                   |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 134,299 b/s  Packets: ......... 5,783  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 5,783  Unexpect: ....... 102  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 343  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0084 (132)                                      E-AC-3 Audio (qaa)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  E-AC-3, stereo (L,R), @48,000 Hz, complete main, bsid 16                   |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 134,299 b/s  Packets: ......... 5,783  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 5,783  Unexpect: ....... 106  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 339  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x008C (140)                                         Subtitles (fra)  |
+|  DVB subtitles for hard of hearing, no aspect ratio                         |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 22,201 b/s  Packets: ........... 956  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: .......... 156  Unexpect: ........ 23  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 155  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x008E (142)                                         Subtitles (fra)  |
+|  DVB subtitles, high definition                                             |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 22,247 b/s  Packets: ........... 958  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: .......... 156  Unexpect: ........ 22  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 155  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x00AA (170)                           MPEG-2 Private sections (AIT)  |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 10,102 b/s  Packets: ........... 435  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 8  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 435  |
+===============================================================================
+
+
+===============================================================================
+|  TABLES & SECTIONS ANALYSIS REPORT                                          |
+|=============================================================================|
+|  PID: 0x0000 (0)                                                       PAT  |
+|-----------------------------------------------------------------------------|
+|  0x00 (0, PAT), TID ext: 0x000D (13)                                        |
+|      Repetition: ..... 337  ms  Section cnt: ...... 191                     |
+|      Min repet.: ..... 311  ms  Table cnt: ........ 191                     |
+|      Max repet.: ..... 963  ms  Version: ........... 14                     |
+|=============================================================================|
+|  PID: 0x0001 (1)                                                       CAT  |
+|-----------------------------------------------------------------------------|
+|  0x01 (1, CAT), TID ext: 0xFFFF (65535)                                     |
+|      Repetition: ..... 988  ms  Section cnt: ....... 65                     |
+|      Min repet.: ..... 949  ms  Table cnt: ......... 65                     |
+|      Max repet.: .... 1968  ms  Version: ............ 1                     |
+|=============================================================================|
+|  PID: 0x0011 (17)                                                  SDT/BAT  |
+|-----------------------------------------------------------------------------|
+|  0x42 (66, SDT Actual), TID ext: 0x000D (13)                                |
+|      Repetition: ..... 494  ms  Section cnt: ...... 131                     |
+|      Min repet.: ..... 463  ms  Table cnt: ........ 131                     |
+|      Max repet.: ..... 976  ms  Version: ............ 2                     |
+|=============================================================================|
+|  PID: 0x0014 (20)                                                  TDT/TOT  |
+|-----------------------------------------------------------------------------|
+|  0x70 (112, TDT)                                                            |
+|      Repetition: .... 3890  ms  Section cnt: ....... 17                     |
+|      Min repet.: .... 3843  ms                                              |
+|      Max repet.: .... 3928  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x73 (115, TOT)                                                            |
+|      Repetition: .... 4166  ms  Section cnt: ....... 15                     |
+|      Min repet.: .... 3843  ms                                              |
+|      Max repet.: .... 7711  ms                                              |
+|=============================================================================|
+|  PID: 0x006E (110)                                                     PMT  |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0D01 (3329)                                      |
+|      Repetition: ..... 328  ms  Section cnt: ...... 197                     |
+|      Min repet.: ..... 303  ms  Table cnt: ........ 197                     |
+|      Max repet.: ..... 654  ms  Version: ............ 4                     |
+|=============================================================================|
+|  PID: 0x00AA (170)                           MPEG-2 Private sections (AIT)  |
+|  Service: 0x0D01 (3329) France 2 POC DAS                                    |
+|-----------------------------------------------------------------------------|
+|  0x74 (116, AIT), TID ext: 0x0010 (16)                                      |
+|      Repetition: ..... 148  ms  Section cnt: ...... 433                     |
+|      Min repet.: ...... 50  ms  Table cnt: ........ 433                     |
+|      Max repet.: ..... 332  ms  Version: ............ 0                     |
+===============================================================================
+

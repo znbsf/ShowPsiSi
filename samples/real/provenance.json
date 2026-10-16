@@ -1,0 +1,22 @@
+{
+  "source_page": "https://tsduck.io/streams/?stream=france-dttv",
+  "retrieved": "2026-10-17",
+  "files": [
+    {
+      "path": "tnt-uhf22-2019.ts",
+      "url": "https://tsduck.io/streams/france-dttv/tnt-uhf22-482MHz-2019-01-22.ts",
+      "bytes": 183939388,
+      "sha256": "24143de80d28461d084dfb75279da520f335de36b7c35f6398ed6d510daa5937",
+      "reference_services": 12
+    },
+    {
+      "path": "tnt-uhf33-2019.ts",
+      "url": "https://tsduck.io/streams/france-dttv/tnt-uhf33-570MHz-2019-01-22.ts",
+      "bytes": 83464668,
+      "sha256": "ddbace3698049c2fb19d2d8ef40201a2bcaf30313a3a0806933222a423813146",
+      "reference_services": 1
+    }
+  ],
+  "integrity": "HTTPS and local SHA-256 identity; publisher digest unavailable. UHF22 byte count matches reference analysis.",
+  "redistribution": "Sample binaries excluded from source distribution; use official source links."
+}

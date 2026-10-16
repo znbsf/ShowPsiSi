@@ -1,0 +1,14 @@
+{
+  "id": "showpsisi.demo.operator", "version": 1,
+  "description": "Synthetic operator extension; private_data_specifier SPSI, SDT only",
+  "extra_pids": [],
+  "descriptors": [{
+    "tag": 225, "pds": 1397773129, "table_ids": [66,70],
+    "name": "operator_channel_descriptor", "payload_bytes": 3,
+    "fields": [
+      {"name": "logical_channel_number", "offset": 0, "type": "u16be"},
+      {"name": "group", "offset": 2, "type": "u8", "labels": {"1":"News", "2":"Culture", "3":"Entertainment"}}
+    ]
+  }],
+  "organization": {"sort_by": "logical_channel_number", "group_by": "group"}
+}

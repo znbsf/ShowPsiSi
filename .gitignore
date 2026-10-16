@@ -1,0 +1,16 @@
+.deps/
+build/
+target/
+node_modules/
+dist/
+artifacts/
+samples/generated/
+samples/real/*.ts
+__pycache__/
+.venv/
+*.user
+*.log
+.env
+.env.*
+!.env.example
+ui/tauri/src-tauri/gen/schemas/

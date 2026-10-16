@@ -1,0 +1,80 @@
+
+* PAT, TID 0 (0x00), PID 0 (0x0000)
+  Version: 14, sections: 1, total size: 16 bytes
+  - Section 0:
+    TS id:      13 (0x000D)
+    Program:  3329 (0x0D01)  PID:  110 (0x006E)
+
+* PMT, TID 2 (0x02), PID 110 (0x006E)
+  Version: 4, sections: 1, total size: 150 bytes
+  - Section 0:
+    Program: 3329 (0x0D01), PCR PID: 120 (0x0078)
+    Program information:
+    - Descriptor 0: Registration (0x05, 5), 4 bytes
+      Format identifier: 0x43554549 ("CUEI")
+    Elementary stream: type 0x1B (AVC video), PID: 120 (0x0078)
+    - Descriptor 0: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 1 (0x01)
+    Elementary stream: type 0x06 (MPEG-2 PES private data), PID: 130 (0x0082)
+    - Descriptor 0: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 2 (0x02)
+    - Descriptor 1: ISO-639 Language (0x0A, 10), 4 bytes
+      Language: fra, Type: 0x00 (undefined)
+    - Descriptor 2: Enhanced AC-3 (0x7A, 122), 2 bytes
+      Component type: 0xC2 (Enhanced AC-3, full, complete main, 2 channels)
+    Elementary stream: type 0x06 (MPEG-2 PES private data), PID: 131 (0x0083)
+    - Descriptor 0: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 3 (0x03)
+    - Descriptor 1: ISO-639 Language (0x0A, 10), 4 bytes
+      Language: qad, Type: 0x00 (undefined)
+    - Descriptor 2: Extension Descriptor (0x7F, 127), 5 bytes
+      Extended descriptor: Supplementary Audio (0x06, 6)
+      Mix type: complete and independent stream
+      Editorial classification: audio description for the visually impaired
+      Language: fra
+    - Descriptor 3: Enhanced AC-3 (0x7A, 122), 2 bytes
+      Component type: 0xD2 (Enhanced AC-3, full, visually impaired, 2 channels)
+    Elementary stream: type 0x06 (MPEG-2 PES private data), PID: 132 (0x0084)
+    - Descriptor 0: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 4 (0x04)
+    - Descriptor 1: ISO-639 Language (0x0A, 10), 4 bytes
+      Language: qaa, Type: 0x00 (undefined)
+    - Descriptor 2: Enhanced AC-3 (0x7A, 122), 2 bytes
+      Component type: 0xC2 (Enhanced AC-3, full, complete main, 2 channels)
+    Elementary stream: type 0x06 (MPEG-2 PES private data), PID: 140 (0x008C)
+    - Descriptor 0: Subtitling (0x59, 89), 8 bytes
+      Language: fra, Type: 32 (0x20)
+      Type: DVB subtitles for hard of hearing, no aspect ratio
+      Composition page: 1 (0x0001), Ancillary page: 1 (0x0001)
+    - Descriptor 1: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 5 (0x05)
+    Elementary stream: type 0x06 (MPEG-2 PES private data), PID: 142 (0x008E)
+    - Descriptor 0: Subtitling (0x59, 89), 8 bytes
+      Language: fra, Type: 20 (0x14)
+      Type: DVB subtitles, high definition
+      Composition page: 1 (0x0001), Ancillary page: 1 (0x0001)
+    - Descriptor 1: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 6 (0x06)
+    Elementary stream: type 0x86 (SCTE 35 Splice Info), PID: 160 (0x00A0)
+    Elementary stream: type 0x05 (MPEG-2 Private sections), PID: 170 (0x00AA)
+    - Descriptor 0: Application Signalling (0x6F, 111), 3 bytes
+      Application type: 16 (0x0010), AIT Version: 3 (0x03)
+    Elementary stream: type 0x0C (DSM-CC Stream Descriptors), PID: 172 (0x00AC)
+    - Descriptor 0: Stream Identifier (0x52, 82), 1 bytes
+      Component tag: 10 (0x0A)
+
+* SDT Actual, TID 66 (0x42), PID 17 (0x0011)
+  Version: 2, sections: 1, total size: 44 bytes
+  - Section 0:
+    Transport Stream Id: 13 (0x000D)
+    Original Network Id: 8442 (0x20FA)
+    Service Id: 3329 (0x0D01), EITs: no, EITp/f: no, CA mode: free
+    Running status: running
+    - Descriptor 0: Service (0x48, 72), 22 bytes
+      Service type: 0x01 (Digital television service)
+      Service: "France 2 POC DAS", Provider: "FTV"
+
+* CAT, TID 1 (0x01), PID 1 (0x0001)
+  Version: 1, sections: 1, total size: 12 bytes
+  - Section 0:
+

@@ -1,0 +1,2437 @@
+
+===============================================================================
+|  TRANSPORT STREAM ANALYSIS REPORT                                           |
+|=============================================================================|
+|  Transport Stream Id: .......... 3 (0x0003)  |  Services: ............. 12  |
+|  Bytes: ....................... 183,939,388  |  PID's: Total: ......... 99  |
+|  TS packets: ...................... 978,401  |         Clear: ......... 83  |
+|     With invalid sync: .................. 0  |         Scrambled: ..... 16  |
+|     With transport error: ............... 0  |         With PCR's: ..... 7  |
+|     Suspect and ignored: ................ 0  |         Unreferenced: ... 0  |
+|-----------------------------------------------------------------------------|
+|  Transport stream bitrate, based on ....... 188 bytes/pkt    204 bytes/pkt  |
+|  User-specified: ......................... 24,181,735 b/s   26,239,755 b/s  |
+|  Estimated based on PCR's: ............... 24,146,440 b/s   26,201,456 b/s  |
+|-----------------------------------------------------------------------------|
+|  Broadcast time: ..................................... 60 sec (1 mn 0 sec)  |
+|  First TDT UTC time stamp: ........................... 2019/01/22 12:46:43  |
+|  Last TDT UTC time stamp: ............................ 2019/01/22 12:47:45  |
+|  First TOT local time stamp: ......................... 2019/01/22 13:46:43  |
+|  Last TOT local time stamp: .......................... 2019/01/22 13:47:45  |
+|  TOT country code: ................................................... FRA  |
+|-----------------------------------------------------------------------------|
+|  Srv Id  Service Name                              Access          Bitrate  |
+|  0x0301  CANAL+ ....................................... C    1,144,800 b/s  |
+|  0x0302  CANAL+ CINEMA ................................ S    3,043,672 b/s  |
+|  0x0303  CANAL+ SPORT ................................. S    5,338,685 b/s  |
+|  0x0304  PLANETE+ ..................................... S    4,016,699 b/s  |
+|  0x0308  LCI .......................................... C    2,495,184 b/s  |
+|  0x0309  PARIS PREMIERE ............................... S    1,604,509 b/s  |
+|  0x030A  CANAL+ ....................................... S    4,525,840 b/s  |
+|  0x03F2  (unknown) .................................... C       14,977 b/s  |
+|  0x03F3  (System Software Update) ..................... C       69,945 b/s  |
+|  0x03F4  (System Software Update) ..................... C      354,668 b/s  |
+|  0x03F5  DATASYSTEM R7 ................................ C      520,163 b/s  |
+|  0x03F6  (System Software Update) ..................... C      659,757 b/s  |
+|                                                                             |
+|  Note 1: C=Clear, S=Scrambled                                               |
+|  Note 2: Unless specified otherwise, bitrates are based on 188 bytes/pkt    |
+===============================================================================
+
+
+===============================================================================
+|  SERVICES ANALYSIS REPORT                                                   |
+|=============================================================================|
+|  Global PID's                                                               |
+|  TS packets: 15,894, PID's: 13 (clear: 13, scrambled: 0)                    |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Global PID's ................................. C      392,829 b/s  |
+|   Subt.  Global PSI/SI PID's (0x00-0x1F) .............. C      192,855 b/s  |
+|  0x0000  PAT .......................................... C       15,002 b/s  |
+|  0x0001  CAT .......................................... C       15,027 b/s  |
+|  0x0010  DVB-NIT ...................................... C       12,011 b/s  |
+|  0x0011  SDT/BAT ...................................... C       21,230 b/s  |
+|  0x0012  EIT .......................................... C      123,775 b/s  |
+|  0x0014  TDT/TOT ...................................... C        3,040 b/s  |
+|  0x0015  Network Synchronization ...................... C        2,768 b/s  |
+|  0x1449  Nagravision EMM .............................. C      157,611 b/s  |
+|  0x144F  Nagravision EMM .............................. C       19,550 b/s  |
+|  0x1450  Nagravision EMM .............................. C        6,401 b/s  |
+|  0x1511  Nagravision EMM .............................. C        6,376 b/s  |
+|  0x1513  Nagravision EMM .............................. C        5,017 b/s  |
+|  0x1519  Nagravision EMM .............................. C        5,017 b/s  |
+|=============================================================================|
+|  Service: 0x0301 (769), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: CANAL+, provider: CNH                                        |
+|  Service type: 0x19 (Advanced codec HD digital television service)          |
+|  TS packets: 46,319, PID's: 4 (clear: 4, scrambled: 0)                      |
+|  PMT PID: 0x0384 (900), PCR PID: 0x038E (910)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec HD digital television service . C    1,144,800 b/s  |
+|  0x0384  PMT .......................................... C       14,952 b/s  |
+|  0x038E  AVC video (720x576, high profile, level 3.0,   C    1,040,302 b/s  |
+|  0x0399  MPEG-1 Audio (fra, Audio layer II, 64 kb/s, @  C       69,574 b/s  |
+|  0x03B7  MPEG-2 Private sections (AIT) ................ C       19,970 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x0302 (770), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: CANAL+ CINEMA, provider: CNH                                 |
+|  Service type: 0x19 (Advanced codec HD digital television service)          |
+|  TS packets: 123,148, PID's: 9 (clear: 6, scrambled: 3)                     |
+|  PMT PID: 0x00C8 (200), PCR PID: 0x00D2 (210)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec HD digital television service . S    3,043,672 b/s  |
+|  0x00C8  PMT .......................................... C       15,002 b/s  |
+|  0x00D2  AVC video .................................... S    2,511,818 b/s  |
+|  0x00DD  E-AC-3 Audio (fra) ........................... S      234,896 b/s  |
+|  0x00DE  E-AC-3 Audio (eng) ........................... S      234,822 b/s  |
+|  0x00F2  Subtitles (fra, DVB subtitles, high definitio  C       11,863 b/s  |
+|  0x00F3  Subtitles (fra, DVB subtitles for hard of hea  C       12,728 b/s  |
+|  0x1B99  Nagravision ECMMediaGuard ECM for OPI 13099 (  C        7,488 b/s  |
+|  0x1B9A  Nagravision ECM .............................. C        7,562 b/s  |
+|  0x1B9B  Nagravision ECM .............................. C        7,488 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x0303 (771), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: CANAL+ SPORT, provider: CNH                                  |
+|  Service type: 0x19 (Advanced codec HD digital television service)          |
+|  TS packets: 216,005, PID's: 9 (clear: 6, scrambled: 3)                     |
+|  PMT PID: 0x012C (300), PCR PID: 0x0136 (310)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec HD digital television service . S    5,338,685 b/s  |
+|  0x012C  PMT .......................................... C       14,977 b/s  |
+|  0x0136  AVC video .................................... S    5,012,786 b/s  |
+|  0x0141  E-AC-3 Audio (fra) ........................... S      132,895 b/s  |
+|  0x0142  E-AC-3 Audio (qaa) ........................... S      132,846 b/s  |
+|  0x0156  Subtitles (fra, DVB subtitles, no aspect rati  C       11,072 b/s  |
+|  0x0157  Subtitles (fra, DVB subtitles for hard of hea  C       11,542 b/s  |
+|  0x1BFD  Nagravision ECMMediaGuard ECM for OPI 13099 (  C        7,587 b/s  |
+|  0x1BFE  Nagravision ECM .............................. C        7,439 b/s  |
+|  0x1BFF  Nagravision ECM .............................. C        7,538 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x0304 (772), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: PLANETE+, provider: CNH                                      |
+|  Service type: 0x19 (Advanced codec HD digital television service)          |
+|  TS packets: 162,517, PID's: 7 (clear: 5, scrambled: 2)                     |
+|  PMT PID: 0x0190 (400), PCR PID: 0x019A (410)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec HD digital television service . S    4,016,699 b/s  |
+|  0x0190  PMT .......................................... C       15,002 b/s  |
+|  0x019A  AVC video .................................... S    3,845,841 b/s  |
+|  0x01A5  E-AC-3 Audio (fra) ........................... S      133,192 b/s  |
+|  0x01BB  Subtitles (fra, DVB subtitles for hard of hea  C            0 b/s  |
+|  0x1C61  Nagravision ECMMediaGuard ECM for OPI 13099 (  C        7,637 b/s  |
+|  0x1C62  Nagravision ECM .............................. C        7,538 b/s  |
+|  0x1C63  Nagravision ECM .............................. C        7,488 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x0308 (776), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: LCI, provider: CNH                                           |
+|  Service type: 0x16 (Advanced codec SD digital television service)          |
+|  TS packets: 100,956, PID's: 4 (clear: 4, scrambled: 0)                     |
+|  PMT PID: 0x01F4 (500), PCR PID: 0x01FE (510)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec SD digital television service . C    2,495,184 b/s  |
+|  0x01F4  PMT .......................................... C       15,027 b/s  |
+|  0x01FE  AVC video (720x576, high profile, level 3.0,   C    2,347,336 b/s  |
+|  0x0209  E-AC-3 Audio (fra, E-AC-3, stereo (L,R), @48,  C      132,821 b/s  |
+|  0x021F  Subtitles (fra, DVB subtitles for hard of hea  C            0 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x0309 (777), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: PARIS PREMIERE, provider: CNH                                |
+|  Service type: 0x16 (Advanced codec SD digital television service)          |
+|  TS packets: 64,919, PID's: 10 (clear: 6, scrambled: 4)                     |
+|  PMT PID: 0x0258 (600), PCR PID: 0x0262 (610)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec SD digital television service . S    1,604,509 b/s  |
+|  0x0258  PMT .......................................... C       29,955 b/s  |
+|  0x0262  AVC video .................................... S    1,128,735 b/s  |
+|  0x026D  E-AC-3 Audio (fra) ........................... S      132,722 b/s  |
+|  0x026E  E-AC-3 Audio (qaa) ........................... S      132,697 b/s  |
+|  0x026F  E-AC-3 Audio (qad) ........................... S      133,093 b/s  |
+|  0x0282  Subtitles (fra, DVB subtitles, no aspect rati  C       11,196 b/s  |
+|  0x0283  Subtitles (fra, DVB subtitles for hard of hea  C       13,544 b/s  |
+|  0x1E55  Nagravision ECMMediaGuard ECM for OPI 13099 (  C        7,538 b/s  |
+|  0x1E56  Nagravision ECM .............................. C        7,538 b/s  |
+|  0x1E57  Nagravision ECM .............................. C        7,488 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x030A (778), TS: 0x0003 (3), Original Netw: 0x20FA (8442)        |
+|  Service name: CANAL+, provider: CNH                                        |
+|  Service type: 0x19 (Advanced codec HD digital television service)          |
+|  TS packets: 183,117, PID's: 10 (clear: 6, scrambled: 4)                    |
+|  PMT PID: 0x0064 (100), PCR PID: 0x006E (110)                               |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Advanced codec HD digital television service . S    4,525,840 b/s  |
+|  0x0064  PMT .......................................... C       29,955 b/s  |
+|  0x006E  AVC video .................................... S    3,851,402 b/s  |
+|  0x0079  E-AC-3 Audio (fra) ........................... S      234,896 b/s  |
+|  0x007A  E-AC-3 Audio (eng) ........................... S      234,847 b/s  |
+|  0x007B  E-AC-3 Audio (qad) ........................... S      141,002 b/s  |
+|  0x008E  Subtitles (fra, DVB subtitles, no aspect rati  C        4,671 b/s  |
+|  0x008F  Subtitles (fra, DVB subtitles for hard of hea  C        6,623 b/s  |
+|  0x1EB9  Nagravision ECMMediaGuard ECM for OPI 13099 (  C        7,414 b/s  |
+|  0x1EBA  Nagravision ECM .............................. C        7,488 b/s  |
+|  0x1EBB  Nagravision ECM .............................. C        7,538 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x03F2 (1010), TS: 0x0003 (3), Original Netw: 0x20FA (8442)       |
+|  Service name: (unknown), provider: CNH                                     |
+|  Service type: 0x0C (Data broadcast service)                                |
+|  TS packets: 606, PID's: 1 (clear: 1, scrambled: 0)                         |
+|  PMT PID: 0x0578 (1400), PCR PID: None                                      |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Data broadcast service ....................... C       14,977 b/s  |
+|  0x0578  PMT .......................................... C       14,977 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x03F3 (1011), TS: 0x0003 (3), Original Netw: 0x20FA (8442)       |
+|  Service name: (System Software Update), provider: CNH                      |
+|  Service type: 0x0C (Data broadcast service)                                |
+|  TS packets: 2,830, PID's: 5 (clear: 5, scrambled: 0)                       |
+|  PMT PID: 0x05DC (1500), PCR PID: None                                      |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Data broadcast service ....................... C       69,945 b/s  |
+|  0x0403  DSM-CC U-N (SSU Canal+) ...................... C       10,009 b/s  |
+|  0x0404  DSM-CC U-N ................................... C       15,966 b/s  |
+|  0x040D  DSM-CC U-N (SSU Canal+) ...................... C       10,009 b/s  |
+|  0x040E  DSM-CC U-N ................................... C       18,956 b/s  |
+|  0x05DC  PMT .......................................... C       15,002 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x03F4 (1012), TS: 0x0003 (3), Original Netw: 0x20FA (8442)       |
+|  Service name: (System Software Update), provider: CNH                      |
+|  Service type: 0x0C (Data broadcast service)                                |
+|  TS packets: 14,350, PID's: 4 (clear: 4, scrambled: 0)                      |
+|  PMT PID: 0x0640 (1600), PCR PID: None                                      |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Data broadcast service ....................... C      354,668 b/s  |
+|  0x042F  DSM-CC U-N (SSU Canal+) ...................... C       19,920 b/s  |
+|  0x0430  DSM-CC U-N (SSU Canal+) ...................... C      249,726 b/s  |
+|  0x0431  DSM-CC U-N ................................... C       70,019 b/s  |
+|  0x0640  PMT .......................................... C       15,002 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x03F5 (1013), TS: 0x0003 (3), Original Netw: 0x20FA (8442)       |
+|  Service name: DATASYSTEM R7, provider: CNH                                 |
+|  Service type: 0x0C (Data broadcast service)                                |
+|  TS packets: 21,046, PID's: 21 (clear: 21, scrambled: 0)                    |
+|  PMT PID: 0x06A4 (1700), PCR PID: None                                      |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Data broadcast service ....................... C      520,163 b/s  |
+|  0x06A4  PMT .......................................... C       75,283 b/s  |
+|  0x1B58  DSM-CC U-N (Canal+) .......................... C        5,808 b/s  |
+|  0x1B59  DSM-CC U-N (Canal+) .......................... C       37,023 b/s  |
+|  0x1B5A  DSM-CC U-N (Canal+) .......................... C        8,057 b/s  |
+|  0x1B5B  DSM-CC U-N (Canal+) .......................... C        5,808 b/s  |
+|  0x1B5C  MPEG-2 PES private data (Canal+) ............. C       81,091 b/s  |
+|  0x1B5D  MPEG-2 Private sections (Canal+) ............. C       23,232 b/s  |
+|  0x1B5E  DSM-CC U-N (Canal+) .......................... C       28,966 b/s  |
+|  0x1B5F  DSM-CC U-N (Canal+) .......................... C       28,941 b/s  |
+|  0x1B60  DSM-CC U-N (Canal+) .......................... C       28,941 b/s  |
+|  0x1B61  DSM-CC U-N (Canal+) .......................... C       28,941 b/s  |
+|  0x1B62  DSM-CC U-N (Canal+) .......................... C       28,991 b/s  |
+|  0x1B63  DSM-CC U-N (Canal+) .......................... C        5,758 b/s  |
+|  0x1B64  DSM-CC U-N (Canal+) .......................... C        5,758 b/s  |
+|  0x1B65  DSM-CC U-N (Canal+) .......................... C        5,758 b/s  |
+|  0x1B66  DSM-CC U-N (Canal+) .......................... C        5,783 b/s  |
+|  0x1B67  DSM-CC U-N (Canal+) .......................... C        5,808 b/s  |
+|  0x1B68  DSM-CC U-N (Canal+) .......................... C       29,040 b/s  |
+|  0x1B69  DSM-CC U-N (Canal+) .......................... C       29,016 b/s  |
+|  0x1B6A  MPEG-2 Private sections (Canal+) ............. C       23,183 b/s  |
+|  0x1B6B  DSM-CC U-N (Canal+) .......................... C       28,966 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+|=============================================================================|
+|  Service: 0x03F6 (1014), TS: 0x0003 (3), Original Netw: 0x20FA (8442)       |
+|  Service name: (System Software Update), provider: CNH                      |
+|  Service type: 0x0C (Data broadcast service)                                |
+|  TS packets: 26,694, PID's: 4 (clear: 4, scrambled: 0)                      |
+|  PMT PID: 0x0708 (1800), PCR PID: None                                      |
+|-----------------------------------------------------------------------------|
+|     PID  Usage                                     Access          Bitrate  |
+|   Total  Data broadcast service ....................... C      659,757 b/s  |
+|  0x0432  DSM-CC U-N (SSU Canal+) ...................... C        5,017 b/s  |
+|  0x0433  DSM-CC U-N (SSU Canal+) ...................... C      499,822 b/s  |
+|  0x0434  DSM-CC U-N ................................... C      139,890 b/s  |
+|  0x0708  PMT .......................................... C       15,027 b/s  |
+|          (C=Clear, S=Scrambled, +=Shared)                                   |
+===============================================================================
+
+
+===============================================================================
+|  PIDS ANALYSIS REPORT                                                       |
+|=============================================================================|
+|  PID: 0x0000 (0)                                                       PAT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: .... 15,002 b/s  Packets: ........... 607  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 20  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 607  |
+|=============================================================================|
+|  PID: 0x0001 (1)                                                       CAT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: .... 15,027 b/s  Packets: ........... 608  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 20  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 608  |
+|=============================================================================|
+|  PID: 0x0010 (16)                                                  DVB-NIT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: .... 12,011 b/s  Packets: ........... 486  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 7  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 121  |
+|=============================================================================|
+|  PID: 0x0011 (17)                                                  SDT/BAT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: .... 21,230 b/s  Packets: ........... 859  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 10  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 348  |
+|=============================================================================|
+|  PID: 0x0012 (18)                                                      EIT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ... 123,775 b/s  Packets: ......... 5,008  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 75  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ... 1,939  |
+|=============================================================================|
+|  PID: 0x0014 (20)                                                  TDT/TOT  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 3,040 b/s  Packets: ........... 123  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 3  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 123  |
+|=============================================================================|
+|  PID: 0x0015 (21)                                  Network Synchronization  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 2,768 b/s  Packets: ........... 112  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 3  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 112  |
+|=============================================================================|
+|  PID: 0x0064 (100)                                                     PMT  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 29,955 b/s  Packets: ......... 1,212  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 28  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 608  |
+|=============================================================================|
+|  PID: 0x006E (110)                                               AVC video  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 3,851,402 b/s  Packets: ....... 155,829  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,292  Unexpect: ....... 231  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 4  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ............. 1,735  Packets: ...... 1,512  |
+|                            TSrate: . 24,150,963 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0079 (121)                                      E-AC-3 Audio (fra)  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 234,896 b/s  Packets: ......... 9,504  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,801  Unexpect: ....... 235  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ...... 1,901  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x007A (122)                                      E-AC-3 Audio (eng)  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 234,847 b/s  Packets: ......... 9,502  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,800  Unexpect: ....... 239  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ...... 1,901  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x007B (123)                                      E-AC-3 Audio (qad)  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 141,002 b/s  Packets: ......... 5,705  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,705  Unexpect: ....... 161  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ...... 1,902  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x008E (142)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles, no aspect ratio                                             |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 4,671 b/s  Packets: ........... 189  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 26  Unexpect: ......... 7  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 27  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x008F (143)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles for hard of hearing, no aspect ratio                         |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 6,623 b/s  Packets: ........... 268  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 29  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 28  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x00C8 (200)                                                     PMT  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,002 b/s  Packets: ........... 607  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 21  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 607  |
+|=============================================================================|
+|  PID: 0x00D2 (210)                                               AVC video  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 2,511,818 b/s  Packets: ....... 101,629  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,306  Unexpect: ....... 212  |
+|  Crypto-Per: ...... 9 sec  Duplicated: ......... 15  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ............. 1,736  Packets: ...... 1,530  |
+|                            TSrate: . 24,118,550 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x00DD (221)                                      E-AC-3 Audio (fra)  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 234,896 b/s  Packets: ......... 9,504  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,804  Unexpect: ....... 241  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ...... 1,902  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x00DE (222)                                      E-AC-3 Audio (eng)  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 234,822 b/s  Packets: ......... 9,501  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,805  Unexpect: ....... 241  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ...... 1,902  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x00F2 (242)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles, high definition                                             |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 11,863 b/s  Packets: ........... 480  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 34  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 34  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x00F3 (243)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles for hard of hearing, no aspect ratio                         |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 12,728 b/s  Packets: ........... 515  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 46  Unexpect: ........ 14  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 46  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x012C (300)                                                     PMT  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 14,977 b/s  Packets: ........... 606  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 22  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 606  |
+|=============================================================================|
+|  PID: 0x0136 (310)                                               AVC video  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 5,012,786 b/s  Packets: ....... 202,819  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,287  Unexpect: ....... 218  |
+|  Crypto-Per: ...... 9 sec  Duplicated: ......... 19  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ............. 1,731  Packets: ...... 1,514  |
+|                            TSrate: . 24,120,242 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0141 (321)                                      E-AC-3 Audio (fra)  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 132,895 b/s  Packets: ......... 5,377  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,377  Unexpect: ....... 154  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ........ 318  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0142 (322)                                      E-AC-3 Audio (qaa)  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 132,846 b/s  Packets: ......... 5,375  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,375  Unexpect: ....... 158  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ........ 317  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0156 (342)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles, no aspect ratio                                             |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 11,072 b/s  Packets: ........... 448  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 28  Unexpect: ........ 14  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 27  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0157 (343)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles for hard of hearing, no aspect ratio                         |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 11,542 b/s  Packets: ........... 467  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 32  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 32  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0190 (400)                                                     PMT  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,002 b/s  Packets: ........... 607  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 21  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 607  |
+|=============================================================================|
+|  PID: 0x019A (410)                                               AVC video  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 3,845,841 b/s  Packets: ....... 155,604  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,295  Unexpect: ....... 211  |
+|  Crypto-Per: ...... 9 sec  Duplicated: ......... 13  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ............. 1,742  Packets: ...... 1,518  |
+|                            TSrate: . 24,096,981 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x01A5 (421)                                      E-AC-3 Audio (fra)  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 133,192 b/s  Packets: ......... 5,389  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,389  Unexpect: ....... 152  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ........ 318  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x01F4 (500)                                                     PMT  |
+|  Service: 0x0308 (776) LCI                                                  |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,027 b/s  Packets: ........... 608  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 18  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 608  |
+|=============================================================================|
+|  PID: 0x01FE (510)                                               AVC video  |
+|  PES stream id: 0xE0 (Video 0)                                              |
+|  720x576, high profile, level 3.0, 4:2:0                                    |
+|  Service: 0x0308 (776) LCI                                                  |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 2,347,336 b/s  Packets: ........ 94,974  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 3,308  Unexpect: ....... 208  |
+|                            Duplicated: ......... 24  PES:                   |
+|                            PCR: ............. 1,746  Packets: ...... 1,530  |
+|                            TSrate: . 24,087,739 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0209 (521)                                      E-AC-3 Audio (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  E-AC-3, stereo (L,R), @48,000 Hz, complete main, bsid 16                   |
+|  Service: 0x0308 (776) LCI                                                  |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 132,821 b/s  Packets: ......... 5,374  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 5,374  Unexpect: ....... 159  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 311  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0258 (600)                                                     PMT  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 29,955 b/s  Packets: ......... 1,212  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 30  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 607  |
+|=============================================================================|
+|  PID: 0x0262 (610)                                               AVC video  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 1,128,735 b/s  Packets: ........ 45,669  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 3,273  Unexpect: ....... 247  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ............. 1,736  Packets: ...... 1,520  |
+|                            TSrate: . 24,204,766 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x026D (621)                                      E-AC-3 Audio (fra)  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 132,722 b/s  Packets: ......... 5,370  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,370  Unexpect: ....... 161  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ........ 318  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x026E (622)                                      E-AC-3 Audio (qaa)  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 132,697 b/s  Packets: ......... 5,369  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,369  Unexpect: ....... 159  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ........ 318  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x026F (623)                                      E-AC-3 Audio (qad)  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 133,093 b/s  Packets: ......... 5,385  Expected: ......... 0  |
+|  Access: ...... Scrambled  Adapt.F.: ........ 5,385  Unexpect: ....... 153  |
+|  Crypto-Per: ...... 9 sec  Duplicated: .......... 0  PES:                   |
+|  Inv.scramb.: ......... 0  PCR: ................. 0  Packets: ........ 318  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0282 (642)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles, no aspect ratio                                             |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 11,196 b/s  Packets: ........... 453  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 39  Unexpect: ........ 18  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 39  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0283 (643)                                         Subtitles (fra)  |
+|  PES stream id: 0xBD (Private stream 1)                                     |
+|  DVB subtitles for hard of hearing, no aspect ratio                         |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 13,544 b/s  Packets: ........... 548  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 41  Unexpect: ........ 19  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 40  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0384 (900)                                                     PMT  |
+|  Service: 0x0301 (769) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 14,952 b/s  Packets: ........... 605  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 23  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 605  |
+|=============================================================================|
+|  PID: 0x038E (910)                                               AVC video  |
+|  PES stream id: 0xE0 (Video 0)                                              |
+|  720x576, high profile, level 3.0, 4:2:0                                    |
+|  Service: 0x0301 (769) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: . 1,040,302 b/s  Packets: ........ 42,091  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........ 4,425  Unexpect: ....... 247  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ............. 3,033  Packets: ...... 1,525  |
+|                            TSrate: . 24,202,442 b/s  Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x0399 (921)                                      MPEG-1 Audio (fra)  |
+|  PES stream id: 0xC0 (Audio 0)                                              |
+|  Audio layer II, 64 kb/s, @48,000 Hz, stereo                                |
+|  Service: 0x0301 (769) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 69,574 b/s  Packets: ......... 2,815  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: .......... 563  Unexpect: ........ 87  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ........ 282  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x03B7 (951)                           MPEG-2 Private sections (AIT)  |
+|  Service: 0x0301 (769) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 19,970 b/s  Packets: ........... 808  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 27  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 808  |
+|=============================================================================|
+|  PID: 0x0403 (1027)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|  SSU OUI: 0x000117 (Canal+)                                                 |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 10,009 b/s  Packets: ........... 405  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 405  |
+|=============================================================================|
+|  PID: 0x0404 (1028)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,966 b/s  Packets: ........... 646  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 22  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 31  |
+|=============================================================================|
+|  PID: 0x040D (1037)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|  SSU OUI: 0x000117 (Canal+)                                                 |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 10,009 b/s  Packets: ........... 405  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 405  |
+|=============================================================================|
+|  PID: 0x040E (1038)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 18,956 b/s  Packets: ........... 767  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 27  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 36  |
+|=============================================================================|
+|  PID: 0x042F (1071)                                             DSM-CC U-N  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|  SSU OUI: 0x000117 (Canal+)                                                 |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 19,920 b/s  Packets: ........... 806  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 29  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 199  |
+|=============================================================================|
+|  PID: 0x0430 (1072)                                             DSM-CC U-N  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|  SSU OUI: 0x000117 (Canal+)                                                 |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 249,726 b/s  Packets: ........ 10,104  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ....... 236  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 563  |
+|=============================================================================|
+|  PID: 0x0431 (1073)                                             DSM-CC U-N  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 70,019 b/s  Packets: ......... 2,833  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 79  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 159  |
+|=============================================================================|
+|  PID: 0x0432 (1074)                                             DSM-CC U-N  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|  SSU OUI: 0x000117 (Canal+)                                                 |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,017 b/s  Packets: ........... 203  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 6  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 203  |
+|=============================================================================|
+|  PID: 0x0433 (1075)                                             DSM-CC U-N  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|  SSU OUI: 0x000117 (Canal+)                                                 |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 499,822 b/s  Packets: ........ 20,223  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ....... 247  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ... 1,041  |
+|=============================================================================|
+|  PID: 0x0434 (1076)                                             DSM-CC U-N  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ... 139,890 b/s  Packets: ......... 5,660  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ....... 158  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 294  |
+|=============================================================================|
+|  PID: 0x0578 (1400)                                                    PMT  |
+|  Service: 0x03F2 (1010) (unknown)                                           |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 14,977 b/s  Packets: ........... 606  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 20  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 606  |
+|=============================================================================|
+|  PID: 0x05DC (1500)                                                    PMT  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,002 b/s  Packets: ........... 607  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 20  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 607  |
+|=============================================================================|
+|  PID: 0x0640 (1600)                                                    PMT  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,002 b/s  Packets: ........... 607  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 20  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 607  |
+|=============================================================================|
+|  PID: 0x06A4 (1700)                                                    PMT  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 75,283 b/s  Packets: ......... 3,046  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 36  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 611  |
+|=============================================================================|
+|  PID: 0x0708 (1800)                                                    PMT  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 15,027 b/s  Packets: ........... 608  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 20  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 608  |
+|=============================================================================|
+|  PID: 0x1449 (5193)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ... 157,611 b/s  Packets: ......... 6,377  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ....... 179  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ... 6,377  |
+|=============================================================================|
+|  PID: 0x144F (5199)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: .... 19,550 b/s  Packets: ........... 791  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 25  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 791  |
+|=============================================================================|
+|  PID: 0x1450 (5200)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 6,401 b/s  Packets: ........... 259  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ....... 0  |
+|=============================================================================|
+|  PID: 0x1511 (5393)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 6,376 b/s  Packets: ........... 258  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 118  |
+|=============================================================================|
+|  PID: 0x1513 (5395)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,017 b/s  Packets: ........... 203  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 6  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ....... 0  |
+|=============================================================================|
+|  PID: 0x1519 (5401)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  Global PID                Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,017 b/s  Packets: ........... 203  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 6  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ....... 0  |
+|=============================================================================|
+|  PID: 0x1B58 (7000)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,808 b/s  Packets: ........... 235  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 7  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 28  |
+|=============================================================================|
+|  PID: 0x1B59 (7001)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 37,023 b/s  Packets: ......... 1,498  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 51  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 86  |
+|=============================================================================|
+|  PID: 0x1B5A (7002)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 8,057 b/s  Packets: ........... 326  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 17  |
+|=============================================================================|
+|  PID: 0x1B5B (7003)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,808 b/s  Packets: ........... 235  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 7  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 49  |
+|=============================================================================|
+|  PID: 0x1B5C (7004)                       MPEG-2 PES private data (Canal+)  |
+|  PES stream id: 0xBF (Private stream 2)                                     |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 81,091 b/s  Packets: ......... 3,281  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ........... 63  Unexpect: ........ 88  |
+|                            Duplicated: .......... 0  PES:                   |
+|                            PCR: ................. 0  Packets: ......... 59  |
+|                                                      Inv.Start: ........ 0  |
+|=============================================================================|
+|  PID: 0x1B5D (7005)                       MPEG-2 Private sections (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 23,232 b/s  Packets: ........... 940  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 28  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 52  |
+|=============================================================================|
+|  PID: 0x1B5E (7006)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 28,966 b/s  Packets: ......... 1,172  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 39  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 64  |
+|=============================================================================|
+|  PID: 0x1B5F (7007)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 28,941 b/s  Packets: ......... 1,171  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 40  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 68  |
+|=============================================================================|
+|  PID: 0x1B60 (7008)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 28,941 b/s  Packets: ......... 1,171  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 40  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 64  |
+|=============================================================================|
+|  PID: 0x1B61 (7009)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 28,941 b/s  Packets: ......... 1,171  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 40  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 67  |
+|=============================================================================|
+|  PID: 0x1B62 (7010)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 28,991 b/s  Packets: ......... 1,173  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 38  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 63  |
+|=============================================================================|
+|  PID: 0x1B63 (7011)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,758 b/s  Packets: ........... 233  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 28  |
+|=============================================================================|
+|  PID: 0x1B64 (7012)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,758 b/s  Packets: ........... 233  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 28  |
+|=============================================================================|
+|  PID: 0x1B65 (7013)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,758 b/s  Packets: ........... 233  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 28  |
+|=============================================================================|
+|  PID: 0x1B66 (7014)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,783 b/s  Packets: ........... 234  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 8  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 27  |
+|=============================================================================|
+|  PID: 0x1B67 (7015)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 5,808 b/s  Packets: ........... 235  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 7  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 31  |
+|=============================================================================|
+|  PID: 0x1B68 (7016)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 29,040 b/s  Packets: ......... 1,175  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 36  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 68  |
+|=============================================================================|
+|  PID: 0x1B69 (7017)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 29,016 b/s  Packets: ......... 1,174  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 37  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 70  |
+|=============================================================================|
+|  PID: 0x1B6A (7018)                       MPEG-2 Private sections (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 23,183 b/s  Packets: ........... 938  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 30  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 49  |
+|=============================================================================|
+|  PID: 0x1B6B (7019)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: .... 28,966 b/s  Packets: ......... 1,172  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 39  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ...... 69  |
+|=============================================================================|
+|  PID: 0x1B99 (7065)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,488 b/s  Packets: ........... 303  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 11  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 303  |
+|=============================================================================|
+|  PID: 0x1B9A (7066)                                        Nagravision ECM  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,562 b/s  Packets: ........... 306  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 8  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 306  |
+|=============================================================================|
+|  PID: 0x1B9B (7067)                                        Nagravision ECM  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,488 b/s  Packets: ........... 303  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 11  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 303  |
+|=============================================================================|
+|  PID: 0x1BFD (7165)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,587 b/s  Packets: ........... 307  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 7  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 307  |
+|=============================================================================|
+|  PID: 0x1BFE (7166)                                        Nagravision ECM  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,439 b/s  Packets: ........... 301  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 301  |
+|=============================================================================|
+|  PID: 0x1BFF (7167)                                        Nagravision ECM  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,538 b/s  Packets: ........... 305  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 305  |
+|=============================================================================|
+|  PID: 0x1C61 (7265)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,637 b/s  Packets: ........... 309  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 5  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 309  |
+|=============================================================================|
+|  PID: 0x1C62 (7266)                                        Nagravision ECM  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,538 b/s  Packets: ........... 305  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 8  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 305  |
+|=============================================================================|
+|  PID: 0x1C63 (7267)                                        Nagravision ECM  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,488 b/s  Packets: ........... 303  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 10  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 303  |
+|=============================================================================|
+|  PID: 0x1E55 (7765)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,538 b/s  Packets: ........... 305  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 305  |
+|=============================================================================|
+|  PID: 0x1E56 (7766)                                        Nagravision ECM  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,538 b/s  Packets: ........... 305  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 305  |
+|=============================================================================|
+|  PID: 0x1E57 (7767)                                        Nagravision ECM  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,488 b/s  Packets: ........... 303  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 11  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 303  |
+|=============================================================================|
+|  PID: 0x1EB9 (7865)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,414 b/s  Packets: ........... 300  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 13  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 300  |
+|=============================================================================|
+|  PID: 0x1EBA (7866)                                        Nagravision ECM  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,488 b/s  Packets: ........... 303  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ........ 10  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 303  |
+|=============================================================================|
+|  PID: 0x1EBB (7867)                                        Nagravision ECM  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  Single Service PID        Transport:                Discontinuities:       |
+|  Bitrate: ..... 7,538 b/s  Packets: ........... 305  Expected: ......... 0  |
+|  Access: .......... Clear  Adapt.F.: ............ 0  Unexpect: ......... 9  |
+|                            Duplicated: .......... 0  Sections:              |
+|                            PCR: ................. 0  Unit start: ..... 305  |
+===============================================================================
+
+
+===============================================================================
+|  TABLES & SECTIONS ANALYSIS REPORT                                          |
+|=============================================================================|
+|  PID: 0x0000 (0)                                                       PAT  |
+|-----------------------------------------------------------------------------|
+|  0x00 (0, PAT), TID ext: 0x0003 (3)                                         |
+|      Repetition: ..... 100  ms  Section cnt: ...... 607                     |
+|      Min repet.: ...... 79  ms  Table cnt: ........ 607                     |
+|      Max repet.: ..... 195  ms  Version: ........... 17                     |
+|=============================================================================|
+|  PID: 0x0001 (1)                                                       CAT  |
+|-----------------------------------------------------------------------------|
+|  0x01 (1, CAT), TID ext: 0xFFFF (65535)                                     |
+|      Repetition: ..... 100  ms  Section cnt: ...... 608                     |
+|      Min repet.: ...... 74  ms  Table cnt: ........ 608                     |
+|      Max repet.: ..... 200  ms  Version: ............ 6                     |
+|=============================================================================|
+|  PID: 0x0010 (16)                                                  DVB-NIT  |
+|-----------------------------------------------------------------------------|
+|  0x40 (64, NIT Actual), TID ext: 0x20FA (8442)                              |
+|      Repetition: ..... 509  ms  Section cnt: ...... 119                     |
+|      Min repet.: ..... 465  ms  Table cnt: ........ 119                     |
+|      Max repet.: ..... 980  ms  Version: ........... 30                     |
+|=============================================================================|
+|  PID: 0x0011 (17)                                                  SDT/BAT  |
+|-----------------------------------------------------------------------------|
+|  0x42 (66, SDT Actual), TID ext: 0x0003 (3)                                 |
+|      Repetition: ..... 969  ms  Section cnt: ....... 60                     |
+|      Min repet.: ..... 945  ms  Table cnt: ......... 60                     |
+|      Max repet.: .... 1004  ms  Version: ............ 5                     |
+|-----------------------------------------------------------------------------|
+|  0x4A (74, BAT), TID ext: 0xC003 (49155)                                    |
+|      Repetition: .... 1454  ms  Section cnt: ....... 42                     |
+|      Min repet.: .... 1424  ms  Table cnt: ......... 42                     |
+|      Max repet.: .... 1501  ms  Version: ........... 18                     |
+|-----------------------------------------------------------------------------|
+|  0x4A (74, BAT), TID ext: 0xC004 (49156)                                    |
+|      Repetition: .... 1490  ms  Section cnt: ....... 41                     |
+|      Min repet.: .... 1429  ms  Table cnt: ......... 41                     |
+|      Max repet.: .... 2895  ms  Version: ............ 5                     |
+|-----------------------------------------------------------------------------|
+|  0x4A (74, BAT), TID ext: 0xC010 (49168)                                    |
+|      Repetition: .... 1490  ms  Section cnt: ....... 41                     |
+|      Min repet.: .... 1425  ms  Table cnt: ......... 41                     |
+|      Max repet.: .... 2891  ms  Version: ........... 18                     |
+|-----------------------------------------------------------------------------|
+|  0x4A (74, BAT), TID ext: 0xC01A (49178)                                    |
+|      Repetition: .... 1528  ms  Section cnt: ...... 121                     |
+|      Min repet.: .... 1428  ms  Table cnt: ......... 40                     |
+|      Max repet.: .... 2909  ms  Version: ............ 3                     |
+|-----------------------------------------------------------------------------|
+|  0x4A (74, BAT), TID ext: 0xFF00 (65280)                                    |
+|      Repetition: .... 1489  ms  Section cnt: ....... 41                     |
+|      Min repet.: .... 1429  ms  Table cnt: ......... 41                     |
+|      Max repet.: .... 2902  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x0012 (18)                                                      EIT  |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x0301 (769)                           |
+|      Repetition: .... 2075  ms  Section cnt: ....... 60                     |
+|      Min repet.: .... 1920  ms  Table cnt: ......... 29                     |
+|      Max repet.: .... 3853  ms  Version: ........... 16                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x0302 (770)                           |
+|      Repetition: .... 2152  ms  Section cnt: ....... 59                     |
+|      Min repet.: .... 1912  ms  Table cnt: ......... 28                     |
+|      Max repet.: .... 5812  ms  Version: ........... 16                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x0303 (771)                           |
+|      Repetition: .... 2004  ms  Section cnt: ....... 60                     |
+|      Min repet.: .... 1917  ms  Table cnt: ......... 30                     |
+|      Max repet.: .... 3878  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x0304 (772)                           |
+|      Repetition: .... 2003  ms  Section cnt: ....... 61                     |
+|      Min repet.: .... 1919  ms  Table cnt: ......... 31                     |
+|      Max repet.: .... 3852  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x0308 (776)                           |
+|      Repetition: .... 2003  ms  Section cnt: ....... 61                     |
+|      Min repet.: .... 1914  ms  Table cnt: ......... 30                     |
+|      Max repet.: .... 3890  ms  Version: ........... 10                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x0309 (777)                           |
+|      Repetition: .... 1937  ms  Section cnt: ....... 62                     |
+|      Min repet.: .... 1916  ms  Table cnt: ......... 31                     |
+|      Max repet.: .... 1974  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x030A (778)                           |
+|      Repetition: .... 2072  ms  Section cnt: ....... 59                     |
+|      Min repet.: .... 1923  ms  Table cnt: ......... 30                     |
+|      Max repet.: .... 3846  ms  Version: ........... 31                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x03F2 (1010)                          |
+|      Repetition: .... 2075  ms  Section cnt: ....... 61                     |
+|      Min repet.: .... 1917  ms  Table cnt: ......... 29                     |
+|      Max repet.: .... 5787  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x03F3 (1011)                          |
+|      Repetition: .... 1937  ms  Section cnt: ....... 61                     |
+|      Min repet.: .... 1914  ms  Table cnt: ......... 31                     |
+|      Max repet.: .... 1963  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x03F4 (1012)                          |
+|      Repetition: .... 2003  ms  Section cnt: ....... 61                     |
+|      Min repet.: .... 1909  ms  Table cnt: ......... 31                     |
+|      Max repet.: .... 3841  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x03F5 (1013)                          |
+|      Repetition: .... 2003  ms  Section cnt: ....... 60                     |
+|      Min repet.: .... 1905  ms  Table cnt: ......... 30                     |
+|      Max repet.: .... 3870  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4E (78, EIT p/f Actual), TID ext: 0x03F6 (1014)                          |
+|      Repetition: .... 1937  ms  Section cnt: ....... 61                     |
+|      Min repet.: .... 1915  ms  Table cnt: ......... 31                     |
+|      Max repet.: .... 1971  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0101 (257)                            |
+|      Repetition: .... 9681  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 9654  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9715  ms  Version: ............ 4                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0104 (260)                            |
+|      Repetition: .... 9675  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 9658  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9692  ms  Version: ............ 9                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0105 (261)                            |
+|      Repetition: .... 9684  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 9658  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9725  ms  Version: ............ 5                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0111 (273)                            |
+|      Repetition: .... 9679  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9662  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9715  ms  Version: ............ 4                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0201 (513)                            |
+|      Repetition: .... 9681  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9651  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9706  ms  Version: ............ 1                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0203 (515)                            |
+|      Repetition: .... 9687  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9648  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9740  ms  Version: ........... 12                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0204 (516)                            |
+|      Repetition: .... 9677  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 9659  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9692  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0205 (517)                            |
+|      Repetition: .... 9676  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9655  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9698  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0206 (518)                            |
+|      Repetition: .... 9685  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9658  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9711  ms  Version: ........... 25                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0401 (1025)                           |
+|      Repetition: .... 9686  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9660  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9721  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0402 (1026)                           |
+|      Repetition: .... 9679  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9665  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9707  ms  Version: ............ 3                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0407 (1031)                           |
+|      Repetition: .... 9678  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9653  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9691  ms  Version: ............ 4                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0415 (1045)                           |
+|      Repetition: .... 9677  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9645  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9702  ms  Version: ........... 15                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0416 (1046)                           |
+|      Repetition: .... 9679  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 9661  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9714  ms  Version: ............ 9                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0601 (1537)                           |
+|      Repetition: .... 9680  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 9642  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9710  ms  Version: ........... 12                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0602 (1538)                           |
+|      Repetition: .... 9686  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9663  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9713  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0606 (1542)                           |
+|      Repetition: ... 12106  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9652  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 19420  ms  Version: ........... 13                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0608 (1544)                           |
+|      Repetition: .... 9683  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9659  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9714  ms  Version: ........... 18                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0609 (1545)                           |
+|      Repetition: ... 11621  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9665  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 19390  ms  Version: ........... 22                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0802 (2050)                           |
+|      Repetition: ... 12105  ms  Section cnt: ....... 10                     |
+|      Min repet.: .... 9652  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 19414  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0803 (2051)                           |
+|      Repetition: .... 9689  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9660  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9737  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0804 (2052)                           |
+|      Repetition: .... 9689  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9658  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9744  ms  Version: ............ 5                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0805 (2053)                           |
+|      Repetition: ... 12101  ms  Section cnt: ....... 11                     |
+|      Min repet.: .... 9663  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 19338  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0A01 (2561)                           |
+|      Repetition: .... 9678  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9652  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9695  ms  Version: ........... 29                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0A02 (2562)                           |
+|      Repetition: .... 9679  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9660  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9699  ms  Version: ........... 10                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0A03 (2563)                           |
+|      Repetition: .... 9686  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9657  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9721  ms  Version: ........... 15                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0A04 (2564)                           |
+|      Repetition: .... 9674  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9655  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9698  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x4F (79, EIT p/f Other), TID ext: 0x0A05 (2565)                           |
+|      Repetition: .... 9677  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 9659  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9706  ms  Version: ............ 6                     |
+|-----------------------------------------------------------------------------|
+|  0x50 (80, EIT schedule Actual), TID ext: 0x0302 (770)                      |
+|      Repetition: ... 12094  ms  Section cnt: ...... 137                     |
+|      Min repet.: .... 9643  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 19373  ms  Version: ............ 6                     |
+|-----------------------------------------------------------------------------|
+|  0x50 (80, EIT schedule Actual), TID ext: 0x0303 (771)                      |
+|      Repetition: .... 9675  ms  Section cnt: ...... 147                     |
+|      Min repet.: .... 9647  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9695  ms  Version: ........... 28                     |
+|-----------------------------------------------------------------------------|
+|  0x50 (80, EIT schedule Actual), TID ext: 0x0304 (772)                      |
+|      Repetition: .... 9679  ms  Section cnt: ...... 143                     |
+|      Min repet.: .... 9661  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9712  ms  Version: ............ 6                     |
+|-----------------------------------------------------------------------------|
+|  0x50 (80, EIT schedule Actual), TID ext: 0x0308 (776)                      |
+|      Repetition: .... 9689  ms  Section cnt: ...... 137                     |
+|      Min repet.: .... 9666  ms  Table cnt: .......... 5                     |
+|      Max repet.: .... 9705  ms  Version: ............ 4                     |
+|-----------------------------------------------------------------------------|
+|  0x50 (80, EIT schedule Actual), TID ext: 0x0309 (777)                      |
+|      Repetition: ... 11630  ms  Section cnt: ...... 144                     |
+|      Min repet.: .... 9674  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 19333  ms  Version: ........... 24                     |
+|-----------------------------------------------------------------------------|
+|  0x50 (80, EIT schedule Actual), TID ext: 0x030A (778)                      |
+|      Repetition: .... 9682  ms  Section cnt: ...... 144                     |
+|      Min repet.: .... 9669  ms  Table cnt: .......... 6                     |
+|      Max repet.: .... 9708  ms  Version: ........... 15                     |
+|=============================================================================|
+|  PID: 0x0014 (20)                                                  TDT/TOT  |
+|-----------------------------------------------------------------------------|
+|  0x70 (112, TDT)                                                            |
+|      Repetition: .... 1001  ms  Section cnt: ....... 61                     |
+|      Min repet.: ..... 950  ms                                              |
+|      Max repet.: .... 2886  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x73 (115, TOT)                                                            |
+|      Repetition: ..... 986  ms  Section cnt: ....... 62                     |
+|      Min repet.: ..... 951  ms                                              |
+|      Max repet.: .... 1927  ms                                              |
+|=============================================================================|
+|  PID: 0x0015 (21)                                  Network Synchronization  |
+|-----------------------------------------------------------------------------|
+|  0x13 (19, unknown)                                                         |
+|      Repetition: .... 1317  ms  Section cnt: ....... 47                     |
+|      Min repet.: ..... 515  ms                                              |
+|      Max repet.: .... 7978  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, ECM (even))                                                     |
+|      Repetition: .... 1317  ms  Section cnt: ....... 47                     |
+|      Min repet.: ..... 515  ms                                              |
+|      Max repet.: .... 7978  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x96 (150, unknown)                                                        |
+|      Repetition: ... 16447  ms  Section cnt: ........ 2                     |
+|      Min repet.: ... 16447  ms                                              |
+|      Max repet.: ... 16447  ms                                              |
+|=============================================================================|
+|  PID: 0x0064 (100)                                                     PMT  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x030A (778)                                       |
+|      Repetition: ..... 101  ms  Section cnt: ...... 599                     |
+|      Min repet.: ...... 77  ms  Table cnt: ........ 599                     |
+|      Max repet.: ..... 197  ms  Version: ............ 2                     |
+|=============================================================================|
+|  PID: 0x00C8 (200)                                                     PMT  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0302 (770)                                       |
+|      Repetition: ..... 100  ms  Section cnt: ...... 606                     |
+|      Min repet.: ...... 74  ms  Table cnt: ........ 606                     |
+|      Max repet.: ..... 202  ms  Version: ............ 1                     |
+|=============================================================================|
+|  PID: 0x012C (300)                                                     PMT  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0303 (771)                                       |
+|      Repetition: ..... 100  ms  Section cnt: ...... 605                     |
+|      Min repet.: ...... 77  ms  Table cnt: ........ 605                     |
+|      Max repet.: ..... 196  ms  Version: ........... 17                     |
+|=============================================================================|
+|  PID: 0x0190 (400)                                                     PMT  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0304 (772)                                       |
+|      Repetition: ..... 100  ms  Section cnt: ...... 606                     |
+|      Min repet.: ...... 75  ms  Table cnt: ........ 606                     |
+|      Max repet.: ..... 201  ms  Version: ............ 1                     |
+|=============================================================================|
+|  PID: 0x01F4 (500)                                                     PMT  |
+|  Service: 0x0308 (776) LCI                                                  |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0308 (776)                                       |
+|      Repetition: ...... 99  ms  Section cnt: ...... 608                     |
+|      Min repet.: ...... 72  ms  Table cnt: ........ 608                     |
+|      Max repet.: ..... 197  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x0258 (600)                                                     PMT  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0309 (777)                                       |
+|      Repetition: ..... 101  ms  Section cnt: ...... 597                     |
+|      Min repet.: ...... 75  ms  Table cnt: ........ 597                     |
+|      Max repet.: ..... 198  ms  Version: ........... 25                     |
+|=============================================================================|
+|  PID: 0x0384 (900)                                                     PMT  |
+|  Service: 0x0301 (769) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x0301 (769)                                       |
+|      Repetition: ..... 100  ms  Section cnt: ...... 604                     |
+|      Min repet.: ...... 74  ms  Table cnt: ........ 604                     |
+|      Max repet.: ..... 199  ms  Version: ........... 10                     |
+|=============================================================================|
+|  PID: 0x03B7 (951)                           MPEG-2 Private sections (AIT)  |
+|  Service: 0x0301 (769) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  0x74 (116, AIT), TID ext: 0x0010 (16)                                      |
+|      Repetition: ...... 75  ms  Section cnt: ...... 805                     |
+|      Min repet.: ...... 56  ms  Table cnt: ........ 805                     |
+|      Max repet.: ..... 145  ms  Version: ............ 4                     |
+|=============================================================================|
+|  PID: 0x0403 (1027)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x4B (75, UNT (Update Notification)), TID ext: 0x019B (411)                |
+|      Repetition: ..... 150  ms  Section cnt: ...... 404                     |
+|      Min repet.: ..... 131  ms  Table cnt: ........ 404                     |
+|      Max repet.: ..... 296  ms  Version: ............ 4                     |
+|=============================================================================|
+|  PID: 0x0404 (1028)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 7                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 2                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0201 (513)                               |
+|      Repetition: ....... 0  ms  Section cnt: ....... 17                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x040D (1037)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x4B (75, UNT (Update Notification)), TID ext: 0x019B (411)                |
+|      Repetition: ..... 150  ms  Section cnt: ...... 404                     |
+|      Min repet.: ..... 131  ms  Table cnt: ........ 404                     |
+|      Max repet.: ..... 296  ms  Version: ............ 4                     |
+|=============================================================================|
+|  PID: 0x040E (1038)                                             DSM-CC U-N  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 7                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 2                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0201 (513)                               |
+|      Repetition: ....... 0  ms  Section cnt: ....... 11                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x042F (1071)                                             DSM-CC U-N  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x4B (75, UNT (Update Notification)), TID ext: 0x0116 (278)                |
+|      Repetition: ..... 339  ms  Section cnt: ...... 179                     |
+|      Min repet.: ..... 282  ms  Table cnt: ........ 179                     |
+|      Max repet.: ..... 594  ms  Version: ........... 14                     |
+|=============================================================================|
+|  PID: 0x0430 (1072)                                             DSM-CC U-N  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 1464  ms  Section cnt: ....... 42                     |
+|      Min repet.: .... 1335  ms  Table cnt: ......... 42                     |
+|      Max repet.: .... 2740  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0106 (262)                               |
+|      Repetition: .... 1429  ms  Section cnt: ....... 43                     |
+|      Min repet.: .... 1333  ms  Table cnt: ......... 43                     |
+|      Max repet.: .... 2715  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x010A (266)                               |
+|      Repetition: .... 1396  ms  Section cnt: ....... 44                     |
+|      Min repet.: .... 1337  ms  Table cnt: ......... 44                     |
+|      Max repet.: .... 2741  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0006 (6)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ...... 256                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x000A (10)                                |
+|      Repetition: ....... 0  ms  Section cnt: ........ 4                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x0431 (1073)                                             DSM-CC U-N  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 4869  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 4843  ms  Table cnt: ......... 12                     |
+|      Max repet.: .... 4906  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x016A (362)                               |
+|      Repetition: .... 4869  ms  Section cnt: ....... 13                     |
+|      Min repet.: .... 4847  ms  Table cnt: ......... 13                     |
+|      Max repet.: .... 4905  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x016E (366)                               |
+|      Repetition: .... 5312  ms  Section cnt: ....... 12                     |
+|      Min repet.: .... 4844  ms  Table cnt: ......... 12                     |
+|      Max repet.: .... 9769  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x006A (106)                               |
+|      Repetition: ....... 0  ms  Section cnt: ....... 58                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x0432 (1074)                                             DSM-CC U-N  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x4B (75, UNT (Update Notification)), TID ext: 0x0116 (278)                |
+|      Repetition: ..... 300  ms  Section cnt: ...... 203                     |
+|      Min repet.: ..... 282  ms  Table cnt: ........ 203                     |
+|      Max repet.: ..... 593  ms  Version: ........... 22                     |
+|=============================================================================|
+|  PID: 0x0433 (1075)                                             DSM-CC U-N  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ..... 700  ms  Section cnt: ....... 87                     |
+|      Min repet.: ..... 657  ms  Table cnt: ......... 87                     |
+|      Max repet.: .... 1358  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ..... 708  ms  Section cnt: ....... 86                     |
+|      Min repet.: ..... 658  ms  Table cnt: ......... 86                     |
+|      Max repet.: .... 1358  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0201 (513)                               |
+|      Repetition: .... 9540  ms  Section cnt: ...... 687                     |
+|      Min repet.: .... 9540  ms  Table cnt: .......... 2                     |
+|      Max repet.: .... 9540  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x0434 (1076)                                             DSM-CC U-N  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 2516  ms  Section cnt: ....... 25                     |
+|      Min repet.: .... 2390  ms  Table cnt: ......... 25                     |
+|      Max repet.: .... 4835  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 2415  ms  Section cnt: ....... 26                     |
+|      Min repet.: .... 2394  ms  Table cnt: ......... 26                     |
+|      Max repet.: .... 2461  ms  Version: ............ 0                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0201 (513)                               |
+|      Repetition: ....... 0  ms  Section cnt: ...... 107                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x0578 (1400)                                                    PMT  |
+|  Service: 0x03F2 (1010) (unknown)                                           |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x03F2 (1010)                                      |
+|      Repetition: ..... 100  ms  Section cnt: ...... 606                     |
+|      Min repet.: ...... 73  ms  Table cnt: ........ 606                     |
+|      Max repet.: ..... 196  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x05DC (1500)                                                    PMT  |
+|  Service: 0x03F3 (1011) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x03F3 (1011)                                      |
+|      Repetition: ..... 100  ms  Section cnt: ...... 607                     |
+|      Min repet.: ...... 76  ms  Table cnt: ........ 607                     |
+|      Max repet.: ..... 198  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x0640 (1600)                                                    PMT  |
+|  Service: 0x03F4 (1012) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x03F4 (1012)                                      |
+|      Repetition: ..... 100  ms  Section cnt: ...... 607                     |
+|      Min repet.: ...... 74  ms  Table cnt: ........ 607                     |
+|      Max repet.: ..... 195  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x06A4 (1700)                                                    PMT  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x03F5 (1013)                                      |
+|      Repetition: ..... 102  ms  Section cnt: ...... 591                     |
+|      Min repet.: ...... 78  ms  Table cnt: ........ 591                     |
+|      Max repet.: ..... 196  ms  Version: ........... 23                     |
+|=============================================================================|
+|  PID: 0x0708 (1800)                                                    PMT  |
+|  Service: 0x03F6 (1014) (System Software Update)                            |
+|-----------------------------------------------------------------------------|
+|  0x02 (2, PMT), TID ext: 0x03F6 (1014)                                      |
+|      Repetition: ..... 100  ms  Section cnt: ...... 607                     |
+|      Min repet.: ...... 76  ms  Table cnt: ........ 607                     |
+|      Max repet.: ..... 200  ms  Version: ............ 0                     |
+|=============================================================================|
+|  PID: 0x1449 (5193)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  0x82 (130, Nagravision EMM)                                                |
+|      Repetition: ....... 9  ms  Section cnt: .... 6,371                     |
+|      Min repet.: ....... 0  ms                                              |
+|      Max repet.: ...... 52  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x86 (134, Nagravision EMM)                                                |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms                                              |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x144F (5199)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  0x84 (132, Nagravision EMM)                                                |
+|      Repetition: ...... 76  ms  Section cnt: ...... 790                     |
+|      Min repet.: ...... 57  ms                                              |
+|      Max repet.: ..... 225  ms                                              |
+|=============================================================================|
+|  PID: 0x1511 (5393)                                        Nagravision EMM  |
+|-----------------------------------------------------------------------------|
+|  0x82 (130, Nagravision EMM)                                                |
+|      Repetition: ..... 507  ms  Section cnt: ...... 118                     |
+|      Min repet.: ..... 132  ms                                              |
+|      Max repet.: .... 2489  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x83 (131, Nagravision EMM)                                                |
+|      Repetition: ..... 457  ms  Section cnt: ...... 131                     |
+|      Min repet.: ..... 133  ms                                              |
+|      Max repet.: .... 3507  ms                                              |
+|=============================================================================|
+|  PID: 0x1B58 (7000)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 6530  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 747  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 28642  ms  Version: ............ 1                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 6530  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 755  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 28649  ms  Version: ............ 1                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 8162  ms  Section cnt: ........ 5                     |
+|      Min repet.: ..... 988  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 28656  ms  Version: ............ 1                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 3                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 1                     |
+|=============================================================================|
+|  PID: 0x1B59 (7001)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 9762  ms  Section cnt: ........ 7                     |
+|      Min repet.: .... 9713  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9837  ms  Version: ........... 28                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 11714  ms  Section cnt: ........ 6                     |
+|      Min repet.: .... 9711  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 19475  ms  Version: ........... 28                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 9761  ms  Section cnt: ........ 7                     |
+|      Min repet.: .... 9727  ms  Table cnt: .......... 7                     |
+|      Max repet.: .... 9810  ms  Version: ........... 28                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 32                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B5A (7002)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ........... 14                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ........... 14                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 5                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B5B (7003)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 4041  ms  Section cnt: ....... 12                     |
+|      Min repet.: ..... 744  ms  Table cnt: ......... 12                     |
+|      Max repet.: ... 12813  ms  Version: ........... 11                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 4320  ms  Section cnt: ....... 11                     |
+|      Min repet.: ..... 243  ms  Table cnt: ......... 11                     |
+|      Max repet.: ... 12310  ms  Version: ........... 11                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 4370  ms  Section cnt: ....... 11                     |
+|      Min repet.: ..... 744  ms  Table cnt: ......... 11                     |
+|      Max repet.: ... 12582  ms  Version: ........... 11                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 14282  ms  Section cnt: ........ 7                     |
+|      Min repet.: ... 14282  ms  Table cnt: .......... 2                     |
+|      Max repet.: ... 14282  ms  Version: ........... 11                     |
+|=============================================================================|
+|  PID: 0x1B5D (7005)                       MPEG-2 Private sections (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0xE3 (227, unknown), TID ext: 0x0000 (0)                                   |
+|      Repetition: .... 3998  ms  Section cnt: ....... 32                     |
+|      Min repet.: .... 2253  ms  Table cnt: ......... 14                     |
+|      Max repet.: .... 6800  ms  Version: ............ 7                     |
+|=============================================================================|
+|  PID: 0x1B5E (7006)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12470  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12444  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12492  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 12470  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12446  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12492  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 16625  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12459  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 24934  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 4                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B5F (7007)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12482  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12430  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12522  ms  Version: ............ 3                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 12482  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12432  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12522  ms  Version: ............ 3                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 12481  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12428  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12522  ms  Version: ............ 3                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 26                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B60 (7008)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12490  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12451  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 12529  ms  Version: ........... 31                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 12491  ms  Section cnt: ........ 3                     |
+|      Min repet.: ... 12452  ms  Table cnt: .......... 3                     |
+|      Max repet.: ... 12529  ms  Version: ........... 31                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 12490  ms  Section cnt: ........ 3                     |
+|      Min repet.: ... 12453  ms  Table cnt: .......... 3                     |
+|      Max repet.: ... 12527  ms  Version: ........... 31                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 27                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B61 (7009)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12477  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12434  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12528  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 16634  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12464  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 24909  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 16634  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12454  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 24919  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 24                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B62 (7010)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12471  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12438  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 12495  ms  Version: ............ 2                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 12473  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12438  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 12503  ms  Version: ............ 2                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 12473  ms  Section cnt: ........ 4                     |
+|      Min repet.: ... 12438  ms  Table cnt: .......... 4                     |
+|      Max repet.: ... 12503  ms  Version: ............ 2                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 26                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B63 (7011)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 6220  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 752  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27568  ms  Version: ........... 29                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 6220  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 509  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27568  ms  Version: ........... 29                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 6216  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 745  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27576  ms  Version: ........... 29                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B64 (7012)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 6220  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 752  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27568  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 6270  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 761  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27316  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 6266  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 991  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27325  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B65 (7013)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 6220  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 752  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27568  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 6220  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 509  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27568  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 6215  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 745  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 27576  ms  Version: ........... 27                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B66 (7014)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 6530  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 747  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 28643  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 6530  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 754  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 28649  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 8162  ms  Section cnt: ........ 5                     |
+|      Min repet.: ..... 988  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 28656  ms  Version: ........... 21                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 2                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ........... 21                     |
+|=============================================================================|
+|  PID: 0x1B67 (7015)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 11758  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 745  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 28183  ms  Version: ........... 23                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 9969  ms  Section cnt: ........ 7                     |
+|      Min repet.: ..... 743  ms  Table cnt: .......... 7                     |
+|      Max repet.: ... 27933  ms  Version: ........... 23                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 9970  ms  Section cnt: ........ 7                     |
+|      Min repet.: ..... 989  ms  Table cnt: .......... 7                     |
+|      Max repet.: ... 27931  ms  Version: ........... 23                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 3                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B68 (7016)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12492  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12430  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12551  ms  Version: ........... 24                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 12492  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12429  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12552  ms  Version: ........... 24                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 12492  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12430  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12551  ms  Version: ........... 24                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 28                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B69 (7017)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: .... 9947  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 155  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 24935  ms  Version: ............ 9                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: .... 7444  ms  Section cnt: ........ 6                     |
+|      Min repet.: ..... 208  ms  Table cnt: .......... 6                     |
+|      Max repet.: ... 12489  ms  Version: ............ 9                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: .... 8290  ms  Section cnt: ........ 7                     |
+|      Min repet.: ..... 198  ms  Table cnt: .......... 7                     |
+|      Max repet.: ... 12532  ms  Version: ............ 9                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 18                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 9                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0003 (3)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ........ 1                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 1                     |
+|      Max repet.: ....... 0  ms  Version: ............ 9                     |
+|=============================================================================|
+|  PID: 0x1B6A (7018)                       MPEG-2 Private sections (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0xE3 (227, unknown), TID ext: 0x0000 (0)                                   |
+|      Repetition: .... 2002  ms  Section cnt: ....... 29                     |
+|      Min repet.: .... 1165  ms  Table cnt: ......... 29                     |
+|      Max repet.: .... 3591  ms  Version: ............ 5                     |
+|=============================================================================|
+|  PID: 0x1B6B (7019)                                    DSM-CC U-N (Canal+)  |
+|  Service: 0x03F5 (1013) DATASYSTEM R7                                       |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0000 (0)                                 |
+|      Repetition: ... 12477  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12432  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12532  ms  Version: ........... 26                     |
+|-----------------------------------------------------------------------------|
+|  0x3B (59, DSM-CC UNM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ... 12477  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12434  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12533  ms  Version: ........... 26                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0001 (1)                                 |
+|      Repetition: ... 12477  ms  Section cnt: ........ 5                     |
+|      Min repet.: ... 12431  ms  Table cnt: .......... 5                     |
+|      Max repet.: ... 12531  ms  Version: ........... 26                     |
+|-----------------------------------------------------------------------------|
+|  0x3C (60, DSM-CC DDM), TID ext: 0x0002 (2)                                 |
+|      Repetition: ....... 0  ms  Section cnt: ....... 26                     |
+|      Min repet.: ....... 0  ms  Table cnt: .......... 0                     |
+|      Max repet.: ....... 0  ms                                              |
+|=============================================================================|
+|  PID: 0x1B99 (7065)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, MediaGuard ECM (even))                                          |
+|      Repetition: ..... 382  ms  Section cnt: ...... 159                     |
+|      Min repet.: ..... 174  ms                                              |
+|      Max repet.: .... 9854  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, MediaGuard ECM (odd))                                           |
+|      Repetition: ..... 338  ms  Section cnt: ...... 143                     |
+|      Min repet.: ..... 182  ms                                              |
+|      Max repet.: .... 9865  ms                                              |
+|=============================================================================|
+|  PID: 0x1B9A (7066)                                        Nagravision ECM  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 383  ms  Section cnt: ...... 159                     |
+|      Min repet.: ..... 176  ms                                              |
+|      Max repet.: ... 10063  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 330  ms  Section cnt: ...... 147                     |
+|      Min repet.: ..... 176  ms                                              |
+|      Max repet.: .... 9833  ms                                              |
+|=============================================================================|
+|  PID: 0x1B9B (7067)                                        Nagravision ECM  |
+|  Service: 0x0302 (770) CANAL+ CINEMA                                        |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 382  ms  Section cnt: ...... 159                     |
+|      Min repet.: ..... 176  ms                                              |
+|      Max repet.: .... 9932  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 339  ms  Section cnt: ...... 143                     |
+|      Min repet.: ..... 173  ms                                              |
+|      Max repet.: .... 9948  ms                                              |
+|=============================================================================|
+|  PID: 0x1BFD (7165)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, MediaGuard ECM (even))                                          |
+|      Repetition: ..... 380  ms  Section cnt: ...... 160                     |
+|      Min repet.: ..... 174  ms                                              |
+|      Max repet.: ... 10081  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, MediaGuard ECM (odd))                                           |
+|      Repetition: ..... 332  ms  Section cnt: ...... 146                     |
+|      Min repet.: ..... 168  ms                                              |
+|      Max repet.: .... 9926  ms                                              |
+|=============================================================================|
+|  PID: 0x1BFE (7166)                                        Nagravision ECM  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 390  ms  Section cnt: ...... 156                     |
+|      Min repet.: ..... 171  ms                                              |
+|      Max repet.: .... 9953  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 336  ms  Section cnt: ...... 144                     |
+|      Min repet.: ..... 169  ms                                              |
+|      Max repet.: .... 9849  ms                                              |
+|=============================================================================|
+|  PID: 0x1BFF (7167)                                        Nagravision ECM  |
+|  Service: 0x0303 (771) CANAL+ SPORT                                         |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 380  ms  Section cnt: ...... 160                     |
+|      Min repet.: ..... 166  ms                                              |
+|      Max repet.: .... 9913  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 336  ms  Section cnt: ...... 144                     |
+|      Min repet.: ..... 159  ms                                              |
+|      Max repet.: .... 9892  ms                                              |
+|=============================================================================|
+|  PID: 0x1C61 (7265)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, MediaGuard ECM (even))                                          |
+|      Repetition: ..... 325  ms  Section cnt: ...... 149                     |
+|      Min repet.: ..... 175  ms                                              |
+|      Max repet.: .... 9843  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, MediaGuard ECM (odd))                                           |
+|      Repetition: ..... 382  ms  Section cnt: ...... 159                     |
+|      Min repet.: ..... 180  ms                                              |
+|      Max repet.: ... 10104  ms                                              |
+|=============================================================================|
+|  PID: 0x1C62 (7266)                                        Nagravision ECM  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 331  ms  Section cnt: ...... 146                     |
+|      Min repet.: ..... 175  ms                                              |
+|      Max repet.: .... 9893  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 383  ms  Section cnt: ...... 158                     |
+|      Min repet.: ..... 167  ms                                              |
+|      Max repet.: .... 9938  ms                                              |
+|=============================================================================|
+|  PID: 0x1C63 (7267)                                        Nagravision ECM  |
+|  Service: 0x0304 (772) PLANETE+                                             |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 332  ms  Section cnt: ...... 146                     |
+|      Min repet.: ..... 177  ms                                              |
+|      Max repet.: ... 10046  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 387  ms  Section cnt: ...... 157                     |
+|      Min repet.: ..... 172  ms                                              |
+|      Max repet.: ... 10009  ms                                              |
+|=============================================================================|
+|  PID: 0x1E55 (7765)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, MediaGuard ECM (even))                                          |
+|      Repetition: ..... 385  ms  Section cnt: ...... 158                     |
+|      Min repet.: ..... 169  ms                                              |
+|      Max repet.: .... 9988  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, MediaGuard ECM (odd))                                           |
+|      Repetition: ..... 331  ms  Section cnt: ...... 146                     |
+|      Min repet.: ..... 166  ms                                              |
+|      Max repet.: .... 9851  ms                                              |
+|=============================================================================|
+|  PID: 0x1E56 (7766)                                        Nagravision ECM  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 385  ms  Section cnt: ...... 158                     |
+|      Min repet.: ..... 169  ms                                              |
+|      Max repet.: .... 9932  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 332  ms  Section cnt: ...... 146                     |
+|      Min repet.: ..... 171  ms                                              |
+|      Max repet.: .... 9963  ms                                              |
+|=============================================================================|
+|  PID: 0x1E57 (7767)                                        Nagravision ECM  |
+|  Service: 0x0309 (777) PARIS PREMIERE                                       |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 380  ms  Section cnt: ...... 160                     |
+|      Min repet.: ..... 174  ms                                              |
+|      Max repet.: .... 9896  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 343  ms  Section cnt: ...... 142                     |
+|      Min repet.: ..... 182  ms                                              |
+|      Max repet.: ... 10067  ms                                              |
+|=============================================================================|
+|  PID: 0x1EB9 (7865)                                                         |
+|  ediaGuard ECM for OPI 13099 (0x332B)MediaGuard ECM for OPI 13099 (0x332B)  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, MediaGuard ECM (even))                                          |
+|      Repetition: ..... 339  ms  Section cnt: ...... 143                     |
+|      Min repet.: ..... 178  ms                                              |
+|      Max repet.: ... 10097  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, MediaGuard ECM (odd))                                           |
+|      Repetition: ..... 387  ms  Section cnt: ...... 157                     |
+|      Min repet.: ..... 172  ms                                              |
+|      Max repet.: .... 9939  ms                                              |
+|=============================================================================|
+|  PID: 0x1EBA (7866)                                        Nagravision ECM  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 330  ms  Section cnt: ...... 147                     |
+|      Min repet.: ..... 175  ms                                              |
+|      Max repet.: .... 9867  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 391  ms  Section cnt: ...... 155                     |
+|      Min repet.: ..... 174  ms                                              |
+|      Max repet.: ... 10074  ms                                              |
+|=============================================================================|
+|  PID: 0x1EBB (7867)                                        Nagravision ECM  |
+|  Service: 0x030A (778) CANAL+                                               |
+|-----------------------------------------------------------------------------|
+|  0x80 (128, Nagravision ECM (even))                                         |
+|      Repetition: ..... 330  ms  Section cnt: ...... 147                     |
+|      Min repet.: ..... 173  ms                                              |
+|      Max repet.: .... 9894  ms                                              |
+|-----------------------------------------------------------------------------|
+|  0x81 (129, Nagravision ECM (odd))                                          |
+|      Repetition: ..... 387  ms  Section cnt: ...... 157                     |
+|      Min repet.: ..... 175  ms                                              |
+|      Max repet.: .... 9884  ms                                              |
+===============================================================================
+

@@ -1,6 +1,30 @@
 # ShowPsiSi
 
-两个可运行的 Windows 原型：**Qt Quick 6.7.3** 与 **Tauri 2 / WebView2**，共用同一个 **C++ / TSDuck 3.39-3956** 进程。现在用于验证架构、交互和资源开销，还不是完整的广播标准分析器。
+**Qt Quick 6.7.3** 与 **Tauri 2 / WebView2** 两套工作台，共用 **C++ / TSDuck 3.39-3956** 引擎。用于查看 MPEG-TS 的 PSI/SI 表、描述符、历史证据和安全编辑导出。它不是射频解调器，也不等于完整标准一致性认证工具。
+
+本轮在独立 Linux 云环境开发：原生引擎与 Qt 已构建并测试，Web 工作台用 Chromium 连接真实引擎验证。原有 Windows 运行证据保留；新代码尚需 Windows 原生 Tauri／文件对话框回归。
+
+## 编辑器式工作台
+
+- 中性深色布局、可调整面板、可见焦点、键盘导航和记录搜索。
+- PSI/SI 结构树：表头、服务、描述符、嵌套字段；正确宽度的十六进制标识与缩写解释。
+- Structure / Hex / XML 视图：原始字节、字节偏移与 TSDuck 原生解码并列可查。
+- 显式 DVB / ATSC / ISDB（含日本、巴西）/ SCTE 上下文及额外 PID；自动模式存在标识冲突时不能替代专业判断。
+- 小型官方标准链接索引，不内置 PDF，不联网解析；未匹配的私有含义保留为未知。
+
+当前链接的 SDK 实际注册 **43 种表解码器、306 种描述符解码器**。这是可调用解码器清单，不是每种广播规范、每个运营商变体均已验证。DVB-S/T/C 的信令参数与调谐/接收能力是两回事；DTMB 没有专用解码器保证。见 [协议覆盖与测试边界](docs/PROTOCOL_COVERAGE.md)。
+
+[需求审计与修复](docs/REQUIREMENTS_AUDIT.md) · [交互参考与视觉验收](docs/UI_UX_REVIEW.md) · [云端构建和排障](docs/CLOUD_DEVELOPMENT.md) · [测试命令](tests/README.md)
+
+### 当前界面
+
+Qt 原生软件渲染，合成码流：
+
+![Qt 编辑器式工作台](docs/images/qt-workbench.png)
+
+Web 工作台，Chromium + 真实原生引擎；不是原生 Tauri 截图：
+
+![Web 编辑器式工作台](docs/images/web-workbench.png)
 
 ## 直接运行
 
@@ -29,7 +53,7 @@ SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-taur
 - SI-only `.ts`（可配置 null 包和重复次数）或 `.bin` 原始 section 文件，均附 PID、来源和修改记录 manifest。
 - JSONL CLI 与 MCP stdio 接口。AI 调用的是真实后端功能，与 GUI 共用 schema 和验证规则。
 
-## 看图与复现证据
+## 初始 Windows 原型与历史证据
 
 以下截图来自两个实际运行的原型，使用同一份 TSDuck 官方真实样流。
 
@@ -65,7 +89,7 @@ SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-taur
 
 浏览器 UI 检查使用 Playwright，仅连接测试进程自己的 WebView2 CDP 端口。正式性能测试关闭 CDP。Qt 检查通过自己窗口内的鼠标事件操作实际控件。自动检查完成后清理并确认自己启动的进程树退出。
 
-依赖定位脚本目前按本机路径配置；新机器需调整。Tauri 的 Cargo.lock 已锁定版本；C++ 使用 vendored nlohmann/json 3.11.3。Linux/macOS 尚未构建或验证，现阶段不能称为跨平台完成。
+依赖定位脚本目前按本机路径配置；新机器需调整。Tauri 的 Cargo.lock 已锁定版本；C++ 使用 vendored nlohmann/json 3.11.3。Linux 原生引擎、Qt 和浏览器工作台已有本轮验证，Linux 原生 Tauri 与 macOS 尚未验证，不能称为所有平台完成。
 
 ## 样流
 

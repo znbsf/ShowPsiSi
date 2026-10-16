@@ -1,10 +1,11 @@
 """CLI and automation client for the shared native engine. UTF-8 JSON Lines."""
-import json, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 class Core:
     def __init__(self):
-        self.proc=subprocess.Popen([str(ROOT/'build/bin/showpsisi-core.exe'),'--root',str(ROOT)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)); self.seq=0
+        executable=Path(os.environ.get('SHOWPSISI_CORE',str(ROOT/'build/bin'/('showpsisi-core.exe' if os.name=='nt' else 'showpsisi-core'))))
+        self.proc=subprocess.Popen([str(executable),'--root',str(ROOT)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,encoding='utf-8',creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0)); self.seq=0
     def call(self,method,params=None,progress=None):
         self.seq+=1; self.proc.stdin.write(json.dumps({'id':self.seq,'method':method,'params':params or {}})+'\n');self.proc.stdin.flush()
         for line in self.proc.stdout:

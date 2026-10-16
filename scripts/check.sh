@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Run from any directory; all paths remain within this checkout.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+python scripts/make_fixture.py
+python -m unittest discover -s tests -p test_engine.py -v
+python -m unittest discover -s tests -p test_protocol_coverage.py -v
+python -m unittest discover -s tests -p test_cloud_preview.py -v
+python -m unittest discover -s tests -p test_qt_ui.py -v
+if [[ "${SHOWPSISI_BROWSER_TESTS:-0}" == 1 ]]; then
+  python -m unittest discover -s tests -p test_web_ui.py -v
+fi

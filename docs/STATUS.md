@@ -42,3 +42,37 @@ No UI winner selected by the user. Current measurements favor Qt for private mem
 Human visual preference and real receiver/playback acceptance are pending. Windows only has been built/tested. Private compiled DLL plugins, comprehensive standards validation, arbitrary table editing, full remux with media/PCR, streaming input and a production EPG time grid remain beyond the minimal prototype. These are documented in README; do not treat this baseline as their completion.
 
 All automated helper/prototype process trees are explicitly stopped after each check. No persistent monitor or background service was started. Resume from the existing source and evidence instead of repeating dependency downloads or the earlier UI fixes.
+
+## Cloud workbench iteration — 2026-10-16 UTC
+
+This section supersedes the initial prototype's UI and integrity status, not its
+historical Windows benchmark numbers. Development used the assistant's own Linux
+cloud workspace only. No owner PC, phone or television was accessed.
+
+Delivered: editor-style Qt/Web interfaces, semantic PSI/SI trees and evidence tabs,
+standard/regional context selection, optional section PIDs and discovery,
+registered native decoder inventory, offline standard-reference metadata, and
+analysis/provenance/extension/export-integrity repairs.
+
+Verification at this checkpoint:
+
+- 22 engine integration tests: passed, including the official recorded UHF22 sample.
+- 7 protocol/reference tests: passed (ATSC, ISDB, private namespace and raw fallback).
+- 3 loopback HTTP bridge tests: passed.
+- 8 Chromium + real native engine UI tests: passed, including 1100/900/520px layouts.
+- 2 compiled Qt + real native engine tests: passed (automatic and explicit DVB).
+- Actual screenshots inspected after visual review and corrections; see `docs/images/`.
+- Both shared C++ engine and Qt compile on Linux. Browser tests do not validate the
+  native Tauri binary, WebView2, native save dialogs or external URL opening.
+- New Windows and macOS builds, hardware-rendered performance and installers have
+  not been verified. The original benchmark is not a measurement of this revision.
+
+The standards index is 12,490 bytes of metadata, not PDFs. SDK inventory is 43
+registered tables / 306 descriptors; references associate 191 descriptor names
+and 26 table names at standard level. Neither count is a conformance percentage.
+
+Known next improvements: Qt record/tree-search parity; reliable field-to-byte
+range highlighting; native Tauri/platform regression. Large-file persistent
+indexing, live network/tuner input, arbitrary edit/remux, and comprehensive
+standard conformance remain explicitly outside this validated file-inspector
+checkpoint. Do not silently relabel those as implemented.

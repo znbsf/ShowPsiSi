@@ -1,13 +1,208 @@
 {
-  "name":"ShowPsiSi", "protocol_version":"0.1", "transport":"JSON Lines over stdio", "engine":"C++ / TSDuck 3.39-3956",
-  "limits":{"input":"aligned local 188/192/204-byte TS files","unique_sections":50000,"validation":"CRC, demux status, DVB SDT/PMT/EIT descriptor bounds; not a complete conformance checker","edit":"single-section actual SDT service rename","export":"signalling snapshot, not live remultiplexing"},
-  "tools":[
-    {"name":"capabilities","description":"Discover tool schemas and implementation limits.","inputSchema":{"type":"object","properties":{},"additionalProperties":false},"annotations":{"readOnlyHint":true}},
-    {"name":"analyze","description":"Incrementally scan a local TS file; keep section evidence and version occurrences in this session. Emits progress notifications.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"bitrate":{"type":"number","minimum":0}},"required":["path"],"additionalProperties":false},"annotations":{"readOnlyHint":true}},
-    {"name":"query","description":"Read the latest observed current sections and derived actual-TS services at a packet position. Observation state, not a guarantee of broadcast validity intervals.","inputSchema":{"type":"object","properties":{"at_packet":{"type":"integer","minimum":0}},"additionalProperties":false},"annotations":{"readOnlyHint":true}},
-    {"name":"inspect","description":"Get raw bytes, descriptor fields, errors and exact packet occurrences of one stable section ID.","inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false},"annotations":{"readOnlyHint":true}},
-    {"name":"load_extension","description":"Load declarative PDS/table-scoped private descriptor definitions and service sorting rules. Rescan required. Does not execute scripts.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":false}},
-    {"name":"preview_rename","description":"Preview a service-name edit to a complete single-section actual SDT; TSDuck serializes it and updates version/CRC. Returns a token bound to this analysis revision.","inputSchema":{"type":"object","properties":{"id":{"type":"string"},"service_id":{"type":"integer","minimum":0,"maximum":65535},"name":{"type":"string","minLength":1,"maxLength":180}},"required":["id","service_id","name"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":false}},
-    {"name":"export","description":"Write a new signalling-only TS (with null padding) or concatenated section BIN plus PID/provenance manifest. Never overwrite existing output. No media, PCR or original pacing. Optional preview token applies an edit to the selected snapshot.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"format":{"type":"string","enum":["ts","bin"]},"at_packet":{"type":"integer","minimum":0},"preview_token":{"type":"string"},"null_packets":{"type":"integer","minimum":0,"maximum":100000},"cycles":{"type":"integer","minimum":1,"maximum":1000}},"required":["path"],"additionalProperties":false},"annotations":{"readOnlyHint":false,"destructiveHint":false}}
+  "name": "ShowPsiSi",
+  "protocol_version": "0.1",
+  "transport": "JSON Lines over stdio",
+  "engine": "C++ / TSDuck 3.39-3956",
+  "limits": {
+    "input": "aligned local 188/192/204-byte TS files",
+    "unique_sections": 50000,
+    "validation": "CRC, demux status, DVB SDT/PMT/EIT descriptor bounds; not a complete conformance checker",
+    "edit": "single-section actual SDT service rename",
+    "export": "signalling snapshot, not live remultiplexing",
+    "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, no RF demodulation or blanket DTMB claim."
+  },
+  "tools": [
+    {
+      "name": "capabilities",
+      "description": "Discover tool schemas and implementation limits.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "analyze",
+      "description": "Incrementally scan a local TS file; keep section evidence and version occurrences in this session. Emits progress notifications.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "bitrate": {
+            "type": "number",
+            "minimum": 0
+          },
+          "standards": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "dvb",
+              "atsc",
+              "isdb",
+              "isdb-japan",
+              "isdb-brazil",
+              "scte"
+            ],
+            "description": "Signalling interpretation context. auto may be ambiguous; select the known broadcast family. Does not configure RF demodulation."
+          },
+          "extra_pids": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8191
+            },
+            "maxItems": 8192,
+            "description": "Additional section-carrying PIDs to monitor."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query",
+      "description": "Read the latest observed current sections and derived actual-TS services at a packet position. Observation state, not a guarantee of broadcast validity intervals.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "inspect",
+      "description": "Get raw bytes, descriptor fields, errors and exact packet occurrences of one stable section ID.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "load_extension",
+      "description": "Load declarative PDS/table-scoped private descriptor definitions and service sorting rules. Rescan required. Does not execute scripts.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "preview_rename",
+      "description": "Preview a service-name edit to a complete single-section actual SDT; TSDuck serializes it and updates version/CRC. Names are limited to 1..180 UTF-8 bytes (multibyte characters use more than one byte). Returns a token bound to this analysis revision.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "service_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 180,
+            "x-maxUtf8Bytes": 180,
+            "description": "1..180 UTF-8 bytes; for example, at most 60 three-byte Chinese characters."
+          }
+        },
+        "required": [
+          "id",
+          "service_id",
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "export",
+      "description": "Write a new signalling-only TS (with null padding) or concatenated section BIN plus PID/provenance manifest. Never overwrite existing output. No media, PCR or original pacing. Optional preview token applies an edit to the selected snapshot.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "ts",
+              "bin"
+            ]
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "null_packets": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100000
+          },
+          "cycles": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    }
   ]
 }

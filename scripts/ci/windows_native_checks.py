@@ -117,8 +117,11 @@ def qt_smoke(artifacts):
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+    diagnostics = (output / "ui.log").read_text(encoding="utf-8", errors="replace")
+    if "QFontDatabase: Cannot find font directory" in diagnostics:
+        raise RuntimeError("Qt offscreen cannot load fonts; screenshot text would be unreadable. See qt-smoke/ui.log.")
     if not report_path.is_file():
-        print((output / "ui.log").read_text(encoding="utf-8", errors="replace"), flush=True)
+        print(diagnostics, flush=True)
         code = None if original_returncode is None else f"0x{original_returncode & 0xFFFFFFFF:08X}"
         raise RuntimeError(f"Qt smoke did not produce a report (exit={code}). See qt-smoke/ui.log and trace.jsonl.")
     report = json.loads(report_path.read_text(encoding="utf-8"))

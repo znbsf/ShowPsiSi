@@ -57,16 +57,32 @@ def run_suite(pattern, artifacts):
         result = unittest.TextTestRunner(stream=log, verbosity=2).run(suite)
     text = (artifacts / f"{Path(pattern).stem}.log").read_text(encoding="utf-8")
     print(text, flush=True)
+    # The large, separately sourced French recording is deliberately untracked.
+    # Permit only its existing absence skip; never hide a missing native binary,
+    # unavailable protocol fixture, changed reason, or another skipped test.
+    allowed_skips = [
+        (test.id(), reason) for test, reason in result.skipped
+        if test.id() == "test_engine.EngineTests.test_real_stream_baseline"
+        and reason == "Optional real sample missing"
+        and not (ROOT / "samples/real/tnt-uhf22-2019.ts").exists()
+    ]
+    unexpected_skips = [
+        (test.id(), reason) for test, reason in result.skipped
+        if (test.id(), reason) not in allowed_skips
+    ]
     summary = {
         "tests_run": result.testsRun,
         "failures": len(result.failures), "errors": len(result.errors),
-        "skipped": [(str(test), reason) for test, reason in result.skipped],
+        "skipped": [(test.id(), reason) for test, reason in result.skipped],
+        "allowed_skips": allowed_skips, "unexpected_skips": unexpected_skips,
         "unexpected_successes": len(result.unexpectedSuccesses),
         "expected_failures": len(result.expectedFailures),
     }
     (artifacts / f"{Path(pattern).stem}.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     # Qt tests normally skip when the executable is absent; this CI job must fail.
-    return result.wasSuccessful() and result.testsRun > 0 and not result.skipped
+    if allowed_skips:
+        print("Optional real-stream recording absent; no real-recording coverage claimed.", flush=True)
+    return result.wasSuccessful() and result.testsRun > len(result.skipped) and not unexpected_skips
 
 
 def qt_smoke(artifacts):
@@ -129,7 +145,7 @@ def main():
         patterns = ["test_engine.py", "test_protocol_coverage.py", "test_cloud_preview.py"]
     results = [run_suite(pattern, artifacts) for pattern in patterns]
     if not all(results):
-        raise SystemExit("Native regression failed, discovered zero tests, or skipped coverage. See logs above.")
+        raise SystemExit("Native regression failed, discovered zero executable tests, or unexpectedly skipped coverage. See logs above.")
 
 
 if __name__ == "__main__":

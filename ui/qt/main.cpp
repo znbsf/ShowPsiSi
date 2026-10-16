@@ -20,6 +20,7 @@
 #include <QJsonParseError>
 #include <QHash>
 #include <QSettings>
+#include <QStandardPaths>
 #include <cmath>
 #include <memory>
 #include <functional>
@@ -196,6 +197,42 @@ public:
     Q_INVOKABLE void mark(QString event){QString path=qEnvironmentVariable("SHOWPSISI_TRACE");if(path.isEmpty())return;QFile file(path);if(file.open(QIODevice::Append)){QJsonObject value{{"event",event},{"ms",clock.nsecsElapsed()/1e6},{"wall_ms",double(QDateTime::currentMSecsSinceEpoch())},{"backend_pid",double(process.processId())}};file.write(QJsonDocument(value).toJson(QJsonDocument::Compact)+'\n');}}
     Q_INVOKABLE QString env(QString name){return qEnvironmentVariable(name.toUtf8().constData());}
     Q_INVOKABLE QString localPath(QUrl url){return url.toLocalFile();}
+    Q_INVOKABLE QUrl fileUrl(QString path){return QUrl::fromLocalFile(path);}
+    Q_INVOKABLE QUrl parentFolder(QString path){return QUrl::fromLocalFile(QFileInfo(path).absolutePath());}
+    Q_INVOKABLE QUrl exportFolder(){
+        // Resource/install directories are not user output locations. In a
+        // portable or read-only installation the home folder is still useful.
+        for(const auto& path:{QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),QDir::homePath()}){
+            const QFileInfo directory(path);
+            if(directory.isDir()&&directory.isWritable())return QUrl::fromLocalFile(directory.absoluteFilePath());
+        }
+        return QUrl::fromLocalFile(QDir::homePath()); // The picker can choose another writable folder.
+    }
+    Q_INVOKABLE QUrl suggestedExport(QUrl folder,QString source,QString format){
+        QString stem;
+        for(const auto character:QFileInfo(source).completeBaseName()){
+            // Captured source names may contain controls, separators or markup.
+            // Keep a short portable leaf name; never derive directories from it.
+            stem+=character.isLetterOrNumber()||character=='-'||character=='_'?character:QChar('-');
+            if(stem.size()>=80)break;
+        }
+        if(stem.isEmpty())stem="capture";
+        return QUrl::fromLocalFile(QDir(folder.toLocalFile()).filePath(stem+"-edited-si."+(format=="bin"?"bin":"ts")));
+    }
+    Q_INVOKABLE QVariantMap exportDestination(QUrl url,QString format){
+        if(!url.isLocalFile()||url.toLocalFile().isEmpty())return {{"error","Choose a local output file."}};
+        if(format!="ts"&&format!="bin")return {{"error","Choose TS or BIN format."}};
+        QString path=url.toLocalFile();
+        if(path.contains(QChar(0)))return {{"error","The output path contains a null character."}};
+        const QFileInfo file(path);
+        if(file.fileName().isEmpty()||file.isDir())return {{"error","Choose a new file name, not a folder."}};
+        if(file.suffix().isEmpty())path+="."+format;
+        else if(file.suffix().compare(format,Qt::CaseInsensitive)!=0)
+            return {{"error",QString("Use a .%1 file name for the selected %2 format.").arg(format,format.toUpper())}};
+        // No existence precheck can prevent a race. The engine exclusively
+        // creates both output and manifest and reports any competing writer.
+        return {{"path",QFileInfo(path).absoluteFilePath()}};
+    }
     Q_INVOKABLE QString json(QVariant value){return QString::fromUtf8(QJsonDocument::fromVariant(value).toJson(QJsonDocument::Indented));}
     std::unique_ptr<QSettings> layoutSettings()const{
         const QString path=qEnvironmentVariable("SHOWPSISI_SETTINGS_PATH");

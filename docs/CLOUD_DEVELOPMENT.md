@@ -62,3 +62,54 @@ Keep wrappers, logs and transient screenshots ignored, stop only processes owned
 by the validation task, and retain the production browser/native distinction.
 Do not disable Chromium/WebKit sandboxing or change host security settings to
 work around an execution-environment restriction.
+
+
+## Qt user-selected export destinations
+
+Qt's edit dialog now selects TS (SI-only transport stream) or BIN (raw sections)
+before opening `QtQuick.Dialogs.FileDialog` in `SaveFile` mode. The initial folder
+is a writable Documents folder when available, otherwise the user's home; a
+successful export remembers its actual output parent for this session. The
+source-derived suggested leaf name is sanitized and ends in `-edited-si.ts` or
+`-edited-si.bin`. A suffix which contradicts the chosen format is refused.
+There is no production fallback to the resource root's `artifacts/` directory.
+Scripted captures must explicitly configure `SHOWPSISI_ARTIFACT_DIR`.
+
+`DontConfirmOverwrite` suppresses a misleading Replace offer; the shared engine
+still exclusively creates the output and adjacent manifest. Either collision is
+reported inside the edit dialog, preserving the preview for a different path.
+Cancel writes nothing and returns focus to Save. An invalidated scan/preview
+cannot later export a stale picker selection. BIN has no packet framing, PID or
+timing by itself; both formats omit media and PCR. These are not full remuxes.
+See the [official FileDialog API](https://doc.qt.io/qt-6/qml-qtquick-dialogs-filedialog.html).
+The implementation was compiled and exercised with Qt 6.7.3.
+
+Validation on the assistant's own Linux cloud computer, 2026-10-16 UTC:
+
+- All **15 compiled Qt integration tests passed**, with **20 assertions** in each
+  save-flow scenario, plus independent native-core TS readback and raw BIN section
+  checks. The scenarios cover external Unicode paths, missing/mismatched suffixes,
+  cancel, output/manifest collisions, unchanged source, stale preview, remembered
+  folder, compact controls, safe names and cleared feedback when reopening edit.
+- A separate POSIX scenario chmods a copied application resource root read-only
+  and exports elsewhere. Windows runs the separate-root flow without claiming
+  equivalent ACL validation. Existing scan cancellation, disconnected/stale
+  backend, comparison, layout, keyboard and PlainText regressions still pass.
+- Actual GTK3-native file dialogs were exercised in the compiled Linux Qt app:
+  cancel preserved preview/focus; two traced repeated accepts of an existing
+  target reached the backend and showed its refusal without a Replace prompt;
+  output/manifest hashes stayed unchanged. An initial untraced picker closure
+  was inconclusive and is excluded from that acceptance evidence.
+- Native TS export was **404,200 bytes**, BIN **968 bytes**. Independent TS
+  readback recovered edited SID 103 (`Final Qt`) with zero CRC diagnostics. The
+  BIN manifest's section lengths, offsets and one-cycle/no-null semantics matched
+  its bytes. The source SHA-256 remained
+  `528c8cd44e1289e8f1d3f59a457bb9247d1f9716df21a4f30c6c6d18cb37ff96`.
+- Both native runs closed with exit 0, empty stderr and no remaining owned app,
+  engine or launcher process. Final format-menu contrast and edit-feedback
+  clearing were subsequently rebuilt and covered by the complete offscreen suite;
+  they were not a third native-dialog run. Windows/macOS native Save dialogs
+  remain unverified. This change does not make the two-file export crash-atomic.
+
+Ignored local evidence: `artifacts/qt-save-final-{build,tests}.log` and
+`artifacts/qt-save-native/validation.json`, traces, screenshots and exported files.

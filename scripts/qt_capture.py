@@ -2,7 +2,7 @@ import time,json,sys
 from ui_common import *
 out=ROOT/'artifacts';out.mkdir(exist_ok=True);trace=out/'qt-visual.trace.jsonl';trace.write_text('')
 real='--real' in sys.argv
-env=environment('samples/real/tnt-uhf22-2019.ts' if real else 'samples/generated/lab.ts',trace);env['SHOWPSISI_SCREENSHOT']=str(out/('qt-real.png' if real else 'qt-quick.png'));env['SHOWPSISI_SCRIPT']='' if real else 'smoke';env['SHOWPSISI_TEST_RESULT']=str(out/'qt-ui-test.json')
+env=environment('samples/real/tnt-uhf22-2019.ts' if real else 'samples/generated/lab.ts',trace);env['SHOWPSISI_SCREENSHOT']=str(out/('qt-real.png' if real else 'qt-quick.png'));env['SHOWPSISI_SCRIPT']='' if real else 'smoke';env['SHOWPSISI_TEST_RESULT']=str(out/'qt-ui-test.json');env['SHOWPSISI_ARTIFACT_DIR']=str(out)
 with (out/'qt-runtime.log').open('w',encoding='utf-8') as log:
     proc=launch('qt',env,log)
     try:

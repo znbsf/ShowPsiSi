@@ -53,7 +53,12 @@ ApplicationWindow {
     property string filter: ""
     property var preview: ({})
     property string notice: ""
-    property string artifactDir: core.env("SHOWPSISI_ARTIFACT_DIR") || core.root + "/artifacts"
+    // Only scripted validation uses this explicitly supplied artifact directory.
+    property string artifactDir: core.env("SHOWPSISI_ARTIFACT_DIR")
+    property var saveIntent: ({})
+    property bool exporting: false
+    property string exportFeedback: ""
+    property url lastExportFolder: core.exportFolder()
     property string snapshotTarget: ""
     property int snapshotTargetService: -1
     property var collapsed: ({
@@ -467,6 +472,38 @@ ApplicationWindow {
             params.at_packet = analysisState.selected_packet;
         core.send("inspect", params);
     }
+    function openExportDialog() {
+        if (!exportButton.enabled || saveDialog.visible) return;
+        let format = exportFormat.currentValue;
+        saveIntent = {token: preview.token, source: analysisState.source, format: format,
+                      at: analysisState.selected_packet};
+        saveDialog.currentFolder = lastExportFolder;
+        saveDialog.selectedFile = core.suggestedExport(lastExportFolder, analysisState.source, format);
+        exportFeedback = "";
+        saveDialog.open();
+    }
+    function acceptExportDestination(url) {
+        let intent = saveIntent;
+        saveIntent = {};
+        if (!backendReady || !analysisState.complete || exporting || !intent.token ||
+                intent.token !== preview.token || preview.after !== renameName.text ||
+                intent.source !== analysisState.source || intent.at !== analysisState.selected_packet) {
+            exportFeedback = "The preview changed. Preview the edit again before exporting.";
+            return;
+        }
+        let destination = core.exportDestination(url, intent.format);
+        if (destination.error) {
+            exportFeedback = destination.error;
+            exportButton.forceActiveFocus();
+            return;
+        }
+        let params = {path: destination.path, format: intent.format, preview_token: intent.token};
+        if (intent.at !== null && intent.at !== undefined) params.at_packet = intent.at;
+        exporting = true;
+        exportFeedback = "Writing a new " + intent.format.toUpperCase() + " file and manifest…";
+        core.mark("export_requested");
+        core.send("export", params);
+    }
     function clearWorkspaceIntentions() {
         inspected = false;
         selected = "";
@@ -479,6 +516,10 @@ ApplicationWindow {
         comparisonError = "";
         fromPacket.clear();
         toPacket.clear();
+        saveIntent = {};
+        saveDialog.close();
+        exporting = false;
+        exportFeedback = "";
         renameDialog.close();
         specificationDialog.close();
         apiDialog.close();
@@ -634,6 +675,11 @@ ApplicationWindow {
                 return;
             }
             if (result.message) {
+                if (method === "export") {
+                    exporting = false;
+                    exportFeedback = result.message;
+                    exportButton.forceActiveFocus();
+                }
                 notice = result.message;
                 if (method === "diff_snapshots")
                     comparisonError = result.message;
@@ -668,8 +714,13 @@ ApplicationWindow {
                 preview = result;
                 notice = "Preview ready · no source changes";
             }
-            if (method === "export")
+            if (method === "export") {
+                exporting = false;
+                lastExportFolder = core.parentFolder(result.path);
                 notice = "Exported " + num(result.bytes) + " bytes + manifest";
+                exportFeedback = notice + "\n" + result.path;
+                exportButton.forceActiveFocus();
+            }
             if (method === "capabilities") {
                 apiText.text = JSON.stringify(result, null, 2);
                 apiDialog.open();
@@ -743,6 +794,14 @@ ApplicationWindow {
                     return;
                 core.capture(artifactDir + "/qt-edit.png");
                 core.click("export");
+                // Explicit validation destination; production always uses the picker.
+                let testIntent = saveIntent;
+                saveDialog.close();
+                saveIntent = testIntent;
+                saveDialog.currentFolder = core.fileUrl(artifactDir);
+                saveDialog.selectedFile = core.fileUrl(artifactDir + "/qt-export-" + Date.now() + ".ts");
+                saveDialog.open();
+                exportAcceptTimer.start();
                 testStep++;
             } else if (testStep === 8) {
                 if (notice.indexOf("Exported") !== 0)
@@ -822,6 +881,100 @@ ApplicationWindow {
                     search: searchChecks,
                     history_cutoff: historyCutoffVerified
                 }));
+                stop();
+            }
+        }
+    }
+    Timer {
+        id: exportAcceptTimer
+        interval: 100
+        onTriggered: saveDialog.accept()
+    }
+    Timer {
+        id: exportTestTimer
+        interval: 150
+        repeat: true
+        property int step: 0
+        property var checks: ({})
+        property string savedPreview: ""
+        property string savedState: ""
+        function choose(path) {
+            core.click("export");
+            let testIntent = saveIntent;
+            saveDialog.close();
+            saveIntent = testIntent;
+            saveDialog.currentFolder = core.fileUrl(core.env("SHOWPSISI_EXPORT_TEST_DIR"));
+            saveDialog.selectedFile = core.fileUrl(path);
+            saveDialog.open();
+            exportAcceptTimer.start();
+        }
+        onTriggered: {
+            let directory = core.env("SHOWPSISI_EXPORT_TEST_DIR");
+            if (step === 0) {
+                if (!analysisState.complete || core.inspecting || !detail.native_table) return;
+                core.click("rename");
+                renameName.text = "Qt destination edit";
+                core.click("preview");
+                step++;
+            } else if (step === 1) {
+                if (!preview.token) return;
+                savedPreview = JSON.stringify(preview);
+                savedState = JSON.stringify(analysisState);
+                core.click("export");
+                checks.save_mode = saveDialog.visible && saveDialog.fileMode === FileDialog.SaveFile;
+                checks.no_replace_prompt = !!(saveDialog.options & FileDialog.DontConfirmOverwrite);
+                checks.user_folder = core.localPath(saveDialog.currentFolder) !== core.root;
+                checks.source_name = core.localPath(saveDialog.selectedFile).endsWith("lab-edited-si.ts");
+                checks.portable_reserved_name = core.localPath(core.suggestedExport(core.fileUrl(directory), "CON.ts", "ts")).endsWith("CON-edited-si.ts");
+                checks.safe_name = core.localPath(core.suggestedExport(core.fileUrl(directory), "../<bad>\\name?.ts", "bin")).endsWith("-edited-si.bin") &&
+                    !core.localPath(core.suggestedExport(core.fileUrl(directory), "../<bad>\\name?.ts", "bin")).includes("<");
+                saveDialog.selectedFile = core.fileUrl(directory + "/cancelled.ts");
+                saveDialog.reject();
+                step++;
+            } else if (step === 2) {
+                checks.cancel_preserves_preview = JSON.stringify(preview) === savedPreview;
+                checks.cancel_preserves_state = JSON.stringify(analysisState) === savedState && !exporting;
+                checks.cancel_focus = exportButton.activeFocus;
+                checks.compact_controls = core.isExposed("export") && core.isExposed("exportFormat");
+                choose(directory + "/wrong.bin");
+                step++;
+            } else if (step === 3) {
+                checks.extension_refused = exportFeedback.indexOf("Use a .ts") === 0 && !exporting;
+                choose(directory + "/chosen λ.ts");
+                step++;
+            } else if (step === 4) {
+                if (exporting || exportFeedback.indexOf("Exported") !== 0) return;
+                checks.ts_success = exportFeedback.includes("chosen λ.ts") && JSON.stringify(preview) === savedPreview;
+                checks.remembered_folder = core.localPath(lastExportFolder) === core.localPath(core.fileUrl(directory));
+                choose(directory + "/chosen λ.ts");
+                step++;
+            } else if (step === 5) {
+                if (exporting) return;
+                checks.existing_output_refused = exportFeedback.includes("already exists") && JSON.stringify(preview) === savedPreview;
+                choose(directory + "/manifest-only.ts");
+                step++;
+            } else if (step === 6) {
+                if (exporting) return;
+                checks.existing_manifest_refused = exportFeedback.includes("already exists") && JSON.stringify(preview) === savedPreview;
+                exportFormat.currentIndex = 1;
+                choose(directory + "/raw-sections");
+                step++;
+            } else if (step === 7) {
+                if (exporting || exportFeedback.indexOf("Exported") !== 0) return;
+                checks.bin_success = exportFeedback.includes("raw-sections.bin") && JSON.stringify(preview) === savedPreview;
+                checks.state_preserved = JSON.stringify(analysisState) === savedState;
+                checks.nonlocal_refused = !!core.exportDestination("https://example.com/output.ts", "ts").error;
+                core.click("export");
+                saveDialog.selectedFile = core.fileUrl(directory + "/stale.bin");
+                preview = {};
+                saveDialog.accept();
+                step++;
+            } else if (step === 8) {
+                checks.stale_refused = !exporting && exportFeedback.indexOf("The preview changed") === 0;
+                renameDialog.close();
+                core.click("rename");
+                checks.reopen_clears_feedback = exportFeedback === "";
+                core.testResult(JSON.stringify({checks: checks, passed: Object.values(checks).every(Boolean)}));
                 stop();
             }
         }
@@ -1193,6 +1346,8 @@ ApplicationWindow {
             plainTextTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "inspect-error")
             inspectFailureTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "export-destination")
+            exportTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("layout-") === 0)
             layoutTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "comparison")
@@ -1251,6 +1406,25 @@ ApplicationWindow {
         onAccepted: {
             source.text = core.localPath(selectedFile);
             scan();
+        }
+    }
+    FileDialog {
+        id: saveDialog
+        title: "Save new SI-only " + (saveIntent.format || "ts").toUpperCase() + " · existing files are refused"
+        fileMode: FileDialog.SaveFile
+        nameFilters: saveIntent.format === "bin" ? ["Raw SI sections (*.bin)"] : ["SI-only transport stream (*.ts)"]
+        defaultSuffix: saveIntent.format || "ts"
+        // Qt Quick Dialogs 6.7 supports this flag. A Replace confirmation would
+        // promise an overwrite which the engine deliberately never permits.
+        options: FileDialog.DontConfirmOverwrite
+        onAccepted: {
+            core.mark("export_dialog_accepted");
+            acceptExportDestination(selectedFile);
+        }
+        onRejected: {
+            core.mark("export_dialog_cancelled");
+            saveIntent = {};
+            exportButton.forceActiveFocus();
         }
     }
     Dialog {
@@ -2308,6 +2482,7 @@ ApplicationWindow {
     Dialog {
         id: renameDialog
         title: "Preview service edit"
+        onAboutToShow: exportFeedback = ""
         anchors.centerIn: parent
         width: 500
         modal: true
@@ -2324,6 +2499,7 @@ ApplicationWindow {
                 id: renameName
                 Layout.fillWidth: true
                 placeholderText: "New service name"
+                enabled: !exporting
                 selectByMouse: true
                 onTextChanged: preview = {}
                 Accessible.name: "New service name"
@@ -2332,9 +2508,10 @@ ApplicationWindow {
                 objectName: "preview"
                 text: "Preview change"
                 primary: true
-                enabled: backendReady && !!analysisState.complete && renameName.text.trim().length > 0 && !!chosenService()
+                enabled: backendReady && !!analysisState.complete && renameName.text.trim().length > 0 && !!chosenService() && !exporting
                 onClicked: {
                     preview = {};
+                    exportFeedback = "";
                     core.send("preview_rename", {
                         id: selected,
                         service_id: chosenService().id,
@@ -2348,27 +2525,64 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 color: ink
             }
-            Action {
-                objectName: "export"
-                text: "Export SI-only TS + manifest"
-                enabled: backendReady && !!analysisState.complete && !!preview.token && preview.after === renameName.text
-                onClicked: {
-                    let p = {
-                        path: artifactDir + "/qt-export-" + Date.now() + ".ts",
-                        format: "ts",
-                        preview_token: preview.token
-                    };
-                    if (analysisState.selected_packet !== null && analysisState.selected_packet !== undefined)
-                        p.at_packet = analysisState.selected_packet;
-                    core.send("export", p);
+            ComboBox {
+                id: exportFormat
+                objectName: "exportFormat"
+                Layout.fillWidth: true
+                enabled: !exporting && !saveDialog.visible
+                textRole: "label"
+                valueRole: "value"
+                model: [{label: "TS · SI-only transport stream (.ts)", value: "ts"},
+                        {label: "BIN · raw SI sections (.bin)", value: "bin"}]
+                Accessible.name: "Export format"
+                delegate: ItemDelegate {
+                    id: formatOption
+                    width: exportFormat.width
+                    height: 32
+                    highlighted: exportFormat.highlightedIndex === index
+                    contentItem: PlainLabel {
+                        text: modelData.label
+                        color: ink
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        color: formatOption.highlighted ? "#37373d" : "#252526"
+                        border.color: formatOption.activeFocus ? blue : "transparent"
+                    }
                 }
             }
+            Action {
+                id: exportButton
+                objectName: "export"
+                text: exporting ? "Exporting…" : "Save SI-only " + (exportFormat.currentValue || "ts").toUpperCase() + " + manifest…"
+                enabled: backendReady && !!analysisState.complete && !!preview.token && preview.after === renameName.text && !exporting
+                onClicked: openExportDialog()
+            }
             PlainLabel {
-                text: "Exports a new signaling-only file in artifacts. The source is unchanged."
+                text: exportFormat.currentValue === "bin"
+                    ? "Raw sections without packet framing, PID or timing. Keep the adjacent manifest for PID and source evidence."
+                    : "Signaling-only TS: no audio, video or PCR; snapshot repetition does not retain original timing."
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 color: muted
                 font.pixelSize: 11
+            }
+            PlainLabel {
+                text: "Choose a new output path. Existing output or manifest files are refused. The source is unchanged."
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                color: muted
+                font.pixelSize: 11
+            }
+            PlainLabel {
+                objectName: "exportFeedback"
+                text: exportFeedback
+                visible: !!text
+                Layout.fillWidth: true
+                Layout.maximumHeight: 100
+                wrapMode: Text.WrapAnywhere
+                elide: Text.ElideRight
+                color: ink
             }
         }
     }

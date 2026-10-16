@@ -10,9 +10,15 @@ Updated: 2026-10-16 UTC.
 - PR #4 merged as `dcadd66`: Windows Tauri release executable compiled and six
   Rust unit tests passed. All five jobs passed in run 38976742240. This is compile
   evidence, not Windows WebView2 interaction or an installer.
-- No release or installer published. Cooperative scan cancellation is now being
-  implemented on `feat/cooperative-analysis-cancel`; the counts below describe
-  its completed local tests, with hosted CI still pending.
+- PR #5 merged as `7df3706`: cooperative scan cancellation, MCP routing and
+  stale-progress isolation. All five jobs passed at head `935ee17` in
+  [run 38980765498](https://github.com/znbsf/ShowPsiSi/actions/runs/38980765498).
+  The exact merged main also passed all five jobs in
+  [run 38981738934](https://github.com/znbsf/ShowPsiSi/actions/runs/38981738934).
+  Windows engine/Qt regressions and Tauri release compilation passed; this does
+  not establish Windows WebView2 interaction.
+- No release or installer published. Qt export destination selection is being
+  verified separately; hosted CI for that change is pending.
 
 ## Current result
 
@@ -53,8 +59,11 @@ a native-runtime claim.
   response routing and safe close. Test gates are excluded from production.
 - 6 HTTP bridge tests and 24 live Chromium/native-engine tests, including backend
   termination, keyboard/tree interaction, historical snapshots and responsive layout.
-- 13 compiled native Qt tests: real workflows, search, literal untrusted text and
-  tooltips, no remote image fetches, and failure-state cleanup.
+- 15 compiled native Qt tests: real workflows, search, literal untrusted text and
+  tooltips, no remote image fetches, failure-state cleanup, external TS/BIN save
+  destinations, cancelled save, stale preview rejection and no-overwrite errors.
+  Linux tests also enforce a read-only application resource directory; the
+  Windows case uses a separate resource directory without claiming ACL coverage.
 - 7 Rust native-shell tests: exact URL allowlist plus launcher success/failure,
   spawn errors, bounded diagnostics and unconfirmed timeout. Native GTK source selection, save/export,
   independent readback, overwrite-warning cancellation and backend-death flows
@@ -62,7 +71,7 @@ a native-runtime claim.
 - Both workbenches carry the selected packet cutoff into inspection. A historical
   view cannot silently assemble a later sibling section.
 
-Total automated test cases above: **137**. See [cloud validation](VALIDATION_CLOUD.md),
+Total automated test cases above: **139** (PR #5 baseline plus two Qt export tests). See [cloud validation](VALIDATION_CLOUD.md),
 [native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
 These are local cloud results; check each PR's latest CI commit separately.
 Native Linux Tauri comparison and persisted layout have been exercised on the

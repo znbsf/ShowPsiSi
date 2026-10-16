@@ -33,6 +33,24 @@ class BridgeTests(unittest.TestCase):
         message=next(item['payload'] for item in batch['messages'] if item['payload'].get('id')==1)
         self.assertEqual(message['result']['name'],'ShowPsiSi')
         self.assertTrue(message['result']['tools'])
+    def test_snapshot_comparison_is_forwarded_to_native_engine(self):
+        # The transport must not become a second, outdated API registry.
+        # A pre-analysis request should reach the engine and receive its error,
+        # rather than fail the bridge's method allowlist.
+        self.invoke('request', {'message': {'id': 41, 'method': 'diff_snapshots',
+                    'params': {'from_packet': 0, 'to_packet': 1}}})
+        cursor = 0
+        for _ in range(4):
+            with self.request('/__bridge/events?after=' + str(cursor)) as response:
+                batch = json.load(response)
+            for item in batch['messages']:
+                cursor = item['seq']
+                if item['payload'].get('id') == 41:
+                    self.assertIn('error', item['payload'])
+                    self.assertNotIn('Unknown method', item['payload']['error']['message'])
+                    return
+        self.fail('Native comparison response was not delivered')
+
     def test_engine_exit_event_and_startup_state(self):
         self.assertTrue(self.invoke('environment')['backend_alive'])
         self.bridge.proc.kill()

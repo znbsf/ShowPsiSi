@@ -56,6 +56,7 @@ flowchart LR
 | --- | --- |
 | capabilities | schema、版本、能力边界 |
 | analyze | 增量进度、服务/事件、历史、诊断 |
+| cancel_analysis | 按原始分析请求 ID 请求合作式取消，原请求另行返回终止状态 |
 | query | 指定包位置的观察快照 |
 | inspect | 原始 hex、字段、字节偏移、指定截面内的出现位置 |
 | diff_snapshots | 同次分析的 A/B 截面对比：表、服务、事件的新增／移除／变化，附双方证据 |
@@ -73,7 +74,7 @@ JSONL 示例（每行一个 JSON 对象，同一进程内保留分析状态）�
 {"id":3,"method":"inspect","params":{"id":"从 query 返回的 section id"}}
 ```
 
-响应为 `{id,result}` 或 `{id,error:{code,message}}`；分析过程中还会出现 `{event:"progress",request_id,state}`。标准输出只输出协议数据。当前调用串行，长扫描期间还没有并发取消。
+响应为 `{id,result}` 或 `{id,error:{code,message}}`；分析过程中还会出现 `{event:"progress",request_id,state}`。标准输出只输出协议数据。普通请求仍按 FIFO 串行执行；独立输入控制路径允许长扫描期间请求取消。Engine/TSDuck 状态只由一个线程访问。具体状态、EOF 与 MCP 语义见 [取消契约](ANALYSIS_CANCELLATION.md)。
 
 MCP 客户端的配置示例（不自动修改任何客户端配置）：
 
@@ -90,7 +91,7 @@ MCP 客户端的配置示例（不自动修改任何客户端配置）：
 
 MCP adapter 已通过 initialize、tools/list 和完整 tools/call 工作流：分析、查看原始证据、预览改名、导出、回读验证；中文服务名与中文输出路径也已覆盖。未测试特定外部 AI 客户端，也没有配置模型、API key 或自动授权客户端写文件。协议具备本机文件读取和新文件输出能力，应按客户端的实际授权范围接入。
 
-后续优先增加有字段 schema 的 `preview_patch`、批量事务、取消/进度、持久化证据索引和 export profile。届时可将工具结果进一步分页，避免把所有 EPG/出现位置一次性塞进 AI 上下文。
+后续优先增加有字段 schema 的 `preview_patch`、批量事务、持久化证据索引和 export profile。届时可将工具结果进一步分页，避免把所有 EPG/出现位置一次性塞进 AI 上下文。
 
 
 ## 截面对比（下一轮实现）

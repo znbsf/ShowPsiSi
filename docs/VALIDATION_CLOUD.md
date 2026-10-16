@@ -86,3 +86,24 @@ returned exit 4 (`gio: Operation not supported`); the old fire-and-forget call
 hid this failure. The new checked asynchronous helper surfaces bounded diagnostics
 and an honest timeout, without killing a browser. Actual native Copy URL cleared
 the failure; no successful OS browser navigation is claimed.
+
+
+## Cooperative cancellation loop
+
+The new local total is **137 distinct automated tests**: engine30, protocol26,
+HTTP6, deterministic core cancellation14, MCP/transport17, compiled Qt13,
+Chromium/native-engine24 and Rust7. Additional stress repetitions are not counted
+as distinct cases. Production core and compile-only gated helper have separate
+identities and startup probes. Default CMake does not build the helper.
+
+Independent review found and verified fixes for passive MCP EOF accidentally
+cancelling work, repeated queued cancellation acknowledgements, Web partial
+evidence remaining after failure, foreign progress events and same-batch
+terminal→late-progress handling. Fifty gated race interleavings and six independent
+probes passed. Qt/backend-death controls and native Tauri cancel/rescan were
+operated; gated/paused fixtures are identified separately from ordinary production
+scans. See ANALYSIS_CANCELLATION.md and NATIVE_TAURI_VALIDATION.md for scope.
+
+Hosted Windows/Linux CI for these cancellation changes is pending at the time of
+this local report. Previous PR #4 and its post-merge five-job run38977600070 passed,
+but those results do not validate later cancellation changes.

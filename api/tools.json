@@ -10,7 +10,9 @@
     "edit": "single-section actual SDT service rename",
     "export": "signalling snapshot, not live remultiplexing",
     "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, no RF demodulation or blanket DTMB claim.",
-    "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness."
+    "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness.",
+    "ordinary_request_queue": 64,
+    "cancellation": "Cooperative targeted cancellation of queued or running analyses. Integer/string request IDs are distinct. Accepted cancellation wins over completion until the terminal commit. Blocking file reads, SDK work and stdout may delay cancellation."
   },
   "tools": [
     {
@@ -69,6 +71,30 @@
       },
       "annotations": {
         "readOnlyHint": true
+      }
+    },
+    {
+      "name": "cancel_analysis",
+      "description": "Request cancellation of the queued/running analyze with exactly this integer or string JSONL request ID. Bypasses the ordinary FIFO. Returns requested=true when accepted (including repeated requests), otherwise requested=false/reason=not_running. Original analyze terminates once with analysis_cancelled and error.data.state: cleared evidence, analysis_status=cancelled, complete=false, retained source/processed packets. Other methods are not cancelled.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Original analyze request ID. Integer 1 and string \"1\" identify different requests."
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
       }
     },
     {

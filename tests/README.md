@@ -75,3 +75,30 @@ executables, empty suites and unexpected skips. Only the named optional real-fil
 test is allowed to skip when that exact recording is absent; the result reports
 that exclusion explicitly. This is not equivalent to native dialogs, WebView2,
 installer testing or real-recording coverage on Windows.
+
+## Cooperative cancellation
+
+Build the optional native helper explicitly for the new deterministic suites:
+
+```sh
+cmake -S . -B build -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON
+cmake --build build --parallel 4
+export SHOWPSISI_TEST_CORE="$PWD/build/bin/showpsisi-core-test"
+python -m unittest discover -s tests -p test_cancellation.py -v
+python -m unittest discover -s tests -p test_mcp_cancellation.py -v
+```
+
+Retain the normal TSDuck/Qt SDK arguments used by your environment. Windows CI
+sets explicit `.exe` paths under its Release output directory. Production
+`showpsisi-core` and helper `showpsisi-core-test` are separate executables; helper
+hooks are absent from the production build. Required CI suites fail if the helper
+is missing rather than treating absent cancellation coverage as success.
+
+The core suite gates queued, progress, read and completion boundaries, checks
+bounded FIFO/control bypass and exact typed IDs, and verifies no stale preview or
+evidence after cancellation. MCP tests use real subprocesses for outer/native ID
+mapping, token-scoped progress, repeated cancellation, EOF drain and callback-safe
+close. Qt/Web tests cover visible Cancel/Cancelling, terminal acknowledgement,
+rescan, stale UI responses and unexpected backend death. Native smoke evidence
+identifies when the compile-only helper is used; no timing benchmark is inferred
+from a deliberately gated or paused test process.

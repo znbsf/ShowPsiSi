@@ -3,6 +3,9 @@
 SHOWPSISI_CORE=/path/to/core python -m unittest discover -s tests -p test_web_ui.py -v
 Requires Playwright Python and Chromium (PLAYWRIGHT_CHROMIUM_EXECUTABLE optional).
 Screenshots: artifacts/web-ui-tests/. Every response is produced by the native core.
+Cancellation tests also use the compile-only showpsisi-core-test checkpoint helper.
+Transport gates delay/replay authentic responses. Positive results are never
+fabricated; foreign/malformed event tests intentionally inject invalid envelopes.
 """
 import hashlib
 import json
@@ -13,7 +16,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import patch
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 
@@ -37,13 +42,29 @@ class BrowserTests(unittest.TestCase):
         cls.playwright=sync_playwright().start()
         cls.addClassCleanup(cls.playwright.stop)
         executable=os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') or shutil.which('chromium') or shutil.which('chromium-browser')
-        cls.browser=cls.playwright.chromium.launch(headless=True,**({'executable_path':executable} if executable else {}))
+        cls.browser=cls.playwright.chromium.launch(headless=True,chromium_sandbox=True,**({'executable_path':executable} if executable else {}))
         cls.addClassCleanup(cls.browser.close)
         cls.artifacts=ROOT/'artifacts/web-ui-tests'
         cls.artifacts.mkdir(parents=True,exist_ok=True)
 
     def setUp(self):
-        self.bridge=Bridge(self.output,self.sample)
+        self.checkpoint=None
+        if self._testMethodName.startswith('test_cancel_'):
+            normal=Path(os.environ.get('SHOWPSISI_CORE',ROOT/'build/bin/showpsisi-core'))
+            helper=Path(os.environ.get('SHOWPSISI_TEST_CORE',normal.with_name(normal.stem+'-test'+normal.suffix)))
+            if not helper.is_file():
+                self.skipTest('Build SHOWPSISI_BUILD_CANCELLATION_TESTS=ON or set SHOWPSISI_TEST_CORE')
+            self.checkpoint=self.output/self._testMethodName
+            stage='before_analysis' if 'before_start' in self._testMethodName else 'before_complete' if 'near_completion' in self._testMethodName else 'after_progress'
+            number='2' if 'stale' in self._testMethodName else '1'
+            with patch.dict(os.environ,SHOWPSISI_TEST_GATE=str(self.checkpoint),SHOWPSISI_TEST_STAGE=stage,SHOWPSISI_TEST_ANALYSIS_NUMBER=number):
+                if 'failure_after_progress' in self._testMethodName:
+                    with patch.dict(os.environ,SHOWPSISI_TEST_FAIL_AT_GATE='1'):
+                        self.bridge=Bridge(self.output,self.sample,executable=str(helper))
+                else:
+                    self.bridge=Bridge(self.output,self.sample,executable=str(helper))
+        else:
+            self.bridge=Bridge(self.output,self.sample)
         self.addCleanup(self.bridge.close)
         self.server=Server(self.bridge)
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True)
@@ -69,6 +90,298 @@ class BrowserTests(unittest.TestCase):
 
     def call(self,method,params=None):
         return self.page.evaluate('([method,params])=>window.showpsisi.call(method,params)',[method,params or {}])
+
+    def wait_checkpoint(self):
+        deadline=time.monotonic()+15
+        ready=Path(str(self.checkpoint)+'.ready')
+        while not ready.exists():
+            if time.monotonic()>deadline:
+                self.fail('Native cancellation helper did not reach checkpoint: '+str(self.checkpoint))
+            self.page.wait_for_timeout(20)
+        return json.loads(ready.read_text())
+
+    def gate_native_messages(self):
+        # Only the test transport is wrapped. Every payload below originated
+        # from this test's real native child; holding a terminal result lets us
+        # assert the pending UI without racing the scheduler or adding sleeps.
+        self.page.add_init_script('''
+          let native;
+          const gate=window.testGate={methods:[],held:[],received:[],requests:[],byId:new Map(),progress:[],listener:null};
+          gate.release=method=>{
+            const selected=gate.held.filter(item=>!method||item.method===method);
+            gate.held=gate.held.filter(item=>!selected.includes(item));
+            for(const item of selected)item.deliver(item.event);
+          };
+          Object.defineProperty(window,'__TAURI__',{configurable:true,get:()=>native,set:value=>{
+            native=value;
+            const invoke=value.core.invoke;
+            value.core.invoke=(command,args={})=>{
+              if(command==='request'){
+                gate.requests.push(args.message);
+                gate.byId.set(args.message.id,args.message.method);
+              }
+              return invoke(command,args);
+            };
+            const listen=value.event.listen;
+            value.event.listen=(name,deliver)=>listen(name,event=>{
+              gate.listener=deliver;
+              const message=event.payload;
+              if(message.event==='progress')gate.progress.push(event);
+              const method=message.event ? message.event : gate.byId.get(message.id);
+              gate.received.push({method,message});
+              if(gate.methods.includes(method))gate.held.push({method,event,deliver});
+              else deliver(event);
+            });
+          }});
+        ''')
+        self.page.reload()
+        self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+
+    def test_cancel_progress_waits_for_terminal_then_rescans(self):
+        self.gate_native_messages()
+        pid=self.bridge.proc.pid
+        self.page.evaluate('window.testGate.methods=["analyze"]')
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.wait_for_function('() => window.testGate.progress.length > 0')
+        before_cancel=self.page.evaluate('window.showpsisi.getState()')
+        self.page.evaluate('''() => {
+          const id=window.testGate.progress[0].payload.request_id;
+          window.testGate.listener({payload:{event:'unrelated',request_id:id,state:{source:'foreign-event'}}});
+          window.testGate.listener({payload:{event:'progress',request_id:id,state:['malformed-state']}});
+          window.testGate.listener({payload:{event:'progress',request_id:'another-request',state:{source:'foreign-request'}}});
+        }''')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),before_cancel)
+        cancel=self.page.locator('#cancel-scan')
+        self.assertTrue(cancel.is_visible())
+        cancel.focus();cancel.press('Enter')
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.event.payload.error?.code==="analysis_cancelled")')
+        self.assertTrue(cancel.is_disabled())
+        self.assertEqual(cancel.inner_text(),'Cancelling…')
+        self.assertTrue(self.page.locator('#scan').is_disabled())
+        self.assertTrue(self.page.locator('#source').is_disabled())
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),{})
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail()'),{})
+        # Repeated activation cannot emit a second cancellation, and late
+        # real progress cannot resurrect partial evidence while cancelling.
+        self.page.evaluate('''() => {
+          window.showpsisi.cancelScan();
+          for(const event of window.testGate.progress)window.testGate.listener(event);
+          window.showpsisi.scan();
+        }''')
+        self.assertEqual(self.page.evaluate('window.testGate.requests.filter(request=>request.method==="cancel_analysis").length'),1)
+        self.assertEqual(self.page.evaluate('window.testGate.requests.filter(request=>request.method==="analyze").length'),1)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),{})
+        for width in (900,761,520):
+            self.page.set_viewport_size({'width':width,'height':1000})
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),width+1)
+            self.assertTrue(cancel.is_visible())
+        self.page.screenshot(path=str(self.artifacts/'cancellation-pending-narrow.png'),full_page=True)
+        self.page.evaluate('window.testGate.release("analyze")')
+        self.page.wait_for_function('() => !document.querySelector("#scan").disabled')
+        state=self.page.evaluate('window.showpsisi.getState()')
+        self.assertEqual(state['analysis_status'],'cancelled')
+        self.assertFalse(state['complete'])
+        self.assertEqual(state['source'],str(self.sample))
+        self.assertEqual(state['services'],[])
+        self.assertEqual(state['tables'],[])
+        self.assertEqual(state['history'],[])
+        self.assertIn('Analysis cancelled',self.page.locator('#notice').inner_text())
+        self.assertFalse(self.page.locator('#notice').evaluate('(element)=>element.classList.contains("error")'))
+        self.assertTrue(self.page.locator('#scan').evaluate('(element)=>element===document.activeElement'))
+        self.assertFalse(cancel.is_visible())
+        self.assertTrue(self.page.locator('#latest').is_disabled())
+        self.assertTrue(self.page.locator('#compare-snapshots').is_disabled())
+        self.assertNotIn('DISCONNECTED',self.page.locator('#runtime').inner_text())
+        self.call('capabilities')
+        self.assertEqual(self.bridge.proc.pid,pid)
+        self.assertIsNone(self.bridge.proc.poll())
+        self.page.evaluate('window.testGate.methods=[]')
+        self.page.locator('#scan').press('Enter')
+        self.page.wait_for_function('() => window.showpsisi.getState().complete && !document.querySelector("#scan").disabled')
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        complete=self.page.evaluate('window.showpsisi.getState()')
+        self.assertEqual(len(complete['services']),6)
+        self.page.evaluate('''() => {for(const event of window.testGate.progress.filter(item=>item.payload.request_id===window.testGate.progress[0].payload.request_id))window.testGate.listener(event);}''')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),complete)
+        self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
+
+    def test_cancel_before_start(self):
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => !document.querySelector("#scan").disabled')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState().analysis_status'),'cancelled')
+        self.assertFalse(self.page.locator('#cancel-scan').is_visible())
+        self.analyze()
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+
+    def test_cancel_transport_failure_stays_pending_and_can_retry(self):
+        failed=[]
+        def interrupt_cancel(route):
+            body=route.request.post_data_json
+            if not failed and body.get('args',{}).get('message',{}).get('method')=='cancel_analysis':
+                failed.append(True)
+                route.abort('failed')
+            else:
+                route.continue_()
+        self.page.route('**/__bridge/invoke',interrupt_cancel)
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => document.querySelector("#notice").textContent.includes("Cancellation was not confirmed")')
+        self.assertEqual(len(failed),1)
+        self.assertTrue(self.page.locator('#scan').is_disabled())
+        self.assertFalse(self.page.locator('#cancel-scan').is_disabled())
+        self.assertNotIn('DISCONNECTED',self.page.locator('#runtime').inner_text())
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => window.showpsisi.getState().analysis_status === "cancelled" && !document.querySelector("#scan").disabled')
+        self.assertFalse(self.page.locator('#notice').evaluate('(element)=>element.classList.contains("error")'))
+        self.analyze()
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+
+    def test_cancel_near_completion(self):
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => !document.querySelector("#scan").disabled')
+        state=self.page.evaluate('window.showpsisi.getState()')
+        self.assertEqual(state['analysis_status'],'cancelled')
+        self.assertEqual(state['services'],[])
+        self.assertEqual(state['tables'],[])
+        self.assertEqual(state['history'],[])
+        self.analyze()
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+
+    def test_cancel_failure_after_progress_clears_partial_evidence(self):
+        self.gate_native_messages()
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.wait_for_function('() => window.showpsisi.getState().tables?.length > 0')
+        Path(str(self.checkpoint)+'.release').touch()
+        self.page.wait_for_function('() => !document.querySelector("#scan").disabled')
+        state=self.page.evaluate('window.showpsisi.getState()')
+        self.assertEqual(state['analysis_status'],'failed')
+        self.assertFalse(state['complete'])
+        self.assertFalse(state.get('tables'))
+        self.assertFalse(state.get('services'))
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail()'),{})
+        self.assertIsNone(self.page.evaluate('window.showpsisi.getComparison()'))
+        self.assertTrue(self.page.locator('#notice').evaluate('(element)=>element.classList.contains("error")'))
+        self.assertIn('Analysis failed',self.page.locator('#list').inner_text())
+        self.assertTrue(self.page.locator('#compare-snapshots').is_disabled())
+        self.assertTrue(self.page.locator('#latest').is_disabled())
+        self.page.evaluate('''() => {for(const event of window.testGate.progress)window.testGate.listener(event)}''')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),state)
+        self.assertNotIn('DISCONNECTED',self.page.locator('#runtime').inner_text())
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+
+    def test_cancel_stale_read_and_comparison_responses(self):
+        self.gate_native_messages()
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        before=self.page.evaluate('window.showpsisi.getState()')
+        service=before['services'][0]
+        self.page.evaluate('window.testGate.methods=["inspect","query","diff_snapshots"]')
+        self.page.locator('#compare-snapshots').click()
+        self.page.locator('#run-comparison').click()
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.method==="diff_snapshots")')
+        self.page.locator('[data-tab="Services"]').click()
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail().name'),'SDT')
+        self.page.evaluate('packet=>{window.showpsisi.snapshot(packet)}',before['history'][0]['last_packet'])
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.method==="query")')
+        self.page.evaluate('service=>{window.showpsisi.inspect(service.source_id,service.id)}',service)
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.method==="inspect")')
+        self.page.locator('[data-tab="Changes"]').click()
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => window.showpsisi.getState().analysis_status === "cancelled" && !document.querySelector("#scan").disabled')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail()'),{})
+        self.assertIsNone(self.page.evaluate('window.showpsisi.getComparison()'))
+        # Restoring either comparison side cannot resurrect the pre-scan
+        # workspace, even before delayed responses arrive.
+        self.page.locator('[data-tab="Changes"]').click()
+        self.page.locator('[data-tab="Services"]').click()
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail()'),{})
+        self.page.evaluate('window.testGate.methods=[]')
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        current=self.page.evaluate('window.showpsisi.getState()')
+        detail=self.page.evaluate('window.showpsisi.getDetail()')
+        self.page.evaluate('window.testGate.release()')
+        self.call('capabilities')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),current)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail()'),detail)
+        self.assertIsNone(self.page.evaluate('window.showpsisi.getComparison()'))
+        self.assertNotIn('Loading',self.page.locator('#inspector').inner_text())
+
+    def test_cancel_stale_preview_cannot_restore_edit_token(self):
+        self.gate_native_messages()
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        self.page.evaluate('window.testGate.methods=["preview_rename"]')
+        self.page.locator('#edit').click()
+        self.page.locator('#rename').fill('Obsolete preview')
+        self.page.locator('#preview').click()
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.method==="preview_rename")')
+        # Invoke the actual scan handler while an edit is pending. A new scan
+        # must close the dialog and invalidate its target, including its finally.
+        self.page.evaluate('() => {window.showpsisi.scan()}')
+        self.wait_checkpoint()
+        self.assertFalse(self.page.locator('#edit-dialog').is_visible())
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => window.showpsisi.getState().analysis_status === "cancelled" && !document.querySelector("#scan").disabled')
+        self.page.evaluate('window.testGate.methods=[]')
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        self.page.locator('#edit').click()
+        self.page.locator('#rename').fill('Current edit')
+        self.page.evaluate('window.testGate.release("preview_rename")')
+        self.call('capabilities')
+        self.assertEqual(self.page.locator('#diff').inner_text(),'')
+        self.assertTrue(self.page.locator('#export').is_disabled())
+        self.assertFalse(self.page.locator('#preview').is_disabled())
+        self.page.locator('#preview').click()
+        self.page.wait_for_function('() => !document.querySelector("#export").disabled')
+        self.assertIn('Current edit',self.page.locator('#diff').inner_text())
+        self.assertNotIn('Obsolete preview',self.page.locator('#diff').inner_text())
+        self.page.locator('#close-edit').click()
+
+    def test_completion_racing_cancel_keeps_terminal_success(self):
+        self.gate_native_messages()
+        self.page.evaluate('window.testGate.methods=["analyze"]')
+        self.page.locator('#scan').click()
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.method==="analyze" && item.event.payload.result?.complete)')
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('() => window.testGate.received.some(item=>item.method==="cancel_analysis")')
+        ack=self.page.evaluate('window.testGate.received.find(item=>item.method==="cancel_analysis").message.result')
+        self.assertFalse(ack['requested'])
+        self.assertEqual(ack['reason'],'not_running')
+        self.assertTrue(self.page.locator('#scan').is_disabled())
+        self.assertTrue(self.page.locator('#cancel-scan').is_disabled())
+        self.page.evaluate('window.testGate.release("analyze")')
+        self.page.wait_for_function('() => window.showpsisi.getState().complete && !document.querySelector("#scan").disabled')
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+        self.assertIn('completed before cancellation',self.page.locator('#notice').inner_text())
+        self.assertFalse(self.page.locator('#cancel-scan').is_visible())
+        # A new, uncancelled analysis receives terminal + late progress in the
+        # same event-loop batch. Promise continuations have not run yet: pending
+        # membership, rather than busy alone, must reject the stale frame.
+        self.page.locator('#scan').click()
+        self.page.wait_for_function('() => window.testGate.held.some(item=>item.method==="analyze" && item.event.payload.result?.complete)')
+        self.assertTrue(self.page.evaluate('''() => {
+          const before=JSON.stringify(window.showpsisi.getState());
+          const request=window.testGate.requests.filter(item=>item.method==='analyze').at(-1);
+          window.testGate.release('analyze');
+          window.testGate.listener({payload:{event:'progress',request_id:request.id,state:{source:'late-after-terminal'}}});
+          return JSON.stringify(window.showpsisi.getState())===before;
+        }'''))
+        self.page.wait_for_function('() => window.showpsisi.getState().complete && !document.querySelector("#scan").disabled')
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
 
     def test_real_analysis_and_selection(self):
         self.analyze()

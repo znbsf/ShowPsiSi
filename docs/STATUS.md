@@ -7,8 +7,12 @@ Updated: 2026-10-16 UTC.
 - PR #3 merged as `f63bc60`: snapshot comparison, layout persistence and protocol
   generation integrity. All four jobs passed at feature head `98482d1` in
   [run 38976239202](https://github.com/znbsf/ShowPsiSi/actions/runs/38976239202).
-- No release or installer published. Windows Tauri compile/test validation is the
-  next CI-only step, separately tracked from Windows Qt/runtime claims.
+- PR #4 merged as `dcadd66`: Windows Tauri release executable compiled and six
+  Rust unit tests passed. All five jobs passed in run 38976742240. This is compile
+  evidence, not Windows WebView2 interaction or an installer.
+- No release or installer published. Cooperative scan cancellation is now being
+  implemented on `feat/cooperative-analysis-cancel`; the counts below describe
+  its completed local tests, with hosted CI still pending.
 
 ## Current result
 
@@ -27,6 +31,11 @@ a native-runtime claim.
 
 ## Verified current behavior
 
+- Cooperative targeted scan cancellation with explicit lifecycle states, cleared
+  incomplete evidence and safe rescan. Qt/Web reject stale/foreign progress;
+  backend death disables stale actions. MCP input stays responsive and passive
+  EOF drains accepted calls. See [cancellation contract](ANALYSIS_CANCELLATION.md).
+
 - Read-only A/B snapshot comparison with deterministic pagination, explicit cutoffs,
   per-side evidence and stable identities. Native Qt and browser workflows preserve
   the main selected snapshot until an explicit navigation action.
@@ -39,9 +48,12 @@ a native-runtime claim.
   export exclusivity/cleanup, framing and regular-file input guards.
 - 26 protocol/reference tests: ATSC and ISDB fixtures; DVB-S/S2/T/T2/C delivery
   parameters; private PDS isolation, nondefault PID discovery and unknown bytes.
-- 5 HTTP bridge tests and 16 live Chromium/native-engine tests, including backend
+- 14 deterministic native cancellation tests and 17 MCP/transport tests: queued,
+  progress and completion boundaries, EOF drain, typed IDs, progress tokens,
+  response routing and safe close. Test gates are excluded from production.
+- 6 HTTP bridge tests and 24 live Chromium/native-engine tests, including backend
   termination, keyboard/tree interaction, historical snapshots and responsive layout.
-- 8 compiled native Qt tests: real workflows, search, literal untrusted text and
+- 13 compiled native Qt tests: real workflows, search, literal untrusted text and
   tooltips, no remote image fetches, and failure-state cleanup.
 - 7 Rust native-shell tests: exact URL allowlist plus launcher success/failure,
   spawn errors, bounded diagnostics and unconfirmed timeout. Native GTK source selection, save/export,
@@ -50,7 +62,7 @@ a native-runtime claim.
 - Both workbenches carry the selected packet cutoff into inspection. A historical
   view cannot silently assemble a later sibling section.
 
-Total automated test cases above: **92**. See [cloud validation](VALIDATION_CLOUD.md),
+Total automated test cases above: **137**. See [cloud validation](VALIDATION_CLOUD.md),
 [native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
 These are local cloud results; check each PR's latest CI commit separately.
 Native Linux Tauri comparison and persisted layout have been exercised on the
@@ -70,7 +82,7 @@ without bundling PDFs. These counts are not conformance percentages. See
 
 ## Remaining boundaries
 
-- New Windows WebView2 and macOS builds, installers and actual external-browser
+- Windows WebView2 interaction, macOS builds, installers and actual external-browser
   launching have not been validated in this iteration. Original Windows evidence
   below does not validate later changes.
 - No RF demodulation, tuner control, complete DTMB-specific signaling guarantee or

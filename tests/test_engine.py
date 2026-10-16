@@ -45,7 +45,7 @@ class EngineTests(unittest.TestCase):
             def call(i,method,params):
                 p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params})+'\n');p.stdin.flush();return json.loads(p.stdout.readline())['result']
             self.assertEqual(call(1,'initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['serverInfo']['name'],'ShowPsiSi')
-            tools=call(2,'tools/list',{})['tools'];self.assertEqual(len(tools),8);self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
+            tools=call(2,'tools/list',{})['tools'];self.assertEqual(len(tools),9);self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
             r=call(3,'tools/call',{'name':'analyze','arguments':{'path':str(ROOT/'samples/generated/lab.ts')}});self.assertFalse(r['isError']);self.assertEqual(len(r['structuredContent']['services']),6)
             service=r['structuredContent']['services'][0]
             comparison=call(8,'tools/call',{'name':'diff_snapshots','arguments':{'from_packet':0,'to_packet':r['structuredContent']['packets']-1,'limit':1}})['structuredContent']

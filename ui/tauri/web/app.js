@@ -86,6 +86,8 @@ let selected = "",
   detailError = "",
   inspectEpoch = 0,
   queryEpoch = 0,
+  scanEpoch = 0,
+  cancelling = false,
   activeAnalyze = null;
 let aggregateDiagnostic = null;
 let backendFailure = "";
@@ -110,7 +112,7 @@ const invoke = (...args) =>
       );
 $("#app").innerHTML = `
 <header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="api">Agent API</button></header>
-<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button></div>
+<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
 <div class="stats" id="stats"></div>
 <main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
@@ -130,7 +132,7 @@ function disableBackendActions() {
   if (!backendFailure) return;
   document
     .querySelectorAll(
-      "#scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
+      "#scan,#cancel-scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
     )
     .forEach((element) => {
       element.disabled = true;
@@ -149,8 +151,10 @@ function disconnectBackend(reason) {
       ? " An in-flight export may have completed; check its destination before retrying after restart."
       : "");
   busy = false;
+  cancelling = false;
   loadingDetail = false;
   activeAnalyze = null;
+  ++scanEpoch;
   ++inspectEpoch;
   ++queryEpoch;
   ++comparison.epoch;
@@ -162,6 +166,7 @@ function disconnectBackend(reason) {
   }
   pending.clear();
   preview = {};
+  editTarget = null;
   if (!detail.name) detailError = backendFailure;
   $("#diff").textContent = backendFailure;
   render();
@@ -208,6 +213,43 @@ function selectionReset() {
   loadingDetail = false;
   openNodes.clear();
 }
+function resetAnalysisViews() {
+  // A saved comparison workspace and an edit token belong to one analysis.
+  // Never restore them after a cancellation or a new source revision.
+  savedWorkspace = null;
+  comparisonEvidence = "";
+  inspectionEvidence = null;
+  if (tab === "Changes") tab = "Services";
+  comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
+  ++queryEpoch;
+  selectionReset();
+  editTarget = null;
+  invalidatePreview();
+  $("#preview").disabled = !!backendFailure;
+  if ($("#edit-dialog").open) $("#edit-dialog").close();
+}
+async function cancelScan() {
+  if (!busy || cancelling || activeAnalyze === null || backendFailure) return;
+  const epoch = scanEpoch, requestId = activeAnalyze;
+  cancelling = true;
+  resetAnalysisViews();
+  data = {};
+  render();
+  notice("Cancelling analysis… waiting for the engine to stop · source unchanged");
+  try {
+    const result = await call("cancel_analysis", { request_id: requestId });
+    if (epoch !== scanEpoch || activeAnalyze !== requestId) return;
+    // Acknowledgment is not the original analysis's terminal result. Keep
+    // Analyze disabled even when completion raced the cancellation request.
+    if (!result.requested)
+      notice("Analysis is finishing… waiting for its result");
+  } catch (error) {
+    if (epoch !== scanEpoch || activeAnalyze !== requestId) return;
+    cancelling = false;
+    render();
+    notice("Cancellation was not confirmed: " + String(error) + ". Analysis is still pending.", true);
+  }
+}
 async function scan() {
   if (busy || backendFailure) return;
   const path = $("#source").value.trim();
@@ -240,11 +282,10 @@ async function scan() {
     $("#extra-pids").focus();
     return;
   }
+  const epoch = ++scanEpoch;
   busy = true;
-  if (tab === "Changes") changeTab("Services");
-  comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
-  ++queryEpoch;
-  selectionReset();
+  cancelling = false;
+  resetAnalysisViews();
   data = {};
   preview = {};
   filter = "";
@@ -254,29 +295,49 @@ async function scan() {
   completePaint = false;
   render();
   notice("Analyzing stream… incremental results appear below");
+  let succeeded = false;
   try {
-    data = await call("analyze", {
+    const operation = call("analyze", {
       path,
       standards: $("#standards").value,
       ...(extraPids.length ? { extra_pids: [...new Set(extraPids)] } : {}),
     });
     render();
-    defaultInspect();
+    const result = await operation;
+    if (epoch !== scanEpoch) return;
+    data = result;
+    succeeded = true;
+    render();
     notice(
-      "Analysis complete · " +
+      (cancelling ? "Analysis completed before cancellation took effect · " : "Analysis complete · ") +
         num(data.packets) +
         " packets · source unchanged",
     );
   } catch (error) {
-    notice(String(error), true);
+    if (epoch !== scanEpoch) return;
+    if (error.code === "analysis_cancelled") {
+      resetAnalysisViews();
+      data = error.data?.state || { analysis_status: "cancelled", complete: false };
+      notice("Analysis cancelled · source unchanged · ready to analyze again");
+    } else {
+      resetAnalysisViews();
+      data = { source: path, analysis_status: "failed", complete: false };
+      notice(String(error), true);
+    }
   } finally {
-    busy = false;
-    activeAnalyze = null;
-    render();
+    if (epoch === scanEpoch) {
+      const returnFocus = cancelling && (document.activeElement === $("#cancel-scan") || document.activeElement === document.body);
+      busy = false;
+      cancelling = false;
+      activeAnalyze = null;
+      render();
+      if (succeeded) defaultInspect();
+      if (returnFocus && !backendFailure) $("#scan").focus();
+    }
   }
 }
 async function inspect(id, sid = -1, key = "", evidence = null) {
-  if (backendFailure) return;
+  if (backendFailure || cancelling) return;
   if (!id) {
     notice("Aggregate diagnostic: packet locations are not indexed.");
     return;
@@ -416,7 +477,7 @@ function render() {
     [
       "SCAN",
       data.metrics ? Number(data.metrics.scan_ms).toFixed(1) + " ms" : "—",
-      busy ? "Analyzing…" : data.complete ? "Complete" : "No source",
+      cancelling ? "Cancelling…" : busy ? "Analyzing…" : data.analysis_status === "cancelled" ? "Cancelled" : data.analysis_status === "failed" ? "Failed" : data.complete ? "Complete" : "No source",
     ],
   ];
   $("#stats").innerHTML = stats
@@ -428,6 +489,10 @@ function render() {
   $("#scan").disabled = busy || !native || !!backendFailure;
   $("#browse").disabled = busy || !native || !!backendFailure;
   $("#scan").textContent = busy ? "Analyzing…" : "Analyze";
+  $("#cancel-scan").hidden = !busy;
+  $("#cancel-scan").disabled = cancelling || activeAnalyze === null || !!backendFailure;
+  $("#cancel-scan").textContent = cancelling ? "Cancelling…" : "Cancel";
+  $("#cancel-scan").setAttribute("aria-busy", String(cancelling));
   $("#source").disabled = busy;
   $("#standards").disabled = busy;
   $("#extra-pids").disabled = busy;
@@ -496,7 +561,9 @@ function render() {
           ? "Search programmes, SID, start time…"
           : "Search issue code or evidence…";
   $("#snapshot-state").textContent =
-    data.selected_packet != null
+    data.analysis_status === "cancelled"
+      ? "CANCELLED · SOURCE UNCHANGED"
+      : data.selected_packet != null
       ? "SNAPSHOT @ " + num(data.selected_packet)
       : (reportedStandards(data)
           ? reportedStandards(data) + " · "
@@ -597,7 +664,7 @@ function renderList() {
     .join("");
   if (!rows.length)
     $("#list").innerHTML =
-      `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${busy ? "Reading transport stream…" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${!data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : "Choose another table family or packet snapshot."}</p></div>`;
+      `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${cancelling ? "Cancelling analysis…" : busy ? "Reading transport stream…" : data.analysis_status === "cancelled" ? "Analysis cancelled" : data.analysis_status === "failed" ? "Analysis failed" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${cancelling ? "Waiting for the engine to stop. The source file stays unchanged." : ["cancelled", "failed"].includes(data.analysis_status) ? "Partial results were cleared. Analyze again when you are ready." : !data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : "Choose another table family or packet snapshot."}</p></div>`;
   const visible = rows.slice(start, start + PAGE_SIZE);
   $("#list")
     .querySelectorAll("[data-row]")
@@ -1348,7 +1415,7 @@ function renderInspector() {
 }
 function renderTimeline() {
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.source ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
+    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
       data.history || []
     )
       .slice(historyPage * 40, (historyPage + 1) * 40)
@@ -1380,7 +1447,7 @@ function renderTimeline() {
     );
 }
 function openEdit() {
-  if (backendFailure) return;
+  if (backendFailure || busy || !data.complete) return;
   preview = {};
   editTarget = {
     id: selected,
@@ -1413,7 +1480,7 @@ function invalidatePreview() {
 }
 $("#rename").oninput = invalidatePreview;
 $("#preview").onclick = async () => {
-  if (backendFailure || !editTarget) return;
+  if (backendFailure || busy || !editTarget) return;
   const target = editTarget;
   const name = $("#rename").value;
   const sid = Number($("#edit-service").value);
@@ -1438,11 +1505,11 @@ $("#preview").onclick = async () => {
   } catch (error) {
     if (target === editTarget) $("#diff").textContent = String(error);
   } finally {
-    $("#preview").disabled = !!backendFailure;
+    if (target === editTarget) $("#preview").disabled = !!backendFailure;
   }
 };
 $("#export").onclick = async () => {
-  if (backendFailure || !preview.token || !editTarget) return;
+  if (backendFailure || busy || !preview.token || !editTarget) return;
   const target = editTarget,
     token = preview.token;
   $("#export").disabled = true;
@@ -1461,16 +1528,19 @@ $("#export").onclick = async () => {
     const params = { path, format: "ts", preview_token: token };
     if (target.packet != null) params.at_packet = target.packet;
     const result = await call("export", params);
+    if (target !== editTarget) return;
     notice(
       "Exported " + num(result.bytes) + " bytes + manifest · " + result.path,
     );
     $("#edit-dialog").close();
   } catch (error) {
+    if (target !== editTarget) return;
     $("#diff").textContent = String(error);
     $("#export").disabled = !!backendFailure;
   }
 };
 $("#scan").onclick = scan;
+$("#cancel-scan").onclick = cancelScan;
 $("#source").onkeydown = (e) => {
   if (e.key === "Enter") scan();
 };
@@ -1697,7 +1767,7 @@ async function boot() {
     }
     if (backendFailure) return;
     if (msg.event) {
-      if (busy && msg.request_id === activeAnalyze && msg.state) {
+      if (msg.event === "progress" && busy && !cancelling && msg.request_id === activeAnalyze && pending.get(msg.request_id)?.method === "analyze" && msg.state && typeof msg.state === "object" && !Array.isArray(msg.state)) {
         data = msg.state;
         render();
       }
@@ -1707,7 +1777,12 @@ async function boot() {
     if (!job) return;
     pending.delete(msg.id);
     clearTimeout(job.timer);
-    if (msg.error) job.reject(new Error(msg.error.message));
+    if (msg.error) {
+      const error = new Error(msg.error.message);
+      error.code = msg.error.code;
+      error.data = msg.error.data;
+      job.reject(error);
+    }
     else job.resolve(msg.result);
   });
   env = await invoke("environment");
@@ -1724,6 +1799,7 @@ async function boot() {
 }
 window.showpsisi = {
   scan,
+  cancelScan,
   snapshot,
   inspect,
   call,

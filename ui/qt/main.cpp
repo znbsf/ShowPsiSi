@@ -6,6 +6,7 @@
 #include <QProcess>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonArray>
 #include <QFile>
 #include <QDir>
 #include <QElapsedTimer>
@@ -30,12 +31,77 @@ class Bridge:public QObject {
     Q_PROPERTY(QString root READ root CONSTANT)
     Q_PROPERTY(QString sample READ sample CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool cancelling READ cancelling NOTIFY cancellingChanged)
+    Q_PROPERTY(bool available READ available NOTIFY availabilityChanged)
+    Q_PROPERTY(QString availability READ availability NOTIFY availabilityChanged)
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool inspecting READ inspecting NOTIFY inspectingChanged)
     Q_PROPERTY(bool comparing READ comparing NOTIFY comparingChanged)
-    QProcess process;QByteArray buffer;QVariantMap m_state,m_detail;QString m_root,m_sample,m_error;bool m_busy=false,m_inspecting=false;
-    QByteArray queuedWrites; QString stderrTail; int latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0;bool m_comparing=false;
-    QElapsedTimer clock;int sequence=0;QHash<int,QString> methods;bool dataFrame=false,completeFrame=false;QQuickWindow* window=nullptr;
+    struct Request { QString method; quint64 generation; };
+    QProcess process;
+    QByteArray buffer,queuedWrites;
+    QVariantMap m_state,m_detail;
+    QString m_root,m_sample,m_error,stderrTail,m_availability="starting";
+    bool m_busy=false,m_cancelling=false,m_inspecting=false,m_comparing=false;
+    int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0;
+    quint64 generation=0;
+    QHash<int,Request> methods;
+    QElapsedTimer clock;
+    bool dataFrame=false,completeFrame=false;
+    QQuickWindow* window=nullptr;
+
+    void clearIntentions(){
+        latestInspect=latestQuery=latestPreview=latestComparison=0;
+        m_detail.clear();m_inspecting=false;m_comparing=false;
+        emit detailChanged();emit inspectingChanged();emit comparingChanged();
+        emit workspaceInvalidated();
+    }
+    void receive(const QJsonObject& msg){
+        if(m_availability=="disconnected")return;
+        if(msg.contains("event")){
+            // Events from old scans, other operations and malformed request IDs
+            // must never replace the active workspace.
+            if(msg["event"]!="progress"||!m_busy||m_cancelling||
+               msg["request_id"]!=QJsonValue(activeAnalysis)||!msg["state"].isObject())return;
+            m_state=msg["state"].toObject().toVariantMap();emit stateChanged();return;
+        }
+        if(!msg["id"].isDouble())return;
+        const int id=msg["id"].toInt();
+        if(msg["id"]!=QJsonValue(id)||!methods.contains(id))return;
+        if(!msg["result"].isObject()&&!msg["error"].isObject())return;
+        const auto request=methods.take(id);
+        const QString method=request.method;
+        if(request.generation!=generation)return;
+        if((method=="analyze"&&id!=activeAnalysis)||(method=="inspect"&&id!=latestInspect)||
+           (method=="query"&&id!=latestQuery)||(method=="preview_rename"&&id!=latestPreview)||
+           (method=="diff_snapshots"&&id!=latestComparison))return;
+        if(method=="inspect"){m_inspecting=false;emit inspectingChanged();}
+        if(method=="diff_snapshots"){m_comparing=false;emit comparingChanged();}
+        const bool cancelRequested=method=="analyze"&&m_cancelling;
+        // Only the original analyze terminal settles the scan. A cancellation
+        // acknowledgement merely says that the worker saw the request.
+        if(method=="analyze"){
+            activeAnalysis=0;m_busy=false;m_cancelling=false;
+            emit busyChanged();emit cancellingChanged();mark("scan_response");
+        }
+        if(msg.contains("error")){
+            const auto error=msg["error"].toObject();
+            const bool cancelled=method=="analyze"&&error["code"]=="analysis_cancelled";
+            if(method=="analyze"){
+                m_state=error["data"].toObject()["state"].toObject().toVariantMap();
+                clearIntentions();emit stateChanged();
+            }
+            m_error=cancelled?QString():error["message"].toString();emit errorChanged();
+            emit response(method,error.toVariantMap());
+        }else{
+            if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
+            QVariantMap result=msg["result"].toObject().toVariantMap();
+            if(method=="analyze"||method=="query"){m_state=result;emit stateChanged();}
+            if(method=="inspect"){m_detail=result;emit detailChanged();}
+            if(cancelRequested)result["cancel_requested"]=true;
+            emit response(method,result);
+        }
+    }
 public:
     Bridge(){
         clock.start();m_root=qEnvironmentVariable("SHOWPSISI_ROOT",QDir::currentPath());m_sample=qEnvironmentVariable("SHOWPSISI_SAMPLE",m_root+"/samples/generated/lab.ts");
@@ -44,24 +110,13 @@ public:
             while((nl=buffer.indexOf('\n'))>=0){
                 QJsonParseError parseError;auto doc=QJsonDocument::fromJson(buffer.left(nl),&parseError);buffer.remove(0,nl+1);
                 if(parseError.error!=QJsonParseError::NoError||!doc.isObject()){m_error="Invalid backend response: "+parseError.errorString();emit errorChanged();continue;}
-                QJsonObject msg=doc.object();
-                if(msg.contains("event")){m_state=msg["state"].toObject().toVariantMap();emit stateChanged();}
-                else {int id=msg["id"].toInt();QString method=methods.take(id);
-                    if(method.isEmpty())continue;
-                    if((method=="inspect"&&id!=latestInspect)||(method=="query"&&id!=latestQuery)||(method=="preview_rename"&&id!=latestPreview)||(method=="diff_snapshots"&&id!=latestComparison))continue;
-                    if(method=="inspect"){m_inspecting=false;emit inspectingChanged();}
-                    if(method=="diff_snapshots"){m_comparing=false;emit comparingChanged();}
-                    if(msg.contains("error")){m_error=msg["error"].toObject()["message"].toString();emit errorChanged();emit response(method,msg["error"].toObject().toVariantMap());}
-                    else {if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}QVariantMap result=msg["result"].toObject().toVariantMap();
-                        if(method=="analyze"||method=="query"){m_state=result;emit stateChanged();}
-                        if(method=="inspect"){m_detail=result;emit detailChanged();}
-                        emit response(method,result);
-                    }
-                    if(method=="analyze"){m_busy=false;emit busyChanged();mark("scan_response");}
-                }
+                receive(doc.object());
             }
         });
-        connect(&process,&QProcess::started,this,[this]{if(!queuedWrites.isEmpty()){process.write(queuedWrites);queuedWrites.clear();}});
+        connect(&process,&QProcess::started,this,[this]{
+            m_availability="ready";emit availabilityChanged();mark("backend_started");
+            if(!queuedWrites.isEmpty()){process.write(queuedWrites);queuedWrites.clear();}
+        });
         connect(&process,&QProcess::readyReadStandardError,this,[this]{stderrTail=(stderrTail+QString::fromUtf8(process.readAllStandardError())).right(4096);});
         connect(&process,&QProcess::errorOccurred,this,[this]{backendStopped(process.errorString());});
         connect(&process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,[this](int code,QProcess::ExitStatus status){
@@ -71,41 +126,74 @@ public:
 #ifdef Q_OS_WIN
         binary+=".exe";
 #endif
-        process.start(qEnvironmentVariable("SHOWPSISI_CORE",binary),{"--root",m_root});
+        // Trusted local test/development configuration, never stream metadata.
+        // Arguments are passed directly to QProcess; no shell interpolation.
+        QStringList arguments={"--root",m_root};
+        if(qEnvironmentVariableIsSet("SHOWPSISI_CORE_ARGS_JSON")){
+            QJsonParseError error;
+            const auto document=QJsonDocument::fromJson(qgetenv("SHOWPSISI_CORE_ARGS_JSON"),&error);
+            bool valid=error.error==QJsonParseError::NoError&&document.isArray()&&document.array().size()<=128;
+            arguments.clear();
+            for(const auto value:document.array()){
+                if(!value.isString()||value.toString().contains(QChar(0))){valid=false;break;}
+                arguments.append(value.toString());
+            }
+            if(!valid){backendStopped("Invalid SHOWPSISI_CORE_ARGS_JSON: expected an array of at most 128 strings without null characters.");return;}
+        }
+        process.start(qEnvironmentVariable("SHOWPSISI_CORE",binary),arguments);
         mark("native_setup");
     }
     ~Bridge(){process.closeWriteChannel();if(!process.waitForFinished(1000)){process.kill();process.waitForFinished(1000);}}
     QVariantMap state()const{return m_state;} QVariantMap detail()const{return m_detail;}
-    void backendStopped(const QString& reason){m_error=reason;m_busy=false;m_inspecting=false;m_comparing=false;methods.clear();queuedWrites.clear();emit errorChanged();emit busyChanged();emit inspectingChanged();emit comparingChanged();}
+    void backendStopped(const QString& reason){
+        if(m_availability=="disconnected")return;
+        m_availability="disconnected";m_error="Backend disconnected. Restart the application. "+reason;
+        ++generation;activeAnalysis=0;m_busy=false;m_cancelling=false;
+        methods.clear();queuedWrites.clear();m_state.clear();clearIntentions();
+        emit availabilityChanged();emit errorChanged();emit busyChanged();emit cancellingChanged();emit stateChanged();
+    }
     bool inspecting()const{return m_inspecting;}
     bool comparing()const{return m_comparing;}
+    bool cancelling()const{return m_cancelling;}
+    bool available()const{return m_availability=="ready";}
+    QString availability()const{return m_availability;}
     QString root()const{return m_root;} QString sample()const{return m_sample;}bool busy()const{return m_busy;}QString error()const{return m_error;}
     void attach(QQuickWindow*w){window=w;connect(w,&QQuickWindow::frameSwapped,this,[this]{
         if(!dataFrame&&m_state.value("observations").toULongLong()>0){dataFrame=true;mark("first_paint");}
-        if(!completeFrame&&m_state.value("complete").toBool()){completeFrame=true;mark("complete_paint");emit completedPaint();}
+        if(!completeFrame&&!m_busy&&!m_cancelling&&m_state.value("complete").toBool()){completeFrame=true;mark("complete_paint");emit completedPaint();}
     },Qt::QueuedConnection);}
+    Q_INVOKABLE void cancelAnalysis(){
+        if(!available()||!m_busy||m_cancelling||!activeAnalysis)return;
+        m_cancelling=true;
+        // Invalidate every outstanding evidence/edit intention, retaining only
+        // the original scan whose terminal response must still be observed.
+        const auto analyze=methods.value(activeAnalysis);methods.clear();methods.insert(activeAnalysis,analyze);
+        clearIntentions();emit cancellingChanged();mark("cancel_requested");
+        send("cancel_analysis",{{"request_id",activeAnalysis}});
+    }
     Q_INVOKABLE void send(QString method,QVariantMap params={}){
-        if(process.state()==QProcess::NotRunning){
-            if(method=="inspect"||method=="query"||method=="analyze"){m_detail.clear();emit detailChanged();}
-            if(method=="analyze"){m_state.clear();emit stateChanged();}
-            backendStopped("Backend is not running. Check SHOWPSISI_CORE and restart the application.");return;
+        if(m_availability=="disconnected"||process.state()==QProcess::NotRunning){
+            backendStopped("Backend is not running. Check SHOWPSISI_CORE.");return;
         }
-        if(method=="analyze"&&m_busy)return;
+        if(m_busy&&method!="cancel_analysis")return;
+        if(method=="cancel_analysis"&&(!m_busy||!m_cancelling))return;
         if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
         int id=++sequence;
         if(method=="analyze"){
-            m_busy=true;m_detail.clear();m_state.clear();latestInspect=latestQuery=latestPreview=latestComparison=0;m_inspecting=false;m_comparing=false;
-            dataFrame=completeFrame=false;emit busyChanged();emit detailChanged();emit stateChanged();emit inspectingChanged();emit comparingChanged();mark("analyze_requested");
+            ++generation;methods.clear();activeAnalysis=id;
+            m_busy=true;m_cancelling=false;m_state.clear();clearIntentions();
+            dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();emit stateChanged();mark("analyze_requested");
         }
         if(method=="inspect"){latestInspect=id;m_detail.clear();m_inspecting=true;emit detailChanged();emit inspectingChanged();}
-        if(method=="query"){latestQuery=id;latestInspect=0;m_detail.clear();m_inspecting=false;emit detailChanged();emit inspectingChanged();}
+        if(method=="query"){latestQuery=id;latestInspect=latestPreview=0;m_detail.clear();m_inspecting=false;emit detailChanged();emit inspectingChanged();}
         if(method=="preview_rename")latestPreview=id;
         if(method=="diff_snapshots"){latestComparison=id;m_comparing=true;emit comparingChanged();}
-        methods[id]=method;QJsonObject request{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}};
+        methods.insert(id,{method,generation});
+        QJsonObject request{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}};
         QByteArray wire=QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
         if(process.state()==QProcess::Starting)queuedWrites+=wire;else if(process.write(wire)<0)backendStopped(process.errorString());
     }
-    Q_INVOKABLE void mark(QString event){QString path=qEnvironmentVariable("SHOWPSISI_TRACE");if(path.isEmpty())return;QFile file(path);if(file.open(QIODevice::Append)){QJsonObject value{{"event",event},{"ms",clock.nsecsElapsed()/1e6},{"wall_ms",double(QDateTime::currentMSecsSinceEpoch())}};file.write(QJsonDocument(value).toJson(QJsonDocument::Compact)+'\n');}}
+    Q_INVOKABLE void mark(QString event){QString path=qEnvironmentVariable("SHOWPSISI_TRACE");if(path.isEmpty())return;QFile file(path);if(file.open(QIODevice::Append)){QJsonObject value{{"event",event},{"ms",clock.nsecsElapsed()/1e6},{"wall_ms",double(QDateTime::currentMSecsSinceEpoch())},{"backend_pid",double(process.processId())}};file.write(QJsonDocument(value).toJson(QJsonDocument::Compact)+'\n');}}
     Q_INVOKABLE QString env(QString name){return qEnvironmentVariable(name.toUtf8().constData());}
     Q_INVOKABLE QString localPath(QUrl url){return url.toLocalFile();}
     Q_INVOKABLE QString json(QVariant value){return QString::fromUtf8(QJsonDocument::fromVariant(value).toJson(QJsonDocument::Indented));}
@@ -180,7 +268,7 @@ public:
     }
     Q_INVOKABLE void testResult(QString text){QFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));if(f.open(QIODevice::WriteOnly))f.write(text.toUtf8());mark("ui_test_done");}
 signals:
-    void stateChanged();void detailChanged();void busyChanged();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
+    void stateChanged();void detailChanged();void busyChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
 };
 int main(int argc,char**argv){
     QGuiApplication app(argc,argv);app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");QQuickStyle::setStyle("Basic");

@@ -50,7 +50,7 @@ class BridgeTests(unittest.TestCase):
         with self.request('/') as response:
             index=response.read().decode();self.assertIn('window.__TAURI__',index)
         env=self.invoke('environment');self.assertEqual(env['runtime'],'cloud-browser')
-        self.assertEqual(Path(env['root']),Path(self.tmp.name))
+        self.assertTrue(Path(env['root']).samefile(self.tmp.name))
     def test_auth_origin_paths_and_dialog(self):
         for path,headers in [('/__bridge/events',{'X-ShowPsiSi-Token':'bad'}),('/',{'Host':'attacker.example'}),('/',{'Origin':'https://attacker.example'})]:
             with self.assertRaises(HTTPError) as error:self.request(path,headers=headers)

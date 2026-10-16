@@ -125,8 +125,12 @@ class ProtocolCoverageTests(unittest.TestCase):
                 self.assert_native(details, name)
         _, details = self.analyze(['MGT', 'TVCT'], 'isdb', [0x1ffb, 0x123])
         self.assertEqual(len(details), 2)
-        self.assertTrue(all(d['native_table']['name'] == 'generic_long_table' for d in details))
-        self.assertTrue(all(d['references'] == [] for d in details))
+        diagnostic = repr([{'pid': d['pid'], 'table_id': d['table_id'],
+                            'standards_context': d.get('standards_context'),
+                            'native_decode_status': d.get('native_decode_status'),
+                            'native_table': d.get('native_table'), 'raw_hex': d.get('raw_hex')} for d in details])
+        self.assertTrue(all(d['native_table']['name'] == 'generic_long_table' for d in details), diagnostic)
+        self.assertTrue(all(d['references'] == [] for d in details), diagnostic)
     def test_dvb_s_s2_t_t2_c_delivery_fields_and_references(self):
         _, details = self.analyze(['DELIVERY_NIT'], 'dvb')
         nit = self.assert_native(details, 'NIT')

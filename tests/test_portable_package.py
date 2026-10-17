@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('portable_checks', ROOT / 'scripts/ci/portable_checks.py')
@@ -45,6 +46,18 @@ class PortablePackageTests(unittest.TestCase):
         portable.manifest(self.package)
         self.validation()
 
+    def test_windows_environment_case_is_normalized_before_dict_lookup(self):
+        for name in ('SystemRoot', 'SYSTEMROOT', 'systemroot'):
+            with self.subTest(name=name), mock.patch.dict(portable.os.environ, {
+                name: 'C:/Windows', 'Path': 'C:/SDK/bin', 'SHOWPSISI_ROOT': 'bad',
+                'Qt_Plugin_Path': 'C:/SDK/plugins', 'TEMP': 'C:/Temp'}, clear=True):
+                env = portable.clean_environment()
+                self.assertEqual(env['SYSTEMROOT'], 'C:/Windows')
+                self.assertEqual(env['PATH'], str(Path('C:/Windows') / 'System32'))
+                self.assertNotIn('SHOWPSISI_ROOT', env)
+                self.assertNotIn('QT_PLUGIN_PATH', env)
+                self.assertEqual(env['TEMP'], 'C:/Temp')
+
     def test_manifest_detects_changed_file(self):
         portable.manifest(self.package)
         (self.package / 'bin/tscore.dll').write_text('modified')
@@ -65,6 +78,18 @@ class PortablePackageTests(unittest.TestCase):
     def test_test_helper_is_never_shipped(self):
         (self.package / 'bin/showpsisi-core-test.exe').write_text('fixture')
         with self.assertRaisesRegex(RuntimeError, 'Unexpected executable'):
+            portable.manifest(self.package)
+
+    def test_system_d3d_compiler_is_not_redistributed(self):
+        (self.package / 'bin/D3Dcompiler_47.dll').write_text('system component')
+        with self.assertRaisesRegex(RuntimeError, 'Developer/test'):
+            portable.manifest(self.package)
+
+    def test_qml_debug_plugins_are_not_shipped(self):
+        path = self.package / 'bin/qmltooling/debug.dll'
+        path.parent.mkdir()
+        path.write_text('debug plugin')
+        with self.assertRaisesRegex(RuntimeError, 'Developer/test'):
             portable.manifest(self.package)
 
     def test_offscreen_plugin_is_never_shipped(self):

@@ -108,9 +108,9 @@ The 3.45 split changes the previous audit's assumptions:
   MIT/BSD/Apache components. Preserve upstream documents without silently
   rewriting them, and explain the actual Windows selection in package notices.
 
-Runtime data must match 3.45. Its portable ZIP contains 18 XML/names files,
-including six `tscore.*` files and twelve `tsduck.*` files. The historical
-17-file/3.39 list is obsolete. Keep the complete matching data initially and
+Runtime data must match 3.45. Its portable ZIP contains 17 XML/names files,
+including six `tscore.*` files and eleven `tsduck.*` files. The exact 3.45
+archive, rather than a historical file list, is authoritative. Keep matching data and
 manifest every file. Do not include separately sourced broadcast recordings.
 
 ### Qt 6.7.3 module and embedded-code inventory
@@ -243,3 +243,67 @@ System32/debug files. See [Microsoft redistribution guidance](https://learn.micr
 6. Runtime relocation, clean-host testing and native Windows GUI acceptance are
    additional independent gates. This review cannot waive them or authorize a
    public release, installer or upload.
+
+## First hosted Windows inventory reconciliation (2026-10-17)
+
+Evidence is diagnostic staging, not a downloadable approved binary package:
+PR #9 head `170b2fb3599cb6b2c177a25ebd70fb2c3f77ba44`, tested merge commit
+`d5b439220fe8d4a225184a7314cf3dc516301974`. The diagnostic artifact's downloaded
+ZIP SHA-256 was checked by the packaging worker:
+`7d486320f45e4f4fbd3617865915aafa186e41ff4113c7223602ed39d85b7b6a`.
+The extracted manifest SHA-256 is
+`d3d10aa6620c7a149f472048eca517fcae99f5572fda60b071b32b3ed45e4f39`.
+This records 695 staged files, including 531 under `bin/`, 456 QML-tree files,
+29 top-level Qt DLLs, and 148 license-directory files. Only diagnostics were
+available locally; hashes below are reconciled against the hosted stage's
+manifest, not a second local inspection of every staged binary/archive byte.
+
+### Matched coverage
+
+- `tscore.dll` and `tsduck.dll` hashes exactly match the independently downloaded
+  official portable-release DLLs recorded above. All 17 XML/names data filenames
+  match that release. The earlier draft's count of 18 was a counting error,
+  corrected by reopening the official ZIP; there is no missing eighteenth file.
+- Every checked-in license-directory file matches the manifest's hash. The two
+  top-level notice/source text hashes match after Windows Git CRLF conversion;
+  this is a line-ending difference, not omitted content. The next stage must
+  hash the revised text inputs again.
+- All three staged Qt source archive hashes match the verified publisher pins.
+- `Qt6Core`, `Qt6Gui`, `Qt6Network`, `Qt6OpenGL` and base plugins (platforms,
+  generic touch, GIF/ICO/JPEG, network information and TLS) map to **qtbase**.
+- `Qt6Svg`, `imageformats/qsvg` and `iconengines/qsvgicon` map to **qtsvg**.
+- The remaining Qt6 QML/Quick/Controls/Dialogs/Shapes/Templates/Layout and
+  LabsFolderListModel DLLs, their `qml/` resources/plugins, and QML tooling
+  plugins map to **qtdeclarative**. All are covered by the prepared source
+  families; no fourth deployed Qt source family was found. The kit's qttools
+  archive is a build/deployment tool input, not evidence that qttools runtime
+  components were shipped.
+- There is no `opengl32sw.dll`, OpenSSL library DLL, separate TSDuck plugin,
+  Dektec runtime or app-local VC runtime in this inventory. The Qt OpenSSL
+  backend plugin is Qt code; its presence alone does not establish that OpenSSL
+  implementation code is embedded. Preserve PE/deployment evidence and check
+  for unexpected dependencies before final approval.
+
+### Specific remaining issues and next evidence
+
+1. The stage contains **D3Dcompiler_47.dll**,
+   SHA-256 `64054871e088d47b4b7380f90efa40cf2f57bd966724764330a029f4fc3aa6eb`.
+   This contradicts the intended no-Microsoft-binary prerequisite route.
+   Use the supported `--no-system-d3d-compiler` deployment option and verify the
+   system library's identity/loading on supported Windows. Microsoft describes
+   the OS-provided compiler in its [official DXSDK NuGet package](https://www.nuget.org/packages/Microsoft.DXSDK.D3DX/9.29.952.7).
+   Do not silently treat this DLL as LGPL-covered Qt code. Optional QML debugging
+   plugins may also be omitted using the pinned tool's supported
+   `--skip-plugin-types qmltooling`; this reduces runtime scope.
+2. Capture Qt installed build-feature files (`qconfig.pri`, `qmodule.pri`,
+   `qconfig.h` where present), their hashes and pre/post-deployment Qt6Core
+   hashes. Record whether windeployqt applied its standard path relocation and
+   provide the relevant build/deployment instructions with the source material.
+3. Persist the recursive PE dependency report, actual system VC/D3D versions
+   and relocation test evidence. The first harness failed before application
+   launch due to an environment-key casing bug; a build/test pass does not
+   substitute for the still-uncompleted relocation acceptance test.
+4. Reconcile the next stage's exact hashes after deployment and notice changes.
+   Keep `review_complete: false` until material source/notice/runtime-origin
+   gaps close. This report does not approve the first manifest or future
+   manifests automatically, and does not waive native GUI acceptance.

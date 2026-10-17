@@ -19,6 +19,12 @@ It copies only the production EXEs, both matching TSDuck/TSCore 3.45-4798 DLLs,
 all matching `ts*.xml`/`ts*.names` data, resources and synthetic sample. Qt runtime,
 plugins and QML are selected by the pinned kit's `windeployqt --release --qmldir`.
 No build-tree wildcard copy, test engine, SDK, Python or PowerShell is shipped.
+Deployment excludes qmltooling debug plugins and the system D3D compiler using
+Qt 6.7.3's `--skip-plugin-types qmltooling --no-system-d3d-compiler` options.
+Windows 10/11 x64 supplies D3Dcompiler_47.dll; validation records its System32
+path, version and SHA-256 and checks actual process module locations.
+Build information also retains installed Qt configuration-file content/hashes
+and installed-kit versus deployed Qt6Core hashes for source/relocation review.
 
 The ordinary GUI is launched directly or through `Launch Qt.cmd`, using only
 CMD/EXEs. Root/schema, sample and core paths are relative to the executable,
@@ -61,8 +67,8 @@ does not establish redistribution rights or sufficient runtime version.
    except the top-level manifest itself. Build identities and hashes are retained.
 2. `validate`: copy to a path with spaces and Unicode, run from an unrelated CWD
    containing a misleading schema, remove SDK/Qt/SHOWPSISI discovery variables,
-   and reduce PATH to Windows System32. Check every PE machine type/import and
-   delayed import; check actual loaded module paths. Exercise production core
+   and reduce PATH to Windows System32. Normalize Windows environment-key case before copying it to an ordinary dict.
+   Check every PE machine type/import and delayed import; check actual loaded module paths. Exercise production core
    capabilities, six-service fixture, named XML/raw inspection, comparison,
    rename/export/readback, source hash preservation, cancellation/rescan and EOF.
    Exercise compiled Qt offscreen smoke with screenshot/trace. Inject qoffscreen

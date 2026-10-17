@@ -48,7 +48,7 @@ def manifest(package):
             raise RuntimeError(f'Unexpected executable in runtime package: {name}')
         if name.lower().endswith('.dll') and not name.startswith('bin/'):
             raise RuntimeError(f'Runtime DLL outside reviewed bin directory: {name}')
-        if re.search(r'core-test|qoffscreen|\.pdb$|\.lib$|\.py$|\.ps1$|(^|/)(include|tests|\.deps)/', name, re.I):
+        if re.search(r'core-test|qoffscreen|D3Dcompiler_47\.dll$|(^|/)qmltooling/|\.pdb$|\.lib$|\.py$|\.ps1$|(^|/)(include|tests|\.deps)/', name, re.I):
             raise RuntimeError(f'Developer/test file in runtime package: {name}')
     value = {'schema_version': 1, 'scope': 'windows-x64-qt-core',
              'build': json.loads((package / 'build-information.json').read_text(encoding='utf-8-sig')),
@@ -65,9 +65,9 @@ def verify_manifest(package):
 
 
 def clean_environment():
-    env = {k: v for k, v in os.environ.items()
+    env = {k.upper(): v for k, v in os.environ.items()
            if not k.upper().startswith(('SHOWPSISI_', 'QT_', 'QML', 'TSDUCK', 'TSPLUGINS', 'TSLIB', 'TSCORE'))}
-    env['PATH'] = str(Path(env['SystemRoot']) / 'System32')
+    env['PATH'] = str(Path(env['SYSTEMROOT']) / 'System32')
     return env
 
 
@@ -128,6 +128,21 @@ def runtime_requirement(package):
             pe.close()
     return {'required_minimum': build['crt_minimum_version'], 'files': versions,
             'satisfied': all(item['satisfied'] for item in versions.values())}
+
+
+def system_d3d_identity():
+    import pefile
+    path = Path(os.environ['SystemRoot']) / 'System32/D3Dcompiler_47.dll'
+    if not path.is_file():
+        raise RuntimeError('Supported Windows system D3Dcompiler_47.dll is missing')
+    pe = pefile.PE(str(path))
+    try:
+        fixed = pe.VS_FIXEDFILEINFO[0]
+        version = (fixed.FileVersionMS >> 16, fixed.FileVersionMS & 65535,
+                   fixed.FileVersionLS >> 16, fixed.FileVersionLS & 65535)
+        return {'path': str(path), 'sha256': digest(path), 'version': '.'.join(map(str, version))}
+    finally:
+        pe.close()
 
 
 def loaded_modules(process, package):
@@ -191,7 +206,7 @@ def qt_probe(package, artifacts, env):
                SHOWPSISI_TRACE=str(trace), SHOWPSISI_SETTINGS_PATH=str(artifacts / 'settings.ini'),
                SHOWPSISI_ARTIFACT_DIR=str(artifacts), QT_QPA_PLATFORM='offscreen',
                QT_QUICK_BACKEND='software', QT_FORCE_STDERR_LOGGING='1',
-               QT_QPA_FONTDIR=str(Path(env['SystemRoot']) / 'Fonts'))
+               QT_QPA_FONTDIR=str(Path(env['SYSTEMROOT']) / 'Fonts'))
     with (artifacts / 'qt.log').open('w', encoding='utf-8') as log:
         proc = subprocess.Popen([str(package / 'bin/showpsisi-qt.exe'), '--showpsisi-development'], env=env, stdout=log, stderr=log)
         try:
@@ -233,7 +248,7 @@ def launcher_probe(package, artifacts, env, direct=False):
                QT_QPA_PLATFORM_PLUGIN_PATH='Z:/missing SDK platforms',
                QML_IMPORT_PATH='Z:/missing SDK qml', QML2_IMPORT_PATH='Z:/missing SDK qml2',
                TSPLUGINS_PATH='Z:/missing SDK tsduck', TSDUCK='Z:/missing SDK')
-    cmd = Path(env['SystemRoot']) / 'System32/cmd.exe'
+    cmd = Path(env['SYSTEMROOT']) / 'System32/cmd.exe'
     command = [str(package / 'bin/showpsisi-qt.exe')] if direct else [str(cmd), '/d', '/c', str(package / 'Launch Qt.cmd')]
     proc = subprocess.Popen(command, env=env)
     owned = []
@@ -279,8 +294,16 @@ def validate(package, artifacts, qt):
         raise RuntimeError('Runtime validation requires Windows; no cross-platform pass inferred')
     verify_manifest(package)
     artifacts.mkdir(parents=True, exist_ok=False)
-    evidence = {'pe_dependencies': pe_dependencies(package), 'native_windows_desktop_verified': False,
-                'runtime_requirement': runtime_requirement(package)}
+    evidence = {'passed': False, 'native_windows_desktop_verified': False}
+    def checkpoint():
+        (artifacts / 'portable-validation.json').write_text(json.dumps(evidence, indent=2), encoding='utf-8')
+    checkpoint()
+    evidence['pe_dependencies'] = pe_dependencies(package)
+    checkpoint()
+    evidence['runtime_requirement'] = runtime_requirement(package)
+    checkpoint()
+    evidence['system_d3d_compiler'] = system_d3d_identity()
+    checkpoint()
     # Different tree, Unicode+spaces, unrelated cwd. Nothing writes into staged ZIP inputs.
     with tempfile.TemporaryDirectory(prefix='ShowPsiSi portable 测试 ') as temporary:
         temporary = Path(temporary)
@@ -297,12 +320,16 @@ def validate(package, artifacts, qt):
             os.environ.update(env, SHOWPSISI_CORE=str(relocated / 'bin/showpsisi-core.exe'))
             os.chdir(cwd)
             evidence['core'] = core_probe(relocated, artifacts)
+            checkpoint()
             # Offscreen is a test-only plugin injected solely into the relocated
             # copy. The manifest and final package categorically exclude it.
             shutil.copy2(qt / 'plugins/platforms/qoffscreen.dll', relocated / 'bin/platforms/qoffscreen.dll')
             evidence['qt_offscreen'] = qt_probe(relocated, artifacts, env)
+            checkpoint()
             evidence['launcher_startup'] = launcher_probe(relocated, artifacts, env)
+            checkpoint()
             evidence['direct_exe_startup'] = launcher_probe(relocated, artifacts, env, direct=True)
+            checkpoint()
         finally:
             os.chdir(saved_cwd)
             os.environ.clear()

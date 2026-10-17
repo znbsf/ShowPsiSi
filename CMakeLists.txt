@@ -36,16 +36,27 @@ if(NOT TSDUCK_DATA_DIR OR NOT EXISTS "${TSDUCK_DATA_DIR}/tsduck.dtv.names")
   message(FATAL_ERROR "Matching TSDuck XML/name runtime data missing. Set TSDUCK_ROOT to the complete SDK.")
 endif()
 file(GLOB TSDUCK_RUNTIME_DATA CONFIGURE_DEPENDS "${TSDUCK_DATA_DIR}/*.xml" "${TSDUCK_DATA_DIR}/*.names" "${TSDUCK_ROOT}/share/tscore/*.xml" "${TSDUCK_ROOT}/share/tscore/*.names")
+# Both engines share one runtime directory. Stage it once per build graph,
+# rather than racing two POST_BUILD copy commands under parallel MSBuild.
+set(SHOWPSISI_RUNTIME_FILES ${TSDUCK_RUNTIME_DATA})
+if(WIN32)
+  list(APPEND SHOWPSISI_RUNTIME_FILES "${TSDUCK_ROOT}/bin/tsduck.dll" "${TSDUCK_ROOT}/bin/tscore.dll")
+endif()
+get_property(_SHOWPSISI_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+set(_SHOWPSISI_RUNTIME_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+if(_SHOWPSISI_MULTI_CONFIG)
+  string(APPEND _SHOWPSISI_RUNTIME_DIR "/$<CONFIG>")
+endif()
+add_custom_target(showpsisi-runtime ALL
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${_SHOWPSISI_RUNTIME_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SHOWPSISI_RUNTIME_FILES} "${_SHOWPSISI_RUNTIME_DIR}"
+  VERBATIM)
 function(configure_showpsisi_core target)
   target_include_directories(${target} PRIVATE "${TSDUCK_INCLUDE}" "${TSCORE_INCLUDE}" third_party)
   target_link_libraries(${target} PRIVATE "${TSDUCK_LIB}" "${TSCORE_LIB}" Threads::Threads)
-  add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${TSDUCK_RUNTIME_DATA} "$<TARGET_FILE_DIR:${target}>")
+  add_dependencies(${target} showpsisi-runtime)
   if(WIN32)
     target_compile_definitions(${target} PRIVATE _TSDUCKDLL_USE _TSCOREDLL_USE NOMINMAX)
-    add_custom_command(TARGET ${target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TSDUCK_ROOT}/bin/tsduck.dll" "$<TARGET_FILE_DIR:${target}>"
-      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TSDUCK_ROOT}/bin/tscore.dll" "$<TARGET_FILE_DIR:${target}>")
   endif()
   if(MSVC)
     target_compile_options(${target} PRIVATE /utf-8 /W3)

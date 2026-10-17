@@ -1,18 +1,60 @@
-INCOMPLETE SOURCE PROVISION - INTERNAL STAGING ONLY
+INCOMPLETE INVENTORY REVIEW - INTERNAL STAGING ONLY
+Binary ZIP creation/upload remains blocked by redistribution-review.json.
 
-ShowPsiSi source revision is recorded in build-information.json.
+APPLICATION
+ShowPsiSi source revision is recorded in build-information.json. A GitHub PR
+build can record a merge/test commit distinct from the PR head; use the recorded
+commit when reproducing that build.
 Repository: https://github.com/znbsf/ShowPsiSi
 nlohmann/json: https://github.com/nlohmann/json/tree/v3.11.3
+
+ACCOMPANYING QT SOURCE
+The sources/ directory accompanies the binary with complete official Qt 6.7.3
+source archives for the deployed qtbase, qtdeclarative and qtsvg families:
+qtbase-everywhere-src-6.7.3.tar.xz
+SHA256 8ccbb9ab055205ac76632c9eeddd1ed6fc66936fc56afc2ed0fd5d9e23da3097
+qtdeclarative-everywhere-src-6.7.3.tar.xz
+SHA256 937b70e441abf5bc4e50d44d26610e2714a28514acf3885cd36116cd610b9875
+qtsvg-everywhere-src-6.7.3.tar.xz
+SHA256 40142cb71fb1e07ad612bc361b67f5d54cd9367f9979ae6b86124a064deda06b
+Official URL prefix:
+https://download.qt.io/archive/qt/6.7/6.7.3/submodules/
+Exact URLs and verified publisher checksums are also in source-index.json;
+manifest.json hashes every archive included in this particular stage.
+
+These archives include the source families' build scripts and third-party
+sources. License/copyright material is also copied under licenses/qt/ for
+convenience. Binary kit archive identities are in build-information.json.
+Final review must reconcile installed build features and any deployment-time
+QtCore relocation patch to the provided source/build information. An upstream
+link alone is not used as a substitute for accompanying the binary with source.
+Keep these sources available wherever the corresponding binary is delivered.
+
+REBUILDING AND REPLACEMENT
+Extract the source archives and follow their included build documentation using
+an x64 MSVC-compatible toolchain and the recorded Qt build-feature information.
+Build shared libraries, preserve the Qt 6 ABI expected by this application, and
+build the corresponding modules/plugins. The application's source checkout
+contains its CMake and Windows packaging scripts. Those scripts record the
+windeployqt invocation and qt.conf deployment layout.
+With the application closed, back up bin/, then replace the appropriate Qt DLLs
+and matching plugin/QML files there with your compatible rebuilt versions.
+Qt libraries remain dynamically loaded; there is no package-manifest signature
+check that prevents using modified libraries. Reverse engineering for debugging
+modifications to Qt is permitted. The application's MIT source is available too.
+
+OTHER COMPONENT SOURCES / PROVENANCE
 TSDuck/TSCore: https://github.com/tsduck/tsduck/tree/v3.45-4798
-Qt: https://download.qt.io/archive/qt/6.7/6.7.3/
+Exact embedded dependency source versions, links and official release-build
+evidence are in source-index.json; their notices are in licenses/tsduck/.
+These selected permissive licenses do not require a source offer merely for
+binary redistribution. Sources are identified for transparency; this file is
+not a legally binding written source offer.
 
-These upstream references identify intended versions. They are not a complete
-corresponding-source package or legally sufficient written source offer.
-Exact Qt build configuration, patches and third-party source provision must be
-reviewed against the actual runtime inventory before binary distribution.
-
-The package pipeline now verifies and includes the official Qt 6.7.3 qtbase,
-qtdeclarative and qtsvg source archives under sources/. Exact official URLs,
-publisher-checked SHA-256 identities and notice provenance are in source-index.json.
-The complete package manifest hashes these archives too. Matching the deployed
-Qt modules/build configuration to these source families remains a review gate.
+SYSTEM PREREQUISITES
+Microsoft's official supported-runtime rule and download:
+https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170
+https://aka.ms/vc14/vc_redist.x64.exe
+The x64 runtime must be at least 14.51.36231.0 (or the higher recorded minimum).
+Install it separately under Microsoft's terms. No automatic installation is
+performed by the portable application.

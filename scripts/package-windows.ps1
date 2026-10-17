@@ -44,7 +44,7 @@ foreach ($File in @('tsduck.dll', 'tscore.dll')) { Copy-Item -LiteralPath (Join-
 $RuntimeData = @(Get-ChildItem -Path "$Sdk/bin/ts*.xml", "$Sdk/bin/ts*.names" -File)
 foreach ($File in $RuntimeData) { Copy-Item -LiteralPath $File.FullName -Destination $Bin }
 foreach ($File in @('tsduck.tables.model.xml', 'tsduck.dtv.names', 'tscore.time.xml', 'tscore.ip.names')) { Require-File (Join-Path $Bin $File) }
-Checked (Join-Path $Qt 'bin/windeployqt.exe') @('--release', '--no-translations', '--no-compiler-runtime', '--qmldir', (Join-Path $Root 'ui/qt'), '--dir', $Bin, (Join-Path $Bin 'showpsisi-qt.exe'))
+Checked (Join-Path $Qt 'bin/windeployqt.exe') @('--release', '--no-translations', '--no-compiler-runtime', '--no-system-d3d-compiler', '--skip-plugin-types', 'qmltooling', '--qmldir', (Join-Path $Root 'ui/qt'), '--dir', $Bin, (Join-Path $Bin 'showpsisi-qt.exe'))
 Require-File (Join-Path $Bin 'platforms/qwindows.dll')
 # Some kit scanners include offscreen by default; it belongs only in the test copy.
 $Offscreen = Join-Path $Bin 'platforms/qoffscreen.dll'
@@ -91,6 +91,19 @@ foreach ($Archive in @(Get-ChildItem -LiteralPath (Join-Path $Root '.deps/qt-arc
     $QtArchives += @{ name = $Archive.Name; sha256 = (Get-FileHash -LiteralPath $Archive.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
 }
 if ($QtArchives.Count -eq 0) { throw 'Original Qt download archive identities missing; use CI dependency setup with --keep.' }
+$QtConfiguration = @{}
+foreach ($Relative in @('mkspecs/qconfig.pri', 'mkspecs/qmodule.pri', 'include/QtCore/qconfig.h')) {
+    $ConfigPath = Join-Path $Qt $Relative
+    Require-File $ConfigPath
+    $QtConfiguration[$Relative] = @{
+        sha256 = (Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        content = Get-Content -LiteralPath $ConfigPath -Raw
+    }
+}
+$QtCoreRelocation = @{
+    installed_kit_sha256 = (Get-FileHash -LiteralPath (Join-Path $Qt 'bin/Qt6Core.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+    deployed_sha256 = (Get-FileHash -LiteralPath (Join-Path $Bin 'Qt6Core.dll') -Algorithm SHA256).Hash.ToLowerInvariant()
+}
 $Metadata = @{
     source_commit = $SourceCommit
     qt_version = '6.7.3'; qt_kit = 'win64_msvc2019_64'
@@ -108,6 +121,9 @@ $Metadata = @{
     crt_support_rule = 'https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170'
     qt_download_archives = $QtArchives
     qt_source_archives = $SourceIndex.qt_source_archives
+    qt_build_configuration = $QtConfiguration
+    qt_core_relocation = $QtCoreRelocation
+    windows_prerequisite = 'Windows 10/11 x64 with system D3Dcompiler_47.dll'
     native_windows_desktop_verified = $false
 }
 $Metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Output 'build-information.json') -Encoding utf8NoBOM

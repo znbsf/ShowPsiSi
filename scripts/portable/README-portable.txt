@@ -1,5 +1,6 @@
 ShowPsiSi Windows x64 Qt + core portable candidate
 
+Requires Windows 10/11 x64 with its system D3Dcompiler_47.dll.
 Extract the whole archive. Open Launch Qt.cmd or bin\showpsisi-qt.exe.
 No Python, PowerShell 7, Qt/TSDuck SDK or compiler is needed to use this GUI.
 Default prerequisite mode requires the Microsoft Visual C++ 2015-2022 x64

@@ -1,0 +1,18 @@
+INCOMPLETE SOURCE PROVISION - INTERNAL STAGING ONLY
+
+ShowPsiSi source revision is recorded in build-information.json.
+Repository: https://github.com/znbsf/ShowPsiSi
+nlohmann/json: https://github.com/nlohmann/json/tree/v3.11.3
+TSDuck/TSCore: https://github.com/tsduck/tsduck/tree/v3.45-4798
+Qt: https://download.qt.io/archive/qt/6.7/6.7.3/
+
+These upstream references identify intended versions. They are not a complete
+corresponding-source package or legally sufficient written source offer.
+Exact Qt build configuration, patches and third-party source provision must be
+reviewed against the actual runtime inventory before binary distribution.
+
+The package pipeline now verifies and includes the official Qt 6.7.3 qtbase,
+qtdeclarative and qtsvg source archives under sources/. Exact official URLs,
+publisher-checked SHA-256 identities and notice provenance are in source-index.json.
+The complete package manifest hashes these archives too. Matching the deployed
+Qt modules/build configuration to these source families remains a review gate.

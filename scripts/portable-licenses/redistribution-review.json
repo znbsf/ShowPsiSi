@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "review_complete": false,
+  "reason": "Exact staged Qt, TSDuck/TSCore and MSVC component notices, corresponding-source provision and redistribution rights require review. Internal staging/tests only; binary archive upload is blocked.",
+  "reviewed_files": {}
+}

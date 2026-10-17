@@ -1,0 +1,148 @@
+{
+  "scope": "TSDuck/TSCore Windows runtime notices and Qt 6.7.3 source-family notice superset; exact Windows Qt inventory review remains incomplete",
+  "review_complete": false,
+  "upstream_build_evidence": [
+    "https://github.com/tsduck/tsduck/actions/runs/34712521690/job/103603758775",
+    "https://github.com/tsduck/rist-installer/actions/runs/34655754940/job/103447672949"
+  ],
+  "components": [
+    {
+      "name": "TSDuck/TSCore",
+      "version": "3.45-4798",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/tsduck/tsduck/tree/v3.45-4798"
+    },
+    {
+      "name": "Small Deflate",
+      "version": "TSDuck v3.45-4798 vendored sources with fixes",
+      "license": "MIT",
+      "source": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtscore/zip/private"
+    },
+    {
+      "name": "Robotweax SRT",
+      "version": "0.2.4",
+      "backend": "Microsoft BCrypt",
+      "license": "MIT",
+      "source": "https://github.com/Robotweax/srt/tree/4162adf50d3ff8e149d7b080130182b04441b0d1"
+    },
+    {
+      "name": "librist",
+      "version": "0.2.20",
+      "license": "BSD-2-Clause",
+      "source": "https://code.videolan.org/rist/librist/-/tree/v0.2.20"
+    },
+    {
+      "name": "LZ4",
+      "version": "1.10.0 bundled in librist",
+      "license": "BSD-2-Clause",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/lz4"
+    },
+    {
+      "name": "cJSON",
+      "version": "1.7.13 bundled in librist",
+      "license": "MIT",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/contrib_cJSON"
+    },
+    {
+      "name": "Mbed TLS",
+      "version": "3.6.6 bundled in librist",
+      "license": "Apache-2.0",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/mbedtls"
+    },
+    {
+      "name": "VATek",
+      "version": "SDK3.12.1 / runtime3.12.10",
+      "license": "BSD-2-Clause",
+      "source": "https://github.com/VisionAdvanceTechnologyInc/vatek_sdk_2/tree/v3.12.1"
+    }
+  ],
+  "materials": {
+    "licenses/tsduck/LICENSE.txt": {
+      "sha256": "58be33f8bd6df6371a95d310ea0ea405d9d46c5186bd8fb438020ea09d685353",
+      "source": "https://github.com/tsduck/tsduck/blob/v3.45-4798/LICENSE.txt"
+    },
+    "licenses/tsduck/OTHERS.txt": {
+      "sha256": "26b32e60d32d78681b90ff548d03c739489313e734cc72ca3c32d70b395407a6",
+      "source": "https://github.com/tsduck/tsduck/blob/v3.45-4798/OTHERS.txt"
+    },
+    "licenses/tsduck/Small-Deflate-sdefl-MIT.txt": {
+      "sha256": "8c7341ef42529b64644108c940f388d37de45a17b0401be438f3c6b19eecc34c",
+      "source": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtscore/zip/private/sdefl.h"
+    },
+    "licenses/tsduck/Small-Deflate-sinfl-MIT.txt": {
+      "sha256": "8c7341ef42529b64644108c940f388d37de45a17b0401be438f3c6b19eecc34c",
+      "source": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtscore/zip/private/sinfl.h"
+    },
+    "licenses/tsduck/Robotweax-SRT-LICENSE.txt": {
+      "sha256": "f522f493123d289bae19fdaf4b73eeb04ac6068ceea0f3146a2dcdc19e9f9b99",
+      "source": "https://github.com/Robotweax/srt/blob/v0.2.4/LICENSE"
+    },
+    "licenses/tsduck/Robotweax-SRT-THIRD_PARTY.md": {
+      "sha256": "5d1e4ef99dafb227a8bc7656b3e58db7c4a87c8bfa25d06b080689a12299abc8",
+      "source": "https://github.com/Robotweax/srt/blob/v0.2.4/THIRD_PARTY.md"
+    },
+    "licenses/tsduck/librist-COPYING.txt": {
+      "sha256": "b9841591a3452ee30033d8e3586c7b1244a0b2fc1dc6cb04576957c313cb2792",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/COPYING"
+    },
+    "licenses/tsduck/LZ4-BSD.txt": {
+      "sha256": "c5cc80af5cbc31e989d4f74a7cecfb2caa9a245ad1b03947bbb34b77c6d5a74e",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/lz4/lz4.c"
+    },
+    "licenses/tsduck/cJSON-MIT.txt": {
+      "sha256": "3384d75264549cd04a5c00538a15871785f3f6ba60a779781df747d591655892",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/contrib_cJSON/cjson/cJSON.h"
+    },
+    "licenses/tsduck/MbedTLS-Apache-2.0.txt": {
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/mbedtls/LICENSE"
+    },
+    "licenses/tsduck/MbedTLS-COPYRIGHT.txt": {
+      "sha256": "b1f67606026f82ae6f4da05101525694b6bc06855209158b07271c82c10f036e",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/contrib/mbedtls"
+    },
+    "licenses/tsduck/librist-COPYRIGHTS.txt": {
+      "sha256": "037c20c6a1b61f74d3740e7cf24d7a834dcb0ff3fa1a32080edc148107d1fd1d",
+      "source": "https://code.videolan.org/rist/librist/-/blob/v0.2.20/"
+    },
+    "licenses/tsduck/VATek-LICENSE.txt": {
+      "sha256": "ba5a0bd34b124be664326b45f292c4dca854e1f967c89eee3802c6f97ff21bfc",
+      "source": "https://github.com/VisionAdvanceTechnologyInc/vatek_sdk_2/blob/v3.12.1/LICENSE"
+    },
+    "licenses/tsduck/VATek-COPYRIGHT.txt": {
+      "sha256": "80f4cb0c1790f875d7f69184bcac34e7024f07af4cc8ee95c0d609f8e5d346b5",
+      "source": "https://github.com/VisionAdvanceTechnologyInc/vatek_sdk_2/tree/v3.12.1/api/core"
+    }
+  },
+  "notes": [
+    "Build log proves downloaded SDK releases and runtime self-reported versions; it is not reproducible-build or publisher-signature proof.",
+    "Permissive dependencies listed here need notices; do not invent a corresponding-source obligation for MIT/BSD/Apache merely because exact binary reproduction is unverified.",
+    "Upstream TSDuck OTHERS retains historical Haivision/MPL entry; this Windows binary actually links Robotweax MIT SRT BCrypt.",
+    "Mbed TLS Apache route selected; no GPL alternative selected.",
+    "VC runtime prerequisite, not redistribution: latest Microsoft x64 v14 runtime >=14.51.36231; observed official download14.51.36247.0 on2026-10-17."
+  ],
+  "qt_source_archives": [
+    {
+      "module": "qtbase",
+      "filename": "qtbase-everywhere-src-6.7.3.tar.xz",
+      "sha256": "8ccbb9ab055205ac76632c9eeddd1ed6fc66936fc56afc2ed0fd5d9e23da3097",
+      "url": "https://download.qt.io/archive/qt/6.7/6.7.3/submodules/qtbase-everywhere-src-6.7.3.tar.xz",
+      "publisher_checksum_verified": true
+    },
+    {
+      "module": "qtdeclarative",
+      "filename": "qtdeclarative-everywhere-src-6.7.3.tar.xz",
+      "sha256": "937b70e441abf5bc4e50d44d26610e2714a28514acf3885cd36116cd610b9875",
+      "url": "https://download.qt.io/archive/qt/6.7/6.7.3/submodules/qtdeclarative-everywhere-src-6.7.3.tar.xz",
+      "publisher_checksum_verified": true
+    },
+    {
+      "module": "qtsvg",
+      "filename": "qtsvg-everywhere-src-6.7.3.tar.xz",
+      "sha256": "40142cb71fb1e07ad612bc361b67f5d54cd9367f9979ae6b86124a064deda06b",
+      "url": "https://download.qt.io/archive/qt/6.7/6.7.3/submodules/qtsvg-everywhere-src-6.7.3.tar.xz",
+      "publisher_checksum_verified": true
+    }
+  ],
+  "qt_notice_collection": "licenses/qt/source-attributions.json"
+}

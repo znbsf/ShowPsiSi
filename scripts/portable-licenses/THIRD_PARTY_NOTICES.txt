@@ -1,0 +1,21 @@
+INCOMPLETE INTERNAL STAGING NOTICE - NOT CLEARED FOR BINARY DISTRIBUTION
+
+ShowPsiSi: MIT; see LICENSE and licenses/ShowPsiSi-MIT.txt.
+nlohmann/json 3.11.3: MIT; see licenses/nlohmann-json-MIT.txt.
+
+Qt 6.7.3 runtime modules/plugins and their incorporated third-party components,
+TSDuck/TSCore 3.45-4798 and its incorporated components, and Microsoft VS 2022
+release CRT require the exact staged inventory's complete notices and license
+review. This file does not supply those missing notices or grant permission.
+See docs/PORTABLE_LICENSE_REVIEW.md in the source checkout when available.
+redistribution-review.json blocks ZIP creation/upload pending completed review.
+
+TSDuck/TSCore 3.45-4798 notice material is now retained in licenses/tsduck/:
+BSD-2-Clause TSDuck, MIT Small Deflate, MIT Robotweax SRT 0.2.4,
+BSD-2-Clause librist 0.2.20 and LZ4, MIT cJSON, Apache-2.0 Mbed TLS,
+and VATek SDK notices. Exact upstream source/build evidence and per-file
+hashes are retained in source-index.json. This resolves those identified notice
+inputs; it does not finish the exact deployed Qt inventory review.
+Robotweax-SRT-THIRD_PARTY.md is upstream provenance. Its generic OpenSSL
+paragraph does not describe this Windows binary: the verified release build
+explicitly used the Microsoft BCrypt backend, without OpenSSL for SRT.

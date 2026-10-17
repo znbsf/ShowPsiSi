@@ -1,0 +1,58 @@
+WINDOWS QT/CORE PORTABLE CI CANDIDATE - THIRD-PARTY NOTICES
+The selected licensing routes and exact reviewed dependency/source/notice bytes
+are recorded in redistribution-review.json. Changed dependencies or materials
+require a new review. This candidate is not a public release or installer;
+native interactive Windows desktop acceptance is recorded separately.
+
+ShowPsiSi: Copyright and MIT license in LICENSE and licenses/ShowPsiSi-MIT.txt.
+nlohmann/json 3.11.3: MIT; see licenses/nlohmann-json-MIT.txt.
+
+QT 6.7.3 - DYNAMIC LIBRARIES UNDER GNU LGPL VERSION 3
+This application uses Qt 6.7.3. The Qt libraries are used under the GNU Lesser
+General Public License version 3. Qt source families deployed by this candidate
+are qtbase, qtdeclarative and qtsvg. Copyright notices and third-party license
+texts are retained under licenses/qt/. The full LGPLv3 and GPLv3 texts are in
+each source family's LICENSES/LGPL-3.0-only.txt and LICENSES/GPL-3.0-only.txt.
+See SOURCE_INFORMATION.txt for the accompanying source archives and replacement
+information. The Qt source/notice collection includes optional components and
+other platforms; inclusion of a notice does not imply that component is used.
+Qt's commercial and alternative license texts are preserved upstream material,
+not a claim to a commercial license or selection of a GPL-only runtime route.
+FreeType uses its FreeType License alternative; BLAKE2 uses its CC0 alternative.
+
+You may modify and replace the dynamically linked Qt libraries with compatible
+versions. Reverse engineering for debugging modifications to the Qt libraries
+is permitted. The application imposes no restriction on those activities.
+The package's integrity manifest is an audit record, not a runtime prohibition
+on using modified libraries. Keep replacement DLLs/plugins/QML ABI-compatible.
+
+TSDUCK/TSCORE 3.45-4798
+The exact upstream Windows DLLs incorporate the following components. Full
+copyright notices and applicable license texts are retained in licenses/tsduck/:
+- TSDuck/TSCore: BSD-2-Clause, LICENSE.txt and upstream OTHERS.txt.
+- Small Deflate with TSDuck fixes: MIT, Small-Deflate-sdefl-MIT.txt and
+  Small-Deflate-sinfl-MIT.txt.
+- Robotweax SRT 0.2.4: MIT, Robotweax-SRT-LICENSE.txt and
+  Robotweax-SRT-THIRD_PARTY.md. The verified Windows build uses Microsoft BCrypt.
+  The upstream THIRD_PARTY document's generic OpenSSL paragraph does not describe
+  this build. This is not a bundled Haivision SRT implementation.
+- librist 0.2.20: BSD-2-Clause, librist-COPYING.txt and librist-COPYRIGHTS.txt.
+- LZ4 1.10.0: BSD-2-Clause, LZ4-BSD.txt.
+- cJSON 1.7.13: MIT, cJSON-MIT.txt.
+- Mbed TLS 3.6.6: Apache-2.0 alternative, MbedTLS-Apache-2.0.txt and
+  MbedTLS-COPYRIGHT.txt.
+- VATek SDK release 3.12.1: BSD-2-Clause, VATek-LICENSE.txt and VATek-COPYRIGHT.txt.
+  Its runtime reports libvatek 3.12.10.
+Upstream source links/build evidence and notice hashes are in source-index.json.
+No separate TSDuck plugin, Dektec runtime, Linux libusb, or VATek Qt tool is
+selected for inclusion merely because upstream umbrella notices mention it.
+
+MICROSOFT / WINDOWS PREREQUISITES
+The selected route requires supported Windows 10/11 x64 and a separately
+installed Microsoft x64 Visual C++ v14 runtime at least 14.51.36231.0, or a
+higher minimum if build-information.json states one. Windows supplies its OS
+libraries, including the system D3D compiler. Do not copy Microsoft runtime
+DLLs from System32 into this package. The official runtime download and its
+terms are Microsoft's responsibility; this package does not install it.
+This candidate excludes D3Dcompiler_47.dll and all app-local Microsoft VC DLLs.
+Its runtime checks require the system-provided dependencies.

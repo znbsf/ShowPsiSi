@@ -159,6 +159,43 @@ jobs:
       - name: Native Qt offscreen interaction regressions
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./scripts/ci/windows.ps1 -Phase QtTests
+      - name: Prepare portable packaging checks
+        run: python -m pip install pefile==2024.8.26 psutil==7.0.0
+      - name: Stage production-only Qt portable candidate
+        run: |
+          $commit = (git rev-parse HEAD).Trim()
+          ./scripts/package-windows.ps1 -BuildBin "$PWD/build/windows/bin/Release" -Qt "$PWD/.deps/Qt/6.7.3/msvc2019_64" -Sdk "$PWD/.deps/TSDuck-3.45-4798" -Output "$PWD/artifacts/portable-stage" -LicenseBundle "$PWD/scripts/portable-licenses" -SourceCommit $commit -Python (Get-Command python).Source
+      - name: Validate relocated portable candidate without SDK PATH
+        run: python scripts/ci/portable_checks.py validate --package artifacts/portable-stage --artifacts artifacts/portable-validation --qt .deps/Qt/6.7.3/msvc2019_64
+      - name: Gate binary ZIP on exact runtime and redistribution review
+        id: portable
+        run: |
+          python scripts/ci/portable_checks.py archive --package artifacts/portable-stage --artifacts artifacts/portable-validation --output artifacts/ShowPsiSi-windows-x64-qt.zip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $ready = Test-Path artifacts/ShowPsiSi-windows-x64-qt.zip
+          "ready=$($ready.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          if (-not $ready) { "Portable binary upload blocked by runtime or redistribution review. See portable-validation/distribution-gate.json." >> $env:GITHUB_STEP_SUMMARY }
+      - name: Keep cleared portable CI artifact (never publish a release)
+        if: ${{ success() && steps.portable.outputs.ready == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowPsiSi-windows-x64-qt
+          path: |
+            artifacts/ShowPsiSi-windows-x64-qt.zip
+            artifacts/ShowPsiSi-windows-x64-qt.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep portable validation evidence (no runtime binaries)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-validation
+          path: |
+            artifacts/portable-validation
+            artifacts/portable-stage/manifest.json
+            artifacts/portable-stage/build-information.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Collect SDK and native DLL diagnostics
         if: always()
         run: ./scripts/ci/windows.ps1 -Phase Diagnostics

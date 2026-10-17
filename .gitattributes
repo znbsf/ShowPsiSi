@@ -1,0 +1,4 @@
+# Preserve exact upstream notice bytes and their audited SHA-256 identities.
+# Upstream whitespace is intentional; do not normalize vendored license texts.
+scripts/portable-licenses/** -text
+scripts/portable-licenses/licenses/** -text -whitespace

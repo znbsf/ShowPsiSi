@@ -68,7 +68,7 @@ try {
             # https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_673/Updates.xml
             # https://learn.microsoft.com/cpp/porting/binary-compat-2015-2017
             Invoke-Checked 'python' @('-m', 'pip', 'install', 'aqtinstall==3.3.0')
-            Invoke-Checked 'python' @('-m', 'aqt', 'install-qt', 'windows', 'desktop', '6.7.3', 'win64_msvc2019_64', '--outputdir', (Join-Path $Root '.deps/Qt'), '--archives', 'qtbase', 'qtdeclarative', 'qtsvg', 'qttools')
+            Invoke-Checked 'python' @('-m', 'aqt', 'install-qt', 'windows', 'desktop', '6.7.3', 'win64_msvc2019_64', '--outputdir', (Join-Path $Root '.deps/Qt'), '--archives', 'qtbase', 'qtdeclarative', 'qtsvg', 'qttools', '--keep', '--archive-dest', (Join-Path $Root '.deps/qt-archives'))
             Assert-File (Join-Path $Qt 'bin/qmake.exe')
             Assert-File (Join-Path $Qt 'bin/windeployqt.exe')
             Invoke-Checked (Join-Path $Qt 'bin/qmake.exe') @('-query')
@@ -95,6 +95,21 @@ try {
             Invoke-Checked (Join-Path $Qt 'bin/windeployqt.exe') @('--release', '--no-translations', '--no-compiler-runtime', '--include-plugins', 'qoffscreen', '--qmldir', (Join-Path $Root 'ui/qt'), '--dir', $Bin, $env:SHOWPSISI_QT)
             Assert-File (Join-Path $Bin 'platforms/qoffscreen.dll')
             Invoke-Checked 'python' @('scripts/make_fixture.py')
+            # Bind explicit production inputs to this build's checkout identity.
+            $CompilerInfo = Get-ChildItem -Path "$Build/CMakeFiles/*/CMakeCXXCompiler.cmake" -File | Select-Object -Last 1
+            if (-not $CompilerInfo) { throw 'CMake compiler identity unavailable.' }
+            $CompilerVersion = Select-String -LiteralPath $CompilerInfo.FullName -Pattern '^set\(CMAKE_CXX_COMPILER_VERSION "([^"]+)"\)'
+            if (-not $CompilerVersion) { throw 'CMake compiler version unavailable.' }
+            $BuildRecord = @{
+                source_commit = (& git rev-parse HEAD).Trim()
+                source_root = $Root
+                compiler_version = $CompilerVersion.Matches[0].Groups[1].Value
+                production = @{}
+            }
+            foreach ($Name in @('showpsisi-core.exe', 'showpsisi-qt.exe')) {
+                $BuildRecord.production[$Name] = (Get-FileHash -LiteralPath (Join-Path $Bin $Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            $BuildRecord | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Bin 'showpsisi-build.json') -Encoding utf8NoBOM
         }
         'EngineTests' {
             Invoke-Checked 'python' @('scripts/ci/windows_native_checks.py', '--artifacts', $Artifacts, '--engine')

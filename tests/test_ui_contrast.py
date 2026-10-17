@@ -35,6 +35,33 @@ class WorkbenchContrastTests(unittest.TestCase):
         for background in ('#14181e', '#2a3341'):
             self.assertGreaterEqual(contrast(tokens['control-border'], background), 3)
 
+    def test_fixed_table_types_have_shared_distinct_readable_tokens(self):
+        qml = (ROOT / 'ui/qt/Main.qml').read_text()
+        css = (ROOT / 'ui/tauri/web/style.css').read_text()
+        expected = {
+            'PAT': ('#78baff', '◆'), 'PMT': ('#72dfc0', '▲'),
+            'CAT': ('#ff9f9f', '■'), 'NIT': ('#d7b2ff', '◈'),
+            'SDT': ('#f1df85', '▦'), 'BAT': ('#e9b699', '◇'),
+            'EIT': ('#eea6d7', '◷'), 'TDT': ('#9fdb8d', '◴'),
+            'TOT': ('#ffb66e', '◶'), 'AIT': ('#a3e4ec', '▤'),
+            'DSMCC': ('#bbb5ff', '▥'),
+        }
+        self.assertEqual(len({v[0] for v in expected.values()}), 11)
+        self.assertEqual(len({v[1] for v in expected.values()}), 11)
+        for name, (color, symbol) in expected.items():
+            with self.subTest(table=name):
+                if name == 'DSMCC':
+                    self.assertIn('return ["' + color + '","' + symbol + '","DSM-CC data"]', qml)
+                else:
+                    self.assertIn(name + ':["' + color + '","' + symbol + '",', qml)
+                rule = re.search(r'\.category-' + name.lower() + r'\s*\{([^}]+)\}', css)
+                self.assertIsNotNone(rule, name)
+                self.assertRegex(rule.group(1), r'color:\s*' + color)
+                for background in ('#181818', '#1f1f1f', '#37373d', '#04395e', '#26313d', '#253b58'):
+                    self.assertGreaterEqual(contrast(color, background), 4.5)
+        self.assertIn('return ["#d5dce7","○","Other signalling"]', qml)
+        self.assertIn('nav.highlighted && nav.foreground === ink ? "#ffffff" : nav.foreground', qml)
+
     def test_qt_authored_text_focus_and_input_tokens(self):
         qml = (ROOT / 'ui/qt/Main.qml').read_text()
         tokens = dict(re.findall(r'property color (\w+):\s*"(#[\da-fA-F]{6})"', qml))

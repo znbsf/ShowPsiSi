@@ -1182,3 +1182,68 @@ footer:has(#notice.error) { height: auto; min-height: 28px; padding-top: 4px; pa
   .tree-help { padding-bottom: 4px; }
   .inspector-footer { padding-top: 6px; padding-bottom: 6px; }
 }
+/* Stable table categories, always paired with visible names and symbols. */
+.category-psi { color: #9ecbff; background: #203b59; }
+.category-service { color: #8ee1be; background: #173d35; }
+.category-schedule { color: #e2b6ff; background: #442c55; }
+.category-clock { color: #ffe29b; background: #493d20; }
+.category-data { color: #9de5f0; background: #203d46; }
+.category-atsc { color: #ffc4a3; background: #4c3225; }
+.category-other { color: #d5dce7; background: #343c49; }
+.table-controls { display: flex; flex-wrap: wrap; gap: 5px 12px; padding: 8px; border-bottom: 1px solid var(--border); }
+.table-controls label { display: flex; gap: 5px; align-items: center; }
+.table-controls input { width: auto; }
+.scope-tabs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.scope-tabs [aria-pressed="true"] { border-color: #8cbbff; background: #253b58; }
+.arrival, .section-group { font-size: 11px; border: 1px solid #46546a; border-radius: 3px; padding: 5px 8px; }
+.arrival summary, .section-group summary { cursor: pointer; color: #cddbef; }
+.arrival p, .section-group p { margin: 5px 0; }
+.section-density { height: 30px; display: flex; gap: 1px; align-items: end; }
+.section-density span { flex: 1; height: var(--height); background: #71b6e8; min-width: 1px; }
+.section-density .invalid { background: #ff9999; }
+.section-links { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0; max-height: 100px; overflow: auto; }
+.section-links .btn { white-space: normal; text-align: left; }
+.xml-tag { color: #8fc9ff; }
+.xml-attribute { color: #c4b5fd; }
+.xml-string { color: #efbd92; }
+.xml-comment { color: #a8b5a1; }
+.tree-children[hidden] { display: none !important; }
+.identity-line { overflow-wrap: anywhere; }
+.table-branch { border-bottom: 1px solid #46546a; }
+.table-branch > summary { display: flex; gap: 8px; padding: 8px; cursor: pointer; align-items: center; }
+.table-branch > summary::before { content: '▸'; color: #c3d6ed; }
+.table-branch[open] > summary::before { content: '▾'; }
+.table-branch summary small { display: block; color: var(--muted); margin-top: 4px; }
+.table-branch > [role="listbox"] { margin-left: 12px; border-left: 2px solid #586c88; }
+.table-branch > [role="listbox"] > p { padding: 8px; }
+/* Expanded evidence must never squeeze the working tree out of a short pane. */
+.inspector { overflow-y: auto; }
+.inspector > * { flex-shrink: 0; }
+.inspector > .tree-area { flex: 1 0 140px; min-height: 140px; }
+.inspector > .evidence { flex: 1 0 140px; min-height: 140px; }
+
+/* Stable per-table-type palette shared with Qt. */
+.category-pat { color: #78baff; background: #26313d; }
+.category-pmt { color: #72dfc0; background: #26313d; }
+.category-cat { color: #ff9f9f; background: #26313d; }
+.category-nit { color: #d7b2ff; background: #26313d; }
+.category-sdt { color: #f1df85; background: #26313d; }
+.category-bat { color: #e9b699; background: #26313d; }
+.category-eit { color: #eea6d7; background: #26313d; }
+.category-tdt { color: #9fdb8d; background: #26313d; }
+.category-tot { color: #ffb66e; background: #26313d; }
+.category-ait { color: #a3e4ec; background: #26313d; }
+.category-dsmcc { color: #bbb5ff; background: #26313d; }
+
+/* Heading span styling must not erase fixed table-type colors. */
+.table-kind.category-pat { color: #78baff; }
+.table-kind.category-pmt { color: #72dfc0; }
+.table-kind.category-cat { color: #ff9f9f; }
+.table-kind.category-nit { color: #d7b2ff; }
+.table-kind.category-sdt { color: #f1df85; }
+.table-kind.category-bat { color: #e9b699; }
+.table-kind.category-eit { color: #eea6d7; }
+.table-kind.category-tdt { color: #9fdb8d; }
+.table-kind.category-tot { color: #ffb66e; }
+.table-kind.category-ait { color: #a3e4ec; }
+.table-kind.category-dsmcc { color: #bbb5ff; }

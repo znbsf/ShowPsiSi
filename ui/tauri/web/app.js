@@ -116,6 +116,44 @@ const tableLabels = {
   "selection_information_table": "SIT"
 };
 const tableLabel = (name) => tableLabels[name] || name;
+// Fixed table-type identities; semantic families remain in explanatory tooltips.
+function tableCategory(row) {
+  const name = row.name || row;
+  const fixed = {
+    PAT: ["pat", "◆", "Core PSI"], PMT: ["pmt", "▲", "Core PSI"], CAT: ["cat", "■", "Core PSI"],
+    NIT: ["nit", "◈", "Services / network"], SDT: ["sdt", "▦", "Services / network"], BAT: ["bat", "◇", "Services / network"],
+    EIT: ["eit", "◷", "Schedule"], TDT: ["tdt", "◴", "Clock"], TOT: ["tot", "◶", "Clock"], AIT: ["ait", "▤", "Data / application"]
+  };
+  if (fixed[name]) return fixed[name];
+  if (/^DSMCC/.test(name)) return ["dsmcc", "▥", "Data / application"];
+  if (/EIT|ETT|AEIT|AETT/.test(name)) return ["schedule", "◷", "Schedule"];
+  if (["TDT", "TOT", "STT"].includes(name)) return ["clock", "◴", "Clock"];
+  if (/DSMCC|INT|UNT|DLT|DCT|AIT|DFIT/.test(name)) return ["data", "▤", "Data / application"];
+  if (/VCT|MGT|RRT|DCCT|DCCSCT/.test(name)) return ["atsc", "◈", "ATSC signalling"];
+  return ["other", "○", "Other signalling"];
+}
+function categoryBadge(row) {
+  const [tone, symbol, label] = tableCategory(row);
+  return `<span class="table-kind category-${tone}" title="${esc(label + " · " + (row.name || row) + " · " + (glossary[row.name || row] || ""))}">${symbol} ${esc(tableLabel(row.name || row))}</span>`;
+}
+const isBadCrc = (row) => row.crc?.status === "invalid";
+let showBadCrc = false, evidenceScope = "merged", groupedTables = false, sectionGroupOpen = false;
+const openTableGroups = new Set();
+function syntaxXml(xml) {
+  // Tokenize original text, then escape each token. Never interpret SDK XML as HTML.
+  return String(xml || "").split(/(<!--[\s\S]*?-->|<[^>]*>)/g).map((part) => {
+    if (part.startsWith("<!--")) return `<span class="xml-comment">${esc(part)}</span>`;
+    if (!part.startsWith("<")) return esc(part);
+    return '<span class="xml-tag">' + part.split(/("[^"]*"|'[^']*')/g).map((token, i) =>
+      i % 2 ? `<span class="xml-string">${esc(token)}</span>` : esc(token).replace(/([\w:.-]+)(=)/g, '<span class="xml-attribute">$1</span>$2')).join("") + '</span>';
+  }).join("");
+}
+function distributionPanel(row) {
+  const d = row.distribution;
+  if (!d) return '';
+  const bins = d.bins || [], max = Math.max(1, ...bins.map(b => b.count));
+  return `<details class="arrival"><summary>Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</summary><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${Math.max(2, 100*b.count/max)}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div></details>`;
+}
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
 let data = {},
   detail = {},
@@ -454,7 +492,11 @@ function defaultInspect() {
       first.id,
       "service:" + (first.key ?? [first.onid, first.ts_id, first.id].join(":")),
     );
-  else if (data.tables?.[0]) inspect(data.tables[0].id);
+  else {
+    const visible = (data.tables || []).find(row => showBadCrc || !isBadCrc(row));
+    if (visible) inspect(visible.id);
+    else { selectionReset(); renderInspector(); }
+  }
 }
 async function snapshot(packet, id) {
   if (busy || backendFailure) return;
@@ -558,7 +600,7 @@ function render() {
           t === "All tables" ||
           (t === "Private / other" ? isOtherTable(r) : r.name === t),
       ).length;
-      return `<button class="nav ${filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon" aria-hidden="true">${t === "All tables" ? "▦" : "◇"}</span><span class="family-label">${esc(tableLabel(t))}</span><span class="count">${num(count)}</span></button>`;
+      return `<button class="nav ${filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon category-${tableCategory(t)[0]}" aria-hidden="true">${t === "All tables" ? "▦" : tableCategory(t)[1]}</span><span class="family-label">${esc(tableLabel(t))}</span><span class="count">${num(count)}</span></button>`;
     })
     .join("");
   $("#sidebar")
@@ -645,7 +687,7 @@ function recordRows() {
     tab === "Services"
       ? data.services || []
       : tab === "Tables"
-        ? (data.tables || []).filter(tableMatches)
+        ? (data.tables || []).filter(tableMatches).filter(r => showBadCrc || !isBadCrc(r))
         : tab === "EPG"
           ? data.events || []
           : data.diagnostics || [];
@@ -659,7 +701,7 @@ function recordRows() {
         " " +
         hex(row.id) +
         " " +
-        hex(row.pmt_pid)
+        hex(row.pmt_pid) + " " + hex(row.table_id, 2)
       )
         .toLowerCase()
         .includes(needle),
@@ -696,7 +738,9 @@ function renderList() {
   $("#service-head").innerHTML =
     tab === "Services"
       ? `<div class="service-head"><span ${tip("LCN")}>LCN</span><span>SERVICE / PROVIDER</span><span ${tip("PMT")}>PMT PID</span><span>GROUP</span></div>`
-      : "";
+      : tab === "Tables" ? `<div class="table-controls"><label><input id="show-bad-crc" type="checkbox" ${showBadCrc ? 'checked' : ''}> Show bad CRC (${num((data.tables || []).filter(tableMatches).filter(isBadCrc).length)})</label><button class="btn small" id="table-group-toggle" aria-pressed="${groupedTables}">${groupedTables ? "Section list" : "Table tree"}</button><span class="meta">${showBadCrc ? 'Including' : 'Hiding'} bad CRC only · Issues retains all evidence</span></div>` : "";
+  $("#table-group-toggle")?.addEventListener("click", () => { groupedTables = !groupedTables; renderList(); });
+  $("#show-bad-crc")?.addEventListener("change", e => { showBadCrc = e.target.checked; page = 0; renderList(); });
   $("#list").innerHTML = rows
     .slice(start, start + PAGE_SIZE)
     .map((r, i) => {
@@ -705,7 +749,7 @@ function renderList() {
       if (tab === "Services")
         body = `<span class="lcn">${r.logical_channel_number ?? "—"}</span><div class="record-name"><strong>${esc(r.name || "Unnamed service")}</strong><small>${esc(r.provider || "No provider")} <span class="muted">· SID ${hex(r.id)}</span></small></div><span class="numeric">${hex(r.pmt_pid)}</span><span class="group">${esc(r.group)}</span>`;
       if (tab === "Tables")
-        body = `<span class="table-kind" ${tip(r.name)}>${esc(tableLabel(r.name))}</span><div class="record-name"><strong>PID <span class="numeric">${hex(r.pid)}</span></strong><small>Version ${r.version} · section ${r.section}/${r.last_section} · ${num(r.bytes)} B</small></div><span class="numeric muted">${num(r.count)}×</span><span class="${r.valid ? "ok" : "bad"}" title="${r.valid ? "Valid section" : "Invalid section"}">${r.valid ? "●" : "⚠"}</span>`;
+        body = `${categoryBadge(r)}<div class="record-name"><strong>PID <span class="numeric">${hex(r.pid)}</span> · TID <span class="numeric">${hex(r.table_id, 2)}</span></strong><small>Version ${r.version} · section ${r.section}/${r.last_section} · ${num(r.bytes)} B</small><small>CRC ${esc(r.crc?.transmitted_hex || r.crc?.status || "unavailable")} · #${num(r.first_packet)} → #${num(r.last_packet)}</small></div><span class="numeric muted">${num(r.count)}×</span><span class="${r.valid ? "ok" : "bad"}" title="${r.valid ? "Valid section" : "Invalid section"}">${r.valid ? "●" : "⚠"}</span>`;
       if (tab === "EPG")
         body = `<div class="record-name"><strong>${esc(r.title)}</strong><small>SID ${hex(r.service_id)} · ${esc(r.start)} UTC · ${num(r.duration_seconds / 60)} min</small></div><span class="muted numeric">${hex(r.id)}</span>`;
       if (tab === "Issues")
@@ -739,7 +783,7 @@ function renderList() {
       };
       el.onclick = activate;
       el.onkeydown = (e) => {
-        const options = [...$("#list").querySelectorAll('[role="option"]')];
+        const options = [...$("#list").querySelectorAll('[role="option"]')].filter(el => el.getClientRects().length);
         const index = options.indexOf(el);
         if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
           e.preventDefault();
@@ -770,6 +814,29 @@ function renderList() {
         }
       };
     });
+  if (tab === "Tables" && groupedTables) {
+    const list = $("#list");
+    list.setAttribute("role", "region");
+    list.setAttribute("aria-label", "Table groups and source sections");
+    const nodes = new Map([...list.querySelectorAll("[data-key]")].map(el => [el.dataset.key, el]));
+    const groups = (data.table_groups || []).filter(g => tableMatches(g) && (!search.trim() || g.section_ids.some(id => rows.some(r => r.id === id))));
+    list.replaceChildren();
+    for (const g of groups) {
+      const groupRows = g.section_ids.map(id => nodes.get(id)).filter(Boolean);
+      // Preserve all-invalid group evidence even when its bad-CRC rows are hidden.
+      if (!groupRows.length && (showBadCrc || g.validity !== "all_invalid" || page > 0)) continue;
+      const branch = document.createElement("details");
+      branch.className = "table-branch";
+      branch.open = openTableGroups.has(g.id);
+      branch.innerHTML = `<summary>${categoryBadge(g)} <span>PID ${hex(g.pid)} · TID ${hex(g.table_id,2)} · v${g.version}<small>${esc(g.validity)} · observed ${g.observed_section_numbers?.length || 0}/${Number(g.last_section)+1} · missing ${(g.missing_section_numbers || []).join(', ') || 'none'} · selected ${g.selected_complete ? 'complete' : 'incomplete'}</small></span></summary><div role="listbox" aria-label="Source sections"></div>`;
+      const holder = branch.querySelector('[role="listbox"]');
+      for (const row of groupRows) holder.append(row);
+      if (!holder.querySelector('[tabindex="0"]') && groupRows.length) groupRows[0].tabIndex = 0;
+      if (!groupRows.length) holder.innerHTML = '<p class="meta">Bad-CRC evidence hidden. Enable Show bad CRC to inspect.</p>';
+      branch.ontoggle = () => branch.open ? openTableGroups.add(g.id) : openTableGroups.delete(g.id);
+      list.append(branch);
+    }
+  }
   if (!$('#list [tabindex="0"]'))
     $('#list [role="option"]')?.setAttribute("tabindex", "0");
 }
@@ -963,10 +1030,13 @@ function objectNodes(object) {
 function descriptorNode(d, index) {
   return {
     label: d.name || "opaque_descriptor",
-    tone: d.malformed ? "bad" : d.extension ? "private" : "",
+    tone: d.malformed || (d.decode_status && d.decode_status !== "decoded") ? "bad" : d.extension ? "private" : "",
     value: hex(d.tag, 2) + " · " + d.length + " B · @" + d.offset,
     children: [
       leaf("descriptor_tag", d.tag, "tag"),
+      leaf("decode_status", d.decode_status || "not reported"),
+      leaf("decode_scope", d.decode_scope || "not reported"),
+      leaf("decoder_registered", d.decoder_registered ?? null),
       leaf("descriptor_length", d.length),
       leaf("section_byte_offset", d.offset),
       leaf("private_data_specifier", d.pds),
@@ -1008,50 +1078,11 @@ function nativeNode(node) {
   };
 }
 function nativeXmlTree() {
-  if (detail.native_table)
-    return {
-      id: "native",
-      label: "TSDuck decoded structure",
-      value: detail.native_table_complete
-        ? "complete table"
-        : "section / partial table",
-      children: [nativeNode(detail.native_table)],
-    };
-  if (!detail.tsduck_xml) return null;
-  const document = new DOMParser().parseFromString(
-    detail.tsduck_xml,
-    "application/xml",
-  );
-  if (document.querySelector("parsererror"))
-    return {
-      id: "native",
-      label: "TSDuck decoded structure",
-      children: [
-        leaf(
-          "status",
-          "XML could not be parsed; original is available in the XML view.",
-        ),
-      ],
-    };
-  const convert = (element) => ({
-    label: element.tagName,
-    children: [
-      ...Array.from(element.attributes).map((attribute) => ({
-        label: attribute.name,
-        value: attribute.value,
-      })),
-      ...Array.from(element.children).map(convert),
-      ...Array.from(element.childNodes)
-        .filter((node) => node.nodeType === 3 && node.textContent.trim())
-        .map((node) => ({ label: "value", value: node.textContent.trim() })),
-    ],
-  });
-  return {
-    id: "native",
-    label: "TSDuck decoded structure",
-    value: "native semantic fields",
-    children: Array.from(document.documentElement?.children || []).map(convert),
-  };
+  if (evidenceScope === "section") return {id:"native",label:"TSDuck decoded structure",value:"SDK table decoding is available in Merged table; fields and bytes here are section-local",children:[]};
+  const merged = detail.merged;
+  return {id:"native",label:"TSDuck decoded structure · merged table",
+    value: merged?.complete && merged.native_table ? "complete selected generation" : "No complete selected generation; no merged decode",
+    children: merged?.complete && merged.native_table ? [nativeNode(merged.native_table)] : []};
 }
 function sectionTree() {
   const descriptors = detail.descriptors || [];
@@ -1071,12 +1102,13 @@ function sectionTree() {
     "standard_context",
     "standards_context",
     "native_decode_status",
+    "crc",
     "native_table_complete",
     "native_table_at_packet",
   ];
   const header = headerKeys
     .filter((k) => detail[k] !== undefined)
-    .map((k) => leaf(k, detail[k]));
+    .flatMap((k) => typeof detail[k] === "object" ? [{id:k,label:k,children:objectNodes(detail[k])}] : [leaf(k, detail[k])]);
   const children = [
     { id: "header", label: "Section header", children: header },
     {
@@ -1144,6 +1176,9 @@ function sectionTree() {
     });
   const nativeTree = nativeXmlTree();
   if (nativeTree) children.push(nativeTree);
+  if (detail.native_table_sources?.length) children.push({id:"assembly",label:detail.merged?.complete ? "Merged table source sections" : "Candidate sections · no completed merge",value: detail.merged?.complete ? "complete" : "partial / superseded", children: detail.native_table_sources.map((source, i) => ({id:source.id || i,label:`Section ${source.section ?? source.section_number ?? i}`, children:objectNodes(source)}))});
+  const audit = (detail.descriptors || []).filter(d => d.malformed || (d.decode_status && d.decode_status !== "decoded"));
+  if (audit.length) children.push({id:"audit",label:"Descriptor audit · unresolved / malformed",value:num(audit.length),tone:"bad",children:audit.map(descriptorNode)});
   if (detail.issues?.length)
     children.push({
       id: "issues",
@@ -1162,6 +1197,8 @@ function sectionTree() {
       native_table_at_packet: detail.native_table_at_packet,
       inspection_scope: detail.inspection_scope,
       occurrence_count: detail.occurrences?.length,
+      identity: detail.identity,
+      distribution: detail.distribution,
       ...(detail.occurrences?.length
         ? {
             occurrences: detail.occurrences.slice(0, 500),
@@ -1219,14 +1256,20 @@ function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1
   if (!node.children)
     return `<div class="tree-leaf" ${accessible}>${label}</div>`;
   const opened = !!needle || openNodes.has(path);
-  return `<div class="tree-node" ${accessible} data-path="${esc(path)}" aria-expanded="${opened}"><div class="tree-row">${label}<span class="node-count">${num(node.children.length)}</span></div><div class="tree-children" role="group" ${opened ? "" : "hidden"}>${node.children.length ? node.children.map((child, i) => drawNode(child, path, i, ancestorMatch || (!!needle && selfMatch), level + 1)).join("") : '<div class="tree-empty">No decoded fields</div>'}</div></div>`;
+  return `<div class="tree-node" ${accessible} data-path="${esc(path)}" aria-expanded="${opened}"><div class="tree-row">${label}<span class="node-count">${num(node.children.length)}</span></div><div class="tree-children" role="group" ${opened ? "" : "hidden"}>${!opened ? "" : node.children.length ? node.children.map((child, i) => drawNode(child, path, i, ancestorMatch || (!!needle && selfMatch), level + 1)).join("") : '<div class="tree-empty">No decoded fields</div>'}</div></div>`;
 }
 function setTreeExpanded(node, expanded) {
+  if (!expanded && node.contains(document.activeElement) && document.activeElement !== node) focusTreeItem(node);
+  if (!expanded && node.querySelector(':scope > .tree-children [tabindex="0"]')) {
+    node.querySelectorAll('[tabindex="0"]').forEach(el => el.tabIndex = -1);
+    node.tabIndex = 0;
+  }
   node.setAttribute("aria-expanded", String(expanded));
   node.querySelector(":scope > .tree-children").hidden = !expanded;
   if (!treeSearch) {
     if (expanded) openNodes.add(node.dataset.path);
     else openNodes.delete(node.dataset.path);
+    renderTree();
   }
 }
 function focusTreeItem(node) {
@@ -1390,6 +1433,13 @@ function referencePanel() {
     "</div>"
   );
 }
+function sectionGroupPanel() {
+  const group = (data.table_groups || []).find(g => (g.section_ids || []).includes(detail.id));
+  if (!group || (group.last_section === 0 && group.section_ids.length === 1)) return '';
+  const sources = (data.tables || []).filter(r => group.section_ids.includes(r.id));
+  const hidden = sources.filter(isBadCrc).length;
+  return `<details class="section-group" id="section-group" ${sectionGroupOpen ? "open" : ""}><summary>▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</summary><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<button class="btn small" data-section-id="${esc(r.id)}" aria-pressed="${r.id === detail.id}">§ ${r.section} · v${r.version} · ${r.valid ? 'valid' : 'invalid'} · CRC ${esc(r.crc?.transmitted_hex || r.crc?.status || 'unavailable')}</button>`).join('')}</div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</details>`;
+}
 function renderInspector() {
   const panel = $("#inspector");
   if (aggregateDiagnostic) {
@@ -1408,8 +1458,13 @@ function renderInspector() {
     : [];
   if (detail.native_xml_guarded)
     nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
+  const xmlSource = evidenceScope === "merged" && detail.merged?.complete ? detail.merged.tsduck_xml : null;
   const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(tableLabel(detail.name))} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : xmlLabel}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}">Merged table</button><span class="meta">Section: fields + bytes · Merged: SDK tree + XML</span></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : xmlLabel}">${view === "hex" ? esc(hexDump(detail.raw_hex)) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  $("#section-group")?.addEventListener("toggle", event => { if (event.target.isConnected) sectionGroupOpen = event.target.open; });
+  panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); });
+  panel.querySelectorAll("[data-section-id]").forEach(el => el.onclick = () => inspect(el.dataset.sectionId));
+  $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#section-group").open = true; });
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>
       (el.onclick = () => {
@@ -1438,9 +1493,12 @@ function renderInspector() {
     };
     renderTree();
     $("#expand-tree").onclick = () => {
-      $("#tree-area")
-        .querySelectorAll(".tree-node")
-        .forEach((el) => setTreeExpanded(el, true));
+      const expand = (node, parent = "", index = 0) => {
+        const path = parent ? parent + "/" + (node.id ?? index) : node.id;
+        if (node.children) { openNodes.add(path); node.children.forEach((child, i) => expand(child, path, i)); }
+      };
+      expand(sectionTree());
+      renderTree();
     };
     $("#collapse-tree").onclick = () => {
       openNodes.clear();

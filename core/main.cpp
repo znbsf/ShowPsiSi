@@ -17,6 +17,8 @@
 #include "tsDescriptorContext.h"
 #include "tsLibTSDuckVersion.h"
 #include "tsAbstractTable.h"
+#include "tsAbstractDescriptor.h"
+#include "tsTablesDisplay.h"
 #include "tsxmlDocument.h"
 #include "tsxmlElement.h"
 #include "nlohmann/json.hpp"
@@ -37,6 +39,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <queue>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -308,7 +311,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             if(p+2>end) { issue(r,"descriptor_header_truncated",p,"Missing descriptor length"); break; }
             size_t n=r.raw[p+1],next=p+2+n; int tag=r.raw[p];
             J d={{"tag",tag},{"length",n},{"offset",p},{"service_id",serviceId},{"pds",pds},{"name","opaque_descriptor"},{"raw",hex(r.raw.data()+p,std::min(next,end)-p)},{"fields",J::object()}};
-            if(next>end) { issue(r,"descriptor_length",p,"Declared length exceeds descriptor loop; raw bytes retained"); d["malformed"]=true; r.descriptors.push_back(d); break; }
+            if(next>end) { d["decode_status"]="parse_failure";issue(r,"descriptor_length",p,"Declared length exceeds descriptor loop; raw bytes retained"); d["malformed"]=true; r.descriptors.push_back(d); break; }
             ts::Descriptor bin(r.raw.data()+p,n+2);
             ts::xml::Document nativeDocument;auto* parent=nativeDocument.initialize(u"descriptor");
             // Ordered wire REGIDs are local to this loop, with program-level PMT
@@ -319,6 +322,10 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             if(namespaceConflict)d["native_decode_warning"]="Observed registration id conflicts with SDK descriptor namespace resolution; generic bytes retained";
             if(auto* native=bin.toXML(descriptorDuck,parent,context,namespaceConflict)){d["native"]=xmlTree(native);d["name"]=native->name().toUTF8();d["native_decoded"]=native->name()!=u"generic_descriptor";}
 
+            const auto& descriptorClass=ts::PSIRepository::Instance().getDescriptor(bin.xdid(),context);
+            d["decoder_registered"]=descriptorClass.factory!=nullptr;
+            d["decode_status"]=namespaceConflict?"context_guarded":d.value("native_decoded",false)?"decoded":descriptorClass.factory?"parse_failure":"unknown_or_unsupported";
+            d["decode_scope"]="SDK registry in observed descriptor context; unknown private syntax cannot be distinguished from unsupported specification without external evidence";
             if(tag==0x05&&n>=4)registrations.push_back((uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4));
             if(tag==0x5f&&n==4) { pdsOnWire=true;pds=(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4); d["name"]="private_data_specifier_descriptor"; d["fields"]["private_data_specifier"]=pds; }
             else if(tag==0x48) {
@@ -420,14 +427,14 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             if(records.size()>=50000)throw std::runtime_error("Unique-section limit (50000) exceeded; narrow input");
             Record r; r.id=id;r.key=key;r.raw=std::move(b);r.pid=pid;r.tid=tid;r.ext=ext;r.version=ver;r.number=num;r.valid=valid;
             r.current=size>=8&&(data[1]&0x80)?(data[5]&1)!=0:true;r.last=size>=8&&(data[1]&0x80)?data[7]:0;
-            if(!valid) {
-                if(size>=12&&(data[1]&0x80)&&ts::CRC32(data,size).value()!=0)issue(r,"crc32",size-4,"MPEG-2 CRC32 mismatch; excluded from derived services");
-                else issue(r,"invalid_section",0,"Rejected by TSDuck section demux");
-            }
+            // SectionDemux validates long-section CRCs, but short TOT/SCTE-35
+            // integrity must also be checked before derived/export selection.
+            if(crcEvidence(r)["status"]=="invalid")issue(r,"crc32",size-4,"MPEG-2 CRC32 mismatch; excluded from derived services");
+            else if(!valid)issue(r,"invalid_section",0,"Rejected by TSDuck section demux");
             decode(r); ids[id]=records.size();records.push_back(std::move(r));it=ids.find(id);
         }
         Record& r=records[it->second];r.positions.push_back(first);r.ends.push_back(last);r.orders.push_back(observations);r.lastPacket=last;
-        if(!valid && !r.issues.empty() && r.issues[0]["code"]=="crc32")++crcErrors;
+        if(!r.issues.empty() && r.issues[0]["code"]=="crc32")++crcErrors;
         if(r.valid&&r.current) {
             if(previous[key]!=id) {
                 if((tid==0x42||tid==0x46))history.push_back({{"id",id},{"version",ver},{"first_packet",first},{"last_packet",last},{"label","SDT v"+std::to_string(ver)}});
@@ -443,9 +450,73 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         if(table.factory&&!table.xml_name.empty())return table.xml_name.toUTF8();
         return tableName(r.tid)!="Private / other"?tableName(r.tid):"Unknown / private (table id "+std::to_string(r.tid)+")";
     }
-    J summary(const Record& r,uint64_t at=UINT64_MAX) const {
+    J crcEvidence(const Record& r) const {
+        const auto& b=r.raw;
+        const bool carries=b.size()>=3&&((b[1]&0x80)!=0||r.tid==0x73||r.tid==0xfc);
+        const bool knownNoCRC=r.tid==0x70||r.tid==0x71||r.tid==0x72||r.tid==0x7e;
+        J out={{"status",!carries&&knownNoCRC?"not_present":"unavailable"},{"transmitted_hex",nullptr},{"calculated_hex",nullptr}};
+        // Only interpret the trailing bytes as CRC when the whole declared section exists.
+        if(carries&&b.size()>=7&&size_t(3+((b[1]&15)<<8)+b[2])==b.size()){
+            const uint32_t value=ts::CRC32(b.data(),b.size()-4).value();
+            const uint8_t bytes[]={uint8_t(value>>24),uint8_t(value>>16),uint8_t(value>>8),uint8_t(value)};
+            out["transmitted_hex"]=hex(b.data()+b.size()-4,4);out["calculated_hex"]=hex(bytes,4);
+            out["status"]=ts::CRC32(b.data(),b.size()).value()==0?"valid":"invalid";
+        }
+        return out;
+    }
+    J evidenceIdentity(const Record& r) const {
+        return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"current_next",r.current},{"section_number",r.number},{"last_section_number",r.last}};
+    }
+    J distribution(const std::vector<const Record*>& parts,uint64_t at,const std::shared_ptr<AnalysisControl>& control=nullptr) const {
+        const uint64_t extent=std::max<uint64_t>(1,at==UINT64_MAX?packets:std::min(packets,at+1));
+        const size_t bins=size_t(std::min<uint64_t>(32,extent));
+        J out={{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"observation_count",0},{"first_packet",nullptr},{"last_packet",nullptr},{"first_seconds",nullptr},{"last_seconds",nullptr},{"min_gap_packets",nullptr},{"max_gap_packets",nullptr},{"mean_gap_packets",nullptr},{"bins",J::array()}};
+        std::vector<uint64_t> counts(bins),bad(bins);std::vector<size_t> limits;
+        // Merge sorted per-variant occurrences without copying/sorting all observations.
+        using Cursor=std::tuple<uint64_t,size_t,size_t>;std::priority_queue<Cursor,std::vector<Cursor>,std::greater<Cursor>> pending;
+        for(size_t i=0;i<parts.size();++i){checkCancelled(control);const auto& r=*parts[i];limits.push_back(std::upper_bound(r.ends.begin(),r.ends.end(),at)-r.ends.begin());if(limits.back())pending.emplace(r.positions[0],i,0);}
+        uint64_t count=0,first=0,last=0,low=UINT64_MAX,high=0;
+        while(!pending.empty()){
+            if((count&255)==0)checkCancelled(control);
+            const auto [pos,part,occurrence]=pending.top();pending.pop();const auto& r=*parts[part];
+            const auto bucket=std::min<uint64_t>(bins-1,pos*bins/extent);++counts[bucket];bad[bucket]+=!r.valid;
+            if(count){low=std::min(low,pos-last);high=std::max(high,pos-last);}else first=pos;last=pos;++count;
+            if(occurrence+1<limits[part])pending.emplace(r.positions[occurrence+1],part,occurrence+1);
+        }
+        for(size_t i=0;i<bins;++i)out["bins"].push_back({{"from_packet",(i*extent+bins-1)/bins},{"to_packet",((i+1)*extent+bins-1)/bins-1},{"count",counts[i]},{"bad",bad[i]}});
+        out["observation_count"]=count;
+        if(count){out["first_packet"]=first;out["last_packet"]=last;if(bitrate>0){out["first_seconds"]=first*188.0*8/bitrate;out["last_seconds"]=last*188.0*8/bitrate;}if(count>1){out["min_gap_packets"]=low;out["max_gap_packets"]=high;out["mean_gap_packets"]=double(last-first)/(count-1);}}
+        return out;
+    }
+    J summary(const Record& r,uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) const {
         auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at); size_t count=size_t(stop-r.ends.begin());
-        return {{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
+        J out={{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
+        if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){out["segment_last_section_number"]=r.raw[12];out["last_table_id"]=r.raw[13];}
+        out["identity"]=evidenceIdentity(r);out["crc"]=crcEvidence(r);out["distribution"]=distribution({&r},at,control);
+        return out;
+    }
+    J tableGroups(uint64_t at,const std::shared_ptr<AnalysisControl>& control=nullptr) const {
+        std::map<std::string,std::vector<const Record*>> groups;
+        for(const auto& r:records)if(!r.ends.empty()&&r.ends.front()<=at)groups[tableGroup(r)+":v="+std::to_string(r.version)+":current="+std::to_string(r.current)+":last="+std::to_string(r.last)].push_back(&r);
+        const auto current=latest(at),next=latest(at,false);J result=J::array();
+        for(const auto& [key,parts]:groups){
+            checkCancelled(control);const auto& first=*parts.front();std::set<unsigned> seen,good,bad,selectedNumbers;J ids=J::array(),selectedIds=J::array();size_t validCount=0,invalidCount=0;
+            const auto& selected=first.current?current:next;
+            for(const auto* r:parts){checkCancelled(control);ids.push_back(r->id);seen.insert(r->number);(r->valid?good:bad).insert(r->number);
+                const size_t count=std::upper_bound(r->ends.begin(),r->ends.end(),at)-r->ends.begin();(r->valid?validCount:invalidCount)+=count;
+                auto chosen=selected.find(sectionKey(*r));if(chosen!=selected.end()&&chosen->second==r){selectedIds.push_back(r->id);selectedNumbers.insert(r->number);}
+            }
+            J missing=J::array(),missingValid=J::array(),selectedMissing=J::array();
+            const bool schedule=first.tid>=0x50&&first.tid<=0x6f;
+            std::set<unsigned> expected;
+            if(schedule){for(const auto* r:parts)if(r->valid&&r->raw.size()>=14){unsigned segmentLast=r->raw[12];if(segmentLast>=r->number&&segmentLast<=r->last&&segmentLast/8==r->number/8)for(unsigned n=r->number&~7u;n<=segmentLast;++n)expected.insert(n);}}
+            else for(unsigned n=0;n<=first.last;++n)expected.insert(n);
+            for(unsigned n:expected){if(!seen.count(n))missing.push_back(n);if(!good.count(n))missingValid.push_back(n);}
+            for(unsigned n=0;n<=first.last;++n)if(!selectedNumbers.count(n))selectedMissing.push_back(n);
+            J groupIdentity=evidenceIdentity(first);groupIdentity.erase("section_number");
+            result.push_back({{"id",key},{"name",nativeTableName(first)},{"identity",groupIdentity},{"pid",first.pid},{"table_id",first.tid},{"extension",first.ext},{"version",first.version},{"current",first.current},{"last_section",first.last},{"section_ids",ids},{"observed_section_numbers",seen},{"valid_section_numbers",good},{"invalid_section_numbers",bad},{"missing_section_numbers",missing},{"missing_valid_section_numbers",missingValid},{"selected_section_ids",selectedIds},{"selected_missing_section_numbers",selectedMissing},{"selected_complete",selectedMissing.empty()&&!selectedIds.empty()},{"validity",validCount?(invalidCount?"mixed":"valid"):"all_invalid"},{"valid_observations",validCount},{"invalid_observations",invalidCount},{"distribution",distribution(parts,at,control)},{"coverage_model",schedule?"observed EIT schedule segment ranges only":"section_number 0 through last_section_number"},{"expected_section_numbers",expected},{"schedule_unobserved_segments_unknown",schedule},{"coverage_scope","observed version across capture cutoff; selected_* uses generation-safe snapshot; repetitions are not missing sections; EIT schedule segment completeness not inferred"}});
+        }
+        return result;
     }
     J derivedSnapshot(const std::map<std::string,const Record*>& selected) const {
         J out={{"services",J::array()},{"events",J::array()}};
@@ -491,13 +562,14 @@ public:
         for(const auto& r:records) {
             checkCancelled(control);
             auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at);if(stop==r.ends.begin())continue;
-            out["tables"].push_back(summary(r,at));
+            out["tables"].push_back(summary(r,at,control));
             for(auto d:r.issues) { d["id"]=r.id;d["pid"]=r.pid;d["packet"]=r.positions.front();d["count"]=size_t(stop-r.ends.begin());out["diagnostics"].push_back(d); }
         }
         checkCancelled(control);const auto derived=derivedSnapshot(selected);checkCancelled(control);out["services"]=derived["services"];out["events"]=derived["events"];
         constexpr size_t bins=80; std::vector<uint64_t> counts(bins,0),bad(bins,0); uint64_t denominator=std::max<uint64_t>(1,totalBytes/stride);
         for(const auto& r:records)for(auto pos:r.positions){checkCancelled(control);size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
+        out["table_groups"]=tableGroups(at,control);out["timing"]={{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         if(demuxStatus.value("discontinuities",uint64_t(0))>0)out["diagnostics"].push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities on monitored PSI/SI PIDs (aggregate; packet locations not yet retained)"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
         return out;
@@ -675,17 +747,26 @@ public:
         auto observed=std::upper_bound(r.ends.begin(),r.ends.end(),cutoff);
         if(observed==r.ends.begin())throw std::runtime_error("Section was not observed at or before selected packet");
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
-        J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;
+        J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_xml_guarded"]=false;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
+        out["section_native_text"]=nullptr;out["section_decode_scope"]="Exact original section; no renumbering or synthetic table assembly";
         if(r.valid){
+            std::ostringstream displayText;ts::DuckContext displayDuck(&NULLREP,&displayText);
+            displayDuck.resetStandards(duck.standards());displayDuck.setDefaultCharsetIn(duck.charsetIn());displayDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
+            ts::TablesDisplay display(displayDuck);ts::Section exact(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK);display.displaySection(exact);
+            bool guardedDisplay=r.tid==ts::TID_DSMCC_UNM&&(duck.standards()&ts::Standards::DVB)==ts::Standards::NONE;
+            for(const auto& descriptor:r.descriptors)guardedDisplay|=descriptor.contains("native_decode_warning");
+            if(guardedDisplay)out["section_decode_scope"]="SDK section text suppressed because descriptor namespace is guarded; exact raw and contextual descriptor evidence retained";
+            else out["section_native_text"]=displayText.str();
             // Share the same generation boundary as query/export, including
             // current/next isolation and version rollover.
             const auto selected=latest(cutoff,r.current);
             std::map<unsigned,const Record*> group;
             for(const auto& [key,candidate]:selected)if(tableGroup(*candidate)==tableGroup(r))group[candidate->number]=candidate;
+            for(const auto& [number,part]:group)out["native_table_sources"].push_back(summary(*part,cutoff));
             ts::BinaryTable table;bool full=group.size()==r.last+1;
             const bool superseded=!group.count(r.number)||group.at(r.number)->id!=r.id;if(superseded)full=false;
             for(unsigned i=0;i<=r.last;i++){auto found=group.find(i);if(found==group.end()){full=false;break;}const auto& part=*found->second;table.addNewSection(part.raw.data(),part.raw.size(),ts::PID(part.pid),ts::CRC32::CHECK);}
@@ -745,6 +826,12 @@ public:
                 out["tsduck_xml"]=document.toString().toUTF8();
             }else{ts::SectionFile file(duck);file.add(std::make_shared<ts::Section>(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK));out["tsduck_xml"]=file.toXML().toUTF8();out["native_decode_status"]=superseded?"inspected section superseded at selected packet; raw section retained":"incomplete table; raw section retained";}
         }
+        const auto& nativeClass=ts::PSIRepository::Instance().getTable(ts::TID(r.tid),ts::SectionContext(ts::PID(r.pid),duck.standards()));
+        out["table_decoder_registered"]=nativeClass.factory!=nullptr;
+        out["table_decode_category"]=!r.valid?"invalid_evidence":!out["native_table_complete"].get<bool>()?"incomplete_or_superseded":out["native_decode_status"]=="generic raw fallback"?(nativeClass.factory?"registered_decoder_fallback":"unknown_or_unsupported"):"decoded";
+        if(r.tid==0x3b||r.tid==0x3c)out["assembly_limitation"]="DSM-CC download transaction/module/block reassembly is not implemented; section identity and original bytes are retained";
+        J sourceIds=J::array();for(const auto& part:out["native_table_sources"])sourceIds.push_back(part["id"]);
+        out["merged"]={{"complete",out["native_table_complete"]},{"source_ids",sourceIds},{"native_table",out["native_table_complete"].get<bool>()?out.value("native_table",J()):J()},{"tsduck_xml",out["native_table_complete"].get<bool>()?out.value("tsduck_xml",J()):J()},{"scope","selected observed table generation; raw_hex, fields and descriptors above belong only to the inspected section"}};
         out["references"]=J::array();out["reference_warnings"]=J::array();
         J sources=J::array();
         try {

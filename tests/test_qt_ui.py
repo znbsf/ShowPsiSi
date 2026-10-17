@@ -58,7 +58,7 @@ class NativeQtTests(unittest.TestCase):
         evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
         destination = Path(evidence_root) / self._testMethodName / script if evidence_root else None
         logfile = directory / (script + '.log')
-        sources = [result, screenshot, logfile, Path(str(screenshot) + '.scanning.png'), Path(str(screenshot) + '.cancelled.png')]
+        sources = [result, screenshot, Path(str(screenshot)+'.xml.png'), logfile, Path(str(screenshot) + '.scanning.png'), Path(str(screenshot) + '.cancelled.png')]
         if env.get('SHOWPSISI_TRACE'):
             sources.append(Path(env['SHOWPSISI_TRACE']))
         with retain_qt_evidence(destination, sources):
@@ -93,6 +93,38 @@ class NativeQtTests(unittest.TestCase):
         helper = Path(os.environ.get('SHOWPSISI_TEST_CORE', production.with_name('showpsisi-core-test' + EXE)))
         self.assertTrue(helper.is_file(), 'Build with -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON or set SHOWPSISI_TEST_CORE')
         return helper
+
+    def test_section_evidence_workbench(self):
+        from test_section_evidence import SectionEvidenceTests
+        fixture = SectionEvidenceTests()
+        parts = [fixture.sdt(), fixture.sdt(number=1), fixture.sdt(number=1,bad=True), fixture.sdt()]
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-sections-') as directory:
+            path = Path(directory) / 'sections.ts'
+            path.write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i,raw in enumerate(parts)))
+            report = self.run_script('section-evidence', directory, overrides={'SHOWPSISI_SAMPLE':str(path)})
+            self.assertTrue(all(report['checks'].values()),report)
+            self.assertEqual((Path(directory)/'section-evidence.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertEqual((Path(directory)/'section-evidence.png.xml.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+
+    def test_superseded_section_does_not_leak_merged_evidence(self):
+        from test_section_evidence import SectionEvidenceTests
+        fixture = SectionEvidenceTests()
+        parts = [fixture.sdt(), fixture.sdt(number=1), fixture.sdt(version=2), fixture.sdt(version=2,number=1)]
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-superseded-') as directory:
+            path = Path(directory) / 'sections.ts'
+            path.write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i,raw in enumerate(parts)))
+            report = self.run_script('section-superseded', directory, overrides={'SHOWPSISI_SAMPLE':str(path)})
+            self.assertTrue(all(report['checks'].values()),report)
+            self.assertEqual((Path(directory)/'section-superseded.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+
+    def test_all_crc_bad_sections_hidden_until_requested(self):
+        from test_section_evidence import SectionEvidenceTests
+        raw = SectionEvidenceTests().sdt(bad=True)
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-allbad-') as directory:
+            path = Path(directory) / 'allbad.ts'
+            path.write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i in range(2)))
+            report = self.run_script('section-allbad', directory, overrides={'SHOWPSISI_SAMPLE':str(path)})
+            self.assertTrue(all(report['checks'].values()),report)
 
     def test_cancel_active_scan_then_rescan_real_engine(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-cancel-') as directory:

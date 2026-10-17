@@ -1,4 +1,10 @@
 #include <QGuiApplication>
+#include <QQuickTextDocument>
+#include <QSyntaxHighlighter>
+#include <QRegularExpression>
+#include <QSaveFile>
+#include <QTextBlock>
+#include <QTextLayout>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
@@ -28,6 +34,8 @@
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
+
+#include "XmlHighlighter.h"
 
 class Bridge:public QObject {
     Q_OBJECT
@@ -289,6 +297,20 @@ public:
         auto settings=layoutSettings();settings->setValue("workbenchLayout",QJsonDocument::fromVariant(layout).toJson(QJsonDocument::Compact));settings->sync();return settings->status()==QSettings::NoError;
     }
     Q_INVOKABLE bool resetLayout(){auto settings=layoutSettings();settings->remove("workbenchLayout");settings->sync();return settings->status()==QSettings::NoError;}
+    Q_INVOKABLE bool xmlHighlightActive(QObject* object){
+        auto document=qobject_cast<QQuickTextDocument*>(object);
+        if(!document || !document->property("xmlHighlighted").toBool())return false;
+        for(auto block=document->textDocument()->begin();block.isValid();block=block.next())
+            if(block.layout() && block.layout()->formats().size()>=3)return true;
+        return false;
+    }
+    Q_INVOKABLE void highlightXml(QObject* object){
+        if(auto document=qobject_cast<QQuickTextDocument*>(object)) {
+            if(!document->property("xmlHighlighted").toBool()) {
+                new XmlHighlighter(document->textDocument()); document->setProperty("xmlHighlighted",true);
+            }
+        }
+    }
     Q_INVOKABLE void capture(QString path){if(window){QDir().mkpath(QFileInfo(path).absolutePath());bool ok=window->grabWindow().save(path);mark(ok?"screenshot_saved":"screenshot_failed");}}
     Q_INVOKABLE bool click(QString name){if(!window)return false;std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem* p)->QQuickItem*{if(p->objectName()==name)return p;for(auto c:p->childItems())if(auto found=find(c))return found;return nullptr;};auto item=find(window->contentItem());if(!item||!item->isVisible()||!item->isEnabled())return false;QPointF pos=item->mapToScene(QPointF(item->width()/2,item->height()/2));QMouseEvent press(QEvent::MouseButtonPress,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QCoreApplication::sendEvent(window,&press);QMouseEvent release(QEvent::MouseButtonRelease,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QCoreApplication::sendEvent(window,&release);return true;}
     Q_INVOKABLE bool hover(QString name){
@@ -338,7 +360,7 @@ public:
         QCoreApplication::sendEvent(window,&release);
         return true;
     }
-    Q_INVOKABLE void testResult(QString text){QFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));if(f.open(QIODevice::WriteOnly))f.write(text.toUtf8());mark("ui_test_done");}
+    Q_INVOKABLE void testResult(QString text){QSaveFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));const auto bytes=text.toUtf8();if(f.open(QIODevice::WriteOnly)&&f.write(bytes)==bytes.size()&&f.commit())mark("ui_test_done");else mark("ui_test_result_failed");}
 signals:
     void stateChanged();void detailChanged();void busyChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
 };

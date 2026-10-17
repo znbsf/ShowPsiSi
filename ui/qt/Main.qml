@@ -57,6 +57,48 @@ ApplicationWindow {
         }
     }
     property string inspectorView: "Structure"
+    property bool showInvalidSections: false
+    property string evidenceScope: "Merged"
+    property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
+    property var siblingSections: (analysisState.tables || []).filter(function(r) { return (selectedGroup.section_ids || []).indexOf(r.id) >= 0 && (showInvalidSections || r.crc?.status !== "invalid"); })
+    property int hiddenInvalidCount: (analysisState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && (!filter || r.name === filter); }).length
+    // Fixed table identities, shared with the Web frontend. Never hash unknown names.
+    function tableCategory(name) {
+        let fixed = {
+            PAT:["#78baff","◆","Program association"],
+            PMT:["#72dfc0","▲","Program map"],
+            CAT:["#ff9f9f","■","Conditional access"],
+            NIT:["#d7b2ff","◈","Network information"],
+            SDT:["#f1df85","▦","Service description"],
+            BAT:["#e9b699","◇","Bouquet association"],
+            EIT:["#eea6d7","◷","Event information"],
+            TDT:["#9fdb8d","◴","UTC time and date"],
+            TOT:["#ffb66e","◶","Time offset"],
+            AIT:["#a3e4ec","▤","Application information"]
+        };
+        if (fixed[name]) return fixed[name];
+        if (/^DSMCC/.test(name || "")) return ["#bbb5ff","▥","DSM-CC data"];
+        return ["#d5dce7","○","Other signalling"];
+    }
+    function tableColor(name) { return tableCategory(name)[0]; }
+    function groupSummary() {
+        if (!selectedGroup.validity) return "";
+        return (selectedGroup.validity === "all_invalid" ? "ALL INVALID" : selectedGroup.validity === "mixed" ? "MIXED VALID / INVALID" : "VALID") + " · " + (selectedGroup.observed_section_numbers || []).length + " observed sections" + ((selectedGroup.missing_section_numbers || []).length ? " · missing " + selectedGroup.missing_section_numbers.join(", ") : " · none missing") + (selectedGroup.selected_complete ? " · current assembly complete" : " · current assembly incomplete");
+    }
+    function crcText(section) {
+        let crc = section.crc || {};
+        return "CRC " + (crc.transmitted_hex || "—") + " · " + (crc.status || "unavailable");
+    }
+    function arrivalText(section) {
+        let d=section.distribution || {};
+        if (d.first_packet === undefined) return "";
+        return "First #" + num(d.first_packet) + " → last #" + num(d.last_packet) + " · " + num(d.observation_count) + " arrivals";
+    }
+    function foldAll(fold) {
+        treeSearch.clear(); let next={};
+        makeTree(detail,selectedService,{},true).forEach(function(row) { if(row.branch) next[row.path]=fold; });
+        collapsed=next; tree.currentIndex=0;
+    }
     property string selected: ""
     property int selectedService: -1
     property string filter: ""
@@ -76,7 +118,7 @@ ApplicationWindow {
     property var treeRows: treeSearch.text.trim() ? filterTree(makeTree(detail, selectedService, {}, true), treeSearch.text) : makeTree(detail, selectedService, collapsed, false)
     property var serviceRows: analysisState.services || []
     property var tableRows: (analysisState.tables || []).filter(function (t) {
-        return !filter || t.name === filter;
+        return (!filter || t.name === filter) && (showInvalidSections || t.crc?.status !== "invalid");
     })
     property var tableFamilies: ["All tables"].concat((analysisState.tables || []).map(function (t) {
         return t.name;
@@ -299,7 +341,7 @@ ApplicationWindow {
         let result = [];
         function node(path, label, value, depth) {
             let branch = value !== null && typeof value === "object";
-            let closed = !expandAll && (hidden[path] === undefined ? (path.endsWith("/meta") || /^service\/[^/]+\/fields$/.test(path)) : !!hidden[path]);
+            let closed = !expandAll && (hidden[path] === undefined ? (path === "arrivals" || path === "descriptor_audit" || path.endsWith("/meta") || /^service\/[^/]+\/fields$/.test(path)) : !!hidden[path]);
             result.push({
                 path: path,
                 label: label,
@@ -323,13 +365,16 @@ ApplicationWindow {
             section: section.section,
             last_section: section.last_section,
             bytes: section.bytes,
-            valid: section.valid
+            valid: section.valid,
+            crc: section.crc || {},
+            extension: section.extension,
+            current_next: section.current
         }, 0);
         function sdkNode(path, value, depth, initiallyClosed) {
             if (!value || !value.name)
                 return;
             let attributes = value.attributes || {};
-            let identity = attributes.service_id || attributes.program_number || attributes.event_id || attributes.elementary_PID || attributes.tag || "";
+            let identity = attributes.service_id || attributes.program_number || attributes.event_id || attributes.elementary_pid || attributes.elementary_PID || attributes.tag || "";
             let service = (section.services || []).find(function (item) {
                 return Number(attributes.service_id) === item.id;
             });
@@ -381,8 +426,23 @@ ApplicationWindow {
                 sdkNode(path + "/child/" + index, child, depth + 1, !(selectedChild || child.name === "service_descriptor"));
             });
         }
-        if (section.native_table)
-            sdkNode("native", section.native_table, 0, false);
+        if (evidenceScope === "Merged" && section.merged?.native_table)
+            sdkNode("native", section.merged.native_table, 0, false);
+        if (evidenceScope === "Merged" && (section.native_table_sources || []).length) {
+            let sources={};
+            section.native_table_sources.forEach(function(source) {
+                sources["Section " + source.section + "/" + source.last_section + " · " + crcText(source)]={
+                    id:source.id,pid:source.pid,table_id:source.table_id,version:source.version,
+                    first_packet:source.first_packet,last_packet:source.last_packet,observations:source.count,
+                    crc:source.crc
+                };
+            });
+            node("provenance", section.merged?.complete ? "Merged source sections · exact evidence" : "Candidate source sections · no complete merge", sources, 0);
+        }
+        if (evidenceScope === "Section" && section.section_native_table)
+            sdkNode("native", section.section_native_table, 0, false);
+        if (evidenceScope === "Section" && section.section_native_text)
+            node("native_section_text", "SDK section display · see Decoded tab", "Exact original section; no merged siblings", 0);
         node("fields", "Application decoded fields", section.fields || {}, 0);
         let services = (section.services || []).filter(function (s) {
             return sid < 0 || s.id === sid;
@@ -411,7 +471,7 @@ ApplicationWindow {
             let path = parent + "/descriptor/" + d.offset;
             result.push({
                 path: path,
-                label: d.name + " · " + hex(d.tag, 2),
+                label: (d.native_decoded || d.extension ? "◆ " : "? ") + d.name + " · " + hex(d.tag, 2),
                 value: d.length + " B @ " + d.offset,
                 depth: depth,
                 branch: true,
@@ -424,11 +484,15 @@ ApplicationWindow {
                     length: d.length,
                     offset: d.offset,
                     pds: d.pds,
-                    malformed: !!d.malformed
+                    malformed: !!d.malformed,
+                    native_decoded: !!d.native_decoded,
+                    registration_ids: d.registration_ids || [],
+                    decode_note: d.native_decode_warning || (d.native_decoded ? "Native decoded" : d.extension ? "Configured extension" : "Unknown semantics; raw bytes preserved")
                 }, depth + 1);
-                node(path + "/fields", "Decoded fields", d.fields || {}, depth + 1);
+                if (Object.keys(d.fields || {}).length)
+                    node(path + "/fields", "Application decoded fields", d.fields, depth + 1);
                 if (d.native)
-                    sdkNode(path + "/native", d.native, depth + 1, true);
+                    sdkNode(path + "/native", d.native, depth + 1, false);
                 node(path + "/raw", "Raw bytes", d.raw || "", depth + 1);
             }
         }
@@ -439,6 +503,18 @@ ApplicationWindow {
         }).forEach(function (d) {
             descriptor("section", d, 0);
         });
+        if (section.distribution)
+            node("arrivals", "Arrival distribution · packet positions", section.distribution, 0);
+        if ((section.descriptors || []).length) {
+            let descriptors=section.descriptors || [];
+            node("descriptor_audit", "Descriptor decode audit · selected section", {
+                scope:"Application-indexed descriptor loops; native-only table loops may contain additional descriptors",
+                native_decoded:descriptors.filter(function(d) {return d.native_decoded;}).length,
+                extension_decoded:descriptors.filter(function(d) {return !!d.extension;}).length,
+                generic_or_unresolved:descriptors.filter(function(d) {return !d.native_decoded && !d.extension;}).length,
+                warnings:descriptors.filter(function(d) {return !!d.native_decode_warning;}).map(function(d) {return hex(d.tag,2) + ": " + d.native_decode_warning;})
+            },0);
+        }
         if ((section.events || []).length)
             node("events", "Events", section.events, 0);
         if ((section.issues || []).length)
@@ -656,7 +732,8 @@ ApplicationWindow {
             inspect(first.source_id, first.id);
             return;
         }
-        let firstTable = (analysisState.tables || [])[0];
+        let firstTable = (analysisState.tables || []).find(function(r) { return showInvalidSections || r.crc?.status !== "invalid"; });
+        if (!firstTable && (analysisState.tables || []).length) tab="Tables";
         if (firstTable) {
             if (tab === "Services")
                 tab = "Tables";
@@ -679,12 +756,12 @@ ApplicationWindow {
     function rowTitle(row) {
         if (tab === "Changes")
             return changeTitle(row);
-        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? tableLabel(row.name) + " · PID " + hex(row.pid) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
+        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? tableCategory(row.name)[1] + " " + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
     }
     function rowSubtitle(row) {
         if (tab === "Changes")
             return (row.changed_fields || []).join(", ") || "Presence changed · select to inspect source evidence";
-        return tab === "Services" ? (row.provider || "No provider") + " · SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) + (row.group ? " · " + row.group : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations" : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
+        return tab === "Services" ? (row.provider || "No provider") + " · SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) + (row.group ? " · " + row.group : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
@@ -754,11 +831,12 @@ ApplicationWindow {
     component NavItem: ItemDelegate {
         id: nav
         property bool keyboardCurrent: false
+        property color foreground: ink
         implicitHeight: 29
         focusPolicy: Qt.StrongFocus
         contentItem: PlainLabel {
             text: nav.text
-            color: nav.highlighted ? "#ffffff" : ink
+            color: nav.highlighted && nav.foreground === ink ? "#ffffff" : nav.foreground
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             font.pixelSize: 11
@@ -1642,6 +1720,162 @@ ApplicationWindow {
             else scan();
         }
     }
+    Timer {
+        id: allBadEvidenceTestTimer
+        interval: 50
+        repeat: true
+        property int phase: 0
+        property double deadline: Date.now()+20000
+        property var checks: ({})
+        onTriggered: {
+            if(Date.now()>deadline) {stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting) return;
+            if(phase===0) {
+                checks.hidden_default=tableRows.length===0 && !detail.id && hiddenInvalidCount===1 && tab==="Tables";
+                checks.toggle_visible=core.click("toggleInvalidSections");phase=1;return;
+            }
+            if(phase===1) {
+                if(tableRows.length!==1) return;
+                activate(tableRows[0]);phase=2;return;
+            }
+            if(phase===2) {
+                if(!detail.id) return;
+                checks.all_invalid=detail.crc.status==="invalid" && selectedGroup.validity==="all_invalid";
+                checks.missing_distinct=selectedGroup.missing_section_numbers.length===1 && selectedGroup.missing_section_numbers[0]===1;
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));
+            }
+        }
+    }
+    Timer {
+        id: supersededEvidenceTestTimer
+        interval: 50
+        repeat: true
+        property int phase: 0
+        property double deadline: Date.now()+20000
+        property string target: ""
+        property var checks: ({})
+        onTriggered: {
+            if(Date.now()>deadline) {stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting || !detail.id) return;
+            if(phase===0) {
+                target=analysisState.tables.find(function(r) {return r.version===1 && r.section===0;}).id;
+                tab="Tables";evidenceScope="Merged";inspect(target,-1,3);phase=1;return;
+            }
+            if(phase===1) {
+                if(detail.id!==target) return;
+                checks.superseded=detail.merged.complete===false && detail.merged.tsduck_xml===null;
+                checks.no_old_native=treeRows.every(function(r) {return r.path!=="native";});
+                inspectorView="XML";phase=2;return;
+            }
+            if(phase===2) {
+                checks.no_xml_leak=xmlEvidence.text.indexOf("<SDT")<0;
+                checks.exact_section_available=!!detail.section_native_text && detail.version===1;
+                inspect(target,-1,1);phase=3;return;
+            }
+            if(phase===3) {
+                if(detail.native_table_at_packet!==1) return;
+                checks.historical_complete=detail.merged.complete===true && detail.native_table_sources.length===2 && detail.native_table_sources.every(function(r) {return r.version===1;});
+                inspectorView="Structure";phase=4;return;
+            }
+            if(phase===4) {
+                checks.historical_native=treeRows.some(function(r) {return r.path==="native";});
+                let sibling=siblingSections.find(function(r) {return r.version===1 && r.section===1;});
+                target=sibling.id;inspect(target,-1,1);phase=5;return;
+            }
+            if(phase===5) {
+                if(detail.id!==target) return;
+                checks.sibling_exact=detail.section===1 && detail.identity.section_number===1 && detail.native_table_sources.length===2;
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));
+            }
+        }
+    }
+    Timer {
+        id: sectionEvidenceTestTimer
+        interval: 50
+        repeat: true
+        property int phase: 0
+        property double deadline: Date.now() + 20000
+        property var checks: ({})
+        property string target: ""
+        property int expandedCount: 0
+        onTriggered: {
+            if (Date.now() > deadline) {
+                stop(); core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error})); return;
+            }
+            if (!analysisState.complete || core.busy || core.inspecting || !detail.id) return;
+            if (phase === 0) {
+                tab="Tables"; filter=""; selectedService=-1;
+                checks.hidden_crc = hiddenInvalidCount > 0 && tableRows.every(function(r) { return r.crc?.status !== "invalid"; });
+                target=(analysisState.tables || []).find(function(r) { return r.section === 0 && r.valid; }).id;
+                inspect(target,-1); phase=1; return;
+            }
+            if (phase === 1) {
+                if (detail.id !== target) return;
+                checks.headers = detail.crc?.transmitted_hex?.length === 8 && detail.identity?.section_number === 0;
+                checks.arrivals = detail.distribution?.observation_count >= 2 && detail.distribution?.first_packet === 0 && detail.distribution?.last_packet > 0;
+                checks.merged_sources = detail.merged?.complete === true && detail.native_table_sources.length === 2 && selectedGroup.validity === "mixed";
+                checks.sources_visible = siblingSections.length === 2;
+                checks.scope_control = core.isExposed("evidenceScope") && core.isExposed("sectionChoice");
+                checks.toggle_click = core.click("toggleInvalidSections"); phase=2; return;
+            }
+            if (phase === 2) {
+                if (!showInvalidSections || siblingSections.length !== 3) return;
+                checks.reveals_bad = tableRows.some(function(r) { return r.crc?.status === "invalid"; });
+                core.click("expandAllSections"); phase=3; return;
+            }
+            if (phase === 3) {
+                expandedCount=treeRows.length;
+                checks.expanded = treeRows.some(function(r) { return r.depth > 2; }) && treeRows.every(function(r) { return !r.branch || !r.closed; });
+                tree.positionViewAtIndex(treeRows.findIndex(function(r) { return r.path === "native"; }), ListView.Beginning); phase=29; return;
+            }
+            if (phase === 29) {
+                checks.native_mouse_fold = core.click("tree_native"); phase=30; return;
+            }
+            if (phase === 30) {
+                let nativeRow=treeRows.find(function(r) {return r.path === "native";});
+                checks.native_folded = nativeRow?.closed === true;
+                tree.positionViewAtIndex(treeRows.findIndex(function(r) { return r.path === "native"; }), ListView.Beginning); phase=301; return;
+            }
+            if (phase === 301) {
+                checks.native_mouse_unfold = core.click("tree_native"); phase=31; return;
+            }
+            if (phase === 31) {
+                let index=treeRows.findIndex(function(r) {return r.path === "native";});
+                checks.native_unfolded = !treeRows[index].closed;
+                tree.currentIndex=index;tree.forceActiveFocus();core.key("Left");phase=32;return;
+            }
+            if (phase === 32) {
+                checks.native_key_folded = treeRows.find(function(r) { return r.path === "native"; }).closed;
+                core.key("Right");phase=33;return;
+            }
+            if (phase === 33) {
+                checks.native_key_unfolded = !treeRows[tree.currentIndex].closed;
+                core.key("Right");phase=34;return;
+            }
+            if (phase === 34) {
+                checks.native_key_child = treeRows[tree.currentIndex].depth > 0;
+                core.click("collapseAllSections");phase=4;return;
+            }
+            if (phase === 4) {
+                checks.collapsed = treeRows.length < expandedCount && treeRows.every(function(r) { return r.depth === 0 && (!r.branch || r.closed); });
+                evidenceScope="Section"; collapsed={header:false}; phase=5; return;
+            }
+            if (phase === 5) {
+                checks.section_scope = !treeRows.some(function(r) { return r.path === "native" || r.path === "provenance"; }) && !!detail.section_native_text;
+                inspectorView="XML"; evidenceScope="Merged"; phase=6; return;
+            }
+            if (phase === 6) {
+                checks.xml_plain = xmlEvidence.textFormat === TextEdit.PlainText && xmlEvidence.text === detail.tsduck_xml;
+                checks.xml_highlighter = core.xmlHighlightActive(xmlEvidence.textDocument);
+                core.capture(core.env("SHOWPSISI_SCREENSHOT") + ".xml.png");
+                inspectorView="Structure"; evidenceScope="Merged"; collapsed={header:true,native:false,provenance:false,fields:true}; tree.positionViewAtBeginning(); phase=7; return;
+            }
+            if (phase === 7) {
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+                stop(); core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k) { return checks[k]; }),checks:checks,tree_height:tree.height,selected:detail.id}));
+            }
+        }
+    }
     Component.onCompleted: {
         core.mark("ui_ready");
         if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
@@ -1657,6 +1891,12 @@ ApplicationWindow {
         }
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "section-allbad")
+            allBadEvidenceTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "section-superseded")
+            supersededEvidenceTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "section-evidence")
+            sectionEvidenceTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "plaintext")
             plainTextTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "protocol-upgrade")
@@ -2032,7 +2272,8 @@ ApplicationWindow {
                             required property string modelData
                             width: ListView.view.width
                             height: 29
-                            text: tableLabel(modelData) + "  " + (modelData === "All tables" ? (analysisState.tables || []).length : (analysisState.tables || []).filter(function (table) {
+                            foreground: tableColor(modelData)
+                            text: (modelData === "All tables" ? "" : tableCategory(modelData)[1] + " ") + tableLabel(modelData) + "  " + (modelData === "All tables" ? (analysisState.tables || []).length : (analysisState.tables || []).filter(function (table) {
                                     return table.name === modelData;
                                 }).length)
                             highlighted: tab === "Tables" && (filter === modelData || (!filter && modelData === "All tables"))
@@ -2042,7 +2283,7 @@ ApplicationWindow {
                             }
                             SafeTip {
                                 visible: anchorControl.hovered
-                                text: modelData + " · " + explanation(modelData)
+                                text: tableCategory(modelData)[2] + " · " + modelData + " · " + explanation(modelData)
                             }
                         }
                     }
@@ -2244,6 +2485,15 @@ ApplicationWindow {
                             Action { text: "Next"; enabled: backendReady && !core.comparing && comparison.next_offset !== null && comparison.next_offset !== undefined; onClicked: compareSnapshots(comparison.next_offset) }
                         }
                     }
+                    Action {
+                        objectName: "toggleInvalidSections"
+                        visible: tab === "Tables"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 8
+                        Layout.rightMargin: 8
+                        text: (showInvalidSections ? "Hide" : "Show") + " CRC-invalid sections (" + hiddenInvalidCount + ")"
+                        onClicked: showInvalidSections = !showInvalidSections
+                    }
                     PlainLabel {
                         text: (tab === "Tables" ? (filter || "All tables") : tab) + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
                         Layout.margins: 10
@@ -2293,7 +2543,7 @@ ApplicationWindow {
                                 PlainLabel {
                                     text: rowTitle(modelData)
                                     width: parent.width
-                                    color: tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? "#cca700" : ink
+                                    color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? "#cca700" : ink
                                     elide: Text.ElideRight
                                     font.pixelSize: 12
                                 }
@@ -2339,7 +2589,7 @@ ApplicationWindow {
                     id: inspectorColumn
                     anchors.fill: parent
                     anchors.margins: 10
-                    spacing: compactInspector ? spaceUnit : spaceUnit * 2
+                    spacing: spaceUnit
                     RowLayout {
                         Layout.fillWidth: true
                         TinyLabel {
@@ -2389,7 +2639,7 @@ ApplicationWindow {
                         PlainLabel {
                             text: changeFields(selectedChange) || "Section presence changed between A and B. Inspect the available side."
                             Layout.fillWidth: true
-                            maximumLineCount: compactInspector ? 2 : 3
+                            maximumLineCount: compactInspector ? 1 : 3
                             wrapMode: Text.WrapAnywhere
                             elide: Text.ElideRight
                             font.pixelSize: 11
@@ -2405,28 +2655,83 @@ ApplicationWindow {
                         HoverHandler { id: sectionTitleHover }
                         Layout.fillWidth: true
                         elide: Text.ElideRight
-                        color: ink
+                        color: tableColor(detail.name)
                         font.weight: Font.DemiBold
                     }
                     PlainLabel {
-                        text: detail.pid !== undefined ? "Packet identifier " + hex(detail.pid) + " · version " + detail.version + " · " + detail.bytes + " B · " + num(detail.count) + " repeats" : "Select a row to view fields and source bytes"
+                        text: detail.pid !== undefined ? "PID " + hex(detail.pid) + " · TID " + hex(detail.table_id, 2) + " · v" + detail.version + " · section " + detail.section + "/" + detail.last_section + " · " + detail.bytes + " B" : "Select a row to view fields and source bytes"
                         color: muted
                         font.pixelSize: 11
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
                     PlainLabel {
-                        text: detail.native_decode_status ? "TSDuck: " + detail.native_decode_status + (detail.native_table_complete === false ? " · section fragment" : "") : ""
+                        objectName: "sectionCrc"
+                        text: crcText(detail) + ((detail.crc || {}).calculated_hex ? " · expected " + detail.crc.calculated_hex : "")
+                        visible: !!detail.id
+                        Layout.fillWidth: true
+                        color: detail.valid === false ? removedColor : muted
+                        font.family: "monospace"
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                    }
+                    PlainLabel {
+                        objectName: "sectionArrivals"
+                        text: arrivalText(detail)
+                        visible: !!text
+                        Layout.fillWidth: true
+                        color: muted
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                        HoverHandler { id: arrivalsHover }
+                        SafeTip { visible: arrivalsHover.hovered; text: "Packet-position distribution; not wall-clock timing. " + ((detail.distribution || {}).basis || "") + "\nGap packets min / mean / max: " + detail.distribution?.min_gap_packets + " / " + detail.distribution?.mean_gap_packets + " / " + detail.distribution?.max_gap_packets + (detail.distribution?.first_seconds !== null && detail.distribution?.first_seconds !== undefined ? "\nSeconds from supplied bitrate: " + detail.distribution.first_seconds + " → " + detail.distribution.last_seconds : "\nSeconds unavailable without a bitrate. No PCR-derived clock.") }
+                    }
+                    Row {
+                        visible: !!detail.distribution && !compactInspector
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 12
+                        spacing: 1
+                        Repeater {
+                            model: detail.distribution?.bins || []
+                            Rectangle {
+                                required property var modelData
+                                width: Math.max(1, (inspectorPane.width - 22) / Math.max(1, detail.distribution.bins.length) - 1)
+                                height: 12
+                                color: modelData.bad ? removedColor : tableColor(detail.name)
+                                opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / Math.max(1, detail.distribution.observation_count) * 8) : 0.08
+                                HoverHandler { id: arrivalBinHover }
+                                SafeTip { visible: arrivalBinHover.hovered; text: "Packets " + modelData.from_packet + "–" + modelData.to_packet + ": " + modelData.count + " arrivals; " + modelData.bad + " invalid" }
+                            }
+                        }
+                    }
+                    RowLayout {
+                        visible: siblingSections.length > 1
+                        Layout.fillWidth: true
+                        spacing: 4
+                        FieldChoice {
+                            id: sectionChoice
+                            objectName: "sectionChoice"
+                            Layout.fillWidth: true
+                            implicitHeight: 28
+                            model: siblingSections.map(function(r) { return "Section " + r.section + "/" + r.last_section + " · " + crcText(r) + " · #" + r.first_packet; })
+                            currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
+                            onActivated: { let r=siblingSections[currentIndex]; if(r) inspect(r.id, -1, detail.native_table_at_packet); }
+                            Accessible.name: "Select original section evidence"
+                        }
+                    }
+                    PlainLabel {
+                        objectName: "sectionCoverage"
+                        text: groupSummary()
                         visible: !!text && !compactInspector
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
-                        color: muted
                         font.pixelSize: 11
+                        color: selectedGroup.validity === "valid" ? muted : changedColor
                     }
                     PlainLabel {
                         objectName: "inspectionCutoff"
                         visible: detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
-                        text: "Assembly cutoff · packet " + num(detail.native_table_at_packet)
+                        text: (detail.merged?.complete ? "Merged assembly" : "No complete merged assembly") + " · cutoff #" + num(detail.native_table_at_packet)
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         color: muted
@@ -2454,7 +2759,7 @@ ApplicationWindow {
                         spacing: 0
                         Repeater {
                             id: evidenceViews
-                            model: ["Structure", "Hex", "XML"]
+                            model: ["Structure", "Hex", "XML", "Decoded"]
                             NavItem {
                                 required property string modelData
                                 objectName: "inspector_" + modelData
@@ -2463,26 +2768,37 @@ ApplicationWindow {
                                 onClicked: inspectorView = modelData
                             }
                         }
+                        FieldChoice {
+                            objectName: "evidenceScope"
+                            model: ["Merged", "Section"]
+                            implicitHeight: 28
+                            Layout.preferredWidth: 100
+                            currentIndex: evidenceScope === "Merged" ? 0 : 1
+                            onActivated: { evidenceScope=currentText; collapsed={header:false}; }
+                            Accessible.name: "Merged table or individual section evidence"
+                        }
                         Item {
                             Layout.fillWidth: true
                         }
                     }
-                    FieldInput {
-                        id: treeSearch
-                        objectName: "treeSearch"
+                    RowLayout {
                         visible: inspectorView === "Structure"
                         Layout.fillWidth: true
-                        implicitHeight: 30
-                        placeholderText: "Find a field…  Ctrl+Shift+K"
-                        placeholderTextColor: muted
-                        selectByMouse: true
-                        Accessible.name: "Search inspector fields and values with ancestor context"
-                        Keys.onEscapePressed: clear()
-                        onAccepted: {
-                            tree.forceActiveFocus();
-                            if (treeRows.length)
-                                tree.currentIndex = 0;
+                        spacing: 4
+                        FieldInput {
+                            id: treeSearch
+                            objectName: "treeSearch"
+                            Layout.fillWidth: true
+                            implicitHeight: 30
+                            placeholderText: "Find field… Ctrl+Shift+K"
+                            placeholderTextColor: muted
+                            selectByMouse: true
+                            Accessible.name: "Search inspector fields and values with ancestor context"
+                            Keys.onEscapePressed: clear()
+                            onAccepted: { tree.forceActiveFocus(); if (treeRows.length) tree.currentIndex=0; }
                         }
+                        Action { objectName: "expandAllSections"; text: "+"; Accessible.name: "Expand all fields"; onClicked: foldAll(false); SafeTip { visible: anchorControl.hovered; text: "Expand all fields" } }
+                        Action { objectName: "collapseAllSections"; text: "−"; Accessible.name: "Collapse all fields"; onClicked: foldAll(true); SafeTip { visible: anchorControl.hovered; text: "Collapse all fields" } }
                     }
                     PlainLabel {
                         visible: inspectorView === "Structure" && !!treeSearch.text.trim()
@@ -2493,9 +2809,9 @@ ApplicationWindow {
                         font.pixelSize: 11
                     }
                     PlainLabel {
-                        visible: inspectorView === "Structure"
+                        visible: inspectorView === "Structure" && !compactInspector
                         Layout.fillWidth: true
-                        text: "↑ ↓ Navigate · ← → Fold / enter · Home / End"
+                        text: (evidenceScope === "Merged" ? "Merged native + selected raw" : "Selected section") + " · ↑ ↓ / ← → · Home / End"
                         color: muted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
@@ -2521,7 +2837,7 @@ ApplicationWindow {
                         Keys.onRightPressed: {
                             let r = treeRows[currentIndex];
                             if (r && r.branch) {
-                                if (r.closed) toggle(r.path);
+                                if (r.closed) win.toggle(r.path);
                                 else if (currentIndex + 1 < treeRows.length && treeRows[currentIndex + 1].depth > r.depth)
                                     currentIndex++;
                             }
@@ -2535,7 +2851,7 @@ ApplicationWindow {
                         Keys.onLeftPressed: {
                             let r = treeRows[currentIndex];
                             if (r && r.branch && !r.closed && !treeSearch.text.trim())
-                                toggle(r.path);
+                                win.toggle(r.path);
                             else if (r) {
                                 for (let i = currentIndex - 1; i >= 0; --i)
                                     if (treeRows[i].depth < r.depth) {
@@ -2547,11 +2863,12 @@ ApplicationWindow {
                         Keys.onReturnPressed: {
                             let r = treeRows[currentIndex];
                             if (r && r.branch)
-                                toggle(r.path);
+                                win.toggle(r.path);
                         }
                         delegate: NavItem {
                             required property var modelData
                             required property int index
+                            objectName: "tree_" + modelData.path
                             highlighted: tree.currentIndex === index
                             keyboardCurrent: tree.currentIndex === index && tree.activeFocus
                             Accessible.role: Accessible.ListItem
@@ -2591,7 +2908,7 @@ ApplicationWindow {
                                 tree.currentIndex = index;
                                 tree.forceActiveFocus();
                                 if (modelData.branch)
-                                    toggle(modelData.path);
+                                    win.toggle(modelData.path);
                             }
                             SafeTip {
                                 visible: anchorControl.hovered
@@ -2600,7 +2917,7 @@ ApplicationWindow {
                         }
                     }
                     TinyLabel {
-                        text: "SECTION HEX · BYTE OFFSET"
+                        text: "SELECTED SECTION HEX · BYTE OFFSET"
                         visible: inspectorView === "Hex"
                     }
                     ScrollView {
@@ -2636,7 +2953,24 @@ ApplicationWindow {
                         TextArea {
                             id: xmlEvidence
                             textFormat: TextEdit.PlainText
-                            text: detail.tsduck_xml || "No TSDuck XML is available for this section. Raw evidence remains in Hex."
+                            text: (evidenceScope === "Section" ? detail.section_tsduck_xml : detail.merged?.tsduck_xml) || "No standalone native XML is available for this section. Exact section fields and bytes remain in Structure and Hex."
+                            Component.onCompleted: core.highlightXml(textDocument)
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.NoWrap
+                            font.family: "monospace"
+                            font.pixelSize: 11
+                        }
+                    }
+                    ScrollView {
+                        visible: inspectorView === "Decoded"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        TextArea {
+                            objectName: "sectionNativeText"
+                            textFormat: TextEdit.PlainText
+                            text: detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex."
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap

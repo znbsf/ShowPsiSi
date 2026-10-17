@@ -9,6 +9,7 @@ is used.
 
 ```sh
 python -m unittest discover -s tests -p test_engine.py -v
+python -m unittest discover -s tests -p test_section_evidence.py -v
 python -m unittest discover -s tests -p test_cloud_preview.py -v
 python -m pip install playwright
 python -m playwright install chromium
@@ -159,3 +160,10 @@ Set `SHOWPSISI_QT_TEST_ARTIFACTS` to retain per-test explicit JSON/log/PNG/trace
 files, including incomplete results and failed assertions. Each file is capped at
 5 MiB. The shared context preserves the original exception if copying fails.
 See [CI completion contracts](../docs/CI_TEST_CONTRACT.md) for reproduced causes.
+
+## Section evidence contract
+
+`test_section_evidence.py` covers section/header/CRC identity, repeat versus missing
+coverage, current/next/PID separation, generation-safe merged provenance, legal EIT
+schedule segment holes, short TOT CRC validation, and bounded histogram output for
+a 20,000-repeat burst. See [the additive contract](../docs/SECTION_EVIDENCE.md).

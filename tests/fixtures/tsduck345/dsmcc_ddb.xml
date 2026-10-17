@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<DSMCC_download_data_message version="2" table_id_extension="7" protocol_discriminator="0x11" dsmcc_type="3" message_id="0x1003" download_id="0x10203040" module_id="7" module_version="3"><block_data>00010203CAFE</block_data></DSMCC_download_data_message>
+</tsduck>

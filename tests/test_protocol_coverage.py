@@ -1,9 +1,13 @@
-"""Protocol fixtures compiled by TSDuck 3.39-3956 tstabcomp, not RF samples.
+"""Protocol fixtures compiled by official TSDuck tstabcomp, not RF samples.
+
+Legacy vectors retain their 3.39-3956 bytes; added vectors use 3.45-4798.
 
 Source XML and expected provenance are documented in docs/PROTOCOL_COVERAGE.md.
 Tests exercise ShowPsiSi's actual JSON API rather than counting SDK classes.
 """
 import sys
+import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -144,6 +148,14 @@ FIXTURES.update({
     'ISDB_SPECIAL_NIT': (0x10, '40f0310002c10000f004fe02c301f02000010002f01afa04123a0cefcd0e072149534442204c61620f010065fb0200658d629a9f'),
     'DVB_SPECIAL_PMT': (0x100, '02b04a0065c10000e201f00024e201f00f380d0160000000900000000000781f06e202f00b7f031580a00a04656e670006e203f00a5908656e67100001000205e150f0056f038010e78ba4a1a7'),
 })
+
+# Exact 3.45-4798 compiler inputs, options and immutable section bytes. Runtime
+# tests do not require tstabcomp; reproduction instructions are beside the XML.
+EXPANDED_FIXTURE_DIR = ROOT / 'tests' / 'fixtures' / 'tsduck345'
+EXPANDED_MANIFEST = json.loads((EXPANDED_FIXTURE_DIR / 'manifest.json').read_text(encoding='utf-8'))
+EXPANDED_FIXTURES = EXPANDED_MANIFEST['fixtures']
+FIXTURES.update({name: (fixture['pid'], fixture['hex'])
+                 for name, fixture in EXPANDED_FIXTURES.items()})
 
 class ProtocolCoverageTests(unittest.TestCase):
     def setUp(self):
@@ -777,6 +789,365 @@ class ProtocolCoverageTests(unittest.TestCase):
         unchanged = self.core.call('diff_snapshots', {'from_packet': 0, 'to_packet': 0})
         self.assertEqual(unchanged['summary']['services']['unchanged'], 0)
         self.assertEqual(unchanged['summary']['tables']['unchanged'], 1)
+
+
+    def assert_fixture_native(self, details, fixture_name, table_name):
+        """Require semantic decoding AND the exact on-wire fixture section."""
+        pid, raw = FIXTURES[fixture_name]
+        matched = [d for d in details if d['pid'] == pid and d['raw_hex'] == raw.upper()]
+        self.assertEqual(len(matched), 1, fixture_name)
+        self.assertEqual(matched[0]['native_decode_status'], 'native TSDuck decoder')
+        return self.assert_native(matched, table_name)
+
+    def test_expanded_fixture_provenance_and_crc(self):
+        self.assertIn('version 3.45-4798', EXPANDED_MANIFEST['generator'])
+        for name, fixture in EXPANDED_FIXTURES.items():
+            with self.subTest(fixture=name):
+                self.assertEqual(hashlib.sha256((EXPANDED_FIXTURE_DIR / fixture['xml']).read_text(encoding='utf-8').encode('utf-8')).hexdigest(),
+                                 fixture['xml_sha256'])
+                raw = bytes.fromhex(fixture['hex'])
+                self.assertEqual(hashlib.sha256(raw).hexdigest(), fixture['sha256'])
+                self.assertEqual(3 + ((raw[1] & 15) << 8 | raw[2]), len(raw))
+                self.assertEqual(crc(raw), 0)
+
+    def test_dtmb_drm_fields_and_exact_license_bytes(self):
+        state, details = self.analyze(['DTMB_DRM_PMT'], 'dtmb', [0x100])
+        pmt = self.assert_fixture_native(details, 'DTMB_DRM_PMT', 'PMT')
+        drm = self.tree_nodes(pmt, 'DTMB_DRM_descriptor')[0]
+        self.assertEqual({k: self.number(v) for k, v in drm['attributes'].items()},
+                         {'video_format': 3, 'video_encryption_method': 2,
+                          'audio_format': 5, 'audio_encryption_method': 1})
+        self.assertEqual(''.join(drm['children'][0]['text'].split()), '1020CAFE')
+        flat = details[0]['descriptors'][0]
+        self.assertEqual(flat['native']['name'], 'DTMB_DRM_descriptor')
+        self.assertTrue(flat['native_decoded'])
+        self.assertEqual(flat['pds'], 0)
+        self.assertEqual(flat['raw'], 'C00632511020CAFE')
+        self.assertEqual(details[0]['standards_context'], 'dtmb')
+        # Encryption signaling is inspected, never treated as decryption.
+        self.assertEqual(state['crc_errors'], 0)
+
+    def test_dtmb_explicit_utf8_selector_preserves_chinese_and_bmp_unicode(self):
+        # --china alone selects a standards flag. UTF-8 is independently explicit
+        # in the compiler arguments AND the service descriptor's 0x15 selectors.
+        _, details = self.analyze(['DTMB_UTF8_SDT'], 'dtmb')
+        sdt = self.assert_fixture_native(details, 'DTMB_UTF8_SDT', 'SDT')
+        service = self.tree_nodes(sdt, 'service_descriptor')[0]['attributes']
+        self.assertEqual(service['service_provider_name'], '实验室 Ω')
+        self.assertEqual(service['service_name'], '中文频道 Ω')
+        raw = bytes.fromhex(FIXTURES['DTMB_UTF8_SDT'][1])
+        self.assertIn(b'\x15' + '实验室 Ω'.encode('utf-8'), raw)
+        self.assertIn(b'\x15' + '中文频道 Ω'.encode('utf-8'), raw)
+
+    def test_dtmb_wrong_family_and_truncated_descriptor_keep_raw_evidence(self):
+        _, details = self.analyze(['DTMB_DRM_PMT'], 'dvb', [0x100])
+        self.assertEqual(details[0]['raw_hex'], FIXTURES['DTMB_DRM_PMT'][1].upper())
+        self.assertFalse(self.tree_nodes(details[0]['native_table'], 'DTMB_DRM_descriptor'))
+        self.assertEqual(details[0]['descriptors'][0]['native']['name'], 'generic_descriptor')
+        short = descriptor(0xc0, b'\x32')  # Missing audio format/encryption octet.
+        pmt = section(2, 101, 0, word(0xe201) + word(0xf000) +
+                      b'\x1b' + word(0xe201) + word(0xf000 | len(short)) + short)
+        _, details = self.analyze_packets(self.packetize(0x100, pmt), 'dtmb', [0x100])
+        self.assertEqual(details[0]['raw_hex'], pmt.hex().upper())
+        flat = details[0]['descriptors'][0]
+        self.assertFalse(flat['native_decoded'])
+        self.assertEqual(flat['native']['name'], 'generic_descriptor')
+        self.assertEqual(flat['raw'], 'C00132')
+
+    def test_isdb_amt_reserved_pid_ipv4_ipv6_and_private_data(self):
+        state, details = self.analyze(['ISDB_AMT'], 'isdb')
+        amt = self.assert_fixture_native(details, 'ISDB_AMT', 'AMT')
+        self.assertTrue(any(t['pid'] == 0x2e for t in state['tables']))
+        services = self.tree_nodes(amt, 'service')
+        self.assertEqual([self.number(n['attributes']['service_id']) for n in services], [101, 102])
+        self.assertEqual(services[0]['attributes']['src'], '192.0.2.17/24')
+        self.assertEqual(services[0]['attributes']['dst'], '239.1.2.3/32')
+        self.assertEqual(services[1]['attributes']['src'], '2001:db8::17/64')
+        self.assertEqual(services[1]['attributes']['dst'], 'ff3e::1234/128')
+        self.assertEqual([''.join(n['children'][0]['text'].split()) for n in services], ['CAFE', '010203'])
+
+    def test_isdb_advanced_cable_numeric_fields_and_other_data_preservation(self):
+        _, details = self.analyze(['ISDB_ADVANCED_CABLE_NIT'], 'isdb')
+        nit = self.assert_fixture_native(details, 'ISDB_ADVANCED_CABLE_NIT', 'NIT')
+        descriptors = self.tree_nodes(nit, 'ISDB_advanced_cable_delivery_system_descriptor')
+        self.assertEqual(len(descriptors), 2)
+        normal = descriptors[0]['children'][0]
+        self.assertEqual({k: self.number(v) for k, v in normal['attributes'].items()},
+                         {'plp_id': 7, 'effective_symbol_length': 2, 'guard_interval': 3, 'bundled_channel': 4})
+        carrier = normal['children'][0]['attributes']
+        self.assertEqual({k: self.number(v) for k, v in carrier.items()},
+                         {'data_slice_id': 9, 'frequency': 450000000, 'frame_type': 2,
+                          'fec_outer': 1, 'modulation': 5, 'fec_inner': 3})
+        other = descriptors[1]['children'][0]
+        self.assertEqual(self.number(other['attributes']['descriptor_tag_extension']), 1)
+        # The compiler pads extension 1 to its specified 88-byte capacity.
+        self.assertEqual(bytes.fromhex(other['text']), bytes(range(28)) + b'\xff' * 60)
+        self.assertTrue(all(d['native_decoded'] for d in details[0]['descriptors']))
+
+    def test_atsc_aggregate_event_tables_unicode_and_timing(self):
+        names = ['ATSC_AEIT', 'ATSC_AETT', 'ATSC_LTST']
+        _, details = self.analyze(names, 'atsc', [FIXTURES[n][0] for n in names])
+        aeit = self.assert_fixture_native(details, 'ATSC_AEIT', 'AEIT')
+        self.assertEqual(self.number(aeit['attributes']['mgt_tag']), 7)
+        event = self.tree_nodes(aeit, 'event')[0]['attributes']
+        self.assertEqual(event['start_time'], '2026-10-16 12:00:00')
+        self.assertEqual(self.number(event['duration']), 1800)
+        self.assertEqual(self.number(event['event_id']), 17)
+        self.assertEqual(self.tree_nodes(aeit, 'string')[0]['attributes']['text'], '数据实验 Ω')
+        aett = self.assert_fixture_native(details, 'ATSC_AETT', 'AETT')
+        self.assertEqual(self.number(self.tree_nodes(aett, 'ETM_data')[0]['attributes']['etm_id']), 0x00650046)
+        self.assertEqual(self.tree_nodes(aett, 'string')[0]['attributes']['text'], '节目详情 Café')
+        ltst = self.assert_fixture_native(details, 'ATSC_LTST', 'LTST')
+        data = self.tree_nodes(ltst, 'data')[0]['attributes']
+        self.assertEqual(self.number(data['data_id']), 10)
+        self.assertEqual(data['start_time'], '2026-10-16 13:00:00')
+        self.assertEqual(self.number(data['length_in_seconds']), 600)
+        self.assertEqual(self.tree_nodes(ltst, 'string')[0]['attributes']['text'], '长期数据')
+
+    def test_atsc_data_tables_fields_and_opaque_payloads(self):
+        names = ['ATSC_DET', 'ATSC_DST', 'ATSC_NRT']
+        _, details = self.analyze(names, 'atsc', [FIXTURES[n][0] for n in names])
+        det = self.assert_fixture_native(details, 'ATSC_DET', 'DET')
+        data = self.tree_nodes(det, 'data')[0]['attributes']
+        self.assertEqual(self.number(data['data_id']), 9)
+        self.assertEqual(data['start_time'], '2026-10-16 12:00:00')
+        self.assertEqual(self.number(data['length_in_seconds']), 1800)
+        self.assertEqual(self.tree_nodes(det, 'string')[0]['attributes']['text'], 'Data Ω')
+        download = self.tree_nodes(det, 'ATSC_download_descriptor')[0]['attributes']
+        self.assertEqual({k: self.number(v) for k, v in download.items()},
+                         {'download_id': 0x12345678, 'carousel_period': 3000, 'control_msg_time_out_value': 5000})
+        dst = self.assert_fixture_native(details, 'ATSC_DST', 'DST')
+        self.assertEqual(self.number(dst['attributes']['table_id_extension']), 0x1234)
+        self.assertEqual(''.join(self.tree_nodes(dst, 'app_id')[0]['text'].split()), '11223344')
+        self.assertEqual(''.join(self.tree_nodes(dst, 'app_data')[0]['text'].split()), '0102CAFE')
+        self.assertEqual(''.join(self.tree_nodes(dst, 'service_private_data')[0]['text'].split()), 'AABBCC')
+        nrt = self.assert_fixture_native(details, 'ATSC_NRT', 'NRT')
+        self.assertEqual(self.number(nrt['attributes']['table_id_extension']), 0x4321)
+        self.assertEqual(''.join(self.tree_nodes(nrt, 'private_data')[0]['text'].split()), '001122CAFE')
+
+    def test_atsc_satellite_vct_chinese_name_and_carrier_fields(self):
+        _, details = self.analyze(['ATSC_SVCT'], 'atsc', [0x166])
+        svct = self.assert_fixture_native(details, 'ATSC_SVCT', 'SVCT')
+        channel = self.tree_nodes(svct, 'channel')[0]['attributes']
+        self.assertEqual(channel['short_name'], '实验HD')
+        self.assertEqual(self.number(channel['major_channel_number']), 7)
+        self.assertEqual(self.number(channel['minor_channel_number']), 2)
+        self.assertEqual(self.number(channel['carrier_frequency']), 12345000000)
+        self.assertEqual(self.number(channel['carrier_symbol_rate']), 27500000)
+        self.assertEqual(self.number(channel['feed_id']), 11)
+
+    def test_dsmcc_download_block_and_control_module_fields(self):
+        _, details = self.analyze(['DSMCC_DDB', 'DSMCC_DII'], 'dvb', [0x170, 0x171])
+        ddb = self.assert_fixture_native(details, 'DSMCC_DDB', 'DSMCC_download_data_message')
+        self.assertEqual(self.number(ddb['attributes']['message_id']), 0x1003)
+        self.assertEqual(self.number(ddb['attributes']['download_id']), 0x10203040)
+        self.assertEqual(self.number(ddb['attributes']['module_id']), 7)
+        self.assertEqual(self.number(ddb['attributes']['module_version']), 3)
+        self.assertEqual(''.join(self.tree_nodes(ddb, 'block_data')[0]['text'].split()), '00010203CAFE')
+        dii = self.assert_fixture_native(details, 'DSMCC_DII', 'DSMCC_user_to_network_message')
+        self.assertEqual(self.number(dii['attributes']['transaction_id']), 0x12345678)
+        header = self.tree_nodes(dii, 'DII')[0]['attributes']
+        self.assertEqual(self.number(header['download_id']), 0x10203040)
+        self.assertEqual(self.number(header['block_size']), 1024)
+        module = self.tree_nodes(dii, 'module')[0]['attributes']
+        self.assertEqual(self.number(module['module_id']), 7)
+        self.assertEqual(self.number(module['module_size']), 6)
+        self.assertEqual(self.number(module['module_timeout']), 1000)
+        self.assertEqual(self.tree_nodes(dii, 'dsmcc_name_descriptor')[0]['attributes']['name'], 'module.bin')
+        self.assertEqual(self.number(self.tree_nodes(dii, 'dsmcc_CRC32_descriptor')[0]['attributes']['crc_32']), 0x12345678)
+        self.assertFalse(self.tree_nodes(dii, 'registration_descriptor'))
+        # These fields do not establish extraction, decompression or file reassembly.
+
+    def test_dvb_container_fonts_fec_and_astra_service_guide(self):
+        names = ['DVB_CONTAINER', 'DVB_DFIT', 'DVB_MPE_FEC', 'DVB_MPE_IFEC', 'ASTRA_SGT']
+        _, details = self.analyze(names, 'dvb', [FIXTURES[n][0] for n in names])
+        container = self.assert_fixture_native(details, 'DVB_CONTAINER', 'container_table')
+        self.assertEqual(self.number(container['attributes']['container_id']), 7)
+        self.assertEqual(''.join(self.tree_nodes(container, 'compression_wrapper')[0]['text'].split()), '001122CAFE')
+        font = self.assert_fixture_native(details, 'DVB_DFIT', 'DFIT')
+        self.assertEqual(font['attributes']['font_family'], 'Lab Sans')
+        self.assertEqual(self.number(font['attributes']['font_id']), 7)
+        self.assertEqual(self.number(self.tree_nodes(font, 'font_style_weight')[0]['attributes']['font_weight']), 6)
+        self.assertEqual(self.tree_nodes(font, 'font_file_URI')[0]['attributes']['uri'], 'https://example.invalid/font.otf')
+        fec = self.assert_fixture_native(details, 'DVB_MPE_FEC', 'MPE_FEC')
+        self.assertEqual(self.number(fec['attributes']['padding_columns']), 4)
+        self.assertEqual(self.number(self.tree_nodes(fec, 'real_time_parameters')[0]['attributes']['address']), 42)
+        self.assertEqual(''.join(self.tree_nodes(fec, 'rs_data')[0]['text'].split()), '00112233CAFE')
+        ifec = self.assert_fixture_native(details, 'DVB_MPE_IFEC', 'MPE_IFEC')
+        self.assertEqual(self.number(ifec['attributes']['ifec_burst_size']), 8)
+        self.assertEqual(self.number(self.tree_nodes(ifec, 'real_time_parameters')[0]['attributes']['prev_burst_size']), 43)
+        self.assertEqual(''.join(self.tree_nodes(ifec, 'IFEC_data')[0]['text'].split()), 'DEADBEEFCAFE')
+        sgt = self.assert_fixture_native(details, 'ASTRA_SGT', 'SGT')
+        service = self.tree_nodes(sgt, 'service')[0]['attributes']
+        self.assertEqual(self.number(service['service_id']), 101)
+        self.assertEqual(self.number(service['logical_channel_number']), 123)
+        self.assertEqual(service['new_service_flag'], 'true')
+        self.assertEqual(self.number(service['genre_code']), 0x1002)
+
+    def test_truncated_new_table_payloads_fall_back_without_losing_bytes(self):
+        for name in ['ISDB_AMT', 'ATSC_DET', 'DSMCC_DDB']:
+            with self.subTest(fixture=name):
+                fixture = EXPANDED_FIXTURES[name]
+                raw = bytearray.fromhex(fixture['hex'])[:9]
+                # Keep a complete CRC-correct section with too little semantic
+                # payload. Transport completeness is not semantic validity.
+                size = len(raw) + 4 - 3
+                raw[1] = (raw[1] & 0xf0) | (size >> 8)
+                raw[2] = size & 255
+                raw += crc(raw).to_bytes(4, 'big')
+                _, details = self.analyze_packets(self.packetize(fixture['pid'], bytes(raw)),
+                                                 fixture['standard'], [fixture['pid']])
+                self.assertEqual(len(details), 1)
+                self.assertEqual(details[0]['raw_hex'], raw.hex().upper())
+                self.assertTrue(details[0]['native_table_complete'])
+                self.assertEqual(details[0]['native_table']['name'], 'generic_long_table')
+                self.assertEqual(details[0]['native_decode_status'], 'generic raw fallback')
+
+
+    def test_dsmcc_unknown_namespace_never_labels_crc_as_mpeg_registration(self):
+        for context in ['auto', 'atsc', 'isdb']:
+            with self.subTest(context=context):
+                _, details = self.analyze(['DSMCC_DII'], context, [0x171])
+                dii = self.assert_fixture_native(details, 'DSMCC_DII', 'DSMCC_user_to_network_message')
+                self.assertFalse(self.tree_nodes(dii, 'registration_descriptor'))
+                self.assertNotIn('<registration_descriptor', details[0]['tsduck_xml'])
+                descriptors = self.tree_nodes(dii, 'generic_descriptor')
+                self.assertEqual([self.number(d['attributes']['tag']) for d in descriptors], [2, 5])
+                self.assertEqual([''.join(d['text'].split()) for d in descriptors],
+                                 ['6D6F64756C652E62696E', '12345678'])
+                self.assertTrue(all(not d.get('references') for d in descriptors))
+                self.assertTrue(details[0]['native_decode_warnings'])
+
+    def test_mpeg_registration_inheritance_order_and_loop_session_isolation(self):
+        _, details = self.analyze(['MPEG_VANC_REGISTRATION_PMT'], 'dvb', [0x100])
+        pmt = self.assert_fixture_native(details, 'MPEG_VANC_REGISTRATION_PMT', 'PMT')
+        anc = self.tree_nodes(pmt, 'smpte_anc_data_descriptor')[0]
+        self.assertEqual(''.join(anc['text'].split()), '00112233')
+        flat = next(d for d in details[0]['descriptors'] if d['tag'] == 0xc4)
+        self.assertEqual(flat['registration_ids'], [0x56414e43])
+        self.assertEqual(flat['native']['name'], 'smpte_anc_data_descriptor')
+        self.assertEqual(flat['pds'], 0)
+        raw_anc = bytes.fromhex(flat['raw'])
+        registration = descriptor(5, b'VANC')
+        other_registration = descriptor(5, b'CUEI')
+        def component(pid, descs):
+            return b'\x06' + word(0xe000 | pid) + word(0xf000 | len(descs)) + descs
+        def analyze_pmt(top, streams):
+            raw = section(2, 101, 0, word(0xe201) + word(0xf000 | len(top)) + top + b''.join(streams))
+            _, observed = self.analyze_packets(self.packetize(0x100, raw), 'dvb', [0x100])
+            self.assertEqual(observed[0]['raw_hex'], raw.hex().upper())
+            return observed[0]
+        # Program-level registrations precede local registrations; a sibling has
+        # only program-level context, not a preceding component's local context.
+        detail = analyze_pmt(registration, [component(0x201, other_registration + raw_anc),
+                                            component(0x202, raw_anc)])
+        flat = [d for d in detail['descriptors'] if d['tag'] == 0xc4]
+        self.assertEqual([d['registration_ids'] for d in flat],
+                         [[0x56414e43, 0x43554549], [0x56414e43]])
+        self.assertTrue(all(d['native']['name'] == 'smpte_anc_data_descriptor' for d in flat))
+        detail = analyze_pmt(b'', [component(0x201, registration + raw_anc), component(0x202, raw_anc)])
+        flat = [d for d in detail['descriptors'] if d['tag'] == 0xc4]
+        self.assertEqual([d['registration_ids'] for d in flat], [[0x56414e43], []])
+        self.assertEqual([d['native']['name'] for d in flat], ['smpte_anc_data_descriptor', 'generic_descriptor'])
+        self.assertEqual([n['name'] for c in self.tree_nodes(detail['native_table'], 'component')
+                          for n in c['children'] if n['name'] != 'registration_descriptor'],
+                         ['smpte_anc_data_descriptor', 'generic_descriptor'])
+        # A new analysis must discard all previous REGID evidence.
+        detail = analyze_pmt(b'', [component(0x201, raw_anc)])
+        self.assertEqual(detail['descriptors'][0]['registration_ids'], [])
+        self.assertFalse(detail['descriptors'][0]['native_decoded'])
+        self.assertEqual(detail['descriptors'][0]['native']['name'], 'generic_descriptor')
+
+    def test_expanded_reference_links_are_family_scoped(self):
+        fixtures = [('DTMB_DRM_PMT', 'PMT', 'DTMB_DRM_descriptor', 'dtmb-drm'),
+                    ('ISDB_AMT', 'AMT', None, 'isdb-si'),
+                    ('ISDB_ADVANCED_CABLE_NIT', 'NIT', 'ISDB_advanced_cable_delivery_system_descriptor', 'isdb-cable'),
+                    ('ATSC_DET', 'DET', None, 'atsc-data'),
+                    ('ATSC_AEIT', 'AEIT', None, 'atsc-dth'),
+                    ('DSMCC_DII', 'DSMCC_user_to_network_message', None, 'mpeg-dsmcc'),
+                    ('DVB_DFIT', 'DFIT', None, 'dvb-ttml'),
+                    ('DVB_CONTAINER', 'container_table', None, 'dvb-tv-anytime'),
+                    ('DVB_MPE_FEC', 'MPE_FEC', None, 'dvb-data'),
+                    ('DVB_MPE_IFEC', 'MPE_IFEC', None, 'dvb-mpe-ifec')]
+        for name, table, descriptor_name, reference in fixtures:
+            with self.subTest(fixture=name):
+                fixture = EXPANDED_FIXTURES[name]
+                _, details = self.analyze([name], fixture['standard'], [fixture['pid']])
+                native = self.assert_fixture_native(details, name, table)
+                node = self.tree_nodes(native, descriptor_name)[0] if descriptor_name else native
+                self.assertIn(reference, [r['id'] for r in node['references']])
+                self.assertTrue(all(r['url'].startswith('https://') for r in node['references']))
+        _, details = self.analyze(['DTMB_DRM_PMT'], 'dvb', [0x100])
+        self.assertNotIn('dtmb-drm', [r['id'] for d in details[0]['descriptors'] for r in d['references']])
+        _, details = self.analyze(['ASTRA_SGT'], 'dvb', [0x176])
+        self.assertEqual(self.assert_fixture_native(details, 'ASTRA_SGT', 'SGT')['references'], [])
+
+
+    def test_avs3_registration_dispatch_never_mislabels_unrelated_family(self):
+        _, details = self.analyze(['MPEG_AVS3_REGISTRATION_PMT'], 'dvb', [0x100])
+        pmt = self.assert_fixture_native(details, 'MPEG_AVS3_REGISTRATION_PMT', 'PMT')
+        # Depending on registry resolution, exact AVS3 decoding or explicitly
+        # warned raw fallback is safe. An unrelated ISDB label never is.
+        self.assertFalse(self.tree_nodes(pmt, 'reference_descriptor'))
+        self.assertNotIn('<reference_descriptor', details[0]['tsduck_xml'])
+        flat = next(d for d in details[0]['descriptors'] if d['tag'] == 0xd1)
+        self.assertEqual(flat['registration_ids'], [0x41565356])
+        self.assertEqual(flat['pds'], 0)
+        self.assertEqual(flat['raw'], 'D10820409A67010101FF')
+        name = flat['native']['name']
+        self.assertIn(name, ['AVS3_video_descriptor', 'generic_descriptor'])
+        nodes = self.tree_nodes(pmt, name)
+        self.assertEqual(len(nodes), 1)
+        if name == 'generic_descriptor':
+            self.assertFalse(self.tree_nodes(pmt, 'AVS3_video_descriptor'))
+            self.assertEqual(self.number(nodes[0]['attributes']['tag']), 0xd1)
+            self.assertEqual(''.join(nodes[0]['text'].split()), '20409A67010101FF')
+            self.assertFalse(flat['native_decoded'])
+            self.assertTrue(flat['native_decode_warning'])
+            self.assertEqual(flat['references'], [])
+            self.assertTrue(details[0]['native_xml_guarded'])
+            self.assertTrue(details[0]['native_decode_warnings'])
+        else:
+            self.assertTrue(flat['native_decoded'])
+            self.assertFalse(self.tree_nodes(pmt, 'generic_descriptor'))
+            for node in [nodes[0], flat['native']]:
+                fields = node['attributes']
+                self.assertEqual(self.number(fields['profile_id']), 0x20)
+                self.assertEqual(self.number(fields['level_id']), 0x40)
+                self.assertEqual(fields['multiple_frame_rate_flag'], 'true')
+                self.assertEqual(self.number(fields['frame_rate_code']), 3)
+                self.assertEqual(self.number(fields['sample_precision']), 2)
+                self.assertEqual(self.number(fields['colour_primaries']), 1)
+
+    def test_avs3_private_pds_decodes_without_leaking_to_sibling_or_session(self):
+        _, details = self.analyze(['MPEG_AVS3_PDS_PMT'], 'dvb', [0x100])
+        pmt = self.assert_fixture_native(details, 'MPEG_AVS3_PDS_PMT', 'PMT')
+        avs = self.tree_nodes(pmt, 'AVS3_video_descriptor')
+        self.assertEqual(len(avs), 1)
+        fields = avs[0]['attributes']
+        self.assertEqual(self.number(fields['profile_id']), 0x20)
+        self.assertEqual(self.number(fields['level_id']), 0x40)
+        self.assertEqual(fields['multiple_frame_rate_flag'], 'true')
+        self.assertEqual(self.number(fields['frame_rate_code']), 3)
+        self.assertEqual(self.number(fields['sample_precision']), 2)
+        self.assertEqual(self.number(fields['colour_primaries']), 1)
+        flat = [d for d in details[0]['descriptors'] if d['tag'] == 0xd1]
+        self.assertEqual([d['pds'] for d in flat], [0x41565356, 0])
+        self.assertEqual([d['registration_ids'] for d in flat], [[], []])
+        self.assertEqual([d['native']['name'] for d in flat], ['AVS3_video_descriptor', 'generic_descriptor'])
+        self.assertEqual([d['native_decoded'] for d in flat], [True, False])
+        self.assertFalse(self.tree_nodes(pmt, 'reference_descriptor'))
+        raw_avs = bytes.fromhex(flat[0]['raw'])
+        raw = section(2, 101, 0, word(0xe201) + word(0xf000) +
+                      b'\x06' + word(0xe201) + word(0xf000 | len(raw_avs)) + raw_avs)
+        _, details = self.analyze_packets(self.packetize(0x100, raw), 'dvb', [0x100])
+        self.assertEqual(details[0]['raw_hex'], raw.hex().upper())
+        flat = details[0]['descriptors'][0]
+        self.assertEqual(flat['pds'], 0)
+        self.assertEqual(flat['registration_ids'], [])
+        self.assertFalse(flat['native_decoded'])
+        self.assertEqual(flat['native']['name'], 'generic_descriptor')
+        self.assertFalse(self.tree_nodes(details[0]['native_table'], 'reference_descriptor'))
 
     def test_standards_choice_is_validated(self):
         with self.assertRaises(RuntimeError):

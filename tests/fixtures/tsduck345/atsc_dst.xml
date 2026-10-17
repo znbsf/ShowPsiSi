@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<DST version="2" table_id_extension="0x1234"><application><compatibilityDescriptor /><app_id description="1">11223344</app_id><app_data>0102CAFE</app_data></application><service_private_data>AABBCC</service_private_data></DST>
+</tsduck>

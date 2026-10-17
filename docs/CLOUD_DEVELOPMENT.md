@@ -4,7 +4,7 @@ This work is performed in a Linux cloud workspace, not on the owner's Windows PC
 
 ## Build the shared engine
 
-Install the TSDuck **3.39-3956 developer SDK**, a C++17 compiler and CMake >=3.22. The SDK can be installed normally or extracted into a workspace directory. Do not put SDKs, generated streams or build products in Git.
+Install the matching TSDuck + TSCore **3.45-4798 runtime and developer SDK**, a C++20 compiler (GCC 13+ on Linux, VS 2022 on Windows), and CMake >=3.22. The SDK can be installed normally or extracted into a workspace directory. Do not put SDKs, generated streams or build products in Git.
 
 ```sh
 cmake -S . -B build -DBUILD_QT_UI=OFF -DTSDUCK_ROOT=/path/to/tsduck/usr
@@ -13,9 +13,54 @@ python scripts/make_fixture.py
 python -m unittest discover -s tests -p test_engine.py -v
 ```
 
-When using extracted Linux packages, add their library directories to `LD_LIBRARY_PATH`, including transitive dependencies (the development session needed `libsrt.so.1.5`). `SHOWPSISI_CORE` overrides the executable path for Python clients and test helpers. No global installation or proxy change is required.
+When using extracted Linux packages, choose the packages for the actual distribution (Ubuntu 24.04 in CI; Debian 13 in this cloud workspace). Add their library directories to `LD_LIBRARY_PATH`, including transitive dependencies. Both `libtsduck.so` and `libtscore.so` are required; missing SRT/RIST/OpenSSL or other transitive libraries are loader failures, not protocol-test skips. `SHOWPSISI_CORE` overrides the executable path for Python clients and test helpers. No global installation or proxy change is required.
 
 For Qt, supply `CMAKE_PREFIX_PATH` pointing to a Qt >=6.5 SDK with Quick and QuickControls2, enable `BUILD_QT_UI`, and install OpenGL development dependencies. This development session uses Qt **6.7.3**. For headless tests use `QT_QPA_PLATFORM=offscreen` and `QT_QUICK_BACKEND=software`; this verifies software-rendered UI, not GPU performance or native desktop integration.
+
+## SDK migration and regression gate
+
+TSDuck 3.45 separates generic TSCore headers/libraries from MPEG-TS-specific
+TSDuck code. Set `TSDUCK_ROOT` to one complete matching SDK prefix, such as the
+`usr` directory produced by extracting both Linux `.deb` files with
+`dpkg-deb --extract`. CMake uses both `include/tscore` and `include/tsduck`, links
+both libraries, and stages the matching XML/name databases. An old SDK or mixed
+header/runtime combination is unsupported. See [dependency identities and
+Windows setup](DEPENDENCIES.md) for the pinned official assets and SHA-256s.
+
+Use a fresh build directory or `cmake --fresh` when moving from 3.39 to 3.45.
+Do not reuse old CMake include/library cache entries. The production build keeps
+test cancellation gates disabled by default. To run the strict native gate,
+build the separate opt-in cancellation helper too:
+
+```sh
+cmake -S . -B build -DBUILD_QT_UI=OFF -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON \
+  -DTSDUCK_ROOT=/path/to/tsduck/usr -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel 2
+python scripts/make_fixture.py
+SHOWPSISI_CORE="$PWD/build/bin/showpsisi-core" \
+SHOWPSISI_TEST_CORE="$PWD/build/bin/showpsisi-core-test" \
+  python scripts/ci/windows_native_checks.py --artifacts artifacts/linux-native --engine
+```
+
+Despite its historical filename, the strict runner is shared by Linux and
+Windows. It runs engine, protocol, SDK migration, HTTP, native cancellation and
+MCP transport suites, retains native startup diagnostics, and rejects missing
+binaries, zero coverage or unexpected skips. Only the separately sourced optional
+French recording may be absent, with its exact existing skip reason. SDK migration
+checks include linked-runtime consistency and Unicode file/extension/export paths.
+
+The CI topology remains five jobs: Linux engine/web, Linux Qt, Linux Tauri build,
+Windows MSVC engine/Qt, and Windows Tauri build. Ubuntu 24.04 downloads both pinned
+SDK packages and verifies their hashes before installation. Windows extracts the
+official installer payload without executing it, uses VS 2022 with Qt's unchanged
+`msvc2019_64` kit, and checks both TSDuck/TSCore DLLs and data. Native dependency
+and loader diagnostics are retained even when a regression fails.
+
+Browser CI still uses the runner's official `/opt/google/chrome/chrome` binary
+with an explicit sandbox-enabled preflight. Do not replace it with an unpacked
+Chromium binary, add `--no-sandbox`, or count preflight failure as an application
+test result. Compilation, offscreen Qt checks, sandboxed browser tests and actual
+native Tauri interaction each retain their own evidence boundary.
 
 ## Browser validation
 

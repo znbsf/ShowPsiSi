@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<MPE_FEC padding_columns="4"><column><real_time_parameters delta_t="123" table_boundary="true" frame_boundary="false" address="42" /><rs_data>00112233CAFE</rs_data></column></MPE_FEC>
+</tsduck>

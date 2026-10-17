@@ -45,6 +45,44 @@ const glossary = {
   EPG: "Electronic Programme Guide",
   PDS: "Private Data Specifier · 32 bits",
   CRC: "Cyclic Redundancy Check",
+  TSDT: "Transport Stream Description Table",
+  ATSC_EIT: "Event Information Table · ATSC PSIP",
+  AEIT: "Aggregate Event Information Table · ATSC",
+  AETT: "Aggregate Extended Text Table · ATSC",
+  DET: "Data Event Table · ATSC",
+  DST: "Data Service Table · ATSC",
+  LTST: "Long Term Service Table · ATSC",
+  NRT: "Network Resources Table · ATSC",
+  SVCT: "Satellite Virtual Channel Table · ATSC",
+  DCCT: "Directed Channel Change Table · ATSC",
+  DCCSCT: "Directed Channel Change Selection Code Table · ATSC",
+  AMT: "Address Map Table · ISDB",
+  DCT: "Download Control Table · ISDB",
+  DLT: "Download Table · ISDB",
+  ERT: "Event Relation Table · ISDB",
+  ITT: "Index Transmission Information Table · ISDB",
+  LIT: "Local Event Information Table · ISDB",
+  NBIT: "Network Board Information Table · ISDB",
+  PCAT: "Partial Content Announcement Table · ISDB",
+  CIT: "Content Identifier Table · DVB",
+  INT: "IP/MAC Notification Table · DVB",
+  RCT: "Related Content Table · DVB",
+  RNT: "Resolution Provider Notification Table · DVB",
+  SAT: "Satellite Access Table · DVB",
+  SGT: "Service Guide Table · SES Astra",
+  UNT: "Update Notification Table · DVB",
+  DFIT: "Downloadable Font Information Table · DVB",
+  MPE_FEC: "Multi-Protocol Encapsulation Forward Error Correction · DVB",
+  MPE_IFEC: "Multi-Protocol Encapsulation Inter-burst Forward Error Correction · DVB",
+  container_table: "Container Table · DVB TV-Anytime",
+  DSMCC_download_data_message: "DSM-CC Download Data Message · download data blocks",
+  DSMCC_user_to_network_message: "DSM-CC User-to-Network Message · download control",
+  DSMCC_stream_descriptors_table: "DSM-CC Stream Descriptors Table",
+  cable_emergency_alert_table: "Cable Emergency Alert Table · SCTE",
+  discontinuity_information_table: "Discontinuity Information Table · DVB",
+  selection_information_table: "Selection Information Table · DVB",
+  splice_information_table: "Splice Information Table · SCTE-35",
+  DTMB: "Digital Terrestrial Multimedia Broadcasting · signalling context",
 };
 const known = ["PAT", "PMT", "SDT", "EIT", "NIT", "CAT", "BAT", "TDT", "TOT"];
 const fieldHelp = {
@@ -67,7 +105,18 @@ const fieldHelp = {
   first_file_offset: "TS packet byte offset; the section may span packets",
   raw_bytes: "Original descriptor bytes including tag and length",
 };
-const tip = (key) => `title="${esc(glossary[key] || key)}"`;
+const tableLabels = {
+  "DSMCC_user_to_network_message": "DSM-CC U-N",
+  "DSMCC_download_data_message": "DSM-CC Data",
+  "DSMCC_stream_descriptors_table": "DSM-CC SDT",
+  "container_table": "DVB Container",
+  "splice_information_table": "SCTE-35",
+  "cable_emergency_alert_table": "SCTE EAS",
+  "discontinuity_information_table": "DIT",
+  "selection_information_table": "SIT"
+};
+const tableLabel = (name) => tableLabels[name] || name;
+const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
 let data = {},
   detail = {},
   env = {},
@@ -112,7 +161,7 @@ const invoke = (...args) =>
       );
 $("#app").innerHTML = `
 <header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="api">Agent API</button></header>
-<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
+<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="dtmb">DTMB</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
 <div class="stats" id="stats"></div>
 <main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
@@ -507,7 +556,7 @@ function render() {
           t === "All tables" ||
           (t === "Private / other" ? isOtherTable(r) : r.name === t),
       ).length;
-      return `<button class="nav ${filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon" aria-hidden="true">${t === "All tables" ? "▦" : "◇"}</span><span class="family-label">${esc(t)}</span><span class="count">${num(count)}</span></button>`;
+      return `<button class="nav ${filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon" aria-hidden="true">${t === "All tables" ? "▦" : "◇"}</span><span class="family-label">${esc(tableLabel(t))}</span><span class="count">${num(count)}</span></button>`;
     })
     .join("");
   $("#sidebar")
@@ -654,7 +703,7 @@ function renderList() {
       if (tab === "Services")
         body = `<span class="lcn">${r.logical_channel_number ?? "—"}</span><div class="record-name"><strong>${esc(r.name || "Unnamed service")}</strong><small>${esc(r.provider || "No provider")} <span class="muted">· SID ${hex(r.id)}</span></small></div><span class="numeric">${hex(r.pmt_pid)}</span><span class="group">${esc(r.group)}</span>`;
       if (tab === "Tables")
-        body = `<span class="table-kind" ${tip(r.name)}>${esc(r.name)}</span><div class="record-name"><strong>PID <span class="numeric">${hex(r.pid)}</span></strong><small>Version ${r.version} · section ${r.section}/${r.last_section} · ${num(r.bytes)} B</small></div><span class="numeric muted">${num(r.count)}×</span><span class="${r.valid ? "ok" : "bad"}" title="${r.valid ? "Valid section" : "Invalid section"}">${r.valid ? "●" : "⚠"}</span>`;
+        body = `<span class="table-kind" ${tip(r.name)}>${esc(tableLabel(r.name))}</span><div class="record-name"><strong>PID <span class="numeric">${hex(r.pid)}</span></strong><small>Version ${r.version} · section ${r.section}/${r.last_section} · ${num(r.bytes)} B</small></div><span class="numeric muted">${num(r.count)}×</span><span class="${r.valid ? "ok" : "bad"}" title="${r.valid ? "Valid section" : "Invalid section"}">${r.valid ? "●" : "⚠"}</span>`;
       if (tab === "EPG")
         body = `<div class="record-name"><strong>${esc(r.title)}</strong><small>SID ${hex(r.service_id)} · ${esc(r.start)} UTC · ${num(r.duration_seconds / 60)} min</small></div><span class="muted numeric">${hex(r.id)}</span>`;
       if (tab === "Issues")
@@ -664,7 +713,7 @@ function renderList() {
     .join("");
   if (!rows.length)
     $("#list").innerHTML =
-      `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${cancelling ? "Cancelling analysis…" : busy ? "Reading transport stream…" : data.analysis_status === "cancelled" ? "Analysis cancelled" : data.analysis_status === "failed" ? "Analysis failed" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${cancelling ? "Waiting for the engine to stop. The source file stays unchanged." : ["cancelled", "failed"].includes(data.analysis_status) ? "Partial results were cleared. Analyze again when you are ready." : !data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : "Choose another table family or packet snapshot."}</p></div>`;
+      `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${cancelling ? "Cancelling analysis…" : busy ? "Reading transport stream…" : data.analysis_status === "cancelled" ? "Analysis cancelled" : data.analysis_status === "failed" ? "Analysis failed" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${cancelling ? "Waiting for the engine to stop. The source file stays unchanged." : ["cancelled", "failed"].includes(data.analysis_status) ? "Partial results were cleared. Analyze again when you are ready." : !data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : ["Services", "EPG"].includes(tab) && (data.tables || []).length ? "This view shows derived " + (tab === "Services" ? "services" : "programme events") + ". Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "Choose another table family or packet snapshot."}</p></div>`;
   const visible = rows.slice(start, start + PAGE_SIZE);
   $("#list")
     .querySelectorAll("[data-row]")
@@ -1319,7 +1368,13 @@ function renderInspector() {
     );
     return;
   }
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(detail.name)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? "TSDuck XML" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : "TSDuck XML"}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  const nativeWarnings = Array.isArray(detail.native_decode_warnings)
+    ? detail.native_decode_warnings.filter((warning) => typeof warning === "string")
+    : [];
+  if (detail.native_xml_guarded)
+    nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
+  const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
+  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(tableLabel(detail.name))} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : xmlLabel}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>
       (el.onclick = () => {

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<AEIT version="2" MGT_tag="7"><source source_id="101"><event off_air="false" event_id="17" start_time="2026-10-16 12:00:00" duration="1800"><title_text><string language="zho" text="数据实验 Ω" /></title_text></event></source></AEIT>
+</tsduck>

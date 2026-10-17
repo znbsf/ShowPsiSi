@@ -3,6 +3,7 @@
 Build showpsisi-qt first. Optional SHOWPSISI_QT and SHOWPSISI_CORE select
 binaries. A missing Qt binary skips the test; an installed but broken one fails.
 """
+import hashlib
 import json
 import hashlib
 import shutil
@@ -351,6 +352,46 @@ for line in sys.stdin:
 
     def test_explicit_dvb_context(self):
         self.run_native_smoke('dvb')
+
+    def test_dtmb_and_guarded_dsmcc_native_views(self):
+        """New selectors, empty projections and warnings use real SDK fixtures."""
+        manifest = json.loads((ROOT / 'tests/fixtures/tsduck345/manifest.json').read_text(encoding='utf-8'))
+        cases = (('DTMB_DRM_PMT', 'dtmb', 'PMT', False),
+                 ('DSMCC_DII', 'auto', 'DSMCC_user_to_network_message', True))
+        for name, standard, table_name, guarded in cases:
+            with self.subTest(fixture=name), tempfile.TemporaryDirectory(prefix='showpsisi-qt-protocol-') as directory:
+                temp = Path(directory)
+                fixture = manifest['fixtures'][name]
+                raw, pid = bytes.fromhex(fixture['hex']), fixture['pid']
+                # Same real three-repeat 188-byte packetization as the Web
+                # new-protocol UI regression; no mocked positive responses.
+                packets = []
+                for repeat in range(3):
+                    remainder, first, counter = raw, True, len(packets) & 15
+                    while remainder:
+                        size = 183 if first else 184
+                        payload, remainder = remainder[:size], remainder[size:]
+                        packets.append(bytes([0x47, (pid >> 8) | (0x40 if first else 0), pid & 255, 0x10 | counter]) +
+                                       (b'\0' if first else b'') + payload + b'\xff' * (size - len(payload)))
+                        first, counter = False, (counter + 1) & 15
+                source = temp / (name + '.ts')
+                source.write_bytes(b''.join(packets))
+                original = hashlib.sha256(source.read_bytes()).hexdigest()
+                report = self.run_script('protocol-upgrade', temp, auto=False, overrides={
+                    'SHOWPSISI_SAMPLE': str(source),
+                    'SHOWPSISI_PROTOCOL_PID': str(pid),
+                    'SHOWPSISI_PROTOCOL_STANDARD': standard,
+                    'SHOWPSISI_PROTOCOL_EXPECTED_TABLE': table_name,
+                    'SHOWPSISI_PROTOCOL_GUARDED': '1' if guarded else '0',
+                })
+                self.assertEqual(report['standards_context'], standard)
+                self.assertEqual(report['table_name'], table_name)
+                self.assertEqual(report['raw_hex'], fixture['hex'].upper())
+                self.assertEqual(report['native_xml_guarded'], guarded)
+                self.assertTrue(report['checks'])
+                self.assertTrue(all(report['checks'].values()), report)
+                self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(), original)
+                self.assertEqual((temp / 'protocol-upgrade.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
 
     def test_failed_inspect_clears_native_evidence(self):
         binary = Path(os.environ.get('SHOWPSISI_QT', ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))

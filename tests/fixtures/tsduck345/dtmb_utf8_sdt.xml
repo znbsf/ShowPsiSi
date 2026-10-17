@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<SDT transport_stream_id="1" original_network_id="2">
+  <service service_id="101"><service_descriptor service_type="1" service_provider_name="实验室 Ω" service_name="中文频道 Ω" /></service>
+</SDT>
+</tsduck>

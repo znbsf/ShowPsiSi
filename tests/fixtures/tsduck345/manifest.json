@@ -1,0 +1,240 @@
+{
+  "generator": "tstabcomp: TSDuck - The MPEG Transport Stream Toolkit - version 3.45-4798",
+  "model": "https://github.com/tsduck/tsduck/tree/v3.45-4798/src/libtsduck/dtv",
+  "fixtures": {
+    "DTMB_DRM_PMT": {
+      "xml": "dtmb_drm_pmt.xml",
+      "standard": "dtmb",
+      "pid": 256,
+      "compiler_args": [
+        "--china"
+      ],
+      "hex": "02b01a0065c10000e201f0001be201f008c00632511020cafe2571db9f",
+      "sha256": "ae31c05e12fbd760b132d501cabc97a81fe991431be9ea546229306e5edb4f41",
+      "xml_sha256": "7cfdd124c906b42d618198daa34ea4d4fb2ab909c2bdd2b8ced2c9895b95abc6"
+    },
+    "DTMB_UTF8_SDT": {
+      "xml": "dtmb_utf8_sdt.xml",
+      "standard": "dtmb",
+      "pid": 17,
+      "compiler_args": [
+        "--china",
+        "--default-charset",
+        "UTF-8"
+      ],
+      "hex": "42f0330001c100000002ff0065fc00224820010d15e5ae9ee9aa8ce5aea420cea91015e4b8ade69687e9a291e9819320cea9a870b5a9",
+      "sha256": "0f5b75d520f8cc1a4ca42b1738350f5ad9268d762a0e271267ecc44aefb5c10d",
+      "xml_sha256": "322deeafbf25f366e1ba25d66ef49701de6db13dca796ad4a51933e7dcb583ae"
+    },
+    "ISDB_AMT": {
+      "xml": "isdb_amt.xml",
+      "standard": "isdb",
+      "pid": 46,
+      "compiler_args": [
+        "--isdb"
+      ],
+      "hex": "fef0440000c7000000bf00657c0cc000021118ef01020320cafe0066fc2520010db800000000000000000000001740ff3e00000000000000000000000012348001020329e14826",
+      "sha256": "b401056b9e5429c65d615e99557de7d77fce3d7b7514f435074ad5bebcee9394",
+      "xml_sha256": "01e3174b4fbdba653356c45591129d7be656b9a1a6c9b8a2553c2ba63e6b1fa5"
+    },
+    "ISDB_ADVANCED_CABLE_NIT": {
+      "xml": "isdb_advanced_cable_nit.xml",
+      "standard": "isdb",
+      "pid": 16,
+      "compiler_args": [
+        "--isdb"
+      ],
+      "hex": "40f07c0002c10000f000f06f00010002f069f40c00074c1309045000008414fff45901000102030405060708090a0b0c0d0e0f101112131415161718191a1bffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff010d3e23",
+      "sha256": "d4a16540533d11c31d23c0b7dfde7d9dff28fc656537fcaa1a73422e23888ce4",
+      "xml_sha256": "3e3ef5ab791be010905d2dd451cabacdd346843f06048d1ac2cacdae4c649dbf"
+    },
+    "ATSC_AEIT": {
+      "xml": "atsc_aeit.xml",
+      "standard": "atsc",
+      "pid": 352,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "d6f02d0007c5000001006501401157fcd440f0070814017a686f01003f0c6570636e5b9e9a8c002003a9f000b0e09638",
+      "sha256": "09f1ae551a15ada5478b3b62871d1ea50733a93a7494ee02421cc2c4b564a04b",
+      "xml_sha256": "bb49f214f34d8076904a4ae7b1cb1e21fea0a0fd3ecb42e2b4e87597dd5d4d09"
+    },
+    "ATSC_AETT": {
+      "xml": "atsc_aett.xml",
+      "standard": "atsc",
+      "pid": 353,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "d7f02a0008c700000100650046f01a017a686f01003f12828276ee8be660c5002000430061006600e99a20271a",
+      "sha256": "639873de62293786d55f60c4c9fccc1d04f8905375b2869b206cedeb47e5242e",
+      "xml_sha256": "7f988e689fdf956327d887856b4524db9eda105543d6137f145a6f2ad95352c8"
+    },
+    "ATSC_DET": {
+      "xml": "atsc_det.xml",
+      "standard": "atsc",
+      "pid": 354,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "cef0390065c900000001c00957fcd440d007081401656e6701003f0c0044006100740061002003a9f00ea60c1234567800000bb8000013884654dc49",
+      "sha256": "e939ec65af0782d0e7b25505f0dbdae38f62929e4481fb078284bc637ccd35ab",
+      "xml_sha256": "3a4ff23bce5df701f89097894244a3c9b28daba07e6e951695bea886c0352c96"
+    },
+    "ATSC_DST": {
+      "xml": "atsc_dst.xml",
+      "standard": "atsc",
+      "pid": 355,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "cff0271234c50000010100020000000600011122334400000000040102cafe00000003aabbccf3ca252a",
+      "sha256": "227accd4cf603ce8afe26cdcb0a19931d531b60619fc86a74fa8292b751bb4f2",
+      "xml_sha256": "fc2e5967bb6e7290c0b4a4b7b743adfe077d844a07f35ec7c7267bc0ed5f4538"
+    },
+    "ATSC_LTST": {
+      "xml": "atsc_ltst.xml",
+      "standard": "atsc",
+      "pid": 356,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "d2f02a1234cb00000001006501c00a57fce250e0025810017a686f01003f08957f671f6570636ef000520b42a0",
+      "sha256": "4ae3ff307b16175db9f3dabe472abf50dc780aadc04d6cc9cf3de92b3fba80fa",
+      "xml_sha256": "c2d99a236282e04d5a37707589b16c0429c82c987d95c4adb1ab57167df61b41"
+    },
+    "ATSC_NRT": {
+      "xml": "atsc_nrt.xml",
+      "standard": "atsc",
+      "pid": 357,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "d1f0114321cd0000000005001122cafe3aa3b97c",
+      "sha256": "c9bcf6405efaa9057da5351d3114df2139c7a25f0ef0fc4afbaa6586f182d0fc",
+      "xml_sha256": "9134f5f459124bf3523caef4846048abbe3ff452b7e15dc77650c208fa243104"
+    },
+    "ATSC_SVCT": {
+      "xml": "atsc_svct.xml",
+      "standard": "atsc",
+      "pid": 358,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "daf0350009cf000000015b9e9a8c004800440000000000000000f01c02041d6eca40068e778103000100652dc200650bfc00fc00415cfe5c",
+      "sha256": "0ecf81689bc61c5a3a564b22409ca81776cbc56956e75f98fb567c327831a86e",
+      "xml_sha256": "9766c7eaf11704733108e0ac0daeddeee187b33361a926b08f1e0cab4fbd5037"
+    },
+    "DSMCC_DDB": {
+      "xml": "dsmcc_ddb.xml",
+      "standard": "dvb",
+      "pid": 368,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "3cb0210007c500001103100310203040ff00000c000703ff000000010203cafe8f2ac1a6",
+      "sha256": "4c71cc8a7718e013e908a9ff8f477e960042d3fe124c9b64667f31c293de6f20",
+      "xml_sha256": "c6908600b67fcf7a0d5f21483591fdbfbab5c71714f02696400d7991f37b2676"
+    },
+    "DSMCC_DII": {
+      "xml": "dsmcc_dii.xml",
+      "standard": "dvb",
+      "pid": 369,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "3bb0535678c700001103100212345678ff00003e10203040040000000000000000000000000000010007000000060320000003e8000007d00000000a0012020a6d6f64756c652e62696e05041234567800000d201630",
+      "sha256": "ac87f18bd80e2e92a02efcccaab32a329759b49f9b76f508ee39d4f7333a1c16",
+      "xml_sha256": "e3492f319f810f6fa31641cf046619b02435ce08d56b2e781d9b4ffb6e666341"
+    },
+    "DVB_CONTAINER": {
+      "xml": "dvb_container.xml",
+      "standard": "dvb",
+      "pid": 370,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "75f00e0007c70000001122cafe6c362f35",
+      "sha256": "b453a7b5ff99d6a6a3f233c57bb7a07c5800cd479fd6dd1b8c55fc2e24db1998",
+      "xml_sha256": "bfb2052d89a5c98b0ee3638da10297bcfb3a01802a6a6c233d6155af64e779b6"
+    },
+    "DVB_DFIT": {
+      "xml": "dvb_dfit.xml",
+      "standard": "dvb",
+      "pid": 371,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "7cf03b0187c90000004c01012068747470733a2f2f6578616d706c652e696e76616c69642f666f6e742e6f746602001803084c61622053616e73e5331dab",
+      "sha256": "31f7451f2947f17b8d28b6795985513ccabe6ce6302d29aa9c96a6643bbe40ab",
+      "xml_sha256": "0bed1f032acebcaca299b5dedb1a990cdb87ddf2871560e56c179500e5d94689"
+    },
+    "DVB_MPE_FEC": {
+      "xml": "dvb_mpe_fec.xml",
+      "standard": "dvb",
+      "pid": 372,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "78b01304ffff000007b8002a00112233cafeb3fa96eb",
+      "sha256": "ab449f6eb5536eb108209fd6ed0d737224f2fa36317ddf132bbf0476d2aa6a40",
+      "xml_sha256": "4cb47977cc7befd52f59fe2344d932f3a434fa133b91f030595fb8e8e0416285"
+    },
+    "DVB_MPE_IFEC": {
+      "xml": "dvb_mpe_ifec.xml",
+      "standard": "dvb",
+      "pid": 373,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "7ab0130308c1000007cc002bdeadbeefcafed820a2e2",
+      "sha256": "0d759b5f34b78cdb3b0194a038211953a7e0c2cd5b8bbe6d61289f0d1ff423e6",
+      "xml_sha256": "71094fe6d5574ce98777b1101d843191d080d5a5f41d89ade54255c3937c66f9"
+    },
+    "ASTRA_SGT": {
+      "xml": "astra_sgt.xml",
+      "standard": "dvb",
+      "pid": 374,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "91f01b0007cb0000fffff000f00c00650001000201ef1002f0000ed6d62b",
+      "sha256": "7656815eb9f6e151e4024ad3edc686c48a5af0851f934b58d56840a1f6887d82",
+      "xml_sha256": "1aeec6def4025af996bd8adfe6d5c338c92ddcf9a7d838e6cb3c77838cde8c03"
+    },
+    "MPEG_AVS3_REGISTRATION_PMT": {
+      "xml": "mpeg_avs3_registration_pmt.xml",
+      "standard": "dvb",
+      "pid": 256,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "02b0220065c10000e201f00605044156535606e201f00ad10820409a67010101fff8d5445c",
+      "sha256": "d68cb862ce668a59572895f3b70e0b7588241277de5fdb97075155ad71229597",
+      "xml_sha256": "7a9213778d427975ae88f4940f10308913b9ab3b5a882ad69d93480509af1e66"
+    },
+    "MPEG_VANC_REGISTRATION_PMT": {
+      "xml": "mpeg_vanc_registration_pmt.xml",
+      "standard": "dvb",
+      "pid": 256,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "02b01e0065c10000e201f006050456414e4306e201f006c40400112233ccc44b14",
+      "sha256": "49bb067392f3883fa7c7059ebf3e31f5a2f631487c0fdcaaa61cbef57eaeb023",
+      "xml_sha256": "887933a9ad195218b7b5fad93797685235d99134dac661695a8baf41cd508970"
+    },
+    "MPEG_AVS3_PDS_PMT": {
+      "xml": "mpeg_avs3_pds_pmt.xml",
+      "standard": "dvb",
+      "pid": 256,
+      "compiler_args": [
+        "--dvb"
+      ],
+      "hex": "02b0310065c10000e201f00006e201f0105f0441565356d10820409a67010101ff06e202f00ad10820409a67010101ffd6a3262e",
+      "sha256": "8e279bf1487827e2272eac2233bd901326011c0f093bc39031783710d50b9e7c",
+      "xml_sha256": "ff1eab7dfbbb600891c4a81d37e5a907e2076c8f149ceffc56b836998b19de5e"
+    }
+  },
+  "xml_hash_normalization": "UTF-8 after universal-newline normalization to LF"
+}

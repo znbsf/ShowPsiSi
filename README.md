@@ -1,8 +1,8 @@
 # ShowPsiSi
 
-**Qt Quick 6.7.3** 与 **Tauri 2 / WebView2** 两套工作台，共用 **C++ / TSDuck 3.39-3956** 引擎。用于查看 MPEG-TS 的 PSI/SI 表、描述符、历史证据和安全编辑导出。它不是射频解调器，也不等于完整标准一致性认证工具。
+**Qt Quick 6.7.3** 与 **Tauri 2 / WebView2** 两套工作台，共用 **C++ / TSDuck 3.45-4798** 引擎。用于查看 MPEG-TS 的 PSI/SI 表、描述符、历史证据和安全编辑导出。它不是射频解调器，也不等于完整标准一致性认证工具。
 
-本轮在独立 Linux 云环境开发：原生引擎、Qt 和 Linux Tauri 已构建并运行；Chromium 工作台也连接真实引擎验证。Linux 原生打开／保存对话框、编辑导出和回读已验证。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
+本轮在独立 Linux 云环境开发。既有 Qt、Linux Tauri 和 Chromium 工作台基线已连接真实引擎验证，包含 Linux 原生打开／保存对话框、编辑导出和回读；TSDuck 3.45 升级后的逐项验证范围见 [协议覆盖记录](docs/PROTOCOL_COVERAGE.md)。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
 
 ## 编辑器式工作台
 
@@ -11,10 +11,10 @@
 - A/B 历史截面对比：查看表、服务与事件的新增、移除及字段变化，按各自时间定位原始证据。
 - PSI/SI 结构树：表头、服务、描述符、嵌套字段；正确宽度的十六进制标识与缩写解释。
 - Structure / Hex / XML 视图：原始字节、字节偏移与 TSDuck 原生解码并列可查。
-- 显式 DVB / ATSC / ISDB（含日本、巴西）/ SCTE 上下文及额外 PID；自动模式存在标识冲突时不能替代专业判断。
+- 显式 DVB / ATSC / ISDB（含日本、巴西）/ SCTE / DTMB 上下文及额外 PID；自动模式存在标识冲突时不能替代专业判断。
 - 小型官方标准链接索引，不内置 PDF，不联网解析；未匹配的私有含义保留为未知。系统无法打开链接时显示原因，可复制或手动选择完整 URL。
 
-当前链接的 SDK 实际注册 **43 种表解码器、306 种描述符解码器**。这是可调用解码器清单，不是每种广播规范、每个运营商变体均已验证。DVB-S/T/C 的信令参数与调谐/接收能力是两回事；DTMB 没有专用解码器保证。见 [协议覆盖与测试边界](docs/PROTOCOL_COVERAGE.md)。
+当前 Linux 构建链接的 SDK 实际注册 **58 个表 XML 注册名称、347 个描述符 XML 注册名称（包含别名）**。这是运行时可调用的注册清单，不是每种广播规范、每个运营商变体均已验证。新增 DSM-CC、ATSC 数据/聚合表、ISDB AMT 等原生结构；Services / EPG 为空时，可从 Tables 查看已解析信令。DVB-S/T/C 的信令参数与调谐/接收能力是两回事；DTMB 上下文及 DRM 描述符不等于完整中国 SI/EPG、RF、AVS 或解密支持。见 [协议覆盖与测试边界](docs/PROTOCOL_COVERAGE.md)。
 
 [需求审计与修复](docs/REQUIREMENTS_AUDIT.md) · [交互参考与视觉验收](docs/UI_UX_REVIEW.md) · [云端构建和排障](docs/CLOUD_DEVELOPMENT.md) · [测试命令](tests/README.md)
 
@@ -27,6 +27,12 @@ Qt 原生软件渲染，合成码流：
 Web 工作台，Chromium + 真实原生引擎；不是原生 Tauri 截图：
 
 ![Web 编辑器式工作台](docs/images/web-workbench.png)
+
+### 协议字段与命名空间提示
+
+Chromium + 真实 3.45 引擎，合成 DSM-CC 样流。长表名使用紧凑缩写，完整 XML 名称保留在字段树和提示中；不确定的描述符显示警告并保留原始字节。
+
+![DSM-CC 字段与受保护的解码视图](docs/images/protocol-inspector.png)
 
 ### A/B 历史变化
 
@@ -97,7 +103,7 @@ SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-taur
 
 ## 构建与测试
 
-当前 Windows 路线：PowerShell 7、VS 2019 Build Tools / MSVC 14.29、Windows SDK、TSDuck 开发包、CMake/Ninja、Python 3。先安装这些前置依赖并按实际位置调整 `scripts/env.ps1`；`setup-deps.ps1` 在项目内准备 Qt 6.7.3、Rust 1.99.1 和 Python 虚拟环境。详见 [依赖说明](docs/DEPENDENCIES.md)。环境脚本只设置当前进程环境。
+当前 Windows 路线：PowerShell 7、Visual Studio 2022 C++ x64 Build Tools、Windows SDK、CMake/Ninja、Python 3 和 7-Zip；原生引擎使用 C++20。`scripts/env.ps1` 通过 vswhere 查找 VS 2022；`setup-deps.ps1` 在项目内解包固定版本 TSDuck 3.45-4798，并准备 Qt 6.7.3、Rust 1.99.1 和 Python 虚拟环境。详见 [依赖说明](docs/DEPENDENCIES.md)。环境脚本只设置当前进程环境。
 
 ```powershell
 .\scripts\setup-deps.ps1
@@ -111,7 +117,7 @@ SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-taur
 
 浏览器 UI 检查使用 Playwright，仅连接测试进程自己的 WebView2 CDP 端口。正式性能测试关闭 CDP。Qt 检查通过自己窗口内的鼠标事件操作实际控件。自动检查完成后清理并确认自己启动的进程树退出。
 
-依赖定位脚本目前按本机路径配置；新机器需调整。Tauri 的 Cargo.lock 已锁定版本；C++ 使用 vendored nlohmann/json 3.11.3。Linux 原生引擎、Qt、Tauri／WebKitGTK 和浏览器工作台已有本轮验证；新 Windows 与 macOS 尚未验证，不能称为所有平台完成。
+依赖路径优先使用项目内 SDK，支持环境变量覆盖；不依赖开发者电脑上的固定安装路径。Tauri 的 Cargo.lock 已锁定版本；C++ 使用 vendored nlohmann/json 3.11.3。既有 Linux 原生引擎、Qt、Tauri／WebKitGTK 和浏览器工作台已有验证；Windows 原生引擎与 Qt 自动化、Tauri release 构建及 Rust 单元测试也已有托管 CI 证据。Windows WebView2 GUI 交互和 macOS 尚未验证，不能称为所有平台完成；TSDuck 3.45 升级以对应提交的测试结果为准。
 
 ## 样流
 

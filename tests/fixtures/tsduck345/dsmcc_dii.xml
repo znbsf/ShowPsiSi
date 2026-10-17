@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<DSMCC_user_to_network_message version="3" table_id_extension="7" protocol_discriminator="0x11" dsmcc_type="3" message_id="0x1002" transaction_id="0x12345678"><DII download_id="0x10203040" block_size="1024"><module module_id="7" module_size="6" module_version="3" module_timeout="1000" block_timeout="2000" min_block_time="10"><dsmcc_name_descriptor name="module.bin" /><dsmcc_CRC32_descriptor CRC_32="0x12345678" /></module></DII></DSMCC_user_to_network_message>
+</tsduck>

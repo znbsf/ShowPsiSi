@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<SVCT version="7" SVCT_id="9"><channel short_name="实验HD" major_channel_number="7" minor_channel_number="2" modulation_mode="1" carrier_frequency="12345000000" carrier_symbol_rate="27500000" polarization="1" FEC_Inner="3" channel_TSID="1" program_number="101" ETM_location="0" source_id="101" feed_id="11" /></SVCT>
+</tsduck>

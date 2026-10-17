@@ -542,7 +542,7 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(names(self.page.evaluate('window.showpsisi.getDetail()')),['A','New B'])
 
     def test_standards_context_and_invalid_extra_pids(self):
-        for standard in ('atsc','isdb-japan'):
+        for standard in ('atsc','isdb-japan','dtmb'):
             self.page.locator('#standards').select_option(standard)
             self.page.locator('#extra-pids').fill('0x123, 291')
             self.analyze()
@@ -559,6 +559,78 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#extra-pids').fill('0xNOPE')
         self.page.locator('#scan').click()
         self.assertIn('decimal or hexadecimal',self.page.locator('#notice').inner_text())
+
+    def test_new_protocol_tables_without_service_projection(self):
+        manifest=json.loads((ROOT/'tests/fixtures/tsduck345/manifest.json').read_text(encoding='utf-8'))
+        cases=(('ATSC_AEIT','AEIT','Aggregate Event Information Table',None),
+               ('DSMCC_DDB','DSMCC_download_data_message','DSM-CC Download Data Message',None),
+               ('DTMB_DRM_PMT','PMT','Program Map Table',None),
+               ('DSMCC_DII','DSMCC_user_to_network_message','DSM-CC User-to-Network Message','auto'))
+        for name,xml_name,explanation,override in cases:
+            with self.subTest(fixture=name):
+                fixture=manifest['fixtures'][name]
+                standard=override or fixture['standard']
+                pid=fixture['pid'];raw=bytes.fromhex(fixture['hex'])
+                packets=[]
+                for repeat in range(3):
+                    remainder=raw;first=True;cc=len(packets)&15
+                    while remainder:
+                        size=183 if first else 184
+                        payload,remainder=remainder[:size],remainder[size:]
+                        packets.append(bytes([0x47,(pid>>8)|(0x40 if first else 0),pid&255,0x10|cc])+
+                                       (b'\0' if first else b'')+payload+b'\xff'*(size-len(payload)))
+                        first=False;cc=(cc+1)&15
+                source=self.output/(name+'.ts');source.write_bytes(b''.join(packets))
+                self.page.locator('[data-tab="Services"]').click()
+                self.page.locator('#standards').select_option(standard)
+                self.page.locator('#extra-pids').fill(str(pid))
+                self.analyze(source)
+                state=self.page.evaluate('window.showpsisi.getState()')
+                self.assertEqual(state['standards_context'],standard)
+                self.assertEqual(state['services'],[])
+                self.assertTrue(state['tables'])
+                self.assertEqual(self.page.locator('#tabs [aria-selected="true"]').inner_text(),'Services')
+                self.assertIn('Open Tables for native signalling fields',self.page.locator('#list').inner_text())
+                self.page.wait_for_function('name => window.showpsisi.getDetail().native_table?.name === name',arg=xml_name)
+                detail=self.page.evaluate('window.showpsisi.getDetail()')
+                self.assertIn(explanation,self.page.locator('.inspector-heading h2').get_attribute('title'))
+                if name == 'DSMCC_DII':
+                    self.assertTrue(detail['native_xml_guarded'])
+                    warnings=self.page.locator('#native-decode-warnings')
+                    self.assertIn('namespace is not established',warnings.inner_text())
+                    self.assertIn('Original wire bytes remain authoritative',warnings.inner_text())
+                    xml_button=self.page.locator('[data-view="xml"]')
+                    self.assertEqual(xml_button.inner_text(),'Guarded SDK XML')
+                    xml_button.click()
+                    self.assertIn('<generic_descriptor',self.page.locator('.evidence').inner_text())
+                    self.assertEqual(self.page.locator('.evidence').get_attribute('aria-label'),'Guarded SDK XML')
+                    self.page.locator('[data-view="hex"]').click()
+                    self.assertIn(' '.join(fixture['hex'][i:i+2].upper() for i in range(0,32,2)),self.page.locator('.evidence').inner_text())
+                    self.assertTrue(warnings.is_visible())
+                    self.page.locator('[data-view="tree"]').click()
+                for target in ('EPG','Services'):
+                    self.page.locator('[data-tab="'+target+'"]').click()
+                    self.assertIn('an empty projection does not mean decoding failed',self.page.locator('#list').inner_text())
+                    self.assertEqual(self.page.evaluate('window.showpsisi.getDetail().id'),detail['id'])
+                self.page.locator('[data-tab="Tables"]').click()
+                label={'DSMCC_download_data_message':'DSM-CC Data','DSMCC_user_to_network_message':'DSM-CC U-N'}.get(xml_name,xml_name)
+                self.assertIn(label,self.page.locator('.inspector-heading h2').inner_text())
+                self.assertEqual(self.page.locator('.table-kind').inner_text(),label)
+                self.assertIn(explanation,self.page.locator('.table-kind').get_attribute('title'))
+                if label != xml_name:
+                    self.assertIn(xml_name,self.page.locator('.table-kind').get_attribute('title'))
+                    self.assertIn(xml_name,self.page.locator('.inspector-heading h2').get_attribute('title'))
+                self.assertEqual(self.page.locator('[data-filter="'+xml_name+'"] .family-label').inner_text(),label)
+                self.page.evaluate('id => window.showpsisi.snapshot(-1,id)',detail['id'])
+                self.page.wait_for_function('id => window.showpsisi.getDetail().id === id',arg=detail['id'])
+                self.assertEqual(self.page.locator('#tabs [aria-selected="true"]').inner_text(),'Tables')
+                self.assertEqual(self.page.evaluate('window.showpsisi.getDetail().raw_hex'),fixture['hex'].upper())
+                self.assertEqual(hashlib.sha256(source.read_bytes()).hexdigest(),hashlib.sha256(b''.join(packets)).hexdigest())
+                if name == 'DSMCC_DII':
+                    self.page.locator('#tree-search').fill('module')
+                    self.assertIn('module_id',self.page.locator('#tree-area').inner_text())
+                    self.assertIn('generic_descriptor',self.page.locator('#tree-area').inner_text())
+                    self.page.screenshot(path=str(self.artifacts/'tsduck345-dsmcc-guarded-inspector.png'),full_page=True)
 
     def test_references_and_responsive_tree(self):
         self.page.locator('#standards').select_option('dvb')

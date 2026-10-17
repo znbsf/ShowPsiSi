@@ -148,7 +148,7 @@ def main():
         qt_smoke(artifacts)
         patterns = ["test_qt_ui.py"]
     else:
-        patterns = ["test_engine.py", "test_protocol_coverage.py", "test_cloud_preview.py",
+        patterns = ["test_engine.py", "test_protocol_coverage.py", "test_sdk_migration.py", "test_cloud_preview.py",
                     "test_cancellation.py", "test_mcp_cancellation.py"]
     results = [run_suite(pattern, artifacts) for pattern in patterns]
     if not all(results):

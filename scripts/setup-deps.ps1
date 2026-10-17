@@ -1,8 +1,10 @@
-# Reproduce local SDK setup. The pre-existing TSDuck and MSVC developer installs are prerequisites.
+# Workspace-only dependencies. Prerequisites: PowerShell 7, VS 2022 C++ tools,
+# Windows SDK, CMake/Ninja, Python and 7-Zip on PATH. No global SDK installation.
 $ErrorActionPreference='Stop'
 $ProjectRoot=Split-Path $PSScriptRoot -Parent
 Push-Location $ProjectRoot
 try {
+    & "$PSScriptRoot/setup-tsduck.ps1"
     if(-not (Test-Path .deps\py\Scripts\python.exe)) { python -m venv .deps\py }
     & .deps\py\Scripts\python.exe -m pip install 'aqtinstall==3.3.0' 'psutil==7.2.2'
     if($LASTEXITCODE){throw 'Python dependency install failed'}

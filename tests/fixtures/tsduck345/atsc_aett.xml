@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<AETT version="3" MGT_tag="8"><ETM_data ETM_id="0x00650046"><extended_text_message><string language="zho" text="节目详情 Café" /></extended_text_message></ETM_data></AETT>
+</tsduck>

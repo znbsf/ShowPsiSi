@@ -9,9 +9,13 @@
 #include "tsShortEventDescriptor.h"
 #include "tsMJD.h"
 #include "tsMGT.h"
+#include "tsPMT.h"
+#include "tsDSMCCUserToNetworkMessage.h"
 #include "tsNames.h"
 #include "tsCharset.h"
 #include "tsPSIRepository.h"
+#include "tsDescriptorContext.h"
+#include "tsLibTSDuckVersion.h"
 #include "tsAbstractTable.h"
 #include "tsxmlDocument.h"
 #include "tsxmlElement.h"
@@ -37,6 +41,13 @@
 #include <mutex>
 #include <thread>
 
+// Resolve version-specific symbols from both shared libraries before startup.
+// A mismatched installed runtime must fail rather than decode with an unsafe ABI.
+TS_LIBTSDUCK_CHECK();
+#if TS_VERSION_INTEGER < 34504798
+#error ShowPsiSi requires TSDuck 3.45-4798 or newer
+#endif
+
 using J = nlohmann::json;
 using Bytes = std::vector<uint8_t>;
 namespace fs = std::filesystem;
@@ -46,7 +57,24 @@ static unsigned u16(const Bytes& b,size_t p) { return unsigned(b.at(p))*256+b.at
 static std::string hex(const uint8_t* p,size_t n) { std::ostringstream o; o<<std::hex<<std::uppercase<<std::setfill('0'); for(size_t i=0;i<n;i++) o<<std::setw(2)<<int(p[i]); return o.str(); }
 static std::string hex(const Bytes& b) { return hex(b.data(),b.size()); }
 static std::string fingerprint(const Bytes& b) { uint64_t h=14695981039346656037ULL; for(auto c:b) { h^=c; h*=1099511628211ULL; } std::ostringstream o; o<<std::hex<<h; return o.str(); }
-static J readJson(const fs::path& p) { std::ifstream in(p); if(!in) throw std::runtime_error("Cannot open "+p.u8string()); J j; in>>j; return j; }
+// C++20 paths return std::u8string. JSON and the wire protocol require a
+// UTF-8 std::string, never locale-dependent path.string() or char8_t arrays.
+static std::string pathUtf8(const fs::path& path) {
+    const auto utf8=path.u8string();
+    return std::string(reinterpret_cast<const char*>(utf8.data()),utf8.size());
+}
+static fs::path pathFromUtf8(std::string_view text) {
+    std::u8string utf8;utf8.reserve(text.size());
+    for(unsigned char byte:text)utf8.push_back(static_cast<char8_t>(byte));
+    return fs::path(utf8);
+}
+static fs::path manifestPath(const fs::path& path) {
+    fs::path manifest=path;manifest += ".manifest.json";return manifest;
+}
+static std::string sdkVersion(int major,int minor,int commit) {
+    return std::to_string(major)+"."+std::to_string(minor)+"-"+std::to_string(commit);
+}
+static J readJson(const fs::path& p) { std::ifstream in(p); if(!in) throw std::runtime_error("Cannot open "+pathUtf8(p)); J j; in>>j; return j; }
 static std::string tableName(int tid) { switch(tid) {case 0:return "PAT";case 1:return "CAT";case 2:return "PMT";case 0x40:case 0x41:return "NIT";case 0x42:case 0x46:return "SDT";case 0x4a:return "BAT";case 0x70:return "TDT";case 0x73:return "TOT";} if(tid>=0x4e&&tid<=0x6f)return "EIT"; return "Private / other"; }
 static void emit(const J& j) {
     const std::string line=j.dump(-1,' ',false,J::error_handler_t::replace);
@@ -121,7 +149,7 @@ static void validateArguments(const J& catalog,const std::string& method,const J
 
 static std::string standardsNames(ts::Standards mask) {
     std::string names;
-    for(const auto& item:std::vector<std::pair<ts::Standards,const char*>>{{ts::Standards::MPEG,"MPEG"},{ts::Standards::DVB,"DVB"},{ts::Standards::ATSC,"ATSC"},{ts::Standards::ISDB,"ISDB"},{ts::Standards::JAPAN,"JAPAN"},{ts::Standards::ABNT,"ABNT"},{ts::Standards::SCTE,"SCTE"}})
+    for(const auto& item:std::vector<std::pair<ts::Standards,const char*>>{{ts::Standards::MPEG,"MPEG"},{ts::Standards::DVB,"DVB"},{ts::Standards::ATSC,"ATSC"},{ts::Standards::ISDB,"ISDB"},{ts::Standards::JAPAN,"JAPAN"},{ts::Standards::ABNT,"ABNT"},{ts::Standards::SCTE,"SCTE"},{ts::Standards::DTMB,"DTMB"}})
         if((mask&item.first)!=ts::Standards::NONE){if(!names.empty())names+=", ";names+=item.second;}
     return names.empty()?"none":names;
 }
@@ -129,10 +157,60 @@ static J xmlTree(const ts::xml::Element* element) {
     if(!element)return nullptr;
     J tree={{"name",element->name().toUTF8()},{"attributes",J::object()},{"children",J::array()}};
     std::map<ts::UString,ts::UString> attributes;element->getAttributes(attributes);
-    for(const auto& [name,value]:attributes)tree["attributes"][name.toUTF8()]=value.toUTF8();
+    // Keep the existing JSON API's ASCII-lowercase attribute keys. Native XML
+    // is serialized separately with its original names and values unchanged.
+    for(const auto& [name,value]:attributes){
+        std::string key=name.toUTF8();for(char& ch:key)if(ch>='A'&&ch<='Z')ch=char(ch-'A'+'a');
+        if(tree["attributes"].contains(key)){
+            tree["attribute_case_collisions"].push_back(key);
+            // Preserve every original spelling/value if normalization collides.
+            for(const auto& [original,text]:attributes)tree["xml_attributes"][original.toUTF8()]=text.toUTF8();
+        }else tree["attributes"][key]=value.toUTF8();
+    }
     ts::UString text;element->getText(text,true);if(!text.empty())tree["text"]=text.toUTF8();
     for(auto* child=element->firstChildElement();child;child=child->nextSiblingElement())tree["children"].push_back(xmlTree(child));
     return tree;
+}
+
+// TSDuck 3.45 can resolve an observed dual-private REGID to a regular
+// descriptor from another family. An exact registry entry proves ambiguity,
+// not permission to guess. Keep generic bytes unless the SDK resolves it to
+// that entry (or a real on-wire PDS explicitly selects another private entry).
+static bool privateDualConflict(const ts::Descriptor& descriptor,ts::DescriptorContext& context,bool pdsOnWire) {
+    const auto& repo=ts::PSIRepository::Instance();
+    const auto& selected=repo.getDescriptor(descriptor.xdid(),context);
+    if(pdsOnWire&&selected.edid.isPrivateDVB()&&selected.edid.pds()==context.getPDS())return false;
+    const auto registrations=context.getREGIDs();
+    for(auto it=registrations.rbegin();it!=registrations.rend();++it){
+        const auto& registered=repo.getDescriptor(ts::EDID::PrivateDual(descriptor.tag(),*it));
+        if(registered.factory&&registered.edid.isPrivateDual())return registered.edid!=selected.edid;
+    }
+    return false;
+}
+
+// Re-render only a PMT loop with a demonstrated namespace conflict, using SDK
+// descriptors and their real parent/list index. Unaffected loops stay intact.
+static bool guardPrivateDualLoop(ts::DuckContext& duck,const ts::DescriptorList& list,ts::xml::Element* parent,bool programLevel) {
+    ts::xml::Document replacement;auto* container=replacement.initialize(u"descriptors");
+    bool guarded=false,pdsOnWire=false;
+    for(size_t index=0;index<list.size();++index){
+        const auto& descriptor=list[index];ts::DescriptorContext context(duck,list,index);
+        const bool conflict=privateDualConflict(descriptor,context,pdsOnWire);guarded|=conflict;
+        descriptor.toXML(duck,container,context,conflict);
+        if(descriptor.tag()==ts::DID_DVB_PRIV_DATA_SPECIF&&descriptor.payloadSize()==4)pdsOnWire=true;
+    }
+    if(!guarded)return false;
+    ts::xml::Element* firstComponent=nullptr;
+    for(auto* child=parent->firstChildElement();child;){
+        auto* next=child->nextSiblingElement();
+        if(programLevel&&child->name()==u"component"){if(!firstComponent)firstComponent=child;}
+        else if(child->name()!=u"metadata"&&child->name()!=u"_metadata")delete child;
+        child=next;
+    }
+    while(auto* child=container->firstChildElement()){
+        if(firstComponent)child->moveBefore(firstComponent);else child->reparent(parent);
+    }
+    return true;
 }
 
 // Exclusive creation protects both the source and competing exports. Failed
@@ -146,13 +224,13 @@ public:
 #else
         file=std::fopen(path.c_str(),"wbx");
 #endif
-        if(!file)throw std::runtime_error("Cannot exclusively create output (it may already exist): "+path.u8string());
+        if(!file)throw std::runtime_error("Cannot exclusively create output (it may already exist): "+pathUtf8(path));
     }
     ExportFile(const ExportFile&)=delete;
     ExportFile& operator=(const ExportFile&)=delete;
     ~ExportFile(){if(file)std::fclose(file);if(!committed){std::error_code ignored;fs::remove(path,ignored);}}
-    void write(const void* data,size_t bytes){if(std::fwrite(data,1,bytes,file)!=bytes)throw std::runtime_error("Output write failed: "+path.u8string());}
-    void close(){auto* f=file;file=nullptr;if(f&&std::fclose(f)!=0)throw std::runtime_error("Output close failed: "+path.u8string());}
+    void write(const void* data,size_t bytes){if(std::fwrite(data,1,bytes,file)!=bytes)throw std::runtime_error("Output write failed: "+pathUtf8(path));}
+    void close(){auto* f=file;file=nullptr;if(f&&std::fclose(f)!=0)throw std::runtime_error("Output close failed: "+pathUtf8(path));}
     void commit(){committed=true;}
 };
 
@@ -221,10 +299,10 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     void issue(Record& r,const std::string& code,size_t offset,const std::string& detail) {
         r.valid=false; r.issues.push_back({{"code",code},{"section_offset",offset},{"detail",detail}});
     }
-    J descriptors(Record& r,size_t begin,size_t end,int serviceId=-1,const std::set<uint32_t>& inheritedRegistrations={}) {
-        J result=J::object(); uint32_t pds=0;
+    J descriptors(Record& r,size_t begin,size_t end,int serviceId=-1,const ts::REGIDVector& inheritedRegistrations={}) {
+        J result=J::object(); uint32_t pds=0;bool pdsOnWire=false;
         ts::DuckContext descriptorDuck(&NULLREP);descriptorDuck.resetStandards(duck.standards());descriptorDuck.setDefaultCharsetIn(duck.charsetIn());descriptorDuck.setDefaultCharsetOut(duck.charsetOut());descriptorDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
-        for(auto registration:inheritedRegistrations)descriptorDuck.addRegistrationId(registration);
+        ts::REGIDVector registrations=inheritedRegistrations;
         if(end>r.raw.size()-4) { issue(r,"descriptor_loop_overrun",begin,"Descriptor loop exceeds section payload"); return result; }
         for(size_t p=begin;p<end;) {
             if(p+2>end) { issue(r,"descriptor_header_truncated",p,"Missing descriptor length"); break; }
@@ -233,10 +311,16 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             if(next>end) { issue(r,"descriptor_length",p,"Declared length exceeds descriptor loop; raw bytes retained"); d["malformed"]=true; r.descriptors.push_back(d); break; }
             ts::Descriptor bin(r.raw.data()+p,n+2);
             ts::xml::Document nativeDocument;auto* parent=nativeDocument.initialize(u"descriptor");
-            if(auto* native=bin.toXML(descriptorDuck,parent,descriptorDuck.actualPDS(pds),ts::TID(r.tid))){d["native"]=xmlTree(native);d["name"]=native->name().toUTF8();d["native_decoded"]=native->name()!=u"generic_descriptor";}
+            // Ordered wire REGIDs are local to this loop, with program-level PMT
+            // registrations inherited ahead of component-level registrations.
+            ts::DescriptorContext context(descriptorDuck,ts::TID(r.tid),descriptorDuck.standards(),ts::CASID_NULL,registrations,pdsOnWire?pds:ts::PDS_NULL);
+            d["registration_ids"]=registrations;
+            const bool namespaceConflict=privateDualConflict(bin,context,pdsOnWire);
+            if(namespaceConflict)d["native_decode_warning"]="Observed registration id conflicts with SDK descriptor namespace resolution; generic bytes retained";
+            if(auto* native=bin.toXML(descriptorDuck,parent,context,namespaceConflict)){d["native"]=xmlTree(native);d["name"]=native->name().toUTF8();d["native_decoded"]=native->name()!=u"generic_descriptor";}
 
-            if(tag==0x05&&n>=4)descriptorDuck.addRegistrationId((uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4));
-            if(tag==0x5f&&n==4) { pds=(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4); d["name"]="private_data_specifier_descriptor"; d["fields"]["private_data_specifier"]=pds; }
+            if(tag==0x05&&n>=4)registrations.push_back((uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4));
+            if(tag==0x5f&&n==4) { pdsOnWire=true;pds=(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4); d["name"]="private_data_specifier_descriptor"; d["fields"]["private_data_specifier"]=pds; }
             else if(tag==0x48) {
                 ts::ServiceDescriptor native(duck,bin); d["name"]="service_descriptor";
                 if(native.isValid()) { result["name"]=native.service_name.toUTF8(); result["provider"]=native.provider_name.toUTF8(); result["type"]=native.service_type; d["fields"]=result; }
@@ -282,8 +366,8 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         } else if(r.tid==2&&b.size()>=16) {
             r.fields["pcr_pid"]=u16(b,8)&0x1fff; r.fields["streams"]=J::array();
             size_t n=u16(b,10)&0xfff; descriptors(r,12,12+n);
-            std::set<uint32_t> programRegistrations;
-            for(size_t p=12;p+2<=std::min(12+n,end);){size_t next=p+2+b[p+1];if(next>std::min(12+n,end))break;if(b[p]==0x05&&b[p+1]>=4)programRegistrations.insert((uint32_t(u16(b,p+2))<<16)|u16(b,p+4));p=next;}
+            ts::REGIDVector programRegistrations;
+            for(size_t p=12;p+2<=std::min(12+n,end);){size_t next=p+2+b[p+1];if(next>std::min(12+n,end))break;if(b[p]==0x05&&b[p+1]>=4)programRegistrations.push_back((uint32_t(u16(b,p+2))<<16)|u16(b,p+4));p=next;}
             for(size_t p=12+n;p<end;) {
                 if(p+5>end){issue(r,"pmt_stream_truncated",p,"Incomplete stream header");break;}
                 size_t len=u16(b,p+3)&0xfff;
@@ -355,8 +439,8 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         if(observations==1&&onFirst)onFirst();
     }
     std::string nativeTableName(const Record& r) const {
-        auto factory=ts::PSIRepository::Instance().getTableFactory(ts::TID(r.tid),duck.standards(),ts::PID(r.pid));
-        if(factory){auto table=factory();if(table)return table->xmlName().toUTF8();}
+        const auto& table=ts::PSIRepository::Instance().getTable(ts::TID(r.tid),ts::SectionContext(ts::PID(r.pid),duck.standards()));
+        if(table.factory&&!table.xml_name.empty())return table.xml_name.toUTF8();
         return tableName(r.tid)!="Private / other"?tableName(r.tid):"Unknown / private (table id "+std::to_string(r.tid)+")";
     }
     J summary(const Record& r,uint64_t at=UINT64_MAX) const {
@@ -398,10 +482,10 @@ public:
         }
         receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),true);
     }
-    void handleInvalidSection(ts::SectionDemux&,const ts::DemuxedData& s) override { receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),false); }
+    void handleInvalidSection(ts::SectionDemux&,const ts::DemuxedData& s,ts::Section::Status) override { receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),false); }
     J state(uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) {
         checkCancelled(control);
-        J out={{"source",source.u8string()},{"file_name",source.filename().u8string()},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
+        J out={{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
         const auto selected=latest(at);
         for(const auto& r:records) {
@@ -475,7 +559,7 @@ public:
             return result;
         };
         const auto before=snapshot(from),after=snapshot(to);
-        J out={{"source",source.u8string()},{"revision",revision},{"from_packet",from},{"to_packet",to},{"kind",kind},{"summary",J::object()},{"changes",J::array()},{"offset",offset},{"limit",limit},{"next_offset",nullptr}};
+        J out={{"source",pathUtf8(source)},{"revision",revision},{"from_packet",from},{"to_packet",to},{"kind",kind},{"summary",J::object()},{"changes",J::array()},{"offset",offset},{"limit",limit},{"next_offset",nullptr}};
         out["scope"]={{"cutoffs","inclusive section completion packet indexes in this analysis revision"},{"tables","selected valid current section slots; byte/version changes, excluding repeated observations"},{"services","complete actual-SDT services on canonical PID 0x0011; other PIDs remain table evidence; PAT/PMT fields only from complete matching generations; compare derived fields, not provenance-only changes"},{"events","observed DVB-layout EIT (table ids 0x4e..0x6f) section events, separated by PID/table/section/ONID/TSID/SID/event id/start; no schedule segment completeness guarantee"},{"evidence","each side contains only occurrences completed at or before its cutoff; no scan-global history, counters or density"},{"decoding_context","fixed analysis-session standards and extension context"},{"absence","absence is observed snapshot state, not proof a service/event ceased broadcasting"},{"order","tables, services, events; lexicographic identity key within each kind"}};
         size_t total=0;
         for(const auto* category:{"tables","services","events"}){
@@ -517,17 +601,18 @@ public:
         try {
         extension=configuredExtension;standardsContext=args.value("standards",std::string("auto"));
         ts::Standards standards=ts::Standards::MPEG;
-        if(standardsContext=="dvb")standards|=ts::Standards::DVB;
+        if(standardsContext=="dvb")standards|=ts::Standards::DVB|ts::Standards::DVBONLY;
         else if(standardsContext=="atsc")standards|=ts::Standards::ATSC;
         else if(standardsContext=="isdb")standards|=ts::Standards::ISDB;
         else if(standardsContext=="isdb-japan")standards|=ts::Standards::ISDB|ts::Standards::JAPAN;
         else if(standardsContext=="isdb-brazil")standards|=ts::Standards::ISDB|ts::Standards::ABNT;
         else if(standardsContext=="scte")standards|=ts::Standards::SCTE;
-        duck.resetStandards(standards);duck.resetRegistrationIds();duck.setDefaultCharsetIn(nullptr);duck.setDefaultCharsetOut(nullptr);duck.setTimeReference(u"UTC");
+        else if(standardsContext=="dtmb")standards|=ts::Standards::DTMB;
+        duck.resetStandards(standards);duck.resetDefaultREGIDs();duck.setDefaultCharsetIn(nullptr);duck.setDefaultCharsetOut(nullptr);duck.setTimeReference(u"UTC");
         if(standardsContext=="isdb-japan"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"ARIB-STD-B24"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"ARIB-STD-B24"));duck.setTimeReference(u"JST");}
         if(standardsContext=="isdb-brazil"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setTimeReference(u"UTC-3");}
         bitrate=args.value("bitrate",0.0);
-        source=fs::absolute(fs::u8path(args.at("path").get<std::string>()));
+        source=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
         TEST_CHECKPOINT("before_analysis",control);
         checkCancelled(control);
         // This API scans bounded local files, not blocking pipes or device streams.
@@ -594,7 +679,7 @@ public:
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
-        out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
+        out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_xml_guarded"]=false;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
         if(r.valid){
             // Share the same generation boundary as query/export, including
             // current/next isolation and version rollover.
@@ -608,6 +693,54 @@ public:
             ts::xml::Document document;auto* parent=document.initialize(u"tsduck");
             if(full&&table.isValid()){
                 auto* native=table.toXML(tableDuck,parent);out["native_table_complete"]=true;
+                // Guard the same observed private-dual REGID conflicts in the
+                // complete PMT tree/XML that are guarded in flat descriptors.
+                if(native&&r.tid==ts::TID_PMT&&native->name()==u"PMT"){
+                    tableDuck.resetStandards(duck.standards());ts::PMT pmt(tableDuck,table);bool guarded=false;
+                    if(pmt.isValid()){
+                        guarded=guardPrivateDualLoop(tableDuck,pmt.descs,native,true);
+                        for(auto* component=native->firstChildElement();component;component=component->nextSiblingElement())if(component->name()==u"component"){
+                            uint16_t pid=ts::PID_NULL;
+                            if(component->getIntAttribute(pid,u"elementary_PID")&&pmt.streams.count(pid)){
+                                tableDuck.resetStandards(duck.standards());
+                                guarded=guardPrivateDualLoop(tableDuck,pmt.streams.at(pid).descs,component,false)||guarded;
+                            }
+                        }
+                    }
+                    if(guarded){
+                        out["native_xml_guarded"]=true;out["native_xml_guard_reason"]="Observed REGID conflicts with SDK private-dual descriptor resolution";
+                        out["native_decode_warnings"]=J::array({"Observed registration id conflicts with SDK descriptor namespace resolution; affected PMT descriptors remain generic bytes."});
+                    }
+                }
+                // In 3.45, DSM-CC DII module tags overlap MPEG descriptor tags.
+                // Without DVB evidence the SDK can label module CRC32 tag 0x05
+                // as a registration descriptor. Retain the decoded table but
+                // render those module descriptors as exact generic bytes until
+                // their DVB namespace is explicitly established.
+                if(native&&r.tid==ts::TID_DSMCC_UNM&&(duck.standards()&ts::Standards::DVB)==ts::Standards::NONE){
+                    ts::DSMCCUserToNetworkMessage message(tableDuck,table);
+                    const auto* dii=message.isValid()?message.toDII():nullptr;
+                    if(dii){
+                        bool hasDescriptors=false;for(const auto& [index,module]:dii->modules)hasDescriptors|=!module.descs.empty();
+                        if(hasDescriptors){
+                            auto* diiNode=native->findFirstChild(u"DII");ts::xml::ElementVector modules;
+                            const bool matching=diiNode&&diiNode->getChildren(modules,u"module")&&modules.size()==dii->modules.size();
+                            if(matching){
+                                size_t index=0;
+                                for(const auto& [key,module]:dii->modules){
+                                    auto* element=const_cast<ts::xml::Element*>(modules[index++]);
+                                    for(auto* child=element->firstChildElement();child;){auto* next=child->nextSiblingElement();if(child->name()!=u"tap")delete child;child=next;}
+                                    ts::DescriptorContext context(tableDuck,ts::TID_DSMCC_UNM,tableDuck.standards());
+                                    for(const auto& descriptor:module.descs)descriptor.toXML(tableDuck,element,context,true);
+                                }
+                            }else{
+                                delete native;ts::BinaryTable::XMLOptions options;options.forceGeneric=true;native=table.toXML(tableDuck,parent,options);
+                            }
+                            out["native_xml_guarded"]=true;out["native_xml_guard_reason"]="DSM-CC module descriptor namespace not established";
+                            out["native_decode_warnings"]=J::array({"DSM-CC DII module descriptor namespace is not established; generic bytes retained. Select DVB only when independently known."});
+                        }
+                    }
+                }
                 if(native){out["native_table"]=xmlTree(native);const auto name=native->name();out["native_decode_status"]=(name==u"generic_long_table"||name==u"generic_short_table")?"generic raw fallback":"native TSDuck decoder";}
                 out["tsduck_xml"]=document.toString().toUTF8();
             }else{ts::SectionFile file(duck);file.add(std::make_shared<ts::Section>(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK));out["tsduck_xml"]=file.toXML().toUTF8();out["native_decode_status"]=superseded?"inspected section superseded at selected packet; raw section retained":"incomplete table; raw section retained";}
@@ -638,8 +771,9 @@ public:
             if((mask&ts::Standards::ATSC)!=ts::Standards::NONE)families.insert("ATSC");
             if((mask&ts::Standards::ISDB)!=ts::Standards::NONE)families.insert("ISDB");
             if((mask&ts::Standards::SCTE)!=ts::Standards::NONE)families.insert("SCTE");
+            if((mask&ts::Standards::DTMB)!=ts::Standards::NONE)families.insert("DTMB");
         }else if(standardsContext.rfind("isdb",0)==0)families.insert("ISDB");
-        else if(standardsContext=="dvb")families.insert("DVB");else if(standardsContext=="atsc")families.insert("ATSC");else if(standardsContext=="scte")families.insert("SCTE");
+        else if(standardsContext=="dvb")families.insert("DVB");else if(standardsContext=="atsc")families.insert("ATSC");else if(standardsContext=="scte")families.insert("SCTE");else if(standardsContext=="dtmb")families.insert("DTMB");
         if(standardsContext=="isdb-japan")families.insert("JAPAN");if(standardsContext=="isdb-brazil")families.insert("ABNT");
         auto references=[&](const std::string& name,const char* kind){
             J found=J::array();for(const auto& reference:sources){bool context=false;for(const auto& family:reference["standards"])context=context||families.count(family.get<std::string>());const auto& names=reference[kind];if(context&&std::find(names.begin(),names.end(),J(name))!=names.end()){
@@ -662,17 +796,17 @@ public:
         if(name.empty()||name.size()>180)throw std::runtime_error("Service name must contain 1..180 UTF-8 bytes");
         ts::BinaryTable table;table.addNewSection(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK);ts::SDT sdt(duck,table);
         if(!sdt.isValid()||!sdt.services.count(sid))throw std::runtime_error("Service is absent from target SDT");
-        std::string before=sdt.services[sid].serviceName(duck).toUTF8();sdt.services[sid].setName(duck,ts::UString::FromUTF8(name));sdt.version=(sdt.version+1)%32;
+        std::string before=sdt.services[sid].serviceName(duck).toUTF8();sdt.services[sid].setName(duck,ts::UString::FromUTF8(name));sdt.incrementVersion();
         ts::BinaryTable changed;if(!sdt.serialize(duck,changed))throw std::runtime_error("TSDuck could not serialize edit");
         for(size_t i=0;i<changed.sectionCount();i++){auto s=changed.sectionAt(i);patchSections.push_back({r.pid,Bytes(s->content(),s->content()+s->size())});}
-        pending={{"token",std::to_string(revision)+":"+id+":"+fingerprint(patchSections.front().second)},{"source_id",id},{"revision",revision},{"service_id",sid},{"before",before},{"after",name},{"old_version",r.version},{"new_version",sdt.version},{"crc_recomputed",true},{"writes_source",false}};
+        pending={{"token",std::to_string(revision)+":"+id+":"+fingerprint(patchSections.front().second)},{"source_id",id},{"revision",revision},{"service_id",sid},{"before",before},{"after",name},{"old_version",r.version},{"new_version",sdt.version()},{"crc_recomputed",true},{"writes_source",false}};
         return pending;
     }
     J exportData(const J& args) {
         if(!complete||records.empty())throw std::runtime_error("Complete a successful analysis before exporting");
         const std::string format=args.value("format",std::string("ts"));if(format!="ts"&&format!="bin")throw std::runtime_error("format must be ts or bin");
-        fs::path path=fs::absolute(fs::u8path(args.at("path").get<std::string>()));
-        if(fs::exists(path)||fs::exists(path.u8string()+".manifest.json"))throw std::runtime_error("Output already exists; choose a new path");
+        fs::path path=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
+        if(fs::exists(path)||fs::exists(manifestPath(path)))throw std::runtime_error("Output already exists; choose a new path");
         bool patch=args.contains("preview_token");if(patch&&(pending.empty()||args["preview_token"]!=pending["token"]||pending["revision"]!=revision))throw std::runtime_error("Missing or stale edit preview token");
         uint64_t at=args.value("at_packet",UINT64_MAX);const auto selected=latest(at);
         if(patch){
@@ -682,7 +816,7 @@ public:
         }
         for(const auto& [key,r]:selected)if((r->tid==0||r->tid==2||r->tid==0x42)&&!completeGroup(*r,selected))throw std::runtime_error("Incomplete PAT/PMT/SDT at selected packet; wait for all sections of one version");
         std::vector<std::pair<unsigned,Bytes>> output;J evidence=J::array();bool applied=false;
-        for(const auto& [key,r]:selected){if(patch&&r->id==pending["source_id"]){output.insert(output.end(),patchSections.begin(),patchSections.end());applied=true;}else output.push_back({r->pid,r->raw});evidence.push_back(summary(*r,at));}
+        for(const auto& [key,r]:selected){if(patch&&r->id==pending.at("source_id").get<std::string>()){output.insert(output.end(),patchSections.begin(),patchSections.end());applied=true;}else output.push_back({r->pid,r->raw});evidence.push_back(summary(*r,at));}
         if(output.empty())throw std::runtime_error("No valid current sections at selected packet");
         if(patch&&!applied)throw std::runtime_error("Edited SDT is not selected at export packet; choose matching time region");
         uint64_t nulls=args.value("null_packets",uint64_t(200));unsigned cycles=args.value("cycles",10u);if(nulls>100000||cycles<1||cycles>1000)throw std::runtime_error("Export bounded to 1..1000 cycles and 100000 null packets/cycle");
@@ -697,17 +831,20 @@ public:
             Bytes packet(188,0xff);packet[0]=0x47;packet[1]=0x1f;packet[2]=0xff;packet[3]=0x10;for(uint64_t i=0;i<nulls;i++)out.write(reinterpret_cast<const char*>(packet.data()),188);
         }
         out.close();
-        J receipt={{"path",path.u8string()},{"bytes",fs::file_size(path)},{"format",format},{"section_count",output.size()},{"source",source.u8string()},{"source_revision",revision},{"at_packet",at==UINT64_MAX?J():J(at)},{"selected_sections",evidence},{"edit",patch?pending:J()},{"has_media",false},{"has_pcr",false},{"timing","snapshot repetition; no original packet timing or PCR retained"},{"cycles",format=="ts"?cycles:1},{"null_packets_per_cycle",format=="ts"?nulls:0}};
+        J receipt={{"path",pathUtf8(path)},{"bytes",fs::file_size(path)},{"format",format},{"section_count",output.size()},{"source",pathUtf8(source)},{"source_revision",revision},{"at_packet",at==UINT64_MAX?J():J(at)},{"selected_sections",evidence},{"edit",patch?pending:J()},{"has_media",false},{"has_pcr",false},{"timing","snapshot repetition; no original packet timing or PCR retained"},{"cycles",format=="ts"?cycles:1},{"null_packets_per_cycle",format=="ts"?nulls:0}};
         J offsets=J::array();size_t offset=0;for(const auto& [pid,b]:output){offsets.push_back({{"pid",pid},{"bin_offset",offset},{"bytes",b.size()},{"fingerprint_fnv1a",fingerprint(b)}});offset+=b.size();}receipt["sections"]=offsets;
-        ExportFile manifest(fs::u8path(path.u8string()+".manifest.json"));const std::string text=receipt.dump(2)+"\n";manifest.write(text.data(),text.size());manifest.close();out.commit();manifest.commit();return receipt;
+        ExportFile manifest(manifestPath(path));const std::string text=receipt.dump(2)+"\n";manifest.write(text.data(),text.size());manifest.close();out.commit();manifest.commit();return receipt;
     }
     J dispatch(const std::string& method,const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control=nullptr) {
         // runCore validates against its immutable startup catalog before queueing.
         // Re-reading mutable schemas here could invalidate an accepted analysis.
         if(method=="capabilities"){
             J result=readJson(root/"api/tools.json");ts::UStringList tables,descriptors;
+            const std::string runtime=sdkVersion(tsduckLibraryVersionMajor,tsduckLibraryVersionMinor,tsduckLibraryVersionCommit);
+            result["engine"]="C++ / TSDuck "+runtime;
+            result["native_sdk"]={{"headers",TS_VERSION_STRING},{"tsduck_runtime",runtime},{"tscore_runtime",sdkVersion(tscoreLibraryVersionMajor,tscoreLibraryVersionMinor,tscoreLibraryVersionCommit)},{"version_symbols_enforced",true},{"cpp_standard",20}};
             ts::PSIRepository::Instance().getRegisteredTableNames(tables);ts::PSIRepository::Instance().getRegisteredDescriptorNames(descriptors);
-            J registry={{"table_names",J::array()},{"descriptor_names",J::array()},{"table_count",tables.size()},{"descriptor_count",descriptors.size()},{"note","Registered decoders, not a guarantee that every payload or regional variant is supported. Explicit standards context resolves ambiguous identifiers."}};
+            J registry={{"table_names",J::array()},{"descriptor_names",J::array()},{"table_count",tables.size()},{"descriptor_count",descriptors.size()},{"note","Registered XML names (including aliases), not a guarantee that every payload or regional variant is supported. Explicit standards context resolves ambiguous identifiers."}};
             for(const auto& name:tables)registry["table_names"].push_back(name.toUTF8());for(const auto& name:descriptors)registry["descriptor_names"].push_back(name.toUTF8());result["native_registry"]=registry;return result;
         }
         if(method=="analyze")return analyze(args,rid,control);
@@ -717,7 +854,7 @@ public:
         if(method=="preview_rename")return preview(args);
         if(method=="export")return exportData(args);
         if(method=="load_extension") {
-            J candidate=readJson(fs::u8path(args.at("path").get<std::string>()));
+            J candidate=readJson(pathFromUtf8(args.at("path").get<std::string>()));
             auto require=[](bool ok,const std::string& message){if(!ok)throw std::runtime_error("Invalid extension: "+message);};
             auto integer=[](const J& value,uint64_t max){return value.is_number_integer()&&value>=0&&value<=max;};
             require(candidate.is_object()&&candidate.contains("id")&&candidate["id"].is_string()&&!candidate["id"].get<std::string>().empty(),"nonempty string id required");
@@ -766,7 +903,7 @@ struct QueuedRequest {
 
 static int runCore(int argc,char**argv) {
     std::cin.tie(nullptr);
-    fs::path root=fs::current_path();for(int i=1;i+1<argc;i++)if(std::string(argv[i])=="--root")root=fs::u8path(argv[++i]);
+    fs::path root=fs::current_path();for(int i=1;i+1<argc;i++)if(std::string(argv[i])=="--root")root=pathFromUtf8(argv[++i]);
     try {
         Engine engine(root);
         // The reader validates JSON and schemas only. No Engine/TSDuck calls or
@@ -854,6 +991,21 @@ static int runCore(int argc,char**argv) {
     } catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}
     return 0;
 }
+#ifdef _WIN32
+// Windows gives wmain lossless UTF-16 arguments; narrow main depends on the
+// active code page and can corrupt a non-ASCII --root before parsing begins.
+static int runWide(int argc,wchar_t** argv,int (*run)(int,char**)) {
+    std::vector<std::string> utf8;utf8.reserve(argc);
+    for(int i=0;i<argc;++i)utf8.push_back(pathUtf8(fs::path(argv[i])));
+    std::vector<char*> args;args.reserve(argc+1);
+    for(auto& arg:utf8)args.push_back(arg.data());args.push_back(nullptr);
+    return run(argc,args.data());
+}
+#endif
 #ifndef SHOWPSISI_TESTING
+#ifdef _WIN32
+int wmain(int argc,wchar_t** argv) { return runWide(argc,argv,runCore); }
+#else
 int main(int argc,char**argv) { return runCore(argc,argv); }
+#endif
 #endif

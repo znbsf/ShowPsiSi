@@ -5,6 +5,7 @@ cd "$(dirname "$0")/.."
 python scripts/make_fixture.py
 python -m unittest discover -s tests -p test_engine.py -v
 python -m unittest discover -s tests -p test_protocol_coverage.py -v
+python -m unittest discover -s tests -p test_sdk_migration.py -v
 python -m unittest discover -s tests -p test_cancellation.py -v
 python -m unittest discover -s tests -p test_mcp_cancellation.py -v
 python -m unittest discover -s tests -p test_cloud_preview.py -v

@@ -3,10 +3,10 @@
   "verified_at": "2026-10-16",
   "description": "Small link registry, not bundled specifications or a conformance database. A match requires an exact TSDuck XML name and applicable standards context. No tag-only matching or inferred private definitions. Unlisted names remain without a normative reference.",
   "mapping_provenance": {
-    "sdk": "TSDuck 3.39-3956",
-    "method": "Descriptor XML names cross-checked against SDK XML model and header @see standard identifiers; table names are selected standard-level associations. Header clause numbers are deliberately not copied because editions can differ.",
-    "precision": "standard-level only; no exact clause assertions",
-    "implementation_reference": "https://tsduck.io/docs/tsduck.html"
+    "sdk": "TSDuck 3.45-4798",
+    "method": "Exact registered XML names are cross-checked against the pinned SDK model and header @see standard identifiers. New associations retain release-pinned SDK header links. Public catalogue editions can differ from the implementation; associations do not assert edition-level conformance.",
+    "precision": "standard-level only; cited SDK clauses are provenance, not independently verified clause mappings",
+    "implementation_reference": "https://github.com/tsduck/tsduck/tree/v3.45-4798/src/libtsduck/dtv"
   },
   "sources": [
     {
@@ -114,7 +114,8 @@
         "EIT",
         "TDT",
         "TOT",
-        "RST"
+        "RST",
+        "SAT"
       ],
       "descriptor_names": [
         "AAC_descriptor",
@@ -197,7 +198,10 @@
       "scope": "standard-level",
       "publisher": "ETSI",
       "verification": "official-page-opened",
-      "verified_at": "2026-10-16"
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "SAT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsSAT.h"
+      }
     },
     {
       "id": "atsc-psip",
@@ -215,7 +219,9 @@
         "ATSC_EIT",
         "ETT",
         "STT",
-        "RRT"
+        "RRT",
+        "DCCT",
+        "DCCSCT"
       ],
       "descriptor_names": [
         "ATSC_stuffing_descriptor",
@@ -234,7 +240,11 @@
       "scope": "standard-level",
       "publisher": "ATSC",
       "verification": "official-page-opened",
-      "verified_at": "2026-10-16"
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "DCCT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsDCCT.h",
+        "DCCSCT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsDCCSCT.h"
+      }
     },
     {
       "id": "isdb-si",
@@ -253,7 +263,8 @@
         "LIT",
         "ERT",
         "ITT",
-        "PCAT"
+        "PCAT",
+        "AMT"
       ],
       "descriptor_names": [
         "ISDB_LDT_linkage_descriptor",
@@ -290,13 +301,20 @@
         "service_group_descriptor",
         "short_node_information_descriptor",
         "system_management_descriptor",
-        "video_decode_control_descriptor"
+        "video_decode_control_descriptor",
+        "material_information_descriptor",
+        "ISDB_scrambler_descriptor"
       ],
       "notes": "English and Japanese versions differ. This is an ARIB reference, not a claim of ABNT/SBTVD conformance. Shared DVB-like table names are intentionally omitted to avoid ambiguous attribution. CDT and SDTT belong to ARIB STD-B21 in the SDK and are not mapped here.",
       "scope": "standard-level",
       "publisher": "ARIB",
       "verification": "official-page-opened",
-      "verified_at": "2026-10-16"
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "AMT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/isdb/tsAMT.h",
+        "material_information_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsMaterialInformationDescriptor.h",
+        "ISDB_scrambler_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBScramblerDescriptor.h"
+      }
     },
     {
       "id": "scte35",
@@ -314,13 +332,444 @@
         "splice_DTMF_descriptor",
         "splice_avail_descriptor",
         "splice_segmentation_descriptor",
-        "splice_time_descriptor"
+        "splice_time_descriptor",
+        "splice_audio_descriptor"
       ],
       "notes": "SCTE catalogue renames the legacy SCTE 35 standard to SCTE 35-1. Does not claim support for the separate SCTE 35-2 event-based standard. Descriptor meaning requires splice-table context.",
       "scope": "standard-level",
       "publisher": "SCTE",
       "verification": "official-search-index",
-      "verified_at": "2026-10-16"
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "splice_audio_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/scte/tsSpliceAudioDescriptor.h"
+      }
+    },
+    {
+      "id": "mpeg-dsmcc",
+      "title": "ISO/IEC 13818-6 — Extensions for DSM-CC",
+      "version": "1998 (edition 1)",
+      "standards": [
+        "MPEG"
+      ],
+      "url": "https://www.iso.org/standard/25039.html",
+      "access": "Official public catalogue; full standard is paid.",
+      "table_names": [
+        "DSMCC_download_data_message",
+        "DSMCC_user_to_network_message",
+        "DSMCC_stream_descriptors_table"
+      ],
+      "descriptor_names": [],
+      "notes": "DSM-CC section and message syntax. Decoded DSI/DII/DDB fields do not establish carousel-file extraction, object reconstruction or receiver conformance.",
+      "scope": "standard-level",
+      "publisher": "ISO/IEC",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "DSMCC_download_data_message": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/mpeg/tsDSMCCDownloadDataMessage.h",
+        "DSMCC_user_to_network_message": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/mpeg/tsDSMCCUserToNetworkMessage.h",
+        "DSMCC_stream_descriptors_table": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/mpeg/tsDSMCCStreamDescriptorsTable.h"
+      }
+    },
+    {
+      "id": "atsc-data",
+      "title": "ATSC A/90 — ATSC Data Broadcast Standard",
+      "version": "A/90:2013 (2013-10-28)",
+      "standards": [
+        "ATSC"
+      ],
+      "url": "https://www.atsc.org/atsc-documents/a902013-atsc-data-broadcast-standard/",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [
+        "DET",
+        "DST",
+        "LTST",
+        "NRT"
+      ],
+      "descriptor_names": [
+        "ATSC_CRC32_descriptor",
+        "ATSC_data_service_descriptor",
+        "ATSC_download_descriptor",
+        "ATSC_group_link_descriptor",
+        "ATSC_module_link_descriptor",
+        "ATSC_multiprotocol_encapsulation_descriptor",
+        "ATSC_PID_count_descriptor"
+      ],
+      "notes": "Transport-stream data-service signalling. NRT here means Network Resources Table, not the distinct ATSC A/103 non-real-time service system. No ATSC 3.0 or file-extraction claim.",
+      "scope": "standard-level",
+      "publisher": "ATSC",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "DET": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsDET.h",
+        "DST": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsDST.h",
+        "LTST": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsLTST.h",
+        "NRT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsNRT.h",
+        "ATSC_CRC32_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCCRC32Descriptor.h",
+        "ATSC_data_service_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCDataServiceDescriptor.h",
+        "ATSC_download_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCDownloadDescriptor.h",
+        "ATSC_group_link_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCGroupLinkDescriptor.h",
+        "ATSC_module_link_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCModuleLinkDescriptor.h",
+        "ATSC_multiprotocol_encapsulation_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCMultiprotocolEncapsulationDescriptor.h",
+        "ATSC_PID_count_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCPIDCountDescriptor.h"
+      }
+    },
+    {
+      "id": "atsc-dth",
+      "title": "ATSC A/81 — Direct-To-Home Satellite Broadcast Standard",
+      "version": "A/81:2003 (2003-07-30)",
+      "standards": [
+        "ATSC"
+      ],
+      "url": "https://www.atsc.org/atsc-documents/a81-direct-to-home-satellite-broadcast-standard/",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [
+        "AEIT",
+        "AETT",
+        "SVCT"
+      ],
+      "descriptor_names": [],
+      "notes": "Aggregate guide and satellite virtual-channel table syntax. This link does not assert reception, conditional-access support or a specialized service/EPG projection.",
+      "scope": "standard-level",
+      "publisher": "ATSC",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "AEIT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsAEIT.h",
+        "AETT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsAETT.h",
+        "SVCT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/atsc/tsSVCT.h"
+      }
+    },
+    {
+      "id": "atsc-parameterized",
+      "title": "ATSC A/71 — Parameterized Services Standard",
+      "version": "A/71:2012 (2012-12-03)",
+      "standards": [
+        "ATSC"
+      ],
+      "url": "https://www.atsc.org/atsc-documents/a71-atsc-parameterized-services-standard-1232012/",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [],
+      "descriptor_names": [
+        "ATSC_component_list_descriptor",
+        "ATSC_parameterized_service_descriptor"
+      ],
+      "notes": "Signalling of receiver requirements; parsing descriptor fields does not implement the announced media formats.",
+      "scope": "standard-level",
+      "publisher": "ATSC",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "ATSC_component_list_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCComponentListDescriptor.h",
+        "ATSC_parameterized_service_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCParameterizedServiceDescriptor.h"
+      }
+    },
+    {
+      "id": "atsc-transport",
+      "title": "ATSC A/53 Part 3 — Service Multiplex and Transport Subsystem Characteristics",
+      "version": "Part 3:2023-02",
+      "standards": [
+        "ATSC"
+      ],
+      "url": "https://www.atsc.org/atsc-documents/a53-atsc-digital-television-standard/",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [],
+      "descriptor_names": [
+        "ATSC_private_information_descriptor"
+      ],
+      "notes": "Only the named transport descriptor is associated here. No blanket A/53 codec or transmission implementation claim.",
+      "scope": "standard-level",
+      "publisher": "ATSC",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "ATSC_private_information_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/atsc/tsATSCPrivateInformationDescriptor.h"
+      }
+    },
+    {
+      "id": "dvb-data",
+      "title": "ETSI EN 301 192 — DVB Specification for Data Broadcasting",
+      "version": "V1.7.1 (2021-08)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://portal.etsi.org/webapp/WorkProgram/Report_WorkItem.asp?WKI_ID=50577",
+      "access": "Official public work-item catalogue verified in search; direct retrieval failed during this check.",
+      "table_names": [
+        "INT",
+        "MPE_FEC"
+      ],
+      "descriptor_names": [
+        "dsmcc_CRC32_descriptor",
+        "dsmcc_compressed_module_descriptor",
+        "dsmcc_est_download_time_descriptor",
+        "dsmcc_group_link_descriptor",
+        "dsmcc_info_descriptor",
+        "dsmcc_location_descriptor",
+        "dsmcc_module_link_descriptor",
+        "dsmcc_name_descriptor",
+        "dsmcc_type_descriptor"
+      ],
+      "notes": "Edition cited by the pinned DSM-CC descriptor headers. Descriptor names are table-specific registrations; MPE-FEC fields are not a claim of application-level FEC recovery or carousel extraction.",
+      "scope": "standard-level",
+      "publisher": "ETSI",
+      "verification": "official-search-index",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "INT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsINT.h",
+        "MPE_FEC": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsMPEFECTable.h",
+        "dsmcc_CRC32_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCCRC32Descriptor.h",
+        "dsmcc_compressed_module_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCCompressedModuleDescriptor.h",
+        "dsmcc_est_download_time_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCEstDownloadTimeDescriptor.h",
+        "dsmcc_group_link_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCGroupLinkDescriptor.h",
+        "dsmcc_info_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCInfoDescriptor.h",
+        "dsmcc_location_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCLocationDescriptor.h",
+        "dsmcc_module_link_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCModuleLinkDescriptor.h",
+        "dsmcc_name_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCNameDescriptor.h",
+        "dsmcc_type_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCTypeDescriptor.h"
+      }
+    },
+    {
+      "id": "dvb-tv-anytime",
+      "title": "ETSI TS 102 323 — Carriage and Signalling of TV-Anytime Information in DVB Transport Streams",
+      "version": "V1.5.1 (2012-01)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://dvb.org/?standard=carriage-and-signalling-of-tv-anytime-information-in-dvb-transport-streams",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [
+        "container_table",
+        "CIT",
+        "RCT",
+        "RNT"
+      ],
+      "descriptor_names": [],
+      "notes": "Table syntax reference. Retained container bytes do not establish decompression or complete TV-Anytime metadata processing.",
+      "scope": "standard-level",
+      "publisher": "ETSI / DVB",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "container_table": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsContainerTable.h",
+        "CIT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsCIT.h",
+        "RCT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsRCT.h",
+        "RNT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsRNT.h"
+      }
+    },
+    {
+      "id": "dvb-mpe-ifec",
+      "title": "ETSI TS 102 772 — Multi-Protocol Encapsulation Inter-burst Forward Error Correction",
+      "version": "V1.1.1 (2010-09)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://www.etsi.org/deliver/etsi_ts/102700_102799/102772/01.01.01_60/ts_102772v010101p.pdf",
+      "access": "Official freely readable specification link verified in search; no PDF is bundled.",
+      "table_names": [
+        "MPE_IFEC"
+      ],
+      "descriptor_names": [],
+      "notes": "MPE-iFEC table syntax; no application-level error-recovery claim. Only a URL is stored, not the specification file.",
+      "scope": "standard-level",
+      "publisher": "ETSI",
+      "verification": "official-search-index",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "MPE_IFEC": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsMPEIFECTable.h"
+      }
+    },
+    {
+      "id": "dvb-ttml",
+      "title": "ETSI EN 303 560 — TTML Subtitling Systems",
+      "version": "V1.1.1 (2018-05)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://portal.etsi.org/webapp/WorkProgram/Report_WorkItem.asp?WKI_ID=53568",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [
+        "DFIT"
+      ],
+      "descriptor_names": [],
+      "notes": "Downloadable Font Information Table syntax. This association does not imply TTML rendering or font downloading.",
+      "scope": "standard-level",
+      "publisher": "ETSI",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "DFIT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsDFIT.h"
+      }
+    },
+    {
+      "id": "dvb-interactive",
+      "title": "ETSI TS 102 809 — Signalling and Carriage of Interactive Applications and Services",
+      "version": "V1.3.1 (2017-06)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://dvb.org/?standard=signalling-and-carriage-of-interactive-applications-and-services-in-hybrid-broadcast-broadband-environments",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [],
+      "descriptor_names": [
+        "dsmcc_caching_priority_descriptor",
+        "dsmcc_content_type_descriptor"
+      ],
+      "notes": "Published edition cited by the SDK; the catalogue also lists a later draft. Descriptor support does not imply execution of interactive applications.",
+      "scope": "standard-level",
+      "publisher": "ETSI / DVB",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "dsmcc_caching_priority_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCCachingPriorityDescriptor.h",
+        "dsmcc_content_type_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCContentTypeDescriptor.h"
+      }
+    },
+    {
+      "id": "dvb-mhp",
+      "title": "ETSI TS 102 727 — Multimedia Home Platform Specification 1.2.2",
+      "version": "V1.1.1 (2010-01)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://portal.etsi.org/webapp/workprogram/Report_WorkItem.asp?WKI_ID=31420",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [],
+      "descriptor_names": [
+        "dsmcc_label_descriptor",
+        "xait_location_descriptor",
+        "xait_pid_descriptor"
+      ],
+      "notes": "Exact descriptor associations from SDK headers. Does not imply an MHP runtime or XAIT application execution.",
+      "scope": "standard-level",
+      "publisher": "ETSI",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "dsmcc_label_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCLabelDescriptor.h",
+        "xait_location_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsXAITLocationDescriptor.h",
+        "xait_pid_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsXAITPIDDescriptor.h"
+      }
+    },
+    {
+      "id": "dvb-ssu",
+      "title": "ETSI TS 102 006 — System Software Update in DVB Systems",
+      "version": "V1.4.1 (2015-06)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://dvb.org/?standard=specification-for-system-software-update-ssu-in-dvb-systems",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [
+        "UNT"
+      ],
+      "descriptor_names": [
+        "dsmcc_ssu_module_type_descriptor",
+        "dsmcc_subgroup_association_descriptor"
+      ],
+      "notes": "Update signalling and descriptor syntax only; no firmware installation, update execution or carousel-file extraction.",
+      "scope": "standard-level",
+      "publisher": "ETSI / DVB",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "UNT": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/dvb/tsUNT.h",
+        "dsmcc_ssu_module_type_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCSSUModuleTypeDescriptor.h",
+        "dsmcc_subgroup_association_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCSubgroupAssociationDescriptor.h"
+      }
+    },
+    {
+      "id": "isdb-cable",
+      "title": "JCTEA STD-003 — Service Information for Digital Cable Television",
+      "version": "Edition not established by the public catalogue",
+      "standards": [
+        "ISDB"
+      ],
+      "url": "https://www.catv.or.jp/jctea/english/standards/index.html",
+      "access": "Official public standards list; full-text access and the applicable edition are not established here.",
+      "table_names": [],
+      "descriptor_names": [
+        "ISDB_advanced_cable_delivery_system_descriptor",
+        "ISDB_cable_TS_division_system_descriptor",
+        "ISDB_wired_multicarrier_transmission_descriptor"
+      ],
+      "notes": "Important implementation limit: the pinned advanced-cable descriptor header says its syntax was reconstructed from a block diagram and requires more real-signal testing. A synthetic decoder pass is not independent validation of that syntax. This is not an RF receiver claim.",
+      "scope": "standard-level",
+      "publisher": "JCTEA",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "ISDB_advanced_cable_delivery_system_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBAdvancedCableDeliverySystemDescriptor.h",
+        "ISDB_cable_TS_division_system_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBCableTSDivisionSystemDescriptor.h",
+        "ISDB_wired_multicarrier_transmission_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBWiredMultiCarrierTransmissionDescriptor.h"
+      }
+    },
+    {
+      "id": "isdb-cas",
+      "title": "ARIB STD-B61 — Conditional Access System (Second Generation) and CAS Program Download System Specifications for Digital Broadcasting",
+      "version": "2.0 Japanese; 1.4-E1 English translation",
+      "standards": [
+        "ISDB"
+      ],
+      "url": "https://www.arib.or.jp/english/std_tr/broadcasting/std-b61.html",
+      "access": "Official public access page; English translation offered free, Japanese edition may require membership or purchase.",
+      "table_names": [],
+      "descriptor_names": [
+        "ISDB_CA_startup_descriptor",
+        "ISDB_download_protection_descriptor"
+      ],
+      "notes": "Descriptor syntax only. English and Japanese editions differ; no descrambling, licence handling or CAS program execution is implemented by this association.",
+      "scope": "standard-level",
+      "publisher": "ARIB",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "ISDB_CA_startup_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBCAStartupDescriptor.h",
+        "ISDB_download_protection_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBDownloadProtectionDescriptor.h"
+      }
+    },
+    {
+      "id": "isdb-receiver",
+      "title": "ARIB STD-B63 — Receiver for Advanced Wide Band Digital Satellite Broadcasting (Desirable Specifications)",
+      "version": "1.10 Japanese; 1.10-E1 English translation",
+      "standards": [
+        "ISDB"
+      ],
+      "url": "https://www.arib.or.jp/english/std_tr/broadcasting/std-b63.html",
+      "access": "Official public access page; English translation offered free, Japanese edition may require membership or purchase.",
+      "table_names": [],
+      "descriptor_names": [
+        "ISDB_character_code_descriptor"
+      ],
+      "notes": "Character-code descriptor syntax reference. Does not imply a complete receiver implementation or automatic character-set selection for every profile.",
+      "scope": "standard-level",
+      "publisher": "ARIB",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "ISDB_character_code_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/isdb/tsISDBCharacterCodeDescriptor.h"
+      }
+    },
+    {
+      "id": "dtmb-drm",
+      "title": "ITU-T J.1041 — Digital Rights Management for Video and Audio Content Distribution: System Architecture",
+      "version": "03/2025",
+      "standards": [
+        "DTMB"
+      ],
+      "url": "https://www.itu.int/rec/T-REC-J.1041",
+      "access": "Official public catalogue with standard access/download links.",
+      "table_names": [],
+      "descriptor_names": [
+        "DTMB_DRM_descriptor"
+      ],
+      "notes": "The pinned tsDTMBDRMDescriptor.h cites ITU-T J.1041 clause 7.2.1. This is SDK provenance, not an independent clause-conformance claim. Only DRM signalling fields and original bytes are exposed; no decryption, licence acquisition, full Chinese SI/EPG, RF demodulation or AVS decoding is implied.",
+      "scope": "standard-level",
+      "publisher": "ITU-T",
+      "verification": "official-page-opened",
+      "verified_at": "2026-10-16",
+      "sdk_headers": {
+        "DTMB_DRM_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dtmb/tsDTMBDRMDescriptor.h"
+      }
     }
   ]
 }

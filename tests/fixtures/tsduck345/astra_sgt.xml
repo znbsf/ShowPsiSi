@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<SGT version="5" service_list_id="7"><service service_id="101" transport_stream_id="1" original_network_id="2" logical_channel_number="123" visible_service_flag="true" new_service_flag="true" genre_code="0x1002" /></SGT>
+</tsduck>

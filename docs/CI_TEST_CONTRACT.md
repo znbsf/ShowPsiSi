@@ -32,6 +32,9 @@ uploaded artifact. A passing earlier state does not prove a later one.
 | Layout persistence ordering | A requested keyboard resize preceded geometry polish and durable settings; immediate close could save the previous size | Test requested/rendered/persisted values separately, graceful close, delayed save, repeated keys, drag, Reset and constrained windows |
 | Evidence lost during cleanup | Wait/early-exit or cross-run assertions could bypass retention before temporary directories disappeared | Bounded report/log/screenshot retention for every failure path, without masking the original exception |
 | Settings contamination | Retained smoke used default user settings rather than an isolated test path | Explicit per-run settings; share a path only for deliberate persistence/reopen tests |
+| Dialog choice is not yet an export | Duplicate-output test saw `exporting=false` before the delayed Save dialog accepted; it judged empty feedback and replaced the pending choice | Await that choice's accepted/rejected signal, then its export terminal; delayed duplicate acceptance, repeated refusal/cancel, and unchanged output/manifest bytes and mtimes |
+| Query has not settled | Use-snapshot query clears detail without setting busy/inspecting; next timer phase could rescan before its response | Hold the real query terminal until the UI acknowledges waiting; prohibit premature analyze, then verify matching inspection |
+| Cancellation sampling window | Fixed fixture sleeps could deliver ACK and terminal between UI timer samples | Hold terminal until UI observes ACK while still busy/cancelling; acknowledge deliberately late frames through the protocol before asserting |
 | Platform geometry differences | Windows compact inspector measured 89px against the unchanged 90px minimum | Keep the threshold; measure geometry/fonts and correct layout, then retain successful platform evidence |
 
 Predicate-based polling of busy/inspection/comparison state is legitimate. Do
@@ -62,3 +65,22 @@ circular requirement to preapprove unpredictable future executable hashes.
 Unknown third-party payloads must still fail review. Preserve platform limits:
 offscreen Qt checks do not prove native Windows dialogs, a clean machine, GPU
 behavior, or WebView2 interaction.
+
+## Qt async regression reproduction
+
+The postmerge export failure was reproduced locally by delaying only the third
+(duplicate-output) dialog acceptance to 700ms: the old harness failed only
+`existing_output_refused`, matching the hosted result. The fix waits on the actual
+choice-resolution event; it does not lengthen a production timeout. Existing output
+and manifest hashes plus modification times are checked after repeated refusals.
+
+`test_snapshot_query_waits_for_terminal_before_rescan` uses a real-engine proxy,
+not fabricated decoded evidence. The proxy holds the Use-snapshot query terminal
+until the UI has acknowledged waiting, and records any premature analyze request.
+Cancellation's adversarial fixture releases its terminal only after the driver
+observes the UI's ACK check; a subsequent fixture response orders late frames.
+
+All Qt integration paths use `qt_evidence.retain_qt_evidence`. Its bounded context
+retains explicit files before temporary cleanup and preserves the original error
+if retention itself fails. The strict Qt runner executes its dedicated unit suite
+on both Linux and Windows, alongside native UI and resource-path tests.

@@ -1,5 +1,5 @@
-INCOMPLETE INVENTORY REVIEW - INTERNAL STAGING ONLY
-Binary ZIP creation/upload remains blocked by redistribution-review.json.
+WINDOWS QT/CORE PORTABLE CI CANDIDATE - SOURCE INFORMATION
+Exact reviewed dependency/source/notice bytes are in redistribution-review.json.
 
 APPLICATION
 ShowPsiSi source revision is recorded in build-information.json. A GitHub PR
@@ -25,8 +25,12 @@ manifest.json hashes every archive included in this particular stage.
 These archives include the source families' build scripts and third-party
 sources. License/copyright material is also copied under licenses/qt/ for
 convenience. Binary kit archive identities are in build-information.json.
-Final review must reconcile installed build features and any deployment-time
-QtCore relocation patch to the provided source/build information. An upstream
+Installed Qt build-feature files and their hashes/content are recorded in
+build-information.json under qt_build_configuration. The reviewed kit is shared
+and relocatable; its Qt6Core DLL was unchanged by deployment (installed/deployed
+hashes are recorded under qt_core_relocation). No local Qt source patches were
+applied. The provided source families and their build scripts correspond to
+this official 6.7.3 kit. An upstream
 link alone is not used as a substitute for accompanying the binary with source.
 Keep these sources available wherever the corresponding binary is delivered.
 

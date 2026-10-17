@@ -30,9 +30,10 @@ obligations simply because it is not a GitHub Release.
   inventory. The binary contains libRIST `v0.2.20` and VATek strings; `1.5.7`
   is the SRT compatibility version. The follow-up build-log audit below identifies
   the actual implementation as Robotweax SRT 0.2.4, not Haivision 1.5.7.
-- The final Windows `windeployqt` output and exact VC redistributable folder
-  are not available in this review. No final Qt/plugin/QML file inventory,
-  complete source bundle or clean-Windows runtime acceptance is claimed.
+- Initial preparation preceded Windows staging. The hosted reconciliations at
+  the end of this document now record the actual deployed inventory, source
+  delivery and runtime evidence. App-local VC redistribution is not selected.
+  Native interactive desktop acceptance remains separate and unverified.
 
 ## Required package materials
 
@@ -307,3 +308,60 @@ manifest, not a second local inspection of every staged binary/archive byte.
    Keep `review_complete: false` until material source/notice/runtime-origin
    gaps close. This report does not approve the first manifest or future
    manifests automatically, and does not waive native GUI acceptance.
+
+
+## Corrected hosted inventory: material review completed (2026-10-17)
+
+The corrected PR head `8911a871de72fbee61af264f7e9c22a2670e2d59` was tested as
+merge commit `9e4ab6941d5e7df07f0890b6e73f7f109c97c0d0` in
+[Windows job 117380319411](https://github.com/znbsf/ShowPsiSi/actions/runs/39027162704/job/117380319411).
+The verified diagnostic artifact SHA-256 is
+`7d228948272e6f608115a47531f1d47ea8e6b774faf0093ba32bd74f36f7dc23`.
+Its stage manifest SHA-256 is
+`9de98ec0697c2f5f3026a6605d13fd56ddf3194e7630971ff6171d3cb53c4286`.
+
+The 683-file inventory removes exactly the Microsoft D3Dcompiler DLL and eleven
+QML tooling DLLs from the first runtime inventory. Remaining third-party
+runtime bytes are unchanged. All checked-in notice/source-index bytes now
+match the stage exactly; all three source archive pins still match. The
+Windows checkout policy preserves these inputs byte-for-byte. The prepared
+notice superset covers the observed qtbase/declarative/svg modules, and no
+additional third-party binary family appeared. TSDuck/TSCore release identities
+and all 17 runtime data files remain accounted for.
+
+Installed Qt configuration is captured verbatim with SHA-256 values in
+`build-information.json`: shared, relocatable Qt 6.7.3; MSVC 19.29.30151 kit;
+OpenSSL support is **not linked** (`openssl-linked` disabled). The OpenSSL
+backend's PE imports contain Qt and system libraries, and no OpenSSL library
+is distributed. The installed and deployed QtCore SHA-256 values are identical
+(`05982ff42ba7ae3074badaee1a09ff7f45e694de815bb06b514b28c28cfe0500`),
+so there is no deployment patch to supply for this kit. Full official module
+source archives plus their build scripts and captured feature/deployment
+information accompany the candidate.
+
+The validation report is bound to the exact manifest above and reports
+`passed: true`. It includes 71 PE import inventories, relocated execution,
+startup loaded-module evidence and system prerequisites. All four checked VC
+runtime files are 14.51.36247.0, satisfying 14.51.36231.0. The system D3D compiler
+is 10.0.20348.5499 and remains outside the package. Hosted Windows Server
+execution is evidence for this CI candidate, not an independent clean consumer
+Windows 10/11 installation test. Interactive native desktop validation remains
+false and must not be represented as completed.
+
+### Exact gate record and limits
+
+`scripts/portable-licenses/redistribution-review.json` now records completion
+of the **material dependency/source/notice review** for 669 exact file hashes,
+including all third-party runtime/QML/data files, notices and source archives.
+It records the observed evidence separately from the finalized top-level
+notice/source/index text hashes, which the next CI stage must reproduce. The
+application's newly compiled EXEs are deliberately outside this reusable
+third-party map; each build's full manifest and runtime validation bind those
+EXEs independently. Changed dependencies or source/notice files fail the gate.
+
+This scoped result supports creation of the requested portable CI candidate
+with accompanying sources and documented Windows/runtime prerequisites. It is
+not blanket legal assurance, approval of an unrelated future inventory, native
+GUI acceptance, public-release authorization, or permission to ship an installer.
+The parent must publish the reviewed inputs and the next CI must revalidate
+and match them before a binary ZIP is uploaded.

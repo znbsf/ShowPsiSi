@@ -1,6 +1,5 @@
 {
-  "scope": "TSDuck/TSCore Windows runtime notices and Qt 6.7.3 source-family notice superset; exact Windows Qt inventory review remains incomplete",
-  "review_complete": false,
+  "scope": "Verified TSDuck/TSCore notices and Qt 6.7.3 source-family provenance; exact runtime distribution review is in redistribution-review.json",
   "upstream_build_evidence": [
     "https://github.com/tsduck/tsduck/actions/runs/34712521690/job/103603758775",
     "https://github.com/tsduck/rist-installer/actions/runs/34655754940/job/103447672949"
@@ -144,5 +143,6 @@
       "publisher_checksum_verified": true
     }
   ],
-  "qt_notice_collection": "licenses/qt/source-attributions.json"
+  "qt_notice_collection": "licenses/qt/source-attributions.json",
+  "runtime_review_record": "redistribution-review.json"
 }

@@ -1,7 +1,8 @@
-INCOMPLETE INVENTORY REVIEW - INTERNAL STAGING ONLY
-Binary ZIP creation/upload remains blocked by redistribution-review.json.
-The notices below describe the selected licensing routes. This warning must
-remain until the exact final files and source delivery have been reviewed.
+WINDOWS QT/CORE PORTABLE CI CANDIDATE - THIRD-PARTY NOTICES
+The selected licensing routes and exact reviewed dependency/source/notice bytes
+are recorded in redistribution-review.json. Changed dependencies or materials
+require a new review. This candidate is not a public release or installer;
+native interactive Windows desktop acceptance is recorded separately.
 
 ShowPsiSi: Copyright and MIT license in LICENSE and licenses/ShowPsiSi-MIT.txt.
 nlohmann/json 3.11.3: MIT; see licenses/nlohmann-json-MIT.txt.
@@ -53,5 +54,5 @@ higher minimum if build-information.json states one. Windows supplies its OS
 libraries, including the system D3D compiler. Do not copy Microsoft runtime
 DLLs from System32 into this package. The official runtime download and its
 terms are Microsoft's responsibility; this package does not install it.
-The first observed stage still contained D3Dcompiler_47.dll. Its exclusion and
-system-prerequisite verification remain mandatory before this review closes.
+This candidate excludes D3Dcompiler_47.dll and all app-local Microsoft VC DLLs.
+Its runtime checks require the system-provided dependencies.

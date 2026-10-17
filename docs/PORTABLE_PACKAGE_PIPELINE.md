@@ -94,10 +94,12 @@ third-party files and altered notices invalidate the review. The three publisher
 information/the manifest. A hash mismatch stops staging. Additional source
 archives may be supplied in the explicit license bundle's `sources/` directory.
 
-The checked-in notice/source templates explicitly remain incomplete and the
-review remains false until the exact staged component inventory is satisfied.
-See [license review](PORTABLE_LICENSE_REVIEW.md). CI retains non-binary validation
-and manifest evidence even when ZIP creation/upload is blocked. The workflow
+The checked-in review now binds the 669 third-party runtime/source/notice files
+reconciled from the successful Windows stage, with the final audited notice and
+source-index bytes. It covers this CI candidate only; changes to those files
+close the archive gate again. See [license review](PORTABLE_LICENSE_REVIEW.md).
+CI retains non-binary validation and manifest evidence even when ZIP creation/upload
+is blocked. A fresh successful run must match the review and produce the actual ZIP. The workflow
 has no release publication or installer step.
 
 ## Evidence boundaries
@@ -107,8 +109,20 @@ Qt integration suite and focused relocation/error-path tests. Local Python tests
 cover manifest tampering, required files, forbidden test payloads, stale validation,
 unknown runtime files, changed notices and fail-closed archive creation.
 
-The new Windows staging/dependency/runtime/startup checks require a hosted run at
-the final source commit. Offscreen checks and visible process startup are not
+Hosted run [39027162704](https://github.com/znbsf/ShowPsiSi/actions/runs/39027162704)
+passed all five jobs for PR head `8911a871de72fbee61af264f7e9c22a2670e2d59`
+(actual tested merge source `9e4ab6941d5e7df07f0890b6e73f7f109c97c0d0`).
+Windows staging, PE closure, production-core operations, Qt offscreen checks,
+and relocated CMD/direct EXE startup passed. The 683-file manifest SHA-256 was
+`9de98ec0697c2f5f3026a6605d13fd56ddf3194e7630971ff6171d3cb53c4286`.
+The runner loaded the checked VC runtime from System32 at version 14.51.36247.0;
+system D3Dcompiler_47.dll was version 10.0.20348.5499. Evidence artifact
+`12098549620` has SHA-256
+`7d228948272e6f608115a47531f1d47ea8e6b774faf0093ba32bd74f36f7dc23`.
+The redistribution gate remained closed and no application ZIP was uploaded in
+that run. Any final source revision must rerun validation and the archive gate.
+
+Offscreen checks and visible process startup are not
 Windows native file-picker/Save/Cancel/overwrite/GPU/desktop interaction acceptance.
 Read-only Windows installation-directory ACL behavior, clean Windows-machine
 acceptance, signing, macOS and Tauri/WebView2 remain separate unverified gates.

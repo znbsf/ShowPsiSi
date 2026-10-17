@@ -20,7 +20,7 @@ ApplicationWindow {
     property color selectionSurface: lightTheme ? "#dceafd" : "#173951"
     property color ink: lightTheme ? "#202733" : "#dce1e9"
     property color muted: lightTheme ? "#566171" : "#abb4c2"
-    property color controlBorder: lightTheme ? "#8590a0" : "#778496"
+    property color controlBorder: lightTheme ? "#6f7b8a" : "#778496"
     property color blue: lightTheme ? "#155fbe" : "#78acfa"
     property color warningColor: lightTheme ? "#805900" : "#e2c16d"
     color: surface
@@ -876,7 +876,7 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 2
-            color: !control.enabled ? raised : control.primary ? (control.hovered ? "#086fae" : "#006fb9") : (control.hovered ? dividerColor : raised)
+            color: !control.enabled ? raised : control.primary ? (control.hovered ? "#086fae" : "#006fb9") : (control.hovered ? hoverSurface : raised)
             border.color: control.activeFocus ? blue : controlBorder
             border.width: control.activeFocus ? focusWidth : 1
         }

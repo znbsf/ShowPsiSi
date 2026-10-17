@@ -31,6 +31,9 @@ All development used the assistant's own Linux cloud environment.
 
 - Strict native gate: 176 tests passed, zero skips: engine30, service metadata15,
   section12, protocol43, SDK6, HTTP6, cancellation17, MCP17, portable25, icons5.
+- Dual-theme contrast: 5 static regressions passed, resolving CSS cascade and QML
+  theme expressions separately. Review found genuine light control-border failures;
+  both UIs now meet the unchanged 3:1 control and 4.5:1 text gates on actual states.
 - Web: 31 real-engine sandboxed Chromium tests passed, including immediate theme
   contrast, keyboard behavior, metadata, 101 logical-table pagination and timing
   provenance. Browser results do not establish native Tauri/WebView2 acceptance.

@@ -1259,7 +1259,7 @@ footer:has(#notice.error) { height: auto; min-height: 28px; padding-top: 4px; pa
   color-scheme: light; --bg: #f5f6f8; --surface: #ffffff; --raised: #e5e7eb;
   --border: #c7ccd5; --input: #ffffff; --hover: #eaf0f8; --text: #202938;
   --muted: #536174; --accent: #185bb2; --selected: #dceaff;
-  --control-border: #8a97a8; --control-border-hover: #506c90;
+  --control-border: #6f7b8a; --control-border-hover: #506c90;
   --green: #176747; --red: #ae2638; --syntax-label: #22558b;
   --syntax-value: #71501f; --syntax-private: #75419f; --syntax-tag: #155ca2;
   --syntax-string: #8a4319;

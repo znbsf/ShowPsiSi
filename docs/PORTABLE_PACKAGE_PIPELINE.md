@@ -122,6 +122,19 @@ system D3Dcompiler_47.dll was version 10.0.20348.5499. Evidence artifact
 The redistribution gate remained closed and no application ZIP was uploaded in
 that run. Any final source revision must rerun validation and the archive gate.
 
+The subsequent archive run [39027782972](https://github.com/znbsf/ShowPsiSi/actions/runs/39027782972)
+passed all five jobs for head `dbed99d1e4704e5e04719199b8b4fb112fff60a3`
+(tested merge source `31b0e10e82dbcb392bd0c78b9b3df09d7bd0e96a`).
+Its [downloadable CI artifact](https://github.com/znbsf/ShowPsiSi/actions/runs/39027782972/artifacts/12098889446)
+contains the 111,655,005-byte portable ZIP and external checksum. Downloaded ZIP
+SHA-256 is `be7457c0999257305034ac7982733df30664fa4545e5bcc960b3b899d761aec3`;
+manifest SHA-256 is `c728caaeac054c486394c453ea807bd3c2dc26227a672786f1894d34776adaf4`.
+All 683 file hashes/sizes, ZIP CRC, 669 reviewed entries, three source archives,
+and the exact passing validation-to-manifest binding were independently checked
+after download. Only the two production executables are present. This artifact
+expires on 2026-10-31 and proves this revision only; later UX integration must
+produce and verify a new package before final handoff.
+
 Offscreen checks and visible process startup are not
 Windows native file-picker/Save/Cancel/overwrite/GPU/desktop interaction acceptance.
 Read-only Windows installation-directory ACL behavior, clean Windows-machine

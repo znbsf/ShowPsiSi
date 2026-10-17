@@ -124,3 +124,21 @@ fixture directory documents the official compiler commands and expected bytes.
 Configure the compiler runtime paths as described in the fixture README.
 Registered decoder counts are not a standards-conformance claim. See
 [protocol coverage](../docs/PROTOCOL_COVERAGE.md) for measured scope and limits.
+
+
+## Standards-informed workbench checks
+
+`python -m unittest discover -s tests -p test_ui_contrast.py -v` checks selected
+actual authored CSS/QML text, focus and control-border color pairs. It is a
+regression test, not a complete accessibility-conformance audit.
+
+The native Qt smoke includes Home/End, collapse/expand/child/parent and Tab exit.
+The real-engine Chromium suite includes roving tree focus, pointer isolation,
+repeated disclosure, filtered/empty states and the actual Chromium accessibility
+tree. Run it using the existing `test_web_ui.py` environment above.
+
+`python tests/capture_ui_ux.py` optionally captures 28/32px density comparisons at
+1440×900, 1000×680 and 520×1000 plus a real narrow validation error. It requires the
+same live-engine/sandboxed Chromium setup and writes to
+`artifacts/ux-standards/web/`. These are browser screenshots, not native Tauri
+acceptance. See [the scoped UX review](../docs/UI_UX_STANDARDS.md).

@@ -24,13 +24,22 @@ ApplicationWindow {
     palette.highlightedText: "white"
     palette.mid: "#454545"
     property color ink: "#cccccc"
-    property color muted: "#969696"
-    property color blue: "#3794ff"
+    property color muted: "#a3a3a3"
+    property color controlBorder: "#7b8799"
+    property color blue: "#78acfa"
+    // Compact desktop tokens; not mobile target-size defaults.
+    readonly property int spaceUnit: 4
+    readonly property int fieldFontSize: 12
+    readonly property int treeRowHeight: 28
+    readonly property int focusWidth: 2
     property color addedColor: "#b5cea8"
     property color removedColor: "#f48771"
     property color changedColor: "#dcdcaa"
     property var savedLayout: core.loadLayout()
     property bool layoutReady: false
+    // Keyboard requests precede SplitView polish; preserve intent until saved.
+    property real pendingInspectorSize: -1
+    property real pendingTimelineSize: -1
     property var comparison: ({})
     property var selectedChange: null
     property string comparisonSide: "after"
@@ -449,22 +458,35 @@ ApplicationWindow {
     function rememberLayout() {
         if (!layoutReady)
             return;
-        let value = { version: 1, explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height };
-        if (!core.saveLayout(value))
+        let value = { version: 1, explorer: explorerPane.width,
+            inspector: pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width,
+            timeline: pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height };
+        if (!core.saveLayout(value)) {
             notice = "Layout could not be saved. The current layout remains usable.";
+        } else {
+            pendingInspectorSize = -1;
+            pendingTimelineSize = -1;
+        }
     }
     function resetLayout() {
+        layoutSaveTimer.stop();
+        pendingInspectorSize = -1;
+        pendingTimelineSize = -1;
         explorerPane.SplitView.preferredWidth = 180;
         inspectorPane.SplitView.preferredWidth = 520;
         timelinePane.SplitView.preferredHeight = 105;
         notice = core.resetLayout() ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.";
     }
     function resizeInspector(delta) {
-        inspectorPane.SplitView.preferredWidth = Math.max(330, Math.min(workspace.width - explorerPane.width - 322, inspectorPane.width + delta));
+        pendingInspectorSize = Math.max(330, Math.min(workspace.width - explorerPane.width - 322,
+            (pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width) + delta));
+        inspectorPane.SplitView.preferredWidth = pendingInspectorSize;
         layoutSaveTimer.restart();
     }
     function resizeTimeline(delta) {
-        timelinePane.SplitView.preferredHeight = Math.max(105, Math.min(350, verticalWorkspace.height - 306, timelinePane.height + delta));
+        pendingTimelineSize = Math.max(105, Math.min(350, verticalWorkspace.height - 306,
+            (pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height) + delta));
+        timelinePane.SplitView.preferredHeight = pendingTimelineSize;
         layoutSaveTimer.restart();
     }
     function currentPacket() {
@@ -682,6 +704,26 @@ ApplicationWindow {
             radius: 2
         }
     }
+    component FieldInput: TextField {
+        id: fieldInput
+        background: Rectangle {
+            radius: 2
+            color: "#181818"
+            border.color: fieldInput.activeFocus ? blue : controlBorder
+            border.width: fieldInput.activeFocus ? focusWidth : 1
+            opacity: fieldInput.enabled ? 1 : 0.4
+        }
+    }
+    component FieldChoice: ComboBox {
+        id: fieldChoice
+        background: Rectangle {
+            radius: 2
+            color: "#252526"
+            border.color: fieldChoice.activeFocus ? blue : controlBorder
+            border.width: fieldChoice.activeFocus ? focusWidth : 1
+            opacity: fieldChoice.enabled ? 1 : 0.4
+        }
+    }
     component TinyLabel: PlainLabel {
         color: muted
         font.pixelSize: 11
@@ -704,12 +746,14 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 2
-            color: !control.enabled ? "#252526" : control.primary ? (control.hovered ? "#1684bb" : "#007acc") : (control.hovered ? "#333333" : "#252526")
-            border.color: control.activeFocus ? blue : "#454545"
+            color: !control.enabled ? "#252526" : control.primary ? (control.hovered ? "#086fae" : "#006fb9") : (control.hovered ? "#333333" : "#252526")
+            border.color: control.activeFocus ? blue : controlBorder
+            border.width: control.activeFocus ? focusWidth : 1
         }
     }
     component NavItem: ItemDelegate {
         id: nav
+        property bool keyboardCurrent: false
         implicitHeight: 29
         focusPolicy: Qt.StrongFocus
         contentItem: PlainLabel {
@@ -721,7 +765,8 @@ ApplicationWindow {
         }
         background: Rectangle {
             color: nav.highlighted ? "#37373d" : nav.hovered ? "#2a2d2e" : "transparent"
-            border.color: nav.activeFocus ? blue : "transparent"
+            border.color: nav.activeFocus || nav.keyboardCurrent ? blue : "transparent"
+            border.width: nav.activeFocus || nav.keyboardCurrent ? focusWidth : 0
         }
     }
     component Card: Rectangle {
@@ -926,7 +971,30 @@ ApplicationWindow {
                 treeSearch.clear();
                 let collapseRestored = JSON.stringify(collapsed) === collapsedBefore && treeRows.length === treeBefore;
                 collapsed = savedCollapsed;
+                tree.forceActiveFocus();
+                core.key("Home");
+                let firstIndex = tree.currentIndex;
+                core.key("End");
+                let endReached = tree.currentIndex === treeRows.length - 1;
+                core.key("Home");
+                let branchIndex = treeRows.findIndex(function (row) { return row.branch; });
+                tree.currentIndex = branchIndex;
+                core.key("Left");
+                let folded = treeRows[tree.currentIndex].closed;
+                core.key("Right");
+                let expanded = !treeRows[tree.currentIndex].closed;
+                let parentIndex = tree.currentIndex;
+                core.key("Right");
+                let entered = tree.currentIndex === parentIndex + 1 && treeRows[tree.currentIndex].depth > treeRows[parentIndex].depth;
+                core.key("Left");
+                let parentReached = tree.currentIndex === parentIndex;
+                core.key("Tab");
+                let tabExits = !tree.activeFocus;
+                collapsed = savedCollapsed;
                 searchChecks = {
+                    tree_home_end: firstIndex === 0 && endReached,
+                    tree_expand_enter_parent: folded && expanded && entered && parentReached,
+                    tree_tab_exits: tabExits,
                     record_names: names,
                     identifiers: identifiers,
                     empty_preserves_selection: empty,
@@ -1153,7 +1221,7 @@ ApplicationWindow {
     }
     Timer {
         id: layoutSaveTimer
-        interval: 100
+        interval: core.env("SHOWPSISI_SCRIPT").indexOf("layout-") === 0 && core.env("SHOWPSISI_TEST_LAYOUT_SAVE_DELAY") ? Number(core.env("SHOWPSISI_TEST_LAYOUT_SAVE_DELAY")) : 100
         onTriggered: rememberLayout()
     }
     Timer {
@@ -1164,12 +1232,37 @@ ApplicationWindow {
         property real originalInspector: 0
         property real originalTimeline: 0
         property bool dragged: false
+        property int acknowledgementAttempts: 0
         onTriggered: {
             let mode = core.env("SHOWPSISI_SCRIPT");
             if (phase === 0) {
                 originalInspector = inspectorPane.width;
                 originalTimeline = timelinePane.height;
-                if (mode === "layout-set") {
+                if (mode === "layout-close") {
+                    let expectedInspector = inspectorPane.width + 48;
+                    let expectedTimeline = timelinePane.height + 48;
+                    core.key("Alt+Left");
+                    core.key("Alt+Left");
+                    core.key("Alt+Up");
+                    core.key("Alt+Up");
+                    win.close();
+                    let saved = core.loadLayout();
+                    core.testResult(JSON.stringify({passed: saved.inspector === expectedInspector && saved.timeline === expectedTimeline,
+                        saved:saved, expectedInspector:expectedInspector, expectedTimeline:expectedTimeline}));
+                    stop();
+                    return;
+                }
+                if (mode === "layout-key-drag" || mode === "layout-key-reset") {
+                    core.key("Alt+Left");
+                    core.key("Alt+Up");
+                    if (mode === "layout-key-drag") {
+                        core.drag("inspectorDivider", -40, 0);
+                        core.drag("timelineDivider", 0, -30);
+                    } else core.click("resetLayout");
+                } else if (mode === "layout-key-constrained") {
+                    win.width = 1000;
+                    win.height = 680;
+                } else if (mode === "layout-set") {
                     core.drag("inspectorDivider", -60, 0);
                     core.drag("timelineDivider", 0, -40);
                 } else if (mode === "layout-reset") {
@@ -1181,6 +1274,23 @@ ApplicationWindow {
                 phase++;
                 return;
             }
+            if (mode === "layout-key-drag" || mode === "layout-key-reset" || mode === "layout-key-constrained") {
+                let expectedInspector = inspectorPane.width, expectedTimeline = timelinePane.height;
+                let cleared = pendingInspectorSize < 0 && pendingTimelineSize < 0;
+                if (mode === "layout-key-reset") { expectedInspector = 520; expectedTimeline = 105; }
+                if (mode === "layout-key-constrained") {
+                    expectedInspector = Math.max(330, workspace.width - explorerPane.width - 322);
+                    expectedTimeline = Math.max(105, Math.min(350, verticalWorkspace.height - 306));
+                    for (let index = 0; index < 40; ++index) { core.key("Alt+Left"); core.key("Alt+Up"); }
+                    cleared = true;
+                }
+                win.close();
+                let saved = core.loadLayout();
+                core.testResult(JSON.stringify({passed: cleared && saved.inspector === expectedInspector && saved.timeline === expectedTimeline,
+                    saved:saved, expectedInspector:expectedInspector, expectedTimeline:expectedTimeline, pendingCleared:cleared}));
+                stop();
+                return;
+            }
             if (phase === 1 && mode === "layout-set") {
                 dragged = inspectorPane.width > originalInspector + 30 && timelinePane.height > originalTimeline + 20;
                 core.key("Alt+Left");
@@ -1188,14 +1298,20 @@ ApplicationWindow {
                 phase++;
                 return;
             }
+            let persisted = core.loadLayout();
+            let acknowledged = !layoutSaveTimer.running && Math.abs(persisted.inspector - inspectorPane.width) <= 1
+                && Math.abs(persisted.timeline - timelinePane.height) <= 1 && Math.abs(persisted.explorer - explorerPane.width) <= 1;
+            if (mode === "layout-set" && !acknowledged && ++acknowledgementAttempts < 20) return;
+            if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             core.testResult(JSON.stringify({
-                passed: recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                passed: (mode !== "layout-set" || acknowledged) && recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
                 explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height,
                 records: recordPane.width, workspace: workspace.width, dragged: dragged,
-                saved: core.loadLayout(),
+                windowWidth: win.width, windowHeight: win.height, savePending: layoutSaveTimer.running,
+                persistedAcknowledged: acknowledged, acknowledgementAttempts: acknowledgementAttempts,
+                saved: persisted,
                 invalid_rejected: !core.saveLayout({version:1,explorer:-1,inspector:520,timeline:105}) && !core.saveLayout({version:99,explorer:180,inspector:520,timeline:105})
             }));
-            if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             stop();
         }
     }
@@ -1205,6 +1321,7 @@ ApplicationWindow {
         repeat: true
         property real phase: 0
         property var checks: ({})
+        property var layoutMetrics: ({})
         property var changedService: null
         property var initialPacket: null
         onTriggered: {
@@ -1263,6 +1380,15 @@ ApplicationWindow {
                 checks.after_cutoff = detail.native_table_at_packet === Number(toPacket.text);
                 checks.after_name = chosenService().name === changedService.after.value.name;
                 checks.tree_height = tree.height >= 90;
+                layoutMetrics = {windowWidth: win.width, windowHeight: win.height,
+                    inspectorWidth: inspectorPane.width, inspectorHeight: inspectorPane.height,
+                    treeHeight: tree.height, timelineHeight: timelinePane.height,
+                    compact: compactInspector, titleFont: sectionTitle.font.toString(),
+                    searchFont: treeSearch.font.toString(), searchHeight: treeSearch.height,
+                    inspectorChildren: Array.from(inspectorColumn.children).filter(function(item) { return item.visible; }).map(function(item) {
+                        return {type: item.toString(), x:item.x, y:item.y, width:item.width, height:item.height,
+                            implicitHeight:item.implicitHeight, text:item.text || ""};
+                    })};
                 core.key("F6");
                 checks.inspector_to_results = recordList.activeFocus;
                 core.key("F6");
@@ -1307,7 +1433,7 @@ ApplicationWindow {
                 phase++;
             } else {
                 checks.rescan_clears = !comparison.source && !selectedChange && !fromPacket.text && !toPacket.text;
-                core.testResult(JSON.stringify({passed:Object.keys(checks).every(function (key) { return checks[key]; }),checks:checks}));
+                core.testResult(JSON.stringify({passed:Object.keys(checks).every(function (key) { return checks[key]; }),checks:checks,layout:layoutMetrics}));
                 stop();
             }
         }
@@ -1507,7 +1633,7 @@ ApplicationWindow {
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
             lifecycleTestTimer.start();
     }
-    onClosing: if (layoutSaveTimer.running) rememberLayout()
+    onClosing: if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout()
 
     Shortcut {
         sequence: "Ctrl+K"
@@ -1663,7 +1789,7 @@ ApplicationWindow {
                 color: muted
                 font.pixelSize: 11
             }
-            ComboBox {
+            FieldChoice {
                 id: standardChoice
                 objectName: "standards"
                 Layout.preferredWidth: 136
@@ -1711,7 +1837,7 @@ ApplicationWindow {
                     text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
                 }
             }
-            TextField {
+            FieldInput {
                 id: extraPids
                 objectName: "extraPids"
                 Layout.preferredWidth: 160
@@ -1727,7 +1853,7 @@ ApplicationWindow {
                 }
                 onAccepted: scan()
             }
-            TextField {
+            FieldInput {
                 id: source
                 enabled: backendReady
                 Layout.fillWidth: true
@@ -1814,7 +1940,10 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical
-            onResizingChanged: if (!resizing) layoutSaveTimer.restart()
+            onResizingChanged: {
+                if (resizing) pendingTimelineSize = -1;
+                else layoutSaveTimer.restart();
+            }
             handle: Rectangle {
                 objectName: "timelineDivider"
                 implicitHeight: 6
@@ -1825,7 +1954,10 @@ ApplicationWindow {
             SplitView.fillHeight: true
             SplitView.minimumHeight: tab === "Changes" ? 380 : 300
             orientation: Qt.Horizontal
-            onResizingChanged: if (!resizing) layoutSaveTimer.restart()
+            onResizingChanged: {
+                if (resizing) pendingInspectorSize = -1;
+                else layoutSaveTimer.restart();
+            }
             handle: Rectangle {
                 objectName: x < workspace.width / 3 ? "explorerDivider" : "inspectorDivider"
                 implicitWidth: 6
@@ -1929,7 +2061,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                         }
                     }
-                    TextField {
+                    FieldInput {
                         id: recordSearch
                         objectName: "recordSearch"
                         Layout.fillWidth: true
@@ -1956,7 +2088,7 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             PlainLabel { text: "A"; color: muted; Layout.preferredWidth: 14 }
-                            TextField {
+                            FieldInput {
                                 id: fromPacket
                                 objectName: "fromPacket"
                                 Layout.fillWidth: true
@@ -1980,7 +2112,7 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             PlainLabel { text: "B"; color: muted; Layout.preferredWidth: 14 }
-                            TextField {
+                            FieldInput {
                                 id: toPacket
                                 objectName: "toPacket"
                                 Layout.fillWidth: true
@@ -2003,7 +2135,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            ComboBox {
+                            FieldChoice {
                                 id: changeKind
                                 objectName: "changeKind"
                                 Layout.fillWidth: true
@@ -2163,9 +2295,10 @@ ApplicationWindow {
                 SplitView.minimumWidth: 330
                 SplitView.maximumWidth: 1600
                 ColumnLayout {
+                    id: inspectorColumn
                     anchors.fill: parent
                     anchors.margins: 10
-                    spacing: compactInspector ? 5 : 8
+                    spacing: compactInspector ? spaceUnit : spaceUnit * 2
                     RowLayout {
                         Layout.fillWidth: true
                         TinyLabel {
@@ -2293,7 +2426,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                         }
                     }
-                    TextField {
+                    FieldInput {
                         id: treeSearch
                         objectName: "treeSearch"
                         visible: inspectorView === "Structure"
@@ -2318,8 +2451,23 @@ ApplicationWindow {
                         color: muted
                         font.pixelSize: 11
                     }
+                    PlainLabel {
+                        visible: inspectorView === "Structure"
+                        Layout.fillWidth: true
+                        text: "↑ ↓ Navigate · ← → Fold / enter · Home / End"
+                        color: muted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
                     ListView {
                         id: tree
+                        objectName: "fieldTree"
+                        Accessible.role: Accessible.List
+                        Accessible.name: "Decoded PSI / SI fields"
+                        Accessible.description: "Hierarchical fields. Use arrow keys to navigate and expand, Home and End to jump. Search with Control Shift K."
+                        onCountChanged: {
+                            if (count && (currentIndex < 0 || currentIndex >= count)) currentIndex = 0;
+                        }
                         visible: inspectorView === "Structure"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -2331,8 +2479,17 @@ ApplicationWindow {
                         ScrollBar.vertical: ScrollBar {}
                         Keys.onRightPressed: {
                             let r = treeRows[currentIndex];
-                            if (r && r.branch && r.closed)
-                                toggle(r.path);
+                            if (r && r.branch) {
+                                if (r.closed) toggle(r.path);
+                                else if (currentIndex + 1 < treeRows.length && treeRows[currentIndex + 1].depth > r.depth)
+                                    currentIndex++;
+                            }
+                        }
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
+                                if (count) currentIndex = event.key === Qt.Key_Home ? 0 : count - 1;
+                                event.accepted = true;
+                            }
                         }
                         Keys.onLeftPressed: {
                             let r = treeRows[currentIndex];
@@ -2354,11 +2511,18 @@ ApplicationWindow {
                         delegate: NavItem {
                             required property var modelData
                             required property int index
-                            highlighted: tree.currentIndex === index && tree.activeFocus
+                            highlighted: tree.currentIndex === index
+                            keyboardCurrent: tree.currentIndex === index && tree.activeFocus
+                            Accessible.role: Accessible.ListItem
+                            Accessible.name: modelData.label + (modelData.value ? ": " + modelData.value : "")
+                            Accessible.description: "Level " + (modelData.depth + 1) + (modelData.branch ? (modelData.closed ? ", collapsed" : ", expanded") : "")
+                            Accessible.focusable: true
+                            Accessible.focused: keyboardCurrent
+                            Accessible.onPressAction: clicked()
                             width: ListView.view.width
-                            height: 30
-                            leftPadding: 4 + modelData.depth * 13
-                            focusPolicy: Qt.StrongFocus
+                            height: treeRowHeight
+                            leftPadding: spaceUnit + modelData.depth * 16
+                            focusPolicy: Qt.NoFocus
                             contentItem: RowLayout {
                                 spacing: 5
                                 PlainLabel {
@@ -2369,21 +2533,22 @@ ApplicationWindow {
                                 PlainLabel {
                                     text: modelData.label
                                     color: modelData.branch ? "#4ec9b0" : ink
-                                    font.pixelSize: 11
+                                    font.pixelSize: fieldFontSize
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
                                 }
                                 PlainLabel {
                                     text: modelData.value
-                                    color: modelData.kind === "number" ? "#b5cea8" : modelData.kind === "string" ? "#ce9178" : muted
+                                    color: modelData.kind === "number" ? "#b5cea8" : modelData.kind === "string" ? "#d6a089" : muted
                                     font.family: "monospace"
-                                    font.pixelSize: 11
+                                    font.pixelSize: fieldFontSize
                                     elide: Text.ElideRight
                                     Layout.maximumWidth: Math.max(90, tree.width * 0.48)
                                 }
                             }
                             onClicked: {
                                 tree.currentIndex = index;
+                                tree.forceActiveFocus();
                                 if (modelData.branch)
                                     toggle(modelData.path);
                             }
@@ -2446,23 +2611,29 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
-                    Action {
-                        objectName: "specifications"
-                        text: specificationLinks.length ? "Official specifications… (" + specificationLinks.length + ")" : "No verified specification link"
+                    GridLayout {
                         Layout.fillWidth: true
-                        enabled: specificationLinks.length > 0
-                        onClicked: specificationDialog.open()
-                    }
-                    Action {
-                        objectName: "rename"
-                        visible: !selectedChange
-                        text: "Rename service…"
-                        Layout.fillWidth: true
-                        enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
-                        onClicked: {
-                            preview = {};
-                            renameName.text = chosenService().name || "";
-                            renameDialog.open();
+                        columns: compactInspector ? 2 : 1
+                        columnSpacing: spaceUnit * 2
+                        rowSpacing: spaceUnit
+                        Action {
+                            objectName: "specifications"
+                            text: specificationLinks.length ? "Official specifications… (" + specificationLinks.length + ")" : "No verified specification link"
+                            Layout.fillWidth: true
+                            enabled: specificationLinks.length > 0
+                            onClicked: specificationDialog.open()
+                        }
+                        Action {
+                            objectName: "rename"
+                            visible: !selectedChange
+                            text: "Rename service…"
+                            Layout.fillWidth: true
+                            enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
+                            onClicked: {
+                                preview = {};
+                                renameName.text = chosenService().name || "";
+                                renameDialog.open();
+                            }
                         }
                     }
                 }
@@ -2669,7 +2840,7 @@ ApplicationWindow {
                 color: muted
                 font.pixelSize: 11
             }
-            TextField {
+            FieldInput {
                 id: renameName
                 Layout.fillWidth: true
                 placeholderText: "New service name"
@@ -2699,7 +2870,7 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 color: ink
             }
-            ComboBox {
+            FieldChoice {
                 id: exportFormat
                 objectName: "exportFormat"
                 Layout.fillWidth: true

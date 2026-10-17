@@ -54,22 +54,39 @@ class NativeQtTests(unittest.TestCase):
                    SHOWPSISI_SCREENSHOT=str(screenshot), SHOWPSISI_AUTO='1' if auto else '0',
                    SHOWPSISI_SETTINGS_PATH=str(settings or directory / 'settings.ini'))
         env.update(overrides or {})
+        report = None
+        diagnostics = ''
+        qml_errors = ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed')
         with (directory / (script + '.log')).open('w+', encoding='utf-8') as log:
             process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
             try:
                 report = wait_for_qt_result(result, process, 25, on_running)
+                if script in ('layout-set', 'layout-read', 'layout-small', 'layout-reset'):
+                    self.assertTrue(screenshot.is_file(), 'Layout result preceded its screenshot')
+                    self.assertEqual(screenshot.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
             finally:
-                process.terminate()
+                if process.poll() is None:
+                    process.terminate()  # Forced cleanup is not a graceful window-close test.
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait(timeout=5)
-            log.seek(0)
-            diagnostics = log.read()
+                log.seek(0)
+                diagnostics = log.read()
+                # Preserve timeout/exit/QML failures too, before temporary cleanup.
+                evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
+                retain = (not report or not report.get('passed') or script == 'comparison-small'
+                          or script.startswith('layout-') or any(error in diagnostics for error in qml_errors))
+                if evidence_root and retain:
+                    destination = Path(evidence_root) / self._testMethodName / script
+                    destination.mkdir(parents=True, exist_ok=True)
+                    for source in (result, screenshot, directory / (script + '.log')):
+                        if source.is_file() and source.stat().st_size <= 5 * 1024 * 1024:
+                            shutil.copy2(source, destination / source.name)
         self.assertTrue(result.exists(), diagnostics)
         self.assertTrue(report['passed'], report)
-        for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
+        for error in qml_errors:
             self.assertNotIn(error, diagnostics)
         return report
 
@@ -235,9 +252,26 @@ for line in sys.stdin:
                          'tree_search_to_tree', 'cutoff_enter_compares'):
                 self.assertTrue(report['checks'][name], report)
 
+    def test_rapid_keyboard_resize_graceful_close_persists_intent(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-layout-close-') as directory:
+            closed = self.run_script('layout-close', directory, auto=False)
+            reopened = self.run_script('layout-read', directory, auto=False)
+            self.assertEqual(reopened['inspector'], closed['expectedInspector'])
+            self.assertEqual(reopened['timeline'], closed['expectedTimeline'])
+
+    def test_pending_keyboard_layout_yields_to_drag_reset_and_constraints(self):
+        for script in ('layout-key-drag', 'layout-key-reset', 'layout-key-constrained'):
+            with self.subTest(script=script), tempfile.TemporaryDirectory(prefix='showpsisi-qt-intent-') as directory:
+                report = self.run_script(script, directory, auto=False)
+                reopened = self.run_script('layout-read', directory, auto=False)
+                self.assertEqual(reopened['saved'], report['saved'])
+
     def test_layout_drag_keyboard_persistence_and_reset(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-layout-') as directory:
-            configured = self.run_script('layout-set', directory, auto=False)
+            configured = self.run_script('layout-set', directory, auto=False,
+                                         overrides={'SHOWPSISI_TEST_LAYOUT_SAVE_DELAY': '700'})
+            self.assertTrue(configured['persistedAcknowledged'])
+            self.assertGreater(configured['acknowledgementAttempts'], 0)
             self.assertTrue(configured['dragged'])
             self.assertTrue(configured['invalid_rejected'])
             restored = self.run_script('layout-read', directory, auto=False)
@@ -517,7 +551,9 @@ for line in sys.stdin:
             self.assertEqual(report['standards_context'], standards)
             self.assertTrue(report['native_tree'])
             self.assertTrue(report['history_cutoff'])
-            self.assertEqual(len(report['search']), 8)
+            self.assertEqual(len(report['search']), 11)
+            for check in ('tree_home_end', 'tree_expand_enter_parent', 'tree_tab_exits'):
+                self.assertTrue(report['search'][check], check)
             self.assertTrue(all(report['search'].values()), report['search'])
             self.assertGreater(report['references'], 0, 'Expected verified SDT specification metadata')
             self.assertEqual(report['services'], 6)
@@ -579,6 +615,66 @@ class QtResultPublicationTests(unittest.TestCase):
     def test_missing_result_fails_at_original_deadline(self):
         with self.assertRaisesRegex(AssertionError, 'content=None'):
             self.wait([FileNotFoundError()] * 10)
+
+
+class QtEvidenceRetentionTests(unittest.TestCase):
+    def exercise(self, complete=False, oversize=False):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run, evidence = root / 'run', root / 'evidence'
+            run.mkdir()
+            binary = root / ('fake-qt' + EXE)
+            binary.touch()
+            process = mock.MagicMock()
+            process.poll.return_value = None
+            process.wait.return_value = 0
+            def publish(*args):
+                (run / 'comparison.json').write_text('{"passed":true}' if complete else '{')
+                (run / 'comparison.log').write_text('ReferenceError: injected QML failure' if complete else 'injected loader context')
+                if oversize:
+                    with (run / 'comparison.png').open('wb') as output:
+                        output.truncate(5 * 1024 * 1024 + 1)
+                if not complete:
+                    raise AssertionError('injected incomplete-result failure')
+                return {'passed': True}
+            with mock.patch.dict(os.environ, SHOWPSISI_QT=str(binary), SHOWPSISI_QT_TEST_ARTIFACTS=str(evidence)), \
+                 mock.patch('subprocess.Popen', return_value=process), \
+                 mock.patch(__name__ + '.wait_for_qt_result', side_effect=publish):
+                with self.assertRaisesRegex(AssertionError, 'ReferenceError' if complete else 'injected incomplete-result failure'):
+                    NativeQtTests().run_script('comparison', run)
+            retained = evidence / 'runTest' / 'comparison'
+            self.assertEqual((retained / 'comparison.json').read_text(), '{"passed":true}' if complete else '{')
+            self.assertIn('injected', (retained / 'comparison.log').read_text())
+            if oversize:
+                self.assertFalse((retained / 'comparison.png').exists())
+            process.terminate.assert_called_once()
+
+    def test_partial_result_retains_original_failure_and_logs(self):
+        self.exercise()
+
+    def test_passed_report_with_qml_error_retains_evidence(self):
+        self.exercise(complete=True)
+
+    def test_oversized_evidence_is_not_copied(self):
+        self.exercise(oversize=True)
+
+    def test_retained_smoke_isolates_settings(self):
+        import windows_native_checks as checks
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            binary = root / ('fake-qt' + EXE)
+            binary.touch()
+            process = mock.MagicMock()
+            process.poll.return_value = 0
+            def publish(path, *args):
+                path.write_text('{"passed":true}')
+                (path.parent / 'screen.png').write_bytes(b'\x89PNG\r\n\x1a\n')
+                return {'passed': True}
+            with mock.patch.dict(os.environ, SHOWPSISI_QT=str(binary), SHOWPSISI_SETTINGS_PATH='inherited-owner-settings.ini'), \
+                 mock.patch.object(checks.subprocess, 'Popen', return_value=process) as launch, \
+                 mock.patch.object(checks, 'wait_for_qt_result', side_effect=publish):
+                checks.qt_smoke(root)
+            self.assertEqual(launch.call_args.kwargs['env']['SHOWPSISI_SETTINGS_PATH'], str(root / 'qt-smoke/settings.ini'))
 
 
 if __name__ == '__main__':

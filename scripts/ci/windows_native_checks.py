@@ -100,6 +100,7 @@ def qt_smoke(artifacts):
         SHOWPSISI_SAMPLE=str(ROOT / "samples/generated/lab.ts"),
         SHOWPSISI_TEST_RESULT=str(report_path), SHOWPSISI_SCREENSHOT=str(output / "screen.png"),
         SHOWPSISI_TRACE=str(output / "trace.jsonl"), SHOWPSISI_ARTIFACT_DIR=str(output),
+        SHOWPSISI_SETTINGS_PATH=str(output / "settings.ini"),
         QT_DEBUG_PLUGINS="1", QT_FORCE_STDERR_LOGGING="1",
     )
     with (output / "ui.log").open("w", encoding="utf-8") as log:
@@ -142,6 +143,7 @@ def main():
     # Ordinary tests and the retained UI smoke must keep using production core.
     engine_probe(artifacts, "SHOWPSISI_TEST_CORE", "cancellation-helper-probe")
     if args.qt:
+        os.environ["SHOWPSISI_QT_TEST_ARTIFACTS"] = str(artifacts / "qt-interactions")
         qt_smoke(artifacts)
         patterns = ["test_qt_ui.py", "test_qt_resource_paths.py"]
     else:

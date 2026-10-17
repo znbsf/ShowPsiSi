@@ -22,7 +22,8 @@ PRODUCTION = Path(os.environ.get('SHOWPSISI_CORE', ROOT / 'build/bin' / ('showps
 
 
 class Wire:
-    def __init__(self, directory, stage='after_progress', number=1, fail=False, production=False):
+    def __init__(self, directory, stage='after_progress', number=1, fail=False, production=False,
+                 pause_publication=False):
         self.prefix = Path(directory) / 'gate'
         env = os.environ.copy()
         for key in tuple(env):
@@ -33,6 +34,8 @@ class Wire:
                        SHOWPSISI_TEST_ANALYSIS_NUMBER=str(number))
         if fail:
             env['SHOWPSISI_TEST_FAIL_AT_GATE'] = '1'
+        if pause_publication:
+            env['SHOWPSISI_TEST_PAUSE_GATE_PUBLICATION'] = '1'
         self.proc = subprocess.Popen([str(PRODUCTION if production else HELPER), '--root', str(ROOT)],
                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      text=True, encoding='utf-8', env=env,
@@ -95,6 +98,7 @@ class Wire:
         Path(str(self.prefix) + '.release').touch()
 
     def close(self):
+        Path(str(self.prefix) + '.publish-release').touch()
         self.release()
         if not self.proc.stdin.closed:
             self.proc.stdin.close()
@@ -158,6 +162,54 @@ class CancellationTests(unittest.TestCase):
         state = message['error']['data']['state']
         self.assert_cleared(state)
         return state
+
+    def test_checkpoint_publishes_complete_json_atomically(self):
+        wire = self.wire(pause_publication=True)
+        self.analyze(wire)
+        ready = Path(str(wire.prefix) + '.ready')
+        temporary = Path(str(ready) + '.tmp')
+        deadline = time.monotonic() + 10
+        while True:
+            self.assertIsNone(wire.proc.poll(), 'Helper exited before publication barrier')
+            if temporary.exists() and temporary.read_bytes() == b'{':
+                break
+            if time.monotonic() >= deadline:
+                self.fail('Helper did not reach partial-publication barrier')
+            time.sleep(.005)
+        self.assertFalse(ready.exists(), 'Incomplete checkpoint was publicly visible')
+        Path(str(wire.prefix) + '.publish-release').touch()
+        wire.gate()
+        # Read immediately on existence, exactly as the browser consumer does.
+        self.assertEqual(json.loads(ready.read_text()), {'stage': 'after_progress', 'analysis_number': 1})
+        self.assertFalse(temporary.exists())
+        wire.release()
+        self.assertTrue(wire.response(1)['result']['complete'])
+
+    def test_checkpoint_write_failure_never_publishes_ready(self):
+        wire = self.wire()
+        ready = Path(str(wire.prefix) + '.ready')
+        temporary = Path(str(ready) + '.tmp')
+        temporary.mkdir()
+        # A nonempty directory makes opening the private file fail on all OSes.
+        (temporary / 'sentinel').write_text('keep')
+        self.analyze(wire)
+        reply = wire.response(1)
+        self.assertEqual(reply['error']['code'], 'request_failed')
+        self.assertIn('ready-file open failed', reply['error']['message'])
+        self.assertFalse(ready.exists())
+        self.assertEqual((temporary / 'sentinel').read_text(), 'keep')
+        self.assert_cleared(wire.call(2, 'query')['result'], 'failed')
+
+    def test_checkpoint_rename_failure_cleans_private_file(self):
+        wire = self.wire()
+        ready = Path(str(wire.prefix) + '.ready')
+        ready.mkdir()
+        (ready / 'sentinel').write_text('keep')
+        self.analyze(wire)
+        self.assertEqual(wire.response(1)['error']['code'], 'request_failed')
+        self.assertFalse(Path(str(ready) + '.tmp').exists())
+        self.assertEqual((ready / 'sentinel').read_text(), 'keep')
+        self.assert_cleared(wire.call(2, 'query')['result'], 'failed')
 
     def test_idle_and_failed_metrics_are_frozen(self):
         wire = self.wire(stage=None)
@@ -328,10 +380,11 @@ class CancellationTests(unittest.TestCase):
         self.assertTrue(wire.response(4)['result']['complete'])
 
     def test_production_ignores_test_gate_environment(self):
-        wire = self.wire(production=True)
+        wire = self.wire(production=True, pause_publication=True)
         self.analyze(wire)
         self.assertTrue(wire.response(1)['result']['complete'])
         self.assertFalse(Path(str(wire.prefix) + '.ready').exists())
+        self.assertFalse(Path(str(wire.prefix) + '.ready.tmp').exists())
 
 
 if __name__ == '__main__':

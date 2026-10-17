@@ -174,6 +174,8 @@ function notice(text, error = false) {
     error = true;
   }
   $("#notice").textContent = text;
+  $("#notice").title = text;
+  $("#notice").setAttribute("aria-live", error ? "assertive" : "polite");
   $("#status-dot").classList.toggle("error", error);
   $("#notice").classList.toggle("error", error);
 }
@@ -1204,7 +1206,7 @@ function highlightedTreeText(value) {
   return result + esc(text.slice(start));
 }
 let treeNodesRendered = 0;
-function drawNode(node, parent = "", index = 0, ancestorMatch = false) {
+function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1) {
   const path = parent ? parent + "/" + (node.id ?? index) : node.id;
   const needle = treeSearch.trim().toLowerCase();
   const selfMatch = (node.label + " " + (node.value ?? ""))
@@ -1212,15 +1214,31 @@ function drawNode(node, parent = "", index = 0, ancestorMatch = false) {
     .includes(needle);
   if (needle && !ancestorMatch && !nodeMatches(node, needle)) return "";
   if (++treeNodesRendered > 2500) return "";
+  const accessible = `role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
   const label = `<span class="node-label ${node.tone || ""}" title="${esc(fieldHelp[node.label] || node.label)}">${highlightedTreeText(node.label)}</span>${node.value !== undefined ? `<span class="node-value">${highlightedTreeText(node.value)}</span>` : ""}`;
   if (!node.children)
-    return `<div class="tree-leaf" tabindex="0">${label}</div>`;
+    return `<div class="tree-leaf" ${accessible}>${label}</div>`;
   const opened = !!needle || openNodes.has(path);
-  return `<details class="tree-node" data-path="${esc(path)}" ${opened ? "open" : ""}><summary>${label}<span class="node-count">${num(node.children.length)}</span></summary><div class="tree-children">${node.children.length ? node.children.map((child, i) => drawNode(child, path, i, ancestorMatch || (!!needle && selfMatch))).join("") : '<div class="tree-empty">No decoded fields</div>'}</div></details>`;
+  return `<div class="tree-node" ${accessible} data-path="${esc(path)}" aria-expanded="${opened}"><div class="tree-row">${label}<span class="node-count">${num(node.children.length)}</span></div><div class="tree-children" role="group" ${opened ? "" : "hidden"}>${node.children.length ? node.children.map((child, i) => drawNode(child, path, i, ancestorMatch || (!!needle && selfMatch), level + 1)).join("") : '<div class="tree-empty">No decoded fields</div>'}</div></div>`;
+}
+function setTreeExpanded(node, expanded) {
+  node.setAttribute("aria-expanded", String(expanded));
+  node.querySelector(":scope > .tree-children").hidden = !expanded;
+  if (!treeSearch) {
+    if (expanded) openNodes.add(node.dataset.path);
+    else openNodes.delete(node.dataset.path);
+  }
+}
+function focusTreeItem(node) {
+  if (!node) return;
+  node.focus({ preventScroll: true });
+  (node.querySelector(":scope > .tree-row") || node).scrollIntoView({ block: "nearest", inline: "nearest" });
 }
 function renderTree() {
   const area = $("#tree-area");
   if (!area) return;
+  const previousPath = area.querySelector('[tabindex="0"]')?.dataset.nodePath;
+  const hadFocus = area.contains(document.activeElement);
   treeNodesRendered = 0;
   area.innerHTML =
     drawNode(sectionTree()) ||
@@ -1230,16 +1248,43 @@ function renderTree() {
       "beforeend",
       '<p class="tree-empty">Tree display limited to 2,500 nodes. Narrow the field search; full evidence remains available in raw/XML views and the Agent API.</p>',
     );
-  area.querySelectorAll("details").forEach((el) =>
-    el.addEventListener("toggle", () => {
-      if (!treeSearch) {
-        if (el.open) openNodes.add(el.dataset.path);
-        else openNodes.delete(el.dataset.path);
-      }
-    }),
-  );
+  const visibleItems = () => [...area.querySelectorAll('[role="treeitem"]')]
+    .filter((el) => el.getClientRects().length && !el.closest("[hidden]"));
+  function setEntry(target, focus = false) {
+    area.querySelectorAll('[role="treeitem"]').forEach((el) => {
+      el.tabIndex = el === target ? 0 : -1;
+    });
+    if (focus) focusTreeItem(target);
+  }
+  const items = visibleItems();
+  setEntry(items.find((el) => el.dataset.nodePath === previousPath) || items[0], hadFocus);
+  // focusin bubbles, but onfocusin is not a supported handler property in
+  // every engine. Replace the listener on rerender instead of accumulating it.
+  if (area.treeFocusHandler) area.removeEventListener("focusin", area.treeFocusHandler);
+  area.treeFocusHandler = (event) => {
+    if (event.target.matches('[role="treeitem"]')) setEntry(event.target);
+  };
+  area.addEventListener("focusin", area.treeFocusHandler);
+  area.onclick = (event) => {
+    const node = event.target.closest('[role="treeitem"]');
+    if (!node || !area.contains(node)) return;
+    setEntry(node, true);
+    if (node.classList.contains("tree-node") && event.target.closest(".tree-row") === node.querySelector(":scope > .tree-row"))
+      setTreeExpanded(node, node.getAttribute("aria-expanded") !== "true");
+  };
+  let typed = "", typedAt = 0;
   area.onkeydown = (e) => {
     const target = e.target;
+    if (e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const items = visibleItems();
+      typed = Date.now() - typedAt < 700 ? typed + e.key.toLowerCase() : e.key.toLowerCase();
+      typedAt = Date.now();
+      const index = items.indexOf(target);
+      const ordered = [...items.slice(index + 1), ...items.slice(0, index + 1)];
+      const match = ordered.find((el) => el.getAttribute("aria-label").toLowerCase().startsWith(typed));
+      if (match) { e.preventDefault(); focusTreeItem(match); }
+      return;
+    }
     if (
       ![
         "ArrowRight",
@@ -1248,42 +1293,32 @@ function renderTree() {
         "ArrowDown",
         "Home",
         "End",
+        "Enter",
+        " ",
       ].includes(e.key)
     )
       return;
-    const focusable = [...area.querySelectorAll("summary,.tree-leaf")].filter(
-      (el) => el.getClientRects().length,
-    );
+    const focusable = visibleItems();
     const index = focusable.indexOf(target);
     if (index < 0) return;
     e.preventDefault();
-    if (e.key === "ArrowRight") {
-      if (target.tagName === "SUMMARY") {
-        if (!target.parentElement.open) target.parentElement.open = true;
-        else focusable[index + 1]?.focus();
+    const branch = target.classList.contains("tree-node");
+    const expanded = target.getAttribute("aria-expanded") === "true";
+    if (e.key === "Enter" || e.key === " ") {
+      if (branch) setTreeExpanded(target, !expanded);
+    } else if (e.key === "ArrowRight") {
+      if (branch) {
+        if (!expanded) setTreeExpanded(target, true);
+        else focusTreeItem(target.querySelector(":scope > .tree-children > [role=treeitem]"));
       }
     } else if (e.key === "ArrowLeft") {
-      if (target.tagName === "SUMMARY" && target.parentElement.open)
-        target.parentElement.open = false;
-      else
-        target.parentElement
-          .closest(".tree-children")
-          ?.parentElement.querySelector("summary")
-          ?.focus();
-    } else
-      focusable[
-        e.key === "Home"
-          ? 0
-          : e.key === "End"
-            ? focusable.length - 1
-            : Math.max(
-                0,
-                Math.min(
-                  focusable.length - 1,
-                  index + (e.key === "ArrowDown" ? 1 : -1),
-                ),
-              )
-      ]?.focus();
+      if (branch && expanded) setTreeExpanded(target, false);
+      else focusTreeItem(target.parentElement.closest('[role="treeitem"]'));
+    } else {
+      const next = e.key === "Home" ? 0 : e.key === "End" ? focusable.length - 1
+        : Math.max(0, Math.min(focusable.length - 1, index + (e.key === "ArrowDown" ? 1 : -1)));
+      focusTreeItem(focusable[next]);
+    }
   };
 }
 function hexDump(raw) {
@@ -1374,7 +1409,7 @@ function renderInspector() {
   if (detail.native_xml_guarded)
     nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
   const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(tableLabel(detail.name))} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-area" id="tree-area" aria-label="Section structure"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : xmlLabel}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${esc(tableLabel(detail.name))} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta">Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.native_decode_status ? " · " + esc(detail.native_decode_status) : ""}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}<div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : xmlLabel}">${esc(view === "hex" ? hexDump(detail.raw_hex) : detail.tsduck_xml || "XML unavailable for this section. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>
       (el.onclick = () => {
@@ -1390,6 +1425,10 @@ function renderInspector() {
       renderTree();
     };
     $("#tree-search").onkeydown = (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        focusTreeItem($('#tree-area [tabindex="0"]'));
+      }
       if (event.key === "Escape") {
         event.preventDefault();
         treeSearch = "";
@@ -1400,11 +1439,8 @@ function renderInspector() {
     renderTree();
     $("#expand-tree").onclick = () => {
       $("#tree-area")
-        .querySelectorAll("details")
-        .forEach((el) => {
-          el.open = true;
-          openNodes.add(el.dataset.path);
-        });
+        .querySelectorAll(".tree-node")
+        .forEach((el) => setTreeExpanded(el, true));
     };
     $("#collapse-tree").onclick = () => {
       openNodes.clear();

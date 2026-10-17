@@ -79,3 +79,10 @@ treating an offscreen dispatched click as proof of interaction.
 Runtime evidence and exact final test totals are recorded in STATUS.md and the
 cloud/native validation documents. Exact semantic field-to-byte highlighting is
 still not claimed: arbitrary SDK XML fields do not supply reliable byte ranges.
+
+## Standards-informed keyboard and contrast pass, 2026-10-17
+
+See [the scoped standards review](UI_UX_STANDARDS.md) for the official-source
+research, verified gap plan, implementation boundaries and final acceptance
+record. This pass concentrates on predictable keyboard access and readable
+technical content rather than claiming a universal desktop design standard.

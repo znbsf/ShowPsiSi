@@ -4,12 +4,19 @@
   --surface: #1d2129;
   --raised: #242a34;
   --border: #343c49;
+  --control-border: #7b8799;
+  --control-border-hover: #94a1b4;
   --text: #d5dce8;
-  --muted: #929eb0;
+  --muted: #a3afc0;
   --accent: #78acfa;
   --selected: #253b58;
   --green: #88c9ac;
   --red: #f39494;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --field-size: 12px;
+  --focus-width: 2px;
   --mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
   font-size: 12px;
@@ -49,15 +56,14 @@ select {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
-[tabindex]:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--accent);
+[tabindex]:focus-visible {
+  outline: var(--focus-width) solid var(--accent);
   outline-offset: -2px;
 }
 input,
 select {
   background: #14181e;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   border-radius: 3px;
   padding: 7px 9px;
   min-width: 0;
@@ -106,7 +112,7 @@ input[type="search"]::-webkit-search-cancel-button {
   flex: 1;
 }
 .btn {
-  border: 1px solid #435065;
+  border: 1px solid var(--control-border);
   background: #2a3341;
   border-radius: 3px;
   padding: 7px 11px;
@@ -115,6 +121,7 @@ input[type="search"]::-webkit-search-cancel-button {
   font-size: 11px;
 }
 .btn:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
   background: #35445a;
 }
 .btn.primary {
@@ -333,7 +340,7 @@ input[type="search"]::-webkit-search-cancel-button {
   gap: 8px;
   margin: 10px 12px;
   padding: 0 8px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--control-border);
   background: #13171d;
   border-radius: 3px;
 }
@@ -550,7 +557,7 @@ input[type="search"]::-webkit-search-cancel-button {
 .tree-node {
   min-width: 0;
 }
-.tree-node summary {
+.tree-node > .tree-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -559,10 +566,7 @@ input[type="search"]::-webkit-search-cancel-button {
   list-style: none;
   min-height: 27px;
 }
-.tree-node summary::-webkit-details-marker {
-  display: none;
-}
-.tree-node summary:before {
+.tree-node > .tree-row:before {
   content: "›";
   color: var(--muted);
   font: 14px var(--mono);
@@ -570,10 +574,10 @@ input[type="search"]::-webkit-search-cancel-button {
   display: inline-block;
   flex-shrink: 0;
 }
-.tree-node[open] > summary:before {
+.tree-node[aria-expanded="true"] > .tree-row:before {
   content: "⌄";
 }
-.tree-node summary:hover,
+.tree-node > .tree-row:hover,
 .tree-leaf:hover {
   background: #252e3c;
 }
@@ -600,7 +604,7 @@ input[type="search"]::-webkit-search-cancel-button {
 }
 .node-count {
   font: 9px var(--mono);
-  color: #8996a8;
+  color: var(--muted);
   background: #2b3441;
   border-radius: 3px;
   padding: 1px 5px;
@@ -1026,9 +1030,9 @@ dialog .actions {
 }
 
 .tree-area {
-  font-size: 11px;
+  font-size: var(--field-size);
 }
-.tree-node summary {
+.tree-node > .tree-row {
   flex-wrap: wrap;
   gap: 5px 8px;
 }
@@ -1037,7 +1041,7 @@ dialog .actions {
   min-width: 0;
 }
 .node-value {
-  font-size: 11px;
+  font-size: var(--field-size);
   max-width: 100%;
 }
 .node-count {
@@ -1146,7 +1150,35 @@ textarea.reference-url {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-textarea.reference-url:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+textarea.reference-url:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: -2px; }
 .reference .reference-status { margin: 8px 0 0; overflow-wrap: anywhere; }
 .reference .reference-status.bad { color: var(--red); }
 .reference a[aria-disabled="true"] { opacity: 0.65; cursor: progress; }
+
+/* Compact inspection rhythm shared with the native workbench. */
+.tree-toolbar { gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+.tree-toolbar input { font-size: 12px; }
+.tree-help { color: var(--muted); font-size: 11px; padding: 0 var(--space-3) var(--space-2); }
+.tree-node > .tree-row, .tree-leaf { min-height: 28px; }
+.tree-children { margin-left: var(--space-3); padding-left: var(--space-1); }
+.tree-area .tree-node:focus-visible { outline: none; }
+.tree-area .tree-node:focus-visible > .tree-row,
+.tree-area .tree-leaf:focus-visible { background: var(--selected); outline: var(--focus-width) solid var(--accent); outline-offset: -2px; }
+#notice.error { white-space: normal; overflow-wrap: anywhere; }
+footer:has(#notice.error) { height: auto; min-height: 28px; padding-top: 4px; padding-bottom: 4px; }
+@media (forced-colors: active) {
+  .record.selected { border: 1px solid Highlight; }
+  .tree-area .tree-node:focus-visible > .tree-row,
+  .tree-area .tree-leaf:focus-visible { outline-color: Highlight; }
+}
+/* Keep evidence context visible while returning height to fields in short panes. */
+@media (max-height: 760px), (max-width: 760px) {
+  .inspector > .panel-title { padding: 6px 12px; min-height: 28px; }
+  .inspector-heading { padding: 6px 12px 0; }
+  .inspector > p.meta { padding: 0 12px; margin: 3px 0 5px; }
+  .view-tabs { padding: 0 12px; }
+  .view-tabs button { padding-bottom: 6px; }
+  .tree-toolbar { padding-top: 6px; padding-bottom: 6px; }
+  .tree-help { padding-bottom: 4px; }
+  .inspector-footer { padding-top: 6px; padding-bottom: 6px; }
+}

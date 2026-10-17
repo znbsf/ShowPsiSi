@@ -24,8 +24,14 @@ ApplicationWindow {
     palette.highlightedText: "white"
     palette.mid: "#454545"
     property color ink: "#cccccc"
-    property color muted: "#969696"
-    property color blue: "#3794ff"
+    property color muted: "#a3a3a3"
+    property color controlBorder: "#7b8799"
+    property color blue: "#78acfa"
+    // Compact desktop tokens; not mobile target-size defaults.
+    readonly property int spaceUnit: 4
+    readonly property int fieldFontSize: 12
+    readonly property int treeRowHeight: 28
+    readonly property int focusWidth: 2
     property color addedColor: "#b5cea8"
     property color removedColor: "#f48771"
     property color changedColor: "#dcdcaa"
@@ -682,6 +688,26 @@ ApplicationWindow {
             radius: 2
         }
     }
+    component FieldInput: TextField {
+        id: fieldInput
+        background: Rectangle {
+            radius: 2
+            color: "#181818"
+            border.color: fieldInput.activeFocus ? blue : controlBorder
+            border.width: fieldInput.activeFocus ? focusWidth : 1
+            opacity: fieldInput.enabled ? 1 : 0.4
+        }
+    }
+    component FieldChoice: ComboBox {
+        id: fieldChoice
+        background: Rectangle {
+            radius: 2
+            color: "#252526"
+            border.color: fieldChoice.activeFocus ? blue : controlBorder
+            border.width: fieldChoice.activeFocus ? focusWidth : 1
+            opacity: fieldChoice.enabled ? 1 : 0.4
+        }
+    }
     component TinyLabel: PlainLabel {
         color: muted
         font.pixelSize: 11
@@ -704,12 +730,14 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 2
-            color: !control.enabled ? "#252526" : control.primary ? (control.hovered ? "#1684bb" : "#007acc") : (control.hovered ? "#333333" : "#252526")
-            border.color: control.activeFocus ? blue : "#454545"
+            color: !control.enabled ? "#252526" : control.primary ? (control.hovered ? "#086fae" : "#006fb9") : (control.hovered ? "#333333" : "#252526")
+            border.color: control.activeFocus ? blue : controlBorder
+            border.width: control.activeFocus ? focusWidth : 1
         }
     }
     component NavItem: ItemDelegate {
         id: nav
+        property bool keyboardCurrent: false
         implicitHeight: 29
         focusPolicy: Qt.StrongFocus
         contentItem: PlainLabel {
@@ -721,7 +749,8 @@ ApplicationWindow {
         }
         background: Rectangle {
             color: nav.highlighted ? "#37373d" : nav.hovered ? "#2a2d2e" : "transparent"
-            border.color: nav.activeFocus ? blue : "transparent"
+            border.color: nav.activeFocus || nav.keyboardCurrent ? blue : "transparent"
+            border.width: nav.activeFocus || nav.keyboardCurrent ? focusWidth : 0
         }
     }
     component Card: Rectangle {
@@ -926,7 +955,30 @@ ApplicationWindow {
                 treeSearch.clear();
                 let collapseRestored = JSON.stringify(collapsed) === collapsedBefore && treeRows.length === treeBefore;
                 collapsed = savedCollapsed;
+                tree.forceActiveFocus();
+                core.key("Home");
+                let firstIndex = tree.currentIndex;
+                core.key("End");
+                let endReached = tree.currentIndex === treeRows.length - 1;
+                core.key("Home");
+                let branchIndex = treeRows.findIndex(function (row) { return row.branch; });
+                tree.currentIndex = branchIndex;
+                core.key("Left");
+                let folded = treeRows[tree.currentIndex].closed;
+                core.key("Right");
+                let expanded = !treeRows[tree.currentIndex].closed;
+                let parentIndex = tree.currentIndex;
+                core.key("Right");
+                let entered = tree.currentIndex === parentIndex + 1 && treeRows[tree.currentIndex].depth > treeRows[parentIndex].depth;
+                core.key("Left");
+                let parentReached = tree.currentIndex === parentIndex;
+                core.key("Tab");
+                let tabExits = !tree.activeFocus;
+                collapsed = savedCollapsed;
                 searchChecks = {
+                    tree_home_end: firstIndex === 0 && endReached,
+                    tree_expand_enter_parent: folded && expanded && entered && parentReached,
+                    tree_tab_exits: tabExits,
                     record_names: names,
                     identifiers: identifiers,
                     empty_preserves_selection: empty,
@@ -1663,7 +1715,7 @@ ApplicationWindow {
                 color: muted
                 font.pixelSize: 11
             }
-            ComboBox {
+            FieldChoice {
                 id: standardChoice
                 objectName: "standards"
                 Layout.preferredWidth: 136
@@ -1711,7 +1763,7 @@ ApplicationWindow {
                     text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
                 }
             }
-            TextField {
+            FieldInput {
                 id: extraPids
                 objectName: "extraPids"
                 Layout.preferredWidth: 160
@@ -1727,7 +1779,7 @@ ApplicationWindow {
                 }
                 onAccepted: scan()
             }
-            TextField {
+            FieldInput {
                 id: source
                 enabled: backendReady
                 Layout.fillWidth: true
@@ -1929,7 +1981,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                         }
                     }
-                    TextField {
+                    FieldInput {
                         id: recordSearch
                         objectName: "recordSearch"
                         Layout.fillWidth: true
@@ -1956,7 +2008,7 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             PlainLabel { text: "A"; color: muted; Layout.preferredWidth: 14 }
-                            TextField {
+                            FieldInput {
                                 id: fromPacket
                                 objectName: "fromPacket"
                                 Layout.fillWidth: true
@@ -1980,7 +2032,7 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             PlainLabel { text: "B"; color: muted; Layout.preferredWidth: 14 }
-                            TextField {
+                            FieldInput {
                                 id: toPacket
                                 objectName: "toPacket"
                                 Layout.fillWidth: true
@@ -2003,7 +2055,7 @@ ApplicationWindow {
                         }
                         RowLayout {
                             Layout.fillWidth: true
-                            ComboBox {
+                            FieldChoice {
                                 id: changeKind
                                 objectName: "changeKind"
                                 Layout.fillWidth: true
@@ -2293,7 +2345,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                         }
                     }
-                    TextField {
+                    FieldInput {
                         id: treeSearch
                         objectName: "treeSearch"
                         visible: inspectorView === "Structure"
@@ -2318,8 +2370,23 @@ ApplicationWindow {
                         color: muted
                         font.pixelSize: 11
                     }
+                    PlainLabel {
+                        visible: inspectorView === "Structure"
+                        Layout.fillWidth: true
+                        text: "↑ ↓ Navigate · ← → Fold / enter · Home / End"
+                        color: muted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
                     ListView {
                         id: tree
+                        objectName: "fieldTree"
+                        Accessible.role: Accessible.List
+                        Accessible.name: "Decoded PSI / SI fields"
+                        Accessible.description: "Hierarchical fields. Use arrow keys to navigate and expand, Home and End to jump. Search with Control Shift K."
+                        onCountChanged: {
+                            if (count && (currentIndex < 0 || currentIndex >= count)) currentIndex = 0;
+                        }
                         visible: inspectorView === "Structure"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -2331,8 +2398,17 @@ ApplicationWindow {
                         ScrollBar.vertical: ScrollBar {}
                         Keys.onRightPressed: {
                             let r = treeRows[currentIndex];
-                            if (r && r.branch && r.closed)
-                                toggle(r.path);
+                            if (r && r.branch) {
+                                if (r.closed) toggle(r.path);
+                                else if (currentIndex + 1 < treeRows.length && treeRows[currentIndex + 1].depth > r.depth)
+                                    currentIndex++;
+                            }
+                        }
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Home || event.key === Qt.Key_End) {
+                                if (count) currentIndex = event.key === Qt.Key_Home ? 0 : count - 1;
+                                event.accepted = true;
+                            }
                         }
                         Keys.onLeftPressed: {
                             let r = treeRows[currentIndex];
@@ -2354,11 +2430,18 @@ ApplicationWindow {
                         delegate: NavItem {
                             required property var modelData
                             required property int index
-                            highlighted: tree.currentIndex === index && tree.activeFocus
+                            highlighted: tree.currentIndex === index
+                            keyboardCurrent: tree.currentIndex === index && tree.activeFocus
+                            Accessible.role: Accessible.ListItem
+                            Accessible.name: modelData.label + (modelData.value ? ": " + modelData.value : "")
+                            Accessible.description: "Level " + (modelData.depth + 1) + (modelData.branch ? (modelData.closed ? ", collapsed" : ", expanded") : "")
+                            Accessible.focusable: true
+                            Accessible.focused: keyboardCurrent
+                            Accessible.onPressAction: clicked()
                             width: ListView.view.width
-                            height: 30
-                            leftPadding: 4 + modelData.depth * 13
-                            focusPolicy: Qt.StrongFocus
+                            height: treeRowHeight
+                            leftPadding: spaceUnit + modelData.depth * 16
+                            focusPolicy: Qt.NoFocus
                             contentItem: RowLayout {
                                 spacing: 5
                                 PlainLabel {
@@ -2369,21 +2452,22 @@ ApplicationWindow {
                                 PlainLabel {
                                     text: modelData.label
                                     color: modelData.branch ? "#4ec9b0" : ink
-                                    font.pixelSize: 11
+                                    font.pixelSize: fieldFontSize
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
                                 }
                                 PlainLabel {
                                     text: modelData.value
-                                    color: modelData.kind === "number" ? "#b5cea8" : modelData.kind === "string" ? "#ce9178" : muted
+                                    color: modelData.kind === "number" ? "#b5cea8" : modelData.kind === "string" ? "#d6a089" : muted
                                     font.family: "monospace"
-                                    font.pixelSize: 11
+                                    font.pixelSize: fieldFontSize
                                     elide: Text.ElideRight
                                     Layout.maximumWidth: Math.max(90, tree.width * 0.48)
                                 }
                             }
                             onClicked: {
                                 tree.currentIndex = index;
+                                tree.forceActiveFocus();
                                 if (modelData.branch)
                                     toggle(modelData.path);
                             }
@@ -2446,23 +2530,29 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                     }
-                    Action {
-                        objectName: "specifications"
-                        text: specificationLinks.length ? "Official specifications… (" + specificationLinks.length + ")" : "No verified specification link"
+                    GridLayout {
                         Layout.fillWidth: true
-                        enabled: specificationLinks.length > 0
-                        onClicked: specificationDialog.open()
-                    }
-                    Action {
-                        objectName: "rename"
-                        visible: !selectedChange
-                        text: "Rename service…"
-                        Layout.fillWidth: true
-                        enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
-                        onClicked: {
-                            preview = {};
-                            renameName.text = chosenService().name || "";
-                            renameDialog.open();
+                        columns: compactInspector ? 2 : 1
+                        columnSpacing: spaceUnit * 2
+                        rowSpacing: spaceUnit
+                        Action {
+                            objectName: "specifications"
+                            text: specificationLinks.length ? "Official specifications… (" + specificationLinks.length + ")" : "No verified specification link"
+                            Layout.fillWidth: true
+                            enabled: specificationLinks.length > 0
+                            onClicked: specificationDialog.open()
+                        }
+                        Action {
+                            objectName: "rename"
+                            visible: !selectedChange
+                            text: "Rename service…"
+                            Layout.fillWidth: true
+                            enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
+                            onClicked: {
+                                preview = {};
+                                renameName.text = chosenService().name || "";
+                                renameDialog.open();
+                            }
                         }
                     }
                 }
@@ -2669,7 +2759,7 @@ ApplicationWindow {
                 color: muted
                 font.pixelSize: 11
             }
-            TextField {
+            FieldInput {
                 id: renameName
                 Layout.fillWidth: true
                 placeholderText: "New service name"
@@ -2699,7 +2789,7 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
                 color: ink
             }
-            ComboBox {
+            FieldChoice {
                 id: exportFormat
                 objectName: "exportFormat"
                 Layout.fillWidth: true

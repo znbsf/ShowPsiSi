@@ -517,7 +517,9 @@ for line in sys.stdin:
             self.assertEqual(report['standards_context'], standards)
             self.assertTrue(report['native_tree'])
             self.assertTrue(report['history_cutoff'])
-            self.assertEqual(len(report['search']), 8)
+            self.assertEqual(len(report['search']), 11)
+            for check in ('tree_home_end', 'tree_expand_enter_parent', 'tree_tab_exits'):
+                self.assertTrue(report['search'][check], check)
             self.assertTrue(all(report['search'].values()), report['search'])
             self.assertGreater(report['references'], 0, 'Expected verified SDT specification metadata')
             self.assertEqual(report['services'], 6)

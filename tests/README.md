@@ -142,3 +142,20 @@ tree. Run it using the existing `test_web_ui.py` environment above.
 same live-engine/sandboxed Chromium setup and writes to
 `artifacts/ux-standards/web/`. These are browser screenshots, not native Tauri
 acceptance. See [the scoped UX review](../docs/UI_UX_STANDARDS.md).
+
+### Qt asynchronous completion and retained evidence
+
+The strict Qt job runs `test_qt_ui.py`, `test_qt_resource_paths.py`, and
+`test_qt_evidence.py` on Linux and Windows. Run any of those with
+`python -m unittest discover -s tests -p <filename> -v` in the native environment.
+
+Export regression deliberately delays duplicate Save-dialog acceptance and checks
+that refused/repeated/cancelled operations preserve the original output and
+manifest hashes and mtimes. Snapshot comparison holds a real-engine query response
+until the UI acknowledges waiting; cancellation fixtures use ACK/terminal and
+late-frame handshakes rather than elapsed sleeps. All waits keep their deadlines.
+
+Set `SHOWPSISI_QT_TEST_ARTIFACTS` to retain per-test explicit JSON/log/PNG/trace
+files, including incomplete results and failed assertions. Each file is capped at
+5 MiB. The shared context preserves the original exception if copying fails.
+See [CI completion contracts](../docs/CI_TEST_CONTRACT.md) for reproduced causes.

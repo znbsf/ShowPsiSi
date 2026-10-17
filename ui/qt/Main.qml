@@ -784,7 +784,15 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
-            if (method === "cancel_analysis") return;
+            if (method === "query") comparisonTestTimer.completedQueries++;
+            if (method === "cancel_analysis") {
+                if (core.env("SHOWPSISI_SCRIPT") === "lifecycle-stale" || core.env("SHOWPSISI_SCRIPT") === "lifecycle-complete-race") {
+                    lifecycleTestTimer.checks.ack_did_not_settle = core.busy && core.cancelling && analysisState.source.indexOf("poison") < 0;
+                    core.mark("cancel_ack_observed");
+                }
+                return;
+            }
+            if (method === "fixture_late_frames") { lifecycleTestTimer.lateFramesAcknowledged = true; return; }
             if (method === "analyze" && result.code === "analysis_cancelled") {
                 notice = "Scan cancelled · source unchanged · analyze again when ready";
                 return;
@@ -1025,29 +1033,42 @@ ApplicationWindow {
     }
     Timer {
         id: exportAcceptTimer
-        interval: 100
+        interval: exportTestTimer.choiceSequence === 3 && core.env("SHOWPSISI_TEST_EXPORT_ACCEPT_DELAY") ? Number(core.env("SHOWPSISI_TEST_EXPORT_ACCEPT_DELAY")) : 100
         onTriggered: saveDialog.accept()
     }
     Timer {
         id: exportTestTimer
         interval: 150
         repeat: true
-        property int step: 0
+        property real step: 0
+        property int choiceSequence: 0
+        property bool choicePending: false
+        property var choiceEvidence: []
+        function resolvedChoice() {
+            if (!choicePending) return;
+            choicePending = false;
+            choiceEvidence = choiceEvidence.concat([{sequence:choiceSequence, feedback:exportFeedback, exporting:exporting}]);
+        }
         property var checks: ({})
         property string savedPreview: ""
         property string savedState: ""
         function choose(path) {
+            choiceSequence++;
             core.click("export");
             let testIntent = saveIntent;
             saveDialog.close();
             saveIntent = testIntent;
             saveDialog.currentFolder = core.fileUrl(core.env("SHOWPSISI_EXPORT_TEST_DIR"));
             saveDialog.selectedFile = core.fileUrl(path);
+            choicePending = true;
             saveDialog.open();
             exportAcceptTimer.start();
         }
         onTriggered: {
             let directory = core.env("SHOWPSISI_EXPORT_TEST_DIR");
+            // Not exporting also describes the interval before dialog acceptance.
+            // Wait for this choice's actual resolution, never an elapsed timer gap.
+            if (choicePending) return;
             if (step === 0) {
                 if (!analysisState.complete || core.inspecting || !detail.native_table) return;
                 core.click("rename");
@@ -1089,8 +1110,16 @@ ApplicationWindow {
             } else if (step === 5) {
                 if (exporting) return;
                 checks.existing_output_refused = exportFeedback.includes("already exists") && JSON.stringify(preview) === savedPreview;
+                choose(directory + "/chosen λ.ts");
+                step = 5.5;
+            } else if (step === 5.5) {
+                if (exporting) return;
+                checks.repeated_output_refused = exportFeedback.includes("already exists") && JSON.stringify(preview) === savedPreview;
+                core.click("export");
+                saveDialog.reject();
+                checks.cancel_after_refusal = !exporting && !Object.keys(saveIntent).length && exportFeedback === "" && JSON.stringify(preview) === savedPreview;
                 choose(directory + "/manifest-only.ts");
-                step++;
+                step = 6;
             } else if (step === 6) {
                 if (exporting) return;
                 checks.existing_manifest_refused = exportFeedback.includes("already exists") && JSON.stringify(preview) === savedPreview;
@@ -1112,7 +1141,7 @@ ApplicationWindow {
                 renameDialog.close();
                 core.click("rename");
                 checks.reopen_clears_feedback = exportFeedback === "";
-                core.testResult(JSON.stringify({checks: checks, passed: Object.values(checks).every(Boolean)}));
+                core.testResult(JSON.stringify({checks: checks, choices:choiceEvidence, passed: Object.values(checks).every(Boolean)}));
                 stop();
             }
         }
@@ -1322,6 +1351,8 @@ ApplicationWindow {
         property real phase: 0
         property var checks: ({})
         property var layoutMetrics: ({})
+        property int completedQueries: 0
+        property int expectedQueryCompletion: 0
         property var changedService: null
         property var initialPacket: null
         onTriggered: {
@@ -1425,9 +1456,15 @@ ApplicationWindow {
                 core.click("record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }));
                 phase = 8;
             } else if (phase === 8) {
+                expectedQueryCompletion = completedQueries + 1;
+                core.mark("comparison_use_snapshot_requested");
                 core.click("useComparisonSnapshot");
                 phase++;
             } else if (phase === 9) {
+                if (completedQueries < expectedQueryCompletion) {
+                    core.mark("comparison_query_waiting");
+                    return;
+                }
                 checks.explicit_use_snapshot = tab === "Services" && analysisState.selected_packet === changedService.after.at_packet && detail.native_table_at_packet === changedService.after.at_packet;
                 scan();
                 phase++;
@@ -1495,7 +1532,8 @@ ApplicationWindow {
         repeat: true
         property int phase: 0
         property int settledTicks: 0
-        property int waitingTicks: 0
+        property bool lateFramesRequested: false
+        property bool lateFramesAcknowledged: false
         property var checks: ({})
         function finish() {
             let passed = Object.keys(checks).length > 0 && Object.keys(checks).every(function (name) { return !!checks[name]; });
@@ -1564,13 +1602,14 @@ ApplicationWindow {
                 phase = 2;return;
             }
             if (phase === 2) {
-                if (core.busy) {
-                    ++waitingTicks;
-                    if (mode === "lifecycle-stale" || mode === "lifecycle-complete-race")
-                        checks.ack_did_not_settle = waitingTicks >= 2 && core.cancelling && analysisState.source.indexOf("poison") < 0;
-                    return;
+                if (core.busy) return;
+                if (mode === "lifecycle-stale" || mode === "lifecycle-complete-race") {
+                    if (!lateFramesRequested) {
+                        lateFramesRequested = true;
+                        core.send("fixture_late_frames");
+                    }
+                    if (!lateFramesAcknowledged) return;
                 }
-                if (++settledTicks < 5) return; // Let deliberately late fixture frames arrive.
                 if (mode === "lifecycle-complete-race") {
                     checks.honest_completion_race = !!analysisState.complete && analysisState.analysis_status === "complete";
                     checks.no_auto_inspect = cleanIntentions();
@@ -1698,11 +1737,13 @@ ApplicationWindow {
         onAccepted: {
             core.mark("export_dialog_accepted");
             acceptExportDestination(selectedFile);
+            exportTestTimer.resolvedChoice();
         }
         onRejected: {
             core.mark("export_dialog_cancelled");
             saveIntent = {};
             exportButton.forceActiveFocus();
+            exportTestTimer.resolvedChoice();
         }
     }
     Dialog {

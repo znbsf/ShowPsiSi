@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXE = '.exe' if os.name == 'nt' else ''
 sys.path.insert(0, str(ROOT / 'scripts' / 'ci'))
 from qt_result import wait_for_qt_result
+from qt_evidence import retain_qt_evidence
 
 
 def native_environment():
@@ -42,7 +43,7 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
-    def run_script(self, script, directory, settings=None, auto=True, overrides=None, on_running=None):
+    def run_script(self, script, directory, settings=None, auto=True, overrides=None, on_running=None, timeout=25, after_report=None):
         binary = Path(os.environ.get('SHOWPSISI_QT', ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))
         if not binary.exists():
             self.skipTest('Build the native Qt target or set SHOWPSISI_QT')
@@ -54,41 +55,37 @@ class NativeQtTests(unittest.TestCase):
                    SHOWPSISI_SCREENSHOT=str(screenshot), SHOWPSISI_AUTO='1' if auto else '0',
                    SHOWPSISI_SETTINGS_PATH=str(settings or directory / 'settings.ini'))
         env.update(overrides or {})
-        report = None
-        diagnostics = ''
-        qml_errors = ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed')
-        with (directory / (script + '.log')).open('w+', encoding='utf-8') as log:
-            process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
-            try:
-                report = wait_for_qt_result(result, process, 25, on_running)
-                if script in ('layout-set', 'layout-read', 'layout-small', 'layout-reset'):
-                    self.assertTrue(screenshot.is_file(), 'Layout result preceded its screenshot')
-                    self.assertEqual(screenshot.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
-            finally:
-                if process.poll() is None:
-                    process.terminate()  # Forced cleanup is not a graceful window-close test.
+        evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
+        destination = Path(evidence_root) / self._testMethodName / script if evidence_root else None
+        logfile = directory / (script + '.log')
+        sources = [result, screenshot, logfile, Path(str(screenshot) + '.scanning.png'), Path(str(screenshot) + '.cancelled.png')]
+        if env.get('SHOWPSISI_TRACE'):
+            sources.append(Path(env['SHOWPSISI_TRACE']))
+        with retain_qt_evidence(destination, sources):
+            with logfile.open('w+', encoding='utf-8') as log:
+                process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
                 try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
+                    report = wait_for_qt_result(result, process, timeout, on_running)
+                    if script in ('layout-set', 'layout-read', 'layout-small', 'layout-reset'):
+                        self.assertTrue(screenshot.is_file(), 'Layout result preceded its screenshot')
+                        self.assertEqual(screenshot.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+                    if after_report:
+                        after_report()
+                finally:
+                    if process.poll() is None:
+                        process.terminate()  # Forced cleanup is not a graceful window-close test.
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                 log.seek(0)
                 diagnostics = log.read()
-                # Preserve timeout/exit/QML failures too, before temporary cleanup.
-                evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
-                retain = (not report or not report.get('passed') or script == 'comparison-small'
-                          or script.startswith('layout-') or any(error in diagnostics for error in qml_errors))
-                if evidence_root and retain:
-                    destination = Path(evidence_root) / self._testMethodName / script
-                    destination.mkdir(parents=True, exist_ok=True)
-                    for source in (result, screenshot, directory / (script + '.log')):
-                        if source.is_file() and source.stat().st_size <= 5 * 1024 * 1024:
-                            shutil.copy2(source, destination / source.name)
-        self.assertTrue(result.exists(), diagnostics)
-        self.assertTrue(report['passed'], report)
-        for error in qml_errors:
-            self.assertNotIn(error, diagnostics)
-        return report
+            self.assertTrue(result.exists(), diagnostics)
+            self.assertTrue(report['passed'], report)
+            for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
+                self.assertNotIn(error, diagnostics)
+            return report
 
     def cancellation_helper(self):
         """Resolve the opt-in helper; it is never substituted for production tests."""
@@ -118,7 +115,8 @@ class NativeQtTests(unittest.TestCase):
         # Adversarial protocol fixture: proves transport correlation, not TS parsing.
         # The explicit argv configuration is trusted local launch input, never
         # metadata from a transport stream, and QProcess does not invoke a shell.
-        fixture = r'''import json, sys, time
+        fixture = r'''import json, os, sys, time
+from pathlib import Path
 
 def emit(value):
     print(json.dumps(value), flush=True)
@@ -157,23 +155,35 @@ for line in sys.stdin:
         assert request['params']['request_id'] == active
         emit(dict(id=identity,result=dict(request_id=active,requested=sys.argv[-1] != 'complete-race',reason='not_running')))
         emit(dict(event='progress',request_id=active,state=state('poison-while-cancelling')))
-        time.sleep(0.4)
+        release = Path(os.environ['SHOWPSISI_FIXTURE_RELEASE'])
+        deadline = time.monotonic() + 15
+        while not release.exists():
+            if time.monotonic() > deadline:
+                raise RuntimeError('UI did not acknowledge cancellation before terminal release')
+            time.sleep(0.01)
         cancelled=state('active.ts',False,'cancelled')
         cancelled.update(observations=0,tables=[])
         if sys.argv[-1] == 'complete-race':
             emit(dict(id=active,result=state('active.ts',True,'complete')))
         else:
             emit(dict(id=active,error=dict(code='analysis_cancelled',message='Analysis cancelled',data=dict(state=cancelled))))
-        time.sleep(0.1)
         emit(dict(id=active,result=state('poison-late-success',True,'complete')))
         emit(dict(event='progress',request_id=active,state=state('poison-late-progress')))
+    elif method == 'fixture_late_frames':
+        emit(dict(id=identity,result=dict(late_frames_sent=True)))
 '''
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-stale-') as directory:
             path = Path(directory) / 'protocol_fixture.py'
             path.write_text(fixture, encoding='utf-8')
             for mode in ('stale', 'complete-race'):
                 with self.subTest(mode=mode):
-                    report = self.run_script('lifecycle-' + mode, directory, overrides={
+                    trace = Path(directory) / (mode + '.trace.jsonl')
+                    release = Path(directory) / (mode + '.release')
+                    def release_after_ui_ack(process):
+                        if trace.exists() and 'cancel_ack_observed' in trace.read_text(encoding='utf-8'):
+                            release.touch()
+                    report = self.run_script('lifecycle-' + mode, directory, on_running=release_after_ui_ack, overrides={
+                        'SHOWPSISI_TRACE': str(trace), 'SHOWPSISI_FIXTURE_RELEASE': str(release),
                         'SHOWPSISI_CORE': sys.executable,
                         'SHOWPSISI_CORE_ARGS_JSON': json.dumps(['-u', str(path), mode]),
                         'SHOWPSISI_TEST_SIZE': 'compact'})
@@ -242,6 +252,26 @@ for line in sys.stdin:
             self.assertGreaterEqual(len(report['checks']), 25)
             self.assertTrue(all(report['checks'].values()), report)
 
+    def test_snapshot_query_waits_for_terminal_before_rescan(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-query-gate-') as directory:
+            gate, trace = Path(directory) / 'query', Path(directory) / 'trace.jsonl'
+            real_core = native_environment()['SHOWPSISI_CORE']
+            observed = []
+            def release_after_wait(process):
+                if gate.with_suffix('.held').exists() and trace.exists():
+                    events = trace.read_text(encoding='utf-8')
+                    if events.count('comparison_query_waiting') >= 2:
+                        self.assertFalse(gate.with_suffix('.premature').exists(), 'Rescan invalidated the pending snapshot query')
+                        observed.append(True)
+                        gate.with_suffix('.release').touch()
+            report = self.run_script('comparison', directory, on_running=release_after_wait, overrides={
+                'SHOWPSISI_CORE': sys.executable,
+                'SHOWPSISI_CORE_ARGS_JSON': json.dumps(['-u', str(ROOT / 'tests/fixtures/qt_delayed_query_proxy.py')]),
+                'SHOWPSISI_REAL_CORE': real_core, 'SHOWPSISI_QUERY_GATE': str(gate), 'SHOWPSISI_TRACE': str(trace)})
+            self.assertTrue(observed, 'The real query response was not held and acknowledged')
+            self.assertFalse(gate.with_suffix('.premature').exists())
+            self.assertTrue(report['checks']['explicit_use_snapshot'])
+
     def test_populated_compact_comparison_keyboard_and_controls(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-compact-comparison-') as directory:
             # Keep a taller persisted timeline to exercise real saved-layout pressure.
@@ -309,10 +339,26 @@ for line in sys.stdin:
         existing_manifest.write_bytes(b'preserve existing manifest')
         source = ROOT / 'samples/generated/lab.ts'
         before = hashlib.sha256(source.read_bytes()).hexdigest()
-        overrides = {'SHOWPSISI_EXPORT_TEST_DIR': str(destination), 'SHOWPSISI_TEST_SIZE': 'compact'}
+        overrides = {'SHOWPSISI_EXPORT_TEST_DIR': str(destination), 'SHOWPSISI_TEST_SIZE': 'compact',
+                     'SHOWPSISI_TEST_EXPORT_ACCEPT_DELAY': '700'}
         if resource_root:
             overrides['SHOWPSISI_ROOT'] = str(resource_root)
-        report = self.run_script('export-destination', directory, overrides=overrides)
+        preserved = {}
+        def observe_first_export(process):
+            output = destination / 'chosen λ.ts'
+            manifest = Path(str(output) + '.manifest.json')
+            if not preserved and output.exists() and manifest.exists():
+                try:
+                    json.loads(manifest.read_text(encoding='utf-8'))
+                except (OSError, json.JSONDecodeError):
+                    return
+                for path in (output, manifest):
+                    preserved[path] = (hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns)
+        report = self.run_script('export-destination', directory, overrides=overrides, on_running=observe_first_export)
+        self.assertEqual(len(preserved), 2, 'The delayed duplicate choice must allow first-export observation')
+        for path, identity in preserved.items():
+            self.assertEqual((hashlib.sha256(path.read_bytes()).hexdigest(), path.stat().st_mtime_ns), identity,
+                             'Repeated refused exports must not modify output or manifest')
         self.assertTrue(all(report['checks'].values()), report)
         self.assertGreaterEqual(len(report['checks']), 20)
         self.assertFalse((destination / 'cancelled.ts').exists())
@@ -425,24 +471,8 @@ for line in sys.stdin:
                 self.assertEqual((temp / 'protocol-upgrade.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
 
     def test_failed_inspect_clears_native_evidence(self):
-        binary = Path(os.environ.get('SHOWPSISI_QT', ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))
-        if not binary.exists():
-            self.skipTest('Build the native Qt target or set SHOWPSISI_QT')
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-error-') as directory:
-            result = Path(directory) / 'result.json'
-            env = native_environment()
-            env.update(SHOWPSISI_SCRIPT='inspect-error', SHOWPSISI_TEST_RESULT=str(result), SHOWPSISI_SETTINGS_PATH=str(Path(directory) / 'settings.ini'))
-            with (Path(directory) / 'ui.log').open('w+', encoding='utf-8') as log:
-                process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
-                try:
-                    report = wait_for_qt_result(result, process, 15)
-                finally:
-                    process.terminate()
-                    process.wait(timeout=5)
-                log.seek(0)
-                diagnostics = log.read()
-            self.assertTrue(result.exists(), diagnostics)
-            self.assertTrue(report['passed'], report)
+            report = self.run_script('inspect-error', directory, timeout=15)
             self.assertIn('Unknown section', report['error'])
 
     def test_stream_markup_is_literal_without_network_fetches(self):
@@ -496,58 +526,26 @@ for line in sys.stdin:
                     core.wait(timeout=5)
                     core.stdout.close()
                     core.stderr.close()
-                env.update(SHOWPSISI_SAMPLE=str(fixture), SHOWPSISI_SCRIPT='plaintext',
-                           SHOWPSISI_TEST_RESULT=str(result), SHOWPSISI_SCREENSHOT=str(temp / 'literal.png'), SHOWPSISI_SETTINGS_PATH=str(temp / 'settings.ini'))
-                with (temp / 'ui.log').open('w+', encoding='utf-8') as log:
-                    process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
-                    try:
-                        report = wait_for_qt_result(result, process, 15)
-                        time.sleep(0.6)  # Allow asynchronous image fetches, if any, to reach the trap.
-                    finally:
-                        process.terminate()
-                        process.wait(timeout=5)
-                    log.seek(0)
-                    diagnostics = log.read()
-                self.assertTrue(result.exists(), diagnostics)
-                self.assertTrue(report['passed'], report)
+                report = self.run_script('plaintext', temp, timeout=15,
+                                         overrides={'SHOWPSISI_SAMPLE': str(fixture)},
+                                         after_report=lambda: time.sleep(0.6))  # Bounded negative-network observation.
                 self.assertGreaterEqual(report['matched_text_items'], 3)
                 self.assertTrue(report['comparison_literal'])
                 self.assertEqual(report['unsafe_text_items'], 0)
                 self.assertGreaterEqual(report['tooltip_text_items'], 1)
                 self.assertEqual(requests, [], 'Markup caused a network image request')
-                for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign'):
-                    self.assertNotIn(error, diagnostics)
         finally:
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
 
     def run_native_smoke(self, standards):
-        binary = Path(os.environ.get('SHOWPSISI_QT', ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))
-        if not binary.exists():
-            self.skipTest('Build the native Qt target or set SHOWPSISI_QT')
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-') as directory:
             temp = Path(directory)
-            result, screenshot, trace = temp / 'result.json', temp / 'screen.png', temp / 'trace.jsonl'
-            env = native_environment()
-            env.update(SHOWPSISI_SCRIPT='smoke', SHOWPSISI_STANDARDS=standards, SHOWPSISI_TEST_RESULT=str(result),
-                       SHOWPSISI_SCREENSHOT=str(screenshot), SHOWPSISI_TRACE=str(trace),
-                       SHOWPSISI_ARTIFACT_DIR=str(temp), SHOWPSISI_SETTINGS_PATH=str(temp / 'settings.ini'))
-            with (temp / 'stderr.log').open('w+', encoding='utf-8') as log:
-                process = subprocess.Popen([str(binary)], cwd=ROOT, env=env, stdout=log, stderr=log)
-                try:
-                    report = wait_for_qt_result(result, process, 35)
-                finally:
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
-                log.seek(0)
-                diagnostics = log.read()
-            self.assertTrue(result.exists(), 'Qt smoke did not finish:\n' + diagnostics + '\n' + (trace.read_text(encoding='utf-8') if trace.exists() else 'No trace'))
-            self.assertTrue(report['passed'], report)
+            screenshot, trace = temp / 'smoke.png', temp / 'trace.jsonl'
+            report = self.run_script('smoke', temp, timeout=35, overrides={
+                'SHOWPSISI_STANDARDS': standards, 'SHOWPSISI_TRACE': str(trace),
+                'SHOWPSISI_ARTIFACT_DIR': str(temp)})
             self.assertEqual(report['standards_context'], standards)
             self.assertTrue(report['native_tree'])
             self.assertTrue(report['history_cutoff'])
@@ -560,9 +558,6 @@ for line in sys.stdin:
             self.assertEqual(len(report['checks']), 5)
             self.assertEqual(screenshot.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
             self.assertTrue(list(temp.glob('qt-export-*.ts.manifest.json')))
-            for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
-                self.assertNotIn(error, diagnostics)
-
 
 
 class QtResultPublicationTests(unittest.TestCase):
@@ -618,7 +613,7 @@ class QtResultPublicationTests(unittest.TestCase):
 
 
 class QtEvidenceRetentionTests(unittest.TestCase):
-    def exercise(self, complete=False, oversize=False):
+    def exercise(self, complete=False, oversize=False, script='comparison'):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             run, evidence = root / 'run', root / 'evidence'
@@ -629,10 +624,10 @@ class QtEvidenceRetentionTests(unittest.TestCase):
             process.poll.return_value = None
             process.wait.return_value = 0
             def publish(*args):
-                (run / 'comparison.json').write_text('{"passed":true}' if complete else '{')
-                (run / 'comparison.log').write_text('ReferenceError: injected QML failure' if complete else 'injected loader context')
+                (run / (script + '.json')).write_text('{"passed":true}' if complete else '{')
+                (run / (script + '.log')).write_text('ReferenceError: injected QML failure' if complete else 'injected loader context')
                 if oversize:
-                    with (run / 'comparison.png').open('wb') as output:
+                    with (run / (script + '.png')).open('wb') as output:
                         output.truncate(5 * 1024 * 1024 + 1)
                 if not complete:
                     raise AssertionError('injected incomplete-result failure')
@@ -641,12 +636,12 @@ class QtEvidenceRetentionTests(unittest.TestCase):
                  mock.patch('subprocess.Popen', return_value=process), \
                  mock.patch(__name__ + '.wait_for_qt_result', side_effect=publish):
                 with self.assertRaisesRegex(AssertionError, 'ReferenceError' if complete else 'injected incomplete-result failure'):
-                    NativeQtTests().run_script('comparison', run)
-            retained = evidence / 'runTest' / 'comparison'
-            self.assertEqual((retained / 'comparison.json').read_text(), '{"passed":true}' if complete else '{')
-            self.assertIn('injected', (retained / 'comparison.log').read_text())
+                    NativeQtTests().run_script(script, run)
+            retained = evidence / 'runTest' / script
+            self.assertEqual((retained / (script + '.json')).read_text(), '{"passed":true}' if complete else '{')
+            self.assertIn('injected', (retained / (script + '.log')).read_text())
             if oversize:
-                self.assertFalse((retained / 'comparison.png').exists())
+                self.assertFalse((retained / (script + '.png')).exists())
             process.terminate.assert_called_once()
 
     def test_partial_result_retains_original_failure_and_logs(self):
@@ -657,6 +652,12 @@ class QtEvidenceRetentionTests(unittest.TestCase):
 
     def test_oversized_evidence_is_not_copied(self):
         self.exercise(oversize=True)
+
+    def test_standalone_modes_retain_timeout_and_diagnostic_failures(self):
+        for script in ('inspect-error', 'plaintext', 'smoke'):
+            for complete in (False, True):
+                with self.subTest(script=script, complete=complete):
+                    self.exercise(complete=complete, script=script)
 
     def test_retained_smoke_isolates_settings(self):
         import windows_native_checks as checks

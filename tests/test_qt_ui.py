@@ -68,6 +68,14 @@ class NativeQtTests(unittest.TestCase):
             log.seek(0)
             diagnostics = log.read()
         self.assertTrue(result.exists(), diagnostics)
+        # Preserve bounded evidence before TemporaryDirectory removes a failed run.
+        failure_root = os.environ.get('SHOWPSISI_QT_FAILURE_ARTIFACTS')
+        if not report.get('passed') and failure_root:
+            destination = Path(failure_root) / script
+            destination.mkdir(parents=True, exist_ok=True)
+            for source in (result, screenshot, directory / (script + '.log')):
+                if source.is_file() and source.stat().st_size <= 5 * 1024 * 1024:
+                    shutil.copy2(source, destination / source.name)
         self.assertTrue(report['passed'], report)
         for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
             self.assertNotIn(error, diagnostics)

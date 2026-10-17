@@ -1257,6 +1257,7 @@ ApplicationWindow {
         repeat: true
         property real phase: 0
         property var checks: ({})
+        property var layoutMetrics: ({})
         property var changedService: null
         property var initialPacket: null
         onTriggered: {
@@ -1315,6 +1316,15 @@ ApplicationWindow {
                 checks.after_cutoff = detail.native_table_at_packet === Number(toPacket.text);
                 checks.after_name = chosenService().name === changedService.after.value.name;
                 checks.tree_height = tree.height >= 90;
+                layoutMetrics = {windowWidth: win.width, windowHeight: win.height,
+                    inspectorWidth: inspectorPane.width, inspectorHeight: inspectorPane.height,
+                    treeHeight: tree.height, timelineHeight: timelinePane.height,
+                    compact: compactInspector, titleFont: sectionTitle.font.toString(),
+                    searchFont: treeSearch.font.toString(), searchHeight: treeSearch.height,
+                    inspectorChildren: Array.from(inspectorColumn.children).filter(function(item) { return item.visible; }).map(function(item) {
+                        return {type: item.toString(), x:item.x, y:item.y, width:item.width, height:item.height,
+                            implicitHeight:item.implicitHeight, text:item.text || ""};
+                    })};
                 core.key("F6");
                 checks.inspector_to_results = recordList.activeFocus;
                 core.key("F6");
@@ -1359,7 +1369,7 @@ ApplicationWindow {
                 phase++;
             } else {
                 checks.rescan_clears = !comparison.source && !selectedChange && !fromPacket.text && !toPacket.text;
-                core.testResult(JSON.stringify({passed:Object.keys(checks).every(function (key) { return checks[key]; }),checks:checks}));
+                core.testResult(JSON.stringify({passed:Object.keys(checks).every(function (key) { return checks[key]; }),checks:checks,layout:layoutMetrics}));
                 stop();
             }
         }
@@ -2215,6 +2225,7 @@ ApplicationWindow {
                 SplitView.minimumWidth: 330
                 SplitView.maximumWidth: 1600
                 ColumnLayout {
+                    id: inspectorColumn
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: compactInspector ? 5 : 8

@@ -2228,7 +2228,7 @@ ApplicationWindow {
                     id: inspectorColumn
                     anchors.fill: parent
                     anchors.margins: 10
-                    spacing: compactInspector ? 5 : 8
+                    spacing: compactInspector ? spaceUnit : spaceUnit * 2
                     RowLayout {
                         Layout.fillWidth: true
                         TinyLabel {

@@ -142,7 +142,7 @@ def main():
     # Ordinary tests and the retained UI smoke must keep using production core.
     engine_probe(artifacts, "SHOWPSISI_TEST_CORE", "cancellation-helper-probe")
     if args.qt:
-        os.environ["SHOWPSISI_QT_FAILURE_ARTIFACTS"] = str(artifacts / "qt-failures")
+        os.environ["SHOWPSISI_QT_TEST_ARTIFACTS"] = str(artifacts / "qt-interactions")
         qt_smoke(artifacts)
         patterns = ["test_qt_ui.py"]
     else:

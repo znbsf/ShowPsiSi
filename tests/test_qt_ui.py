@@ -68,10 +68,10 @@ class NativeQtTests(unittest.TestCase):
             log.seek(0)
             diagnostics = log.read()
         self.assertTrue(result.exists(), diagnostics)
-        # Preserve bounded evidence before TemporaryDirectory removes a failed run.
-        failure_root = os.environ.get('SHOWPSISI_QT_FAILURE_ARTIFACTS')
-        if not report.get('passed') and failure_root:
-            destination = Path(failure_root) / script
+        # Preserve failures and the compact acceptance layout before temporary cleanup.
+        evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
+        if evidence_root and (not report.get('passed') or script == 'comparison-small'):
+            destination = Path(evidence_root) / script
             destination.mkdir(parents=True, exist_ok=True)
             for source in (result, screenshot, directory / (script + '.log')):
                 if source.is_file() and source.stat().st_size <= 5 * 1024 * 1024:

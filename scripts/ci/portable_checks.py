@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -39,7 +40,8 @@ def manifest(package):
                 'bin/tscore.time.xml', 'bin/tscore.ip.names', 'bin/platforms/qwindows.dll',
                 'bin/qt.conf', 'bin/showpsisi-portable.json', 'api/tools.json', 'extensions/demo.json',
                 'references/standards.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'LICENSE',
-                'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'redistribution-review.json']
+                'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'redistribution-review.json',
+                'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico']
     for name in required:
         if name not in files:
             raise RuntimeError(f'Required package file missing: {name}')
@@ -105,6 +107,75 @@ def pe_dependencies(package):
         finally:
             pe.close()
     return evidence
+
+
+def embedded_application_icon(package):
+    """Resolve every Windows icon group entry to its same-language image bytes.
+
+    Our RC emits a single original icon group. Reject malformed or unrelated
+    groups too: their presence must not silently change the shell's default icon.
+    """
+    import pefile
+    data = (package / 'assets/icons/showpsisi.ico').read_bytes()
+    count = 7
+    if len(data) < 6 + 16 * count or struct.unpack('<HHH', data[:6]) != (0, 1, count):
+        raise RuntimeError('Application ICO must contain all seven sizes')
+    expected = {}
+    next_offset = 6 + 16 * count
+    for index in range(count):
+        fields = struct.unpack('<BBBBHHII', data[6 + 16 * index:22 + 16 * index])
+        width, height, colors, reserved, planes, bits, length, offset = fields
+        if (width != height or (width or 256) not in (16, 24, 32, 48, 64, 128, 256)
+                or (colors, reserved, planes, bits) != (0, 0, 1, 32)
+                or offset != next_offset or not length or offset + length > len(data)
+                or width in expected):
+            raise RuntimeError('Malformed application ICO directory')
+        expected[width] = (fields[:7], data[offset:offset + length])
+        next_offset += length
+    if next_offset != len(data):
+        raise RuntimeError('Malformed application ICO payload boundary')
+    pe = pefile.PE(str(package / 'bin/showpsisi-qt.exe'))
+    try:
+        resources = getattr(pe, 'DIRECTORY_ENTRY_RESOURCE', None)
+        if resources is None:
+            raise RuntimeError('Qt executable has no embedded icon resources')
+        images, groups = {}, []
+        for resource in resources.entries:
+            if resource.id not in (3, 14):  # RT_ICON, RT_GROUP_ICON
+                continue
+            for item in resource.directory.entries:
+                for language in item.directory.entries:
+                    entry = language.data.struct
+                    payload = pe.get_data(entry.OffsetToData, entry.Size)
+                    if len(payload) != entry.Size:
+                        raise RuntimeError('Truncated executable icon resource')
+                    if resource.id == 3:
+                        key = (item.id, language.id)
+                        if item.id is None or key in images:
+                            raise RuntimeError('Ambiguous executable icon resource ID/language')
+                        images[key] = payload
+                    else:
+                        groups.append((language.id, payload))
+        if not groups:
+            raise RuntimeError('Qt executable has no embedded icon group')
+        for language, group in groups:
+            if len(group) != 6 + 14 * count or struct.unpack('<HHH', group[:6]) != (0, 1, count):
+                raise RuntimeError('Malformed executable icon group directory')
+            seen_sizes, seen_ids = set(), set()
+            for index in range(count):
+                fields = struct.unpack('<BBBBHHIH', group[6 + 14 * index:20 + 14 * index])
+                width, resource_id = fields[0], fields[7]
+                if width not in expected or width in seen_sizes or resource_id in seen_ids:
+                    raise RuntimeError('Invalid or duplicate executable icon group entry')
+                metadata, payload = expected[width]
+                if fields[:7] != metadata or images.get((resource_id, language)) != payload:
+                    raise RuntimeError('Qt executable icon group does not match packaged original artwork')
+                seen_sizes.add(width)
+                seen_ids.add(resource_id)
+        return {'verified': True, 'frames': count, 'groups': len(groups),
+                'ico_sha256': digest(package / 'assets/icons/showpsisi.ico')}
+    finally:
+        pe.close()
 
 
 def runtime_requirement(package):
@@ -299,6 +370,8 @@ def validate(package, artifacts, qt):
         (artifacts / 'portable-validation.json').write_text(json.dumps(evidence, indent=2), encoding='utf-8')
     checkpoint()
     evidence['pe_dependencies'] = pe_dependencies(package)
+    checkpoint()
+    evidence['application_icon'] = embedded_application_icon(package)
     checkpoint()
     evidence['runtime_requirement'] = runtime_requirement(package)
     checkpoint()

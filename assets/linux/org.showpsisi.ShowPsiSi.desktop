@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ShowPsiSi
+Comment=Inspect transport stream PSI/SI evidence
+Exec=showpsisi-qt
+Icon=org.showpsisi.ShowPsiSi
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true

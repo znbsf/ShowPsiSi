@@ -57,6 +57,8 @@ class NativeQtTests(unittest.TestCase):
         env.update(overrides or {})
         evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
         destination = Path(evidence_root) / self._testMethodName / script if evidence_root else None
+        if destination and script == 'refinement':
+            destination = destination / (env.get('SHOWPSISI_THEME', 'dark') + '-' + env.get('SHOWPSISI_TEST_SIZE', 'normal'))
         logfile = directory / (script + '.log')
         sources = [result, screenshot, Path(str(screenshot)+'.xml.png'), logfile, Path(str(screenshot) + '.scanning.png'), Path(str(screenshot) + '.cancelled.png')]
         if env.get('SHOWPSISI_TRACE'):
@@ -93,6 +95,32 @@ class NativeQtTests(unittest.TestCase):
         helper = Path(os.environ.get('SHOWPSISI_TEST_CORE', production.with_name('showpsisi-core-test' + EXE)))
         self.assertTrue(helper.is_file(), 'Build with -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON or set SHOWPSISI_TEST_CORE')
         return helper
+
+    def test_refined_themes_grouping_and_pid_columns(self):
+        for theme in ('dark', 'light'):
+            for size in ('normal', 'compact'):
+                with self.subTest(theme=theme, size=size), tempfile.TemporaryDirectory(prefix='showpsisi-qt-refined-') as directory:
+                    report = self.run_script('refinement', directory, overrides={
+                        'SHOWPSISI_THEME':theme, 'SHOWPSISI_TEST_SIZE':size})
+                    self.assertEqual(report['theme'], theme)
+                    self.assertGreaterEqual(report['tree_height'], 90)
+                    self.assertTrue(all(report['checks'].values()), report)
+                    for capture in (Path(directory)/'refinement.png', Path(directory)/'refinement.png.xml.png'):
+                        self.assertEqual(capture.read_bytes()[-12:], b'\x00\x00\x00\x00IEND\xaeB`\x82', 'Incomplete PNG capture')
+
+    def test_refined_service_media_wire_evidence(self):
+        from test_service_metadata import ServiceMetadataTests
+        fixture = ServiceMetadataTests()
+        parts = [fixture.pat(), fixture.pmt(), fixture.nit(), (0x11,fixture.sdt(last=0))]
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-media-') as directory:
+            path = Path(directory)/'media.ts'
+            path.write_bytes(b''.join(bytes([0x47,0x40|(pid>>8),pid&255,0x10,0])+raw+b'\xff'*(183-len(raw)) for pid,raw in parts))
+            for theme in ('dark','light'):
+                capture_dir=Path(directory)/theme
+                capture_dir.mkdir()
+                report=self.run_script('refinement', capture_dir, overrides={'SHOWPSISI_THEME':theme,
+                    'SHOWPSISI_SAMPLE':str(path), 'SHOWPSISI_TEST_SIZE':'compact', 'SHOWPSISI_EXPECT_MEDIA':'1'})
+                self.assertEqual(report['theme'],theme)
 
     def test_section_evidence_workbench(self):
         from test_section_evidence import SectionEvidenceTests

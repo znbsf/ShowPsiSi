@@ -137,7 +137,7 @@ function categoryBadge(row) {
   return `<span class="table-kind category-${tone}" title="${esc(label + " · " + (row.name || row) + " · " + (glossary[row.name || row] || ""))}">${symbol} ${esc(tableLabel(row.name || row))}</span>`;
 }
 const isBadCrc = (row) => row.crc?.status === "invalid";
-let showBadCrc = false, evidenceScope = "merged", groupedTables = false, sectionGroupOpen = false;
+let showBadCrc = false, evidenceScope = "merged", groupedTables = true, sectionGroupOpen = false;
 const openTableGroups = new Set();
 function syntaxXml(xml) {
   // Tokenize original text, then escape each token. Never interpret SDK XML as HTML.
@@ -148,11 +148,19 @@ function syntaxXml(xml) {
       i % 2 ? `<span class="xml-string">${esc(token)}</span>` : esc(token).replace(/([\w:.-]+)(=)/g, '<span class="xml-attribute">$1</span>$2')).join("") + '</span>';
   }).join("");
 }
+function arrivalAxis(first, last, timing = data.timing) {
+  const scale = Number(timing?.seconds_per_packet);
+  const timed = scale > 0 && timing?.basis === "user supplied bitrate";
+  return `<div class="arrival-axis" aria-label="${timed ? 'Estimated seconds from supplied bitrate, not PCR' : 'Packet positions'}">${[0, .25, .5, .75, 1].map(f => {
+    const packet = Math.round(first + (last-first)*f);
+    return `<span>${timed ? (packet*scale).toFixed(3)+' s' : '#'+num(packet)}</span>`;
+  }).join('')}</div><div class="axis-basis">${timed ? 'Estimated elapsed seconds · user supplied 188-byte TS bitrate · not PCR time' : 'Zero-based packet positions · no measured time available'}</div>`;
+}
 function distributionPanel(row) {
   const d = row.distribution;
   if (!d) return '';
   const bins = d.bins || [], max = Math.max(1, ...bins.map(b => b.count));
-  return `<details class="arrival"><summary>Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</summary><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${Math.max(2, 100*b.count/max)}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div></details>`;
+  return `<details class="arrival"><summary>Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</summary><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</details>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
 let data = {},
@@ -162,6 +170,7 @@ let data = {},
   pending = new Map(),
   tab = "Services",
   filter = "",
+  pidFilter = null,
   search = "",
   page = 0,
   historyPage = 0;
@@ -198,14 +207,28 @@ const invoke = (...args) =>
         ),
       );
 $("#app").innerHTML = `
-<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="api">Agent API</button></header>
+<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="api">Agent API</button></header>
 <div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="dtmb">DTMB</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
 <div class="stats" id="stats"></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only transport stream and manifest, without media or PCR.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><div class="actions"><button class="btn" id="export" disabled>Export SI-only TS + manifest</button><button class="btn" id="close-edit">Close</button></div></dialog>
 <dialog id="api-dialog" aria-labelledby="api-title"><h2 id="api-title">Native agent API</h2><pre id="api-text"></pre><button class="btn" id="close-api">Close</button></dialog>`;
+let theme = "dark";
+try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
+function applyTheme() {
+  document.documentElement.dataset.theme = theme;
+  $("#theme-toggle").textContent = theme === "dark" ? "Light theme" : "Dark theme";
+  $("#theme-toggle").setAttribute("aria-pressed", String(theme === "light"));
+  document.querySelector('meta[name="color-scheme"]').content = theme;
+}
+applyTheme();
+$("#theme-toggle").onclick = () => {
+  theme = theme === "dark" ? "light" : "dark";
+  try { localStorage.setItem("showpsisi.theme", theme); } catch (_) {}
+  applyTheme();
+};
 function notice(text, error = false) {
   if (backendFailure) {
     text = backendFailure;
@@ -378,6 +401,7 @@ async function scan() {
   data = {};
   preview = {};
   filter = "";
+  pidFilter = null;
   page = 0;
   historyPage = 0;
   firstPaint = false;
@@ -550,8 +574,8 @@ function reportedStandards(value) {
 }
 function tableMatches(t) {
   return (
-    !filter ||
-    (filter === "Private / other" ? isOtherTable(t) : t.name === filter)
+    (pidFilter === null || Number(t.pid) === pidFilter) && (!filter ||
+    (filter === "Private / other" ? isOtherTable(t) : t.name === filter))
   );
 }
 function render() {
@@ -600,7 +624,7 @@ function render() {
           t === "All tables" ||
           (t === "Private / other" ? isOtherTable(r) : r.name === t),
       ).length;
-      return `<button class="nav ${filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon category-${tableCategory(t)[0]}" aria-hidden="true">${t === "All tables" ? "▦" : tableCategory(t)[1]}</span><span class="family-label">${esc(tableLabel(t))}</span><span class="count">${num(count)}</span></button>`;
+      return `<button class="nav ${pidFilter === null && filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon category-${tableCategory(t)[0]}" aria-hidden="true">${t === "All tables" ? "▦" : tableCategory(t)[1]}</span><span class="family-label">${esc(tableLabel(t))}</span><span class="count">${num(count)}</span></button>`;
     })
     .join("");
   $("#sidebar")
@@ -608,6 +632,7 @@ function render() {
     .forEach(
       (el) =>
         (el.onclick = () => {
+          pidFilter = null;
           filter = el.dataset.filter === "All tables" ? "" : el.dataset.filter;
           changeTab("Tables");
           page = 0;
@@ -615,6 +640,19 @@ function render() {
           [...$("#sidebar").querySelectorAll("button")].find((button) => button.dataset.filter === el.dataset.filter)?.focus();
         }),
     );
+  const pids = [...new Set((data.tables || []).map(r => Number(r.pid)))].sort((a,b) => a-b);
+  const pidPanel = document.createElement("div");
+  pidPanel.className = "pid-explorer";
+  pidPanel.innerHTML = '<div class="pid-head"><span>PID</span><span>TABLES</span><span>#</span></div>' + pids.map(pid => {
+    const tables = (data.tables || []).filter(r => r.pid === pid);
+    const names = [...new Set(tables.map(r => tableLabel(r.name)))].join(" / ");
+    return `<button class="nav pid-row ${pidFilter === pid ? 'active' : ''}" data-pid="${pid}" title="PID ${hex(pid)} · ${esc(names)}"><span class="numeric">${hex(pid)}</span><span class="family-label">${esc(names)}</span><span class="count">${tables.length}</span></button>`;
+  }).join('');
+  $("#sidebar").prepend(pidPanel);
+  pidPanel.querySelectorAll('[data-pid]').forEach(el => el.onclick = () => {
+    pidFilter = Number(el.dataset.pid); filter = ''; changeTab('Tables'); page = 0; render();
+    $(`#sidebar [data-pid="${pidFilter}"]`)?.focus();
+  });
   $("#extension").innerHTML =
     `<div class="panel-title">DESCRIPTOR EXTENSION</div><strong>${esc(data.extension_id || "No extension reported")}</strong><p>Schema extensions use their declared scope. Native decoding follows the table context; raw evidence is retained.</p>`;
   $("#tabs").innerHTML = ["Services", "Tables", "EPG", "Issues", "Changes"]
@@ -707,7 +745,7 @@ function recordRows() {
         .includes(needle),
     );
   }
-  return rows;
+  return tab === "Tables" ? [...rows].sort((a,b) => a.pid-b.pid || a.table_id-b.table_id || a.extension-b.extension || a.version-b.version || a.section-b.section) : rows;
 }
 function rowIdentity(r, index) {
   return tab === "Services"
@@ -719,6 +757,7 @@ function rowIdentity(r, index) {
         : r.id;
 }
 function renderList() {
+  $("#list").onscroll = () => { $("#service-head").scrollLeft = $("#list").scrollLeft; };
   $(".searchbar").hidden = tab === "Changes";
   $("#list").setAttribute("role", tab === "Changes" ? "region" : "listbox");
   $("#list").setAttribute("aria-label", tab === "Changes" ? "Snapshot changes" : "Stream records");
@@ -727,27 +766,25 @@ function renderList() {
     return;
   }
   const rows = recordRows();
-  page = Math.max(0, Math.min(page, Math.ceil(rows.length / PAGE_SIZE) - 1));
+  const groups = tab === "Tables" && groupedTables ? (data.table_groups || []).filter(g => tableMatches(g) && (!search.trim() || g.section_ids.some(id => rows.some(r => r.id === id)))).sort((a,b) => a.pid-b.pid || a.table_id-b.table_id || a.extension-b.extension || a.version-b.version) : [];
+  const total = tab === "Tables" && groupedTables ? groups.length : rows.length;
+  page = Math.max(0, Math.min(page, Math.ceil(total / PAGE_SIZE) - 1));
   const start = page * PAGE_SIZE;
-  $("#result-count").textContent = num(rows.length);
-  $("#page-label").textContent = rows.length
-    ? `${num(start + 1)}–${num(Math.min(start + PAGE_SIZE, rows.length))} of ${num(rows.length)}`
-    : "0 records";
+  $("#result-count").textContent = num(total);
+  $("#page-label").textContent = total ? `${num(start + 1)}–${num(Math.min(start + PAGE_SIZE, total))} of ${num(total)} ${tab === "Tables" && groupedTables ? "tables" : "records"}` : "0 records";
   $("#prev").disabled = page === 0;
-  $("#next").disabled = start + PAGE_SIZE >= rows.length;
-  $("#service-head").innerHTML =
-    tab === "Services"
-      ? `<div class="service-head"><span ${tip("LCN")}>LCN</span><span>SERVICE / PROVIDER</span><span ${tip("PMT")}>PMT PID</span><span>GROUP</span></div>`
-      : tab === "Tables" ? `<div class="table-controls"><label><input id="show-bad-crc" type="checkbox" ${showBadCrc ? 'checked' : ''}> Show bad CRC (${num((data.tables || []).filter(tableMatches).filter(isBadCrc).length)})</label><button class="btn small" id="table-group-toggle" aria-pressed="${groupedTables}">${groupedTables ? "Section list" : "Table tree"}</button><span class="meta">${showBadCrc ? 'Including' : 'Hiding'} bad CRC only · Issues retains all evidence</span></div>` : "";
-  $("#table-group-toggle")?.addEventListener("click", () => { groupedTables = !groupedTables; renderList(); });
+  $("#next").disabled = start + PAGE_SIZE >= total;
+  $("#service-head").innerHTML = tab === "Services" ? `<div class="service-head"><span ${tip("LCN")}>LCN</span><span>SERVICE / PROVIDER</span><span>TYPE</span><span ${tip("PMT")}>PMT PID</span><span>VIDEO / AUDIO PIDs</span></div>` : "";
+  $("#table-filter-tools").innerHTML = tab === "Tables" ? `<label title="Include invalid CRC sections. Issues always retains all evidence."><input id="show-bad-crc" type="checkbox" ${showBadCrc ? 'checked' : ''}> Bad CRC (${num((data.tables || []).filter(tableMatches).filter(isBadCrc).length)})</label><button class="btn small" id="table-group-toggle" aria-pressed="${groupedTables}" title="Switch between logical tables and individual sections">${groupedTables ? "Sections" : "Tables"}</button>` : "";
+  $("#table-group-toggle")?.addEventListener("click", () => { groupedTables = !groupedTables; page = 0; renderList(); });
   $("#show-bad-crc")?.addEventListener("change", e => { showBadCrc = e.target.checked; page = 0; renderList(); });
   $("#list").innerHTML = rows
-    .slice(start, start + PAGE_SIZE)
+    .slice(tab === "Tables" && groupedTables ? 0 : start, tab === "Tables" && groupedTables ? rows.length : start + PAGE_SIZE)
     .map((r, i) => {
       const key = rowIdentity(r, start + i);
       let body = "";
       if (tab === "Services")
-        body = `<span class="lcn">${r.logical_channel_number ?? "—"}</span><div class="record-name"><strong>${esc(r.name || "Unnamed service")}</strong><small>${esc(r.provider || "No provider")} <span class="muted">· SID ${hex(r.id)}</span></small></div><span class="numeric">${hex(r.pmt_pid)}</span><span class="group">${esc(r.group)}</span>`;
+        body = `<span class="lcn" title="LCN: ${esc(r.lcn_status || 'unknown')}${esc((r.lcn_candidates || []).map(c => ` · ${c.number} (${c.namespace}; ${c.source_id})`).join(''))}">${r.logical_channel_number ?? (r.lcn_status === 'conflict' ? 'Conflict' : '—')}</span><div class="record-name"><strong>${esc(r.name || "Unnamed service")}</strong><small>${esc(r.provider || "No provider")} · SID ${hex(r.id)}</small><small>${esc(r.group || '')}</small></div><span class="service-type" title="${esc(r.service_type_name || 'Service type unavailable')}">${esc((r.service_type_name || 'Unknown').replace('Digital television service', 'Digital TV').replace('Digital radio sound service', 'Digital radio'))}<small class="numeric">${hex(r.service_type ?? r.type, 2)}</small></span><span class="numeric">${hex(r.pmt_pid)}</span><span class="numeric media-pids" title="${esc(r.media_status || 'PMT unavailable')}"><span>V ${r.video_pids?.length ? r.video_pids.map(p => hex(p)).join(', ') : r.media_status === 'decoded PMT' ? 'none' : '—'}</span><span>A ${r.audio_pids?.length ? r.audio_pids.map(p => hex(p)).join(', ') : r.media_status === 'decoded PMT' ? 'none' : '—'}</span></span>`;
       if (tab === "Tables")
         body = `${categoryBadge(r)}<div class="record-name"><strong>PID <span class="numeric">${hex(r.pid)}</span> · TID <span class="numeric">${hex(r.table_id, 2)}</span></strong><small>Version ${r.version} · section ${r.section}/${r.last_section} · ${num(r.bytes)} B</small><small>CRC ${esc(r.crc?.transmitted_hex || r.crc?.status || "unavailable")} · #${num(r.first_packet)} → #${num(r.last_packet)}</small></div><span class="numeric muted">${num(r.count)}×</span><span class="${r.valid ? "ok" : "bad"}" title="${r.valid ? "Valid section" : "Invalid section"}">${r.valid ? "●" : "⚠"}</span>`;
       if (tab === "EPG")
@@ -819,16 +856,15 @@ function renderList() {
     list.setAttribute("role", "region");
     list.setAttribute("aria-label", "Table groups and source sections");
     const nodes = new Map([...list.querySelectorAll("[data-key]")].map(el => [el.dataset.key, el]));
-    const groups = (data.table_groups || []).filter(g => tableMatches(g) && (!search.trim() || g.section_ids.some(id => rows.some(r => r.id === id))));
     list.replaceChildren();
-    for (const g of groups) {
+    for (const g of groups.slice(start, start + PAGE_SIZE)) {
       const groupRows = g.section_ids.map(id => nodes.get(id)).filter(Boolean);
       // Preserve all-invalid group evidence even when its bad-CRC rows are hidden.
-      if (!groupRows.length && (showBadCrc || g.validity !== "all_invalid" || page > 0)) continue;
+      if (!groupRows.length && (showBadCrc || g.validity !== "all_invalid")) continue;
       const branch = document.createElement("details");
       branch.className = "table-branch";
       branch.open = openTableGroups.has(g.id);
-      branch.innerHTML = `<summary>${categoryBadge(g)} <span>PID ${hex(g.pid)} · TID ${hex(g.table_id,2)} · v${g.version}<small>${esc(g.validity)} · observed ${g.observed_section_numbers?.length || 0}/${Number(g.last_section)+1} · missing ${(g.missing_section_numbers || []).join(', ') || 'none'} · selected ${g.selected_complete ? 'complete' : 'incomplete'}</small></span></summary><div role="listbox" aria-label="Source sections"></div>`;
+      branch.innerHTML = `<summary>${categoryBadge(g)} <span>PID ${hex(g.pid)} · TID ${hex(g.table_id,2)} · Ext ${hex(g.extension)} · v${g.version} · ${g.current ? "current" : "next"}<small>${esc(g.validity)} · observed ${g.observed_section_numbers?.length || 0}/${Number(g.last_section)+1} · missing ${(g.missing_section_numbers || []).join(', ') || 'none'} · selected ${g.selected_complete ? 'complete' : 'incomplete'}</small><small>${num(g.distribution?.observation_count)} observations · packets #${num(g.distribution?.first_packet)}–#${num(g.distribution?.last_packet)}</small></span></summary><div role="listbox" aria-label="Source sections"></div>`;
       const holder = branch.querySelector('[role="listbox"]');
       for (const row of groupRows) holder.append(row);
       if (!holder.querySelector('[tabindex="0"]') && groupRows.length) groupRows[0].tabIndex = 0;
@@ -1564,7 +1600,7 @@ function renderInspector() {
 }
 function renderTimeline() {
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div><div class="history"><span class="meta">0</span>${(
+    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div>${arrivalAxis(0, Math.max(0,(data.packets || 1)-1))}<div class="history"><span class="meta">0</span>${(
       data.history || []
     )
       .slice(historyPage * 40, (historyPage + 1) * 40)

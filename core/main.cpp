@@ -10,6 +10,9 @@
 #include "tsMJD.h"
 #include "tsMGT.h"
 #include "tsPMT.h"
+#include "tsDVB.h"
+#include "tsStreamType.h"
+#include "tsAbstractLogicalChannelDescriptor.h"
 #include "tsDSMCCUserToNetworkMessage.h"
 #include "tsNames.h"
 #include "tsCharset.h"
@@ -351,6 +354,16 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                     d["fields"][name]=display; result[name]=display;
                 }
             }
+            // Only SDK-resolved ordinary LCN descriptors participate. HD-simulcast
+            // and regional/list descriptors are retained in native evidence, not flattened.
+            const std::set<std::string> lcnNames={"logical_channel_number_descriptor","eacem_logical_channel_number_descriptor","nordig_logical_channel_descriptor_v1","dtg_logical_channel_descriptor","australia_logical_channel_descriptor"};
+            if(!namespaceConflict&&pdsOnWire&&lcnNames.count(d.value("name",std::string()))){
+                auto native=bin.deserialize(descriptorDuck,context);
+                if(auto* lcn=dynamic_cast<ts::AbstractLogicalChannelDescriptor*>(native.get());lcn&&lcn->isValid()){
+                    d["lcn_entries"]=J::array();
+                    for(const auto& entry:lcn->entries)d["lcn_entries"].push_back({{"service_id",entry.service_id},{"number",entry.lcn},{"visible",entry.visible}});
+                }
+            }
             r.descriptors.push_back(d); p=next;
         }
         return result;
@@ -373,13 +386,48 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         } else if(r.tid==2&&b.size()>=16) {
             r.fields["pcr_pid"]=u16(b,8)&0x1fff; r.fields["streams"]=J::array();
             size_t n=u16(b,10)&0xfff; descriptors(r,12,12+n);
+            // Classification consumes only descriptors which passed the same
+            // context-aware native decoding used by the evidence inspector.
+            auto addDecoded=[&](ts::DescriptorList& list,size_t begin,size_t stop){
+                for(const auto& d:r.descriptors){const size_t offset=d["offset"],length=d["length"];
+                    if(offset>=begin&&offset+2+length<=stop&&d.value("decode_status",std::string())=="decoded")list.add(b.data()+offset,2+length);
+                }
+            };
+            ts::PMT nativePMT; if(12+n<=end)addDecoded(nativePMT.descs,12,12+n);
             ts::REGIDVector programRegistrations;
             for(size_t p=12;p+2<=std::min(12+n,end);){size_t next=p+2+b[p+1];if(next>std::min(12+n,end))break;if(b[p]==0x05&&b[p+1]>=4)programRegistrations.push_back((uint32_t(u16(b,p+2))<<16)|u16(b,p+4));p=next;}
             for(size_t p=12+n;p<end;) {
                 if(p+5>end){issue(r,"pmt_stream_truncated",p,"Incomplete stream header");break;}
                 size_t len=u16(b,p+3)&0xfff;
-                r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]}});
-                descriptors(r,p+5,p+5+len,-1,programRegistrations);p+=5+len;
+                descriptors(r,p+5,p+5+len,-1,programRegistrations);
+                ts::PMT::Stream nativeStream(&nativePMT,b[p]);
+                if(p+5+len<=end)addDecoded(nativeStream.descs,p+5,p+5+len);
+                // SDK isAudio/isVideo include private stream-type shortcuts. A
+                // private numeric value alone does not establish its namespace.
+                bool audio=nativeStream.isAudio(duck),video=nativeStream.isVideo(duck);
+                if(b[p]>=0x80){
+                    const bool atsc=(duck.standards()&ts::Standards::ATSC)!=ts::Standards::NONE;
+                    auto registered=[&](ts::REGID id){return nativePMT.descs.containsRegistration(id)||nativeStream.descs.containsRegistration(id);};
+                    const bool hdmv=registered(ts::REGID_HDMV);
+                    if(hdmv){
+                        // HDMV 0x80 is LPCM, not DigiCipher video; 0x91 is IGS,
+                        // not A52/AC3. Use the SDK's documented HDMV audio set.
+                        const std::set<unsigned> types={0x80,0x81,0x82,0x83,0x84,0x85,0x86,0x87,0x8a,0x94,0xa1,0xa2};
+                        audio=types.count(b[p])&&ts::StreamTypeIsAudio(b[p],std::set<ts::REGID>{ts::REGID_HDMV});video=false;
+                    }else if((b[p]==0xd2||b[p]==0xd4)&&registered(ts::REGID_AVSVideo)){
+                        audio=false;video=nativeStream.isVideo(duck);
+                    }else if((b[p]==0xd3||b[p]==0xd5)&&registered(ts::REGID_AVSAudio)){
+                        audio=nativeStream.isAudio(duck);video=false;
+                    }else{
+                        if(!(atsc&&(b[p]==0x81||b[p]==0x87)))nativeStream.stream_type=0x06;
+                        const auto codec=nativeStream.getCodec(duck);
+                        audio=ts::CodecTypeIsAudio(codec);video=ts::CodecTypeIsVideo(codec);
+                    }
+                }
+                r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},
+                    {"is_audio",audio},{"is_video",video},
+                    {"classification_basis","TSDuck PMT classification; private stream types require namespace or descriptor evidence"}});
+                p+=5+len;
             }
         } else if(r.tid==1&&b.size()>=12) {
             descriptors(r,8,end);
@@ -516,6 +564,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             J groupIdentity=evidenceIdentity(first);groupIdentity.erase("section_number");
             result.push_back({{"id",key},{"name",nativeTableName(first)},{"identity",groupIdentity},{"pid",first.pid},{"table_id",first.tid},{"extension",first.ext},{"version",first.version},{"current",first.current},{"last_section",first.last},{"section_ids",ids},{"observed_section_numbers",seen},{"valid_section_numbers",good},{"invalid_section_numbers",bad},{"missing_section_numbers",missing},{"missing_valid_section_numbers",missingValid},{"selected_section_ids",selectedIds},{"selected_missing_section_numbers",selectedMissing},{"selected_complete",selectedMissing.empty()&&!selectedIds.empty()},{"validity",validCount?(invalidCount?"mixed":"valid"):"all_invalid"},{"valid_observations",validCount},{"invalid_observations",invalidCount},{"distribution",distribution(parts,at,control)},{"coverage_model",schedule?"observed EIT schedule segment ranges only":"section_number 0 through last_section_number"},{"expected_section_numbers",expected},{"schedule_unobserved_segments_unknown",schedule},{"coverage_scope","observed version across capture cutoff; selected_* uses generation-safe snapshot; repetitions are not missing sections; EIT schedule segment completeness not inferred"}});
         }
+        std::sort(result.begin(),result.end(),[](const J& a,const J& b){return std::tuple(a["pid"].get<unsigned>(),a["table_id"].get<unsigned>(),a["extension"].get<unsigned>(),a["version"].get<unsigned>(),a["current"].get<bool>(),a["id"].get<std::string>())<std::tuple(b["pid"].get<unsigned>(),b["table_id"].get<unsigned>(),b["extension"].get<unsigned>(),b["version"].get<unsigned>(),b["current"].get<bool>(),b["id"].get<std::string>());});
         return result;
     }
     J derivedSnapshot(const std::map<std::string,const Record*>& selected) const {
@@ -530,7 +579,42 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             for(const auto& e:r.events)out["events"].push_back(e);
         }
         std::string groupBy=extension.value("organization",J::object()).value("group_by",std::string("group"));
-        for(auto& [key,s]:services) { unsigned sid=s["id"];s["key"]=key;auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});s["pmt_pid"]=pat!=pmts.end()?J(pat->second):J();if(pat!=pmts.end()){auto pmt=components.find({pat->second,sid});if(pmt!=components.end())s["components"]=pmt->second;}s["group"]=s.value(groupBy,J("Unassigned"));out["services"].push_back(s); }
+        for(auto& [key,s]:services) {
+            unsigned sid=s["id"];s["key"]=key;s["service_type"]=s.value("type",J());s["service_type_name"]=nullptr;
+            if(s["service_type"].is_number_unsigned()||s["service_type"].is_number_integer()){
+                const auto name=ts::ServiceTypeName(s["service_type"].get<uint8_t>()).toUTF8();
+                if(name.find("unknown")==std::string::npos&&name.find("Unknown")==std::string::npos)s["service_type_name"]=name;
+            }
+            auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});s["pmt_pid"]=pat!=pmts.end()?J(pat->second):J();
+            s["audio_pids"]=J::array();s["video_pids"]=J::array();s["media_status"]="PMT unavailable";
+            if(pat!=pmts.end()){auto pmt=components.find({pat->second,sid});if(pmt!=components.end()){
+                s["components"]=pmt->second;s["media_status"]="decoded PMT";
+                for(const auto& stream:pmt->second.value("streams",J::array())){
+                    if(stream.value("is_audio",false))s["audio_pids"].push_back(stream["pid"]);
+                    if(stream.value("is_video",false))s["video_pids"].push_back(stream["pid"]);
+                }
+            }}
+            s["lcn_candidates"]=J::array();
+            for(const auto& [unused,ptr]:selected){const auto& r=*ptr;if(!completeGroup(r,selected))continue;
+                for(const auto& d:r.descriptors){
+                    auto add=[&](const J& number,const J& visible){s["lcn_candidates"].push_back({{"number",number},{"visible",visible},{"region",nullptr},{"namespace",d.value("extension",d.value("name",std::string("unknown")))},{"pds",d["pds"]},{"source_id",r.id},{"descriptor_offset",d["offset"]}});};
+                    if(r.id==s["source_id"].get<std::string>()&&d["service_id"]==sid&&d["fields"].contains("logical_channel_number"))add(d["fields"]["logical_channel_number"],nullptr);
+                    if(r.tid!=0x40&&r.tid!=0x41&&r.tid!=0x4a)continue;
+                    for(const auto& transport:r.fields.value("transports",J::array())){
+                        const size_t start=transport["descriptor_offset"],length=transport["descriptor_bytes"],offset=d["offset"];
+                        if(transport["transport_stream_id"]!=s["ts_id"]||transport["original_network_id"]!=s["onid"]||offset<start||offset>=start+length)continue;
+                        for(const auto& entry:d.value("lcn_entries",J::array()))if(entry["service_id"]==sid)add(entry["number"],entry["visible"]);
+                    }
+                }
+            }
+            std::set<J> numbers,visibility,namespaces;
+            for(const auto& candidate:s["lcn_candidates"]){numbers.insert(candidate["number"]);visibility.insert(candidate["visible"]);namespaces.insert(candidate["namespace"]);}
+            const bool conflict=numbers.size()>1||visibility.size()>1||namespaces.size()>1;
+            s["lcn_status"]=numbers.empty()?"unknown":conflict?"conflict":"known";
+            s["logical_channel_number"]=numbers.size()==1&&!conflict?*numbers.begin():J();
+            s["lcn_scope"]="Explicit extension or SDK ordinary LCN descriptor with on-wire PDS and exact ONID/TSID/SID; regional/list and HD-simulcast mappings not selected";
+            s["group"]=s.value(groupBy,J("Unassigned"));out["services"].push_back(s);
+        }
         std::string sort=extension.value("organization",J::object()).value("sort_by",std::string("id"));
         std::sort(out["services"].begin(),out["services"].end(),[&](const J&a,const J&b){J av=a.value(sort,J());J bv=b.value(sort,J());return (av.is_null()?a["id"]:av)<(bv.is_null()?b["id"]:bv);});
         return out;
@@ -569,7 +653,7 @@ public:
         constexpr size_t bins=80; std::vector<uint64_t> counts(bins,0),bad(bins,0); uint64_t denominator=std::max<uint64_t>(1,totalBytes/stride);
         for(const auto& r:records)for(auto pos:r.positions){checkCancelled(control);size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
-        out["table_groups"]=tableGroups(at,control);out["timing"]={{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
+        out["table_groups"]=tableGroups(at,control);out["timing"]={{"packet_unit","zero-based TS packet index"},{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"bitrate_unit","bits/second for 188-byte TS packets"},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         if(demuxStatus.value("discontinuities",uint64_t(0))>0)out["diagnostics"].push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities on monitored PSI/SI PIDs (aggregate; packet locations not yet retained)"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
         return out;
@@ -603,7 +687,15 @@ public:
                 const auto& r=records.at(ids.at(service.at("source_id").get<std::string>()));
                 J identity={{"original_network_id",service["onid"]},{"transport_stream_id",service["ts_id"]},{"service_id",service["id"]},{"source_pid",r.pid}};
                 J content=service;content.erase("source_id");content.erase("key");
+                // Evidence location/version changes alone are not service changes.
+                std::set<J> semanticCandidates;
+                for(auto candidate:content["lcn_candidates"]){candidate.erase("source_id");candidate.erase("descriptor_offset");semanticCandidates.insert(std::move(candidate));}
+                content["lcn_candidates"]=semanticCandidates;
                 std::vector<const Record*> sources={&r};
+                for(const auto& candidate:service["lcn_candidates"]){
+                    const auto* source=&records.at(ids.at(candidate["source_id"].get<std::string>()));
+                    if(std::find(sources.begin(),sources.end(),source)==sources.end())sources.push_back(source);
+                }
                 // Include the exact complete PAT/PMT evidence used to derive the
                 // association, never a stale PMT sharing only the service id.
                 if(!service["pmt_pid"].is_null()){
@@ -947,7 +1039,7 @@ public:
             require(candidate.is_object()&&candidate.contains("id")&&candidate["id"].is_string()&&!candidate["id"].get<std::string>().empty(),"nonempty string id required");
             require(candidate.contains("descriptors")&&candidate["descriptors"].is_array(),"descriptors must be an array");
             std::set<std::tuple<uint64_t,unsigned,unsigned>> descriptorScopes;
-            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds"};
+            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_scope"};
             for(const auto& d:candidate["descriptors"]){
                 require(d.is_object(),"descriptor must be an object");
                 require(d.contains("tag")&&integer(d["tag"],255),"tag must be 0..255");

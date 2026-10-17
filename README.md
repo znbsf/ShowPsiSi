@@ -18,7 +18,21 @@
 
 [需求审计与修复](docs/REQUIREMENTS_AUDIT.md) · [交互参考与视觉验收](docs/UI_UX_REVIEW.md) · [云端构建和排障](docs/CLOUD_DEVELOPMENT.md) · [测试命令](tests/README.md)
 
-### 当前界面
+### 最新界面迭代（开发中）
+
+浅色／深色主题、按数值排序的 PID 列表、LCN／节目类型／PMT 与音视频 PID、可展开的逻辑多 section 表，以及明确标注单位的到达刻度。原始值与来源仍可回查。图标随 Qt 与 Tauri 资源打包。验收范围见 [本轮验证记录](docs/WORKBENCH_REFINEMENT.md)。
+
+Qt 原生控件软件渲染，合成样流：
+
+![Qt 深色工作台](docs/images/qt-refined-dark.png)
+![Qt 浅色节目与媒体字段](docs/images/qt-refined-light.png)
+
+Chromium 连接真实 C++ 引擎，合成样流（不是 Windows WebView2 截图）：
+
+![Web 深色逻辑表](docs/images/web-refined-dark.png)
+![Web 浅色节目与媒体字段](docs/images/web-refined-light.png)
+
+### 前一轮界面记录
 
 Qt 原生软件渲染，合成码流：
 

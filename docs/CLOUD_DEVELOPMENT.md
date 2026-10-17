@@ -194,3 +194,20 @@ omitted the extracted SDK's transitive SRT library path and was interrupted;
 that loader/setup failure is excluded from acceptance. The successful run used
 the documented explicit library paths. Fresh Windows CI is still required for
 the correction itself.
+
+### Final hosted acceptance (2026-10-17 UTC)
+
+The pending Windows check above was subsequently completed. Final feature head
+`70ed914d49bbe485befdfdead03ffced682f5bb2` passed all five jobs in
+[run 38991403217](https://github.com/znbsf/ShowPsiSi/actions/runs/38991403217).
+PR #7 merged as `e5793c77ebb23efec5ad661a598c507ca3490403`, and that exact merged
+revision passed all five jobs in
+[run 38991857522](https://github.com/znbsf/ShowPsiSi/actions/runs/38991857522).
+The post-merge Linux and Windows Qt logs each report **24 tests passed**:
+16 compiled native Qt integration scenarios and eight publication-reader
+regressions, with no skips, failures or errors. This supersedes the pending-CI
+status above without erasing the original failure or the initial-head boundary.
+
+These hosted Qt checks use offscreen rendering. Windows native Save-dialog
+interaction and WebView2 interaction remain unverified, as do macOS builds and
+installers; successful Windows Tauri release compilation is not GUI acceptance.

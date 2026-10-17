@@ -1,6 +1,9 @@
 # ShowPsiSi status
 
-Updated: 2026-10-16 UTC.
+Verified snapshot: 2026-10-17 UTC, merged `main`
+[`e5793c77ebb23efec5ad661a598c507ca3490403`](https://github.com/znbsf/ShowPsiSi/commit/e5793c77ebb23efec5ad661a598c507ca3490403).
+The latest hosted acceptance below is tied to that exact revision. Earlier local
+and historical results retain their stated scope; later commits need their own checks.
 
 - PR #1 merged as `ac039f6`: modern workbenches and initial integrity loop.
 - PR #2 merged as `beb2e57`: Windows MSVC engine/Qt validation.
@@ -19,7 +22,15 @@ Updated: 2026-10-16 UTC.
   not establish Windows WebView2 interaction.
 - PR #6 merged as `3e51f4c`: native Qt Save destination and TS/BIN choice.
   All five CI jobs passed at `37e92c0` in run 38982972251; Windows Qt15 passed.
-- No release or installer published. SDK 3.45 cross-platform validation is pending.
+- PR #7 merged as `e5793c7`: TSDuck/TSCore 3.45-4798 migration, expanded protocol
+  inspection and contextual workbench UI, plus the Qt test-result publication fix.
+  All five jobs passed at final feature head `70ed914d49bbe485befdfdead03ffced682f5bb2`
+  in [run 38991403217](https://github.com/znbsf/ShowPsiSi/actions/runs/38991403217).
+  The exact merged `main` above also passed all five jobs in
+  [run 38991857522](https://github.com/znbsf/ShowPsiSi/actions/runs/38991857522).
+- No release or installer published. SDK 3.45 hosted Linux/Windows build and
+  regression checks passed within the limits below; this is not all-platform
+  native GUI acceptance.
 
 ## Current result
 
@@ -85,10 +96,19 @@ Qt16 run includes both PR #6 export scenarios and the new protocol fixture check
 The initial SDK head `6fcb135` passed all five jobs in run 38990955608,
 including Windows SDK/Qt and both Rust jobs. A confirmed result-publication race
 from PR #6's post-merge Windows run was then corrected in the test harness.
-The strict local Qt gate now passes 16 native tests plus 8 publication tests;
-its new exact-head hosted CI is pending. See [cloud validation](VALIDATION_CLOUD.md),
+The corrected strict Qt gate passed locally and in both final feature-head and
+post-merge runs linked above. The post-merge Linux and Windows Qt jobs each
+passed **24 tests: 16 compiled native Qt integration tests plus 8 result-publication
+harness regressions**, with no skips, failures or errors. These are offscreen
+checks; they do not validate the Windows native Save dialog. All five hosted jobs
+passed: Linux engine/web, Linux Qt, Linux Tauri build/tests, Windows MSVC
+engine/Qt, and Windows Tauri release compilation/Rust tests. The 165-test total
+above is the recorded local suite total, not a per-platform CI total.
+See [cloud validation](VALIDATION_CLOUD.md),
+[publication-race history and final acceptance](CLOUD_DEVELOPMENT.md#qt-test-result-publication-race-2026-10-17),
 [native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
-These are local cloud results; check each PR's latest CI commit separately.
+Earlier pending-CI statements in validation records describe intermediate heads;
+this dated snapshot records the final feature head and exact merged revision.
 Native Linux Tauri comparison and persisted layout have been exercised on the
 new assets. Its actual unsupported desktop-browser helper now reports failure;
 Copy URL succeeds and clears the error. Browser navigation itself is not verified.
@@ -113,8 +133,9 @@ version-specific ABI symbols are enforced.
 
 ## Remaining boundaries
 
-- Windows WebView2 interaction, macOS builds, installers and actual external-browser
-  launching have not been validated in this iteration. Original Windows evidence
+- Windows WebView2 interaction, Windows/macOS native Save-dialog interaction,
+  macOS builds, installers and actual external-browser launching have not been
+  validated in this iteration. Original Windows evidence
   below does not validate later changes.
 - No RF demodulation, tuner control, complete DTMB-specific signaling guarantee or
   ATSC 3.0 IP/ROUTE/MMT support.

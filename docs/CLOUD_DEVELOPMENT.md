@@ -158,3 +158,39 @@ Validation on the assistant's own Linux cloud computer, 2026-10-16 UTC:
 
 Ignored local evidence: `artifacts/qt-save-final-{build,tests}.log` and
 `artifacts/qt-save-native/validation.json`, traces, screenshots and exported files.
+
+## Qt test-result publication race (2026-10-17)
+
+The PR6 post-merge main run [38983420832](https://github.com/znbsf/ShowPsiSi/actions/runs/38983420832)
+passed four jobs but failed Windows Qt's active-backend-death test with an empty
+result JSON. The harness stopped the application as soon as the result path
+existed; `QFile` creates that path before its buffered JSON is flushed. This is
+a result-publication race, not evidence that the Save-dialog behavior failed.
+The failure remains recorded rather than being replaced by a successful rerun.
+
+All four Qt unittest result waiters and the retained CI smoke now use a shared,
+bounded complete-JSON reader before stopping the producer. Original deadlines
+and application assertions remain in force. Missing or persistently malformed
+results fail with the last content and process state; complete non-object results
+are rejected, and `passed: false` is returned to the existing failure assertion.
+An observed producer exit triggers a final read in case its last flush raced the
+previous read. Eight harness regressions cover these cases, including an actual
+empty file followed by partial and complete writes. They are distinct from the
+16 compiled Qt integration tests.
+
+The initial PR7 head `6fcb13577678b06d146965464a1336f7fc3f4aa3` passed all five
+jobs in [38990955608](https://github.com/znbsf/ShowPsiSi/actions/runs/38990955608),
+including Windows TSDuck/TSCore 3.45 migration and all 16 native Qt tests. Its
+Windows screenshots have readable text and populated native views. This initial
+run predates the publication-reader correction; it is not acceptance evidence
+for that correction. Windows native Save-dialog interaction remains unverified.
+
+Correction validation in the Linux cloud workspace: the strict native runner's
+retained real Qt smoke passed, followed by all **24 tests** (16 compiled Qt
+integration scenarios plus eight publication-reader regressions), zero skips,
+failures or errors. Evidence is retained locally in
+`artifacts/sdk345-publication-strict/` and its sibling log. A first local attempt
+omitted the extracted SDK's transitive SRT library path and was interrupted;
+that loader/setup failure is excluded from acceptance. The successful run used
+the documented explicit library paths. Fresh Windows CI is still required for
+the correction itself.

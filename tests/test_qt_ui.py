@@ -5,7 +5,6 @@ binaries. A missing Qt binary skips the test; an installed but broken one fails.
 """
 import hashlib
 import json
-import hashlib
 import shutil
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import threading
@@ -17,9 +16,12 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = '.exe' if os.name == 'nt' else ''
+sys.path.insert(0, str(ROOT / 'scripts' / 'ci'))
+from qt_result import wait_for_qt_result
 
 
 def native_environment():
@@ -55,11 +57,7 @@ class NativeQtTests(unittest.TestCase):
         with (directory / (script + '.log')).open('w+', encoding='utf-8') as log:
             process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
             try:
-                deadline = time.monotonic() + 25
-                while not result.exists() and process.poll() is None and time.monotonic() < deadline:
-                    if on_running:
-                        on_running(process)
-                    time.sleep(0.1)
+                report = wait_for_qt_result(result, process, 25, on_running)
             finally:
                 process.terminate()
                 try:
@@ -70,7 +68,6 @@ class NativeQtTests(unittest.TestCase):
             log.seek(0)
             diagnostics = log.read()
         self.assertTrue(result.exists(), diagnostics)
-        report = json.loads(result.read_text(encoding='utf-8'))
         self.assertTrue(report['passed'], report)
         for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
             self.assertNotIn(error, diagnostics)
@@ -404,16 +401,13 @@ for line in sys.stdin:
             with (Path(directory) / 'ui.log').open('w+', encoding='utf-8') as log:
                 process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
                 try:
-                    deadline = time.monotonic() + 15
-                    while not result.exists() and process.poll() is None and time.monotonic() < deadline:
-                        time.sleep(0.1)
+                    report = wait_for_qt_result(result, process, 15)
                 finally:
                     process.terminate()
                     process.wait(timeout=5)
                 log.seek(0)
                 diagnostics = log.read()
             self.assertTrue(result.exists(), diagnostics)
-            report = json.loads(result.read_text(encoding='utf-8'))
             self.assertTrue(report['passed'], report)
             self.assertIn('Unknown section', report['error'])
 
@@ -473,9 +467,7 @@ for line in sys.stdin:
                 with (temp / 'ui.log').open('w+', encoding='utf-8') as log:
                     process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
                     try:
-                        deadline = time.monotonic() + 15
-                        while not result.exists() and process.poll() is None and time.monotonic() < deadline:
-                            time.sleep(0.1)
+                        report = wait_for_qt_result(result, process, 15)
                         time.sleep(0.6)  # Allow asynchronous image fetches, if any, to reach the trap.
                     finally:
                         process.terminate()
@@ -483,7 +475,6 @@ for line in sys.stdin:
                     log.seek(0)
                     diagnostics = log.read()
                 self.assertTrue(result.exists(), diagnostics)
-                report = json.loads(result.read_text(encoding='utf-8'))
                 self.assertTrue(report['passed'], report)
                 self.assertGreaterEqual(report['matched_text_items'], 3)
                 self.assertTrue(report['comparison_literal'])
@@ -511,9 +502,7 @@ for line in sys.stdin:
             with (temp / 'stderr.log').open('w+', encoding='utf-8') as log:
                 process = subprocess.Popen([str(binary)], cwd=ROOT, env=env, stdout=log, stderr=log)
                 try:
-                    deadline = time.monotonic() + 35
-                    while not result.exists() and process.poll() is None and time.monotonic() < deadline:
-                        time.sleep(0.1)
+                    report = wait_for_qt_result(result, process, 35)
                 finally:
                     process.terminate()
                     try:
@@ -524,7 +513,6 @@ for line in sys.stdin:
                 log.seek(0)
                 diagnostics = log.read()
             self.assertTrue(result.exists(), 'Qt smoke did not finish:\n' + diagnostics + '\n' + (trace.read_text(encoding='utf-8') if trace.exists() else 'No trace'))
-            report = json.loads(result.read_text(encoding='utf-8'))
             self.assertTrue(report['passed'], report)
             self.assertEqual(report['standards_context'], standards)
             self.assertTrue(report['native_tree'])
@@ -538,6 +526,59 @@ for line in sys.stdin:
             self.assertTrue(list(temp.glob('qt-export-*.ts.manifest.json')))
             for error in ('ReferenceError:', 'TypeError:', 'Cannot assign', 'Unable to assign', 'QQmlApplicationEngine failed'):
                 self.assertNotIn(error, diagnostics)
+
+
+
+class QtResultPublicationTests(unittest.TestCase):
+    def wait(self, reads, *, exit_code=None, timeout=0.3):
+        path = mock.Mock()
+        path.read_text.side_effect = reads
+        process = mock.Mock()
+        process.poll.return_value = exit_code
+        now = [0.0]
+        def advance(seconds):
+            now[0] += seconds
+        with mock.patch('qt_result.time.monotonic', side_effect=lambda: now[0]), \
+             mock.patch('qt_result.time.sleep', side_effect=advance):
+            return wait_for_qt_result(path, process, timeout)
+
+    def test_empty_and_partial_publication_waits_for_complete_json(self):
+        self.assertEqual(self.wait([FileNotFoundError(), '', '{"passed":',
+                                    '{"passed": true}']), {"passed": True})
+
+    def test_real_file_creation_does_not_end_wait_before_write(self):
+        with tempfile.TemporaryDirectory(prefix='qt-result-publication-') as directory:
+            path = Path(directory) / 'result.json'
+            path.touch()  # Reproduce QFile opening an empty result before flushing.
+            process = mock.Mock()
+            process.poll.return_value = None
+            writes = iter(['{"passed":', '{"passed": true}'])
+            def publish(_):
+                path.write_text(next(writes), encoding='utf-8')
+            self.assertEqual(wait_for_qt_result(path, process, 2, publish), {"passed": True})
+            process.terminate.assert_not_called()
+
+    def test_complete_failure_is_returned_without_retry(self):
+        self.assertEqual(self.wait(['{"passed": false}']), {"passed": False})
+
+    def test_malformed_result_fails_at_original_deadline(self):
+        with self.assertRaisesRegex(AssertionError, 'content=.*broken'):
+            self.wait(['broken'] * 10)
+
+    def test_exited_writer_with_incomplete_result_fails(self):
+        with self.assertRaisesRegex(AssertionError, 'exit=1'):
+            self.wait(['{"passed":'] * 2, exit_code=1)
+
+    def test_exit_observation_rereads_final_flushed_result(self):
+        self.assertEqual(self.wait(['', '{"passed": true}'], exit_code=0), {"passed": True})
+
+    def test_nonobject_complete_result_is_rejected(self):
+        with self.assertRaisesRegex(AssertionError, 'must be an object'):
+            self.wait(['[]'])
+
+    def test_missing_result_fails_at_original_deadline(self):
+        with self.assertRaisesRegex(AssertionError, 'content=None'):
+            self.wait([FileNotFoundError()] * 10)
 
 
 if __name__ == '__main__':

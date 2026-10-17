@@ -79,10 +79,14 @@ a native-runtime claim.
 - Both workbenches carry the selected packet cutoff into inspection. A historical
   view cannot silently assemble a later sibling section.
 
-The SDK upgrade has **157 current local integration tests passed**: engine30,
-protocol43, SDK6, cancellation14, MCP17, HTTP6, Qt16 and Chromium25. The integrated
+The SDK upgrade has **165 current local tests passed**: engine30,
+protocol43, SDK6, cancellation14, MCP17, HTTP6, Qt16, Qt-result publication8 and Chromium25. The integrated
 Qt16 run includes both PR #6 export scenarios and the new protocol fixture checks.
-Rust regression and Windows upgrade validation will be rerun in this PR's CI. See [cloud validation](VALIDATION_CLOUD.md),
+The initial SDK head `6fcb135` passed all five jobs in run 38990955608,
+including Windows SDK/Qt and both Rust jobs. A confirmed result-publication race
+from PR #6's post-merge Windows run was then corrected in the test harness.
+The strict local Qt gate now passes 16 native tests plus 8 publication tests;
+its new exact-head hosted CI is pending. See [cloud validation](VALIDATION_CLOUD.md),
 [native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
 These are local cloud results; check each PR's latest CI commit separately.
 Native Linux Tauri comparison and persisted layout have been exercised on the

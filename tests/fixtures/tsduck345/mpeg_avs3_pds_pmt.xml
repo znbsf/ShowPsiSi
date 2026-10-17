@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 XML model.
+     The second component intentionally has no PDS or registration context. -->
+<tsduck>
+  <PMT service_id="101" PCR_PID="0x201">
+    <component elementary_PID="0x201" stream_type="0x06">
+      <private_data_specifier_descriptor private_data_specifier="0x41565356" />
+      <AVS3_video_descriptor profile_id="0x20" level_id="0x40" multiple_frame_rate_flag="true" frame_rate_code="3" sample_precision="2" chroma_format="1" temporal_id_flag="true" td_mode_flag="false" library_stream_flag="false" library_picture_enable_flag="true" colour_primaries="1" transfer_characteristics="1" matrix_coefficients="1" />
+    </component>
+    <component elementary_PID="0x202" stream_type="0x06">
+      <AVS3_video_descriptor profile_id="0x20" level_id="0x40" multiple_frame_rate_flag="true" frame_rate_code="3" sample_precision="2" chroma_format="1" temporal_id_flag="true" td_mode_flag="false" library_stream_flag="false" library_picture_enable_flag="true" colour_primaries="1" transfer_characteristics="1" matrix_coefficients="1" />
+    </component>
+  </PMT>
+</tsduck>

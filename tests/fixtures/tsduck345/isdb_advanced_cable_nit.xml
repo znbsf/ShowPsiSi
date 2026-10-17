@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<NIT network_id="2">
+  <transport_stream transport_stream_id="1" original_network_id="2">
+    <ISDB_advanced_cable_delivery_system_descriptor><normal_data plp_id="7" effective_symbol_length="2" guard_interval="3" bundled_channel="4"><carrier data_slice_id="9" frequency="450000000" frame_type="2" FEC_outer="1" modulation="5" FEC_inner="3" /></normal_data></ISDB_advanced_cable_delivery_system_descriptor>
+    <ISDB_advanced_cable_delivery_system_descriptor><other_data descriptor_tag_extension="1">000102030405060708090A0B0C0D0E0F101112131415161718191A1B</other_data></ISDB_advanced_cable_delivery_system_descriptor>
+  </transport_stream>
+</NIT>
+</tsduck>

@@ -2,14 +2,15 @@
   "name": "ShowPsiSi",
   "protocol_version": "0.1",
   "transport": "JSON Lines over stdio",
-  "engine": "C++ / TSDuck 3.39-3956",
+  "engine": "C++ / TSDuck 3.45-4798",
   "limits": {
     "input": "aligned local 188/192/204-byte TS files",
     "unique_sections": 50000,
     "validation": "CRC, demux status, DVB SDT/PMT/EIT descriptor bounds; not a complete conformance checker",
     "edit": "single-section actual SDT service rename",
     "export": "signalling snapshot, not live remultiplexing",
-    "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, no RF demodulation or blanket DTMB claim.",
+    "native_json": "XML element names and values preserved; attribute keys use ASCII lowercase for API compatibility. Rare case collisions preserve all original attributes in xml_attributes and identify collisions. tsduck_xml retains SDK XML spelling.",
+    "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, DTMB context includes registered DTMB signalling descriptors only; no RF demodulation or blanket standards-conformance claim.",
     "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness.",
     "ordinary_request_queue": 64,
     "cancellation": "Cooperative targeted cancellation of queued or running analyses. Integer/string request IDs are distinct. Accepted cancellation wins over completion until the terminal commit. Blocking file reads, SDK work and stdout may delay cancellation."
@@ -49,7 +50,8 @@
               "isdb",
               "isdb-japan",
               "isdb-brazil",
-              "scte"
+              "scte",
+              "dtmb"
             ],
             "description": "Signalling interpretation context. auto may be ambiguous; select the known broadcast family. Does not configure RF demodulation."
           },

@@ -1,7 +1,9 @@
 # Validation
 
-All tests use the real native JSONL engine. Build `showpsisi-core` first and make
-TSDuck's runtime libraries available to the dynamic loader. `SHOWPSISI_CORE` can
+Integration suites use the real native JSONL engine. Selected transport/error
+tests deliberately use scripted subprocess fixtures to inject invalid or late
+responses; they do not establish parser correctness. Build `showpsisi-core` first
+and make TSDuck's runtime libraries available to the dynamic loader. `SHOWPSISI_CORE` can
 select an alternate executable; otherwise `build/bin/showpsisi-core` (or `.exe`)
 is used.
 
@@ -102,3 +104,23 @@ close. Qt/Web tests cover visible Cancel/Cancelling, terminal acknowledgement,
 rescan, stale UI responses and unexpected backend death. Native smoke evidence
 identifies when the compile-only helper is used; no timing benchmark is inferred
 from a deliberately gated or paused test process.
+
+## SDK 3.45 and protocol expansion
+
+The pinned SDK is TSDuck/TSCore 3.45-4798. The build requires C++20 and checks
+version-specific symbols from both libraries. Changing `TSDUCK_ROOT` re-resolves
+all SDK paths rather than silently keeping a previous build directory's cache.
+
+```sh
+python -m unittest discover -s tests -p test_sdk_migration.py -v
+python -m unittest discover -s tests -p test_protocol_coverage.py -v
+python tests/fixtures/tsduck345/reproduce.py --compiler /path/to/tstabcomp
+```
+
+The SDK suite checks runtime/header identity, Unicode input/output/root paths,
+manifest roundtrip and explicit DTMB context without guessed charset/timezone.
+Protocol fixtures exercise new native tables and namespace boundaries; the
+fixture directory documents the official compiler commands and expected bytes.
+Configure the compiler runtime paths as described in the fixture README.
+Registered decoder counts are not a standards-conformance claim. See
+[protocol coverage](../docs/PROTOCOL_COVERAGE.md) for measured scope and limits.

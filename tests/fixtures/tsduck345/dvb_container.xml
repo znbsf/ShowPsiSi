@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<container_table version="3" container_id="7"><compression_wrapper>001122CAFE</compression_wrapper></container_table>
+</tsduck>

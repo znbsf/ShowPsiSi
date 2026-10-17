@@ -17,8 +17,9 @@ Updated: 2026-10-16 UTC.
   [run 38981738934](https://github.com/znbsf/ShowPsiSi/actions/runs/38981738934).
   Windows engine/Qt regressions and Tauri release compilation passed; this does
   not establish Windows WebView2 interaction.
-- No release or installer published. Qt export destination selection is being
-  verified separately; hosted CI for that change is pending.
+- PR #6 merged as `3e51f4c`: native Qt Save destination and TS/BIN choice.
+  All five CI jobs passed at `37e92c0` in run 38982972251; Windows Qt15 passed.
+- No release or installer published. SDK 3.45 cross-platform validation is pending.
 
 ## Current result
 
@@ -52,26 +53,40 @@ a native-runtime claim.
 - 30 engine tests: source preservation, analysis failure reset, exact PAT→PMT
   binding, snapshot inspection cutoff, regional text, extension validation,
   export exclusivity/cleanup, framing and regular-file input guards.
-- 26 protocol/reference tests: ATSC and ISDB fixtures; DVB-S/S2/T/T2/C delivery
+- 43 protocol/reference tests: ATSC and ISDB fixtures; DVB-S/S2/T/T2/C delivery
   parameters; private PDS isolation, nondefault PID discovery and unknown bytes.
+  New fixtures cover all 15 newly registered table types, DTMB DRM, explicitly
+  signalled text, registration inheritance and safe namespace fallback. All 21
+  fixture XML inputs reproduce byte-for-byte with the pinned compiler.
+- 6 SDK migration tests: runtime/header identity, UTF-8 filesystem paths,
+  root arguments, manifests and no invented DTMB charset/timezone.
 - 14 deterministic native cancellation tests and 17 MCP/transport tests: queued,
   progress and completion boundaries, EOF drain, typed IDs, progress tokens,
   response routing and safe close. Test gates are excluded from production.
-- 6 HTTP bridge tests and 24 live Chromium/native-engine tests, including backend
+- 6 HTTP bridge tests and 25 live Chromium/native-engine tests, including backend
   termination, keyboard/tree interaction, historical snapshots and responsive layout.
-- 15 compiled native Qt tests: real workflows, search, literal untrusted text and
+- 16 compiled native Qt tests: real workflows, search, literal untrusted text and
   tooltips, no remote image fetches, failure-state cleanup, external TS/BIN save
   destinations, cancelled save, stale preview rejection and no-overwrite errors.
   Linux tests also enforce a read-only application resource directory; the
   Windows case uses a separate resource directory without claiming ACL coverage.
-- 7 Rust native-shell tests: exact URL allowlist plus launcher success/failure,
+  Actual DTMB/DSM-CC fixtures also verify standard selection, empty projections,
+  guarded warning/XML display, raw-byte preservation and indexed list labels.
+- 7 Rust native-shell tests passed on the merged pre-upgrade baseline: exact URL allowlist plus launcher success/failure,
   spawn errors, bounded diagnostics and unconfirmed timeout. Native GTK source selection, save/export,
   independent readback, overwrite-warning cancellation and backend-death flows
   were also checked in the actual application.
 - Both workbenches carry the selected packet cutoff into inspection. A historical
   view cannot silently assemble a later sibling section.
 
-Total automated test cases above: **139** (PR #5 baseline plus two Qt export tests). See [cloud validation](VALIDATION_CLOUD.md),
+The SDK upgrade has **165 current local tests passed**: engine30,
+protocol43, SDK6, cancellation14, MCP17, HTTP6, Qt16, Qt-result publication8 and Chromium25. The integrated
+Qt16 run includes both PR #6 export scenarios and the new protocol fixture checks.
+The initial SDK head `6fcb135` passed all five jobs in run 38990955608,
+including Windows SDK/Qt and both Rust jobs. A confirmed result-publication race
+from PR #6's post-merge Windows run was then corrected in the test harness.
+The strict local Qt gate now passes 16 native tests plus 8 publication tests;
+its new exact-head hosted CI is pending. See [cloud validation](VALIDATION_CLOUD.md),
 [native Tauri evidence](NATIVE_TAURI_VALIDATION.md) and [test commands](../tests/README.md).
 These are local cloud results; check each PR's latest CI commit separately.
 Native Linux Tauri comparison and persisted layout have been exercised on the
@@ -84,10 +99,17 @@ discovery. The expanded PR #3 suite also passed all four jobs: Windows engine29 
 explicitly allowed absent-recording test, protocol26, HTTP5 and Qt8. Its retained
 Windows Qt smoke screenshot was downloaded and visually inspected.
 
-The SDK currently registers **43 table decoders / 306 descriptor decoders**.
-The 12,490-byte standards index associates 191 descriptor names and 26 table names,
+The linked SDK is **TSDuck/TSCore 3.45-4798**, using C++20. The Linux runtime
+registers **58 table XML names / 347 descriptor XML names**, including aliases.
+The offline standards index associates 227 descriptor names and 49 table names,
 without bundling PDFs. These counts are not conformance percentages. See
 [protocol coverage](PROTOCOL_COVERAGE.md) for measured, SDK-only and unknown cases.
+
+Explicit DVB uses the SDK strict-DVB flag. Ambiguous DSM-CC module or private-dual
+descriptor contexts retain generic bytes and show a warning instead of silently
+asserting another namespace. Guarded XML is labelled; wire bytes are authoritative.
+The split TSCore/TSDuck libraries, headers and runtime data must match; both
+version-specific ABI symbols are enforced.
 
 ## Remaining boundaries
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<DET version="4" source_id="101"><data data_id="9" start_time="2026-10-16 12:00:00" ETM_location="1" length_in_seconds="1800"><title_text><string language="eng" text="Data Ω" /></title_text><ATSC_download_descriptor download_id="0x12345678" carousel_period="3000" control_msg_time_out_value="5000" /></data></DET>
+</tsduck>

@@ -14,7 +14,7 @@ if (-not $IsWindows) { throw 'This script requires a Windows x64 runner with Vis
 
 $Root = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $Artifacts = Join-Path $Root 'artifacts/windows-native'
-$Sdk = Join-Path $Root '.deps/TSDuck-3.39-3956'
+$Sdk = Join-Path $Root '.deps/TSDuck-3.45-4798'
 $Qt = Join-Path $Root '.deps/Qt/6.7.3/msvc2019_64'
 $Build = Join-Path $Root 'build/windows'
 $Bin = Join-Path $Build 'bin/Release'
@@ -57,32 +57,9 @@ try {
     Set-NativeEnvironment
     switch ($Phase) {
         'Dependencies' {
-            # The portable ZIP is runtime-only in this release. The NSIS EXE has
-            # include/ and lib/Release-Win64/. /S /all=true would install the SDK,
-            # but also writes registry/PATH. Extract payload only; never run it.
-            # https://github.com/tsduck/tsduck/blob/v3.39-3956/pkg/nsis/tsduck.nsi
-            # https://github.com/tsduck/tsduck/blob/v3.39-3956/pkg/nsis/build-installer.ps1
-            $Url = 'https://github.com/tsduck/tsduck/releases/download/v3.39-3956/TSDuck-Win64-3.39-3956.exe'
-            # Identity recorded from the official release asset; not a publisher signature.
-            $ExpectedHash = '8694ac1301904ca7e978cfe42a540f29e876f10d68c668ed1bc5d3d25ea2c9c0'
-            $Downloads = Join-Path $Root '.deps/downloads'
-            New-Item -ItemType Directory -Force $Downloads, $Sdk | Out-Null
-            $Installer = Join-Path $Downloads 'TSDuck-Win64-3.39-3956.exe'
-            Invoke-WebRequest -Uri $Url -OutFile $Installer -MaximumRetryCount 3 -RetryIntervalSec 5
-            $Hash = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
-            @{ url = $Url; sha256 = $Hash; expected_sha256 = $ExpectedHash } |
-                ConvertTo-Json | Set-Content (Join-Path $Artifacts 'tsduck-source.json') -Encoding utf8
-            if ($Hash -ne $ExpectedHash) { throw "Official TSDuck asset SHA-256 mismatch: $Hash" }
-            $SevenZip = (Get-Command 7z.exe -ErrorAction Stop).Source
-            Invoke-Checked $SevenZip @('l', $Installer)
-            Invoke-Checked $SevenZip @('x', '-y', "-o$Sdk", $Installer, 'bin/*', 'include/*', 'lib/Release-Win64/*', 'LICENSE.txt', 'OTHERS.txt')
-            foreach ($Name in @('include/tsduck.h', 'include/tsVersion.h', 'lib/Release-Win64/tsduck.lib', 'bin/tsduck.dll', 'bin/tsp.exe', 'bin/tsduck.tables.model.xml', 'bin/tsduck.dtv.names')) {
-                Assert-File (Join-Path $Sdk $Name)
-            }
-            $VersionHeader = Get-Content (Join-Path $Sdk 'include/tsVersion.h') -Raw
-            foreach ($Define in @('TS_VERSION_MAJOR\s+3\b', 'TS_VERSION_MINOR\s+39\b', 'TS_COMMIT\s+3956\b')) {
-                if ($VersionHeader -notmatch $Define) { throw "Unexpected TSDuck SDK version: $Define missing" }
-            }
+            # Verify and extract the official NSIS payload into this workspace;
+            # the setup helper never executes the installer or writes registry/PATH.
+            & (Join-Path $Root 'scripts/setup-tsduck.ps1') -Sdk $Sdk -Artifacts $Artifacts
             Invoke-Checked (Join-Path $Sdk 'bin/tsp.exe') @('--version')
 
             # Qt's published 6.7.3 package is named win64_msvc2019_64. VS 2022
@@ -98,7 +75,7 @@ try {
             Invoke-Checked 'python' @('-m', 'pip', 'freeze')
         }
         'Build' {
-            Assert-File (Join-Path $Sdk 'include/tsduck.h')
+            & (Join-Path $Root 'scripts/setup-tsduck.ps1') -Sdk $Sdk -ValidateOnly
             Assert-File (Join-Path $Qt 'lib/cmake/Qt6/Qt6Config.cmake')
             Invoke-Checked 'cmake' @('--version')
             Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', '-DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
@@ -106,9 +83,15 @@ try {
             Assert-File $env:SHOWPSISI_CORE
             Assert-File $env:SHOWPSISI_TEST_CORE
             Assert-File $env:SHOWPSISI_QT
-            # Preserve the SDK's lookup files beside the copied TSDuck DLL. A DLL
-            # alone can start successfully while native XML/name decoding fails.
+            # Preserve both SDKs' lookup files beside the copied TSDuck/TSCore DLLs.
+            # A DLL alone can start while native XML/name decoding still fails.
             Copy-Item -Path "$Sdk/bin/ts*.xml", "$Sdk/bin/ts*.names" -Destination $Bin
+            foreach ($Name in @('tsduck.dll', 'tscore.dll', 'tsduck.tables.model.xml', 'tsduck.dtv.names', 'tscore.time.xml', 'tscore.ip.names')) {
+                Assert-File (Join-Path $Bin $Name)
+                $SourceHash = (Get-FileHash -LiteralPath (Join-Path $Sdk "bin/$Name") -Algorithm SHA256).Hash
+                $StagedHash = (Get-FileHash -LiteralPath (Join-Path $Bin $Name) -Algorithm SHA256).Hash
+                if ($SourceHash -ne $StagedHash) { throw "Staged TSDuck/TSCore runtime mismatch: $Name" }
+            }
             Invoke-Checked (Join-Path $Qt 'bin/windeployqt.exe') @('--release', '--no-translations', '--no-compiler-runtime', '--include-plugins', 'qoffscreen', '--qmldir', (Join-Path $Root 'ui/qt'), '--dir', $Bin, $env:SHOWPSISI_QT)
             Assert-File (Join-Path $Bin 'platforms/qoffscreen.dll')
             Invoke-Checked 'python' @('scripts/make_fixture.py')
@@ -139,7 +122,7 @@ try {
                 if ($Vs) {
                     $Dumpbin = Get-ChildItem "$Vs/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe" -ErrorAction SilentlyContinue | Sort-Object FullName | Select-Object -Last 1
                     if ($Dumpbin) {
-                        foreach ($File in @($env:SHOWPSISI_CORE, $env:SHOWPSISI_TEST_CORE, $env:SHOWPSISI_QT, "$Bin/tsduck.dll", "$Bin/Qt6Core.dll", "$Bin/platforms/qoffscreen.dll", "$Sdk/bin/tsduck.dll", "$Sdk/bin/tsp.exe", "$Qt/bin/Qt6Core.dll", "$Qt/bin/qmake.exe")) {
+                        foreach ($File in @($env:SHOWPSISI_CORE, $env:SHOWPSISI_TEST_CORE, $env:SHOWPSISI_QT, "$Bin/tsduck.dll", "$Bin/tscore.dll", "$Bin/Qt6Core.dll", "$Bin/platforms/qoffscreen.dll", "$Sdk/bin/tsduck.dll", "$Sdk/bin/tscore.dll", "$Sdk/bin/tsp.exe", "$Qt/bin/Qt6Core.dll", "$Qt/bin/qmake.exe")) {
                             if (Test-Path -LiteralPath $File) { & $Dumpbin.FullName /DEPENDENTS $File }
                         }
                     }

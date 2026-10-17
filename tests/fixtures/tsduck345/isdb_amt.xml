@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<AMT version="3">
+  <service service_id="101" src="192.0.2.17/24" dst="239.1.2.3/32"><private_data>CAFE</private_data></service>
+  <service service_id="102" src="2001:db8::17/64" dst="ff3e::1234/128"><private_data>010203</private_data></service>
+</AMT>
+</tsduck>

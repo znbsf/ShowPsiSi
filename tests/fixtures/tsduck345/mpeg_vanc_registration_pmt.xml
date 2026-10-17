@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<PMT service_id="101" PCR_PID="0x201"><registration_descriptor format_identifier="0x56414E43" /><component elementary_PID="0x201" stream_type="0x06"><smpte_anc_data_descriptor>00112233</smpte_anc_data_descriptor></component></PMT>
+</tsduck>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<PMT service_id="101" PCR_PID="0x201">
+  <component elementary_PID="0x201" stream_type="0x1b">
+    <DTMB_DRM_descriptor video_format="3" video_encryption_method="2" audio_format="5" audio_encryption_method="1"><DRM_data_bytes>1020CAFE</DRM_data_bytes></DTMB_DRM_descriptor>
+  </component>
+</PMT>
+</tsduck>

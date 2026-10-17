@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<MPE_IFEC burst_number="3" IFEC_burst_size="8"><burst><real_time_parameters delta_t="124" MPE_boundary="true" frame_boundary="true" prev_burst_size="43" /><IFEC_data>DEADBEEFCAFE</IFEC_data></burst></MPE_IFEC>
+</tsduck>

@@ -174,6 +174,52 @@ ApplicationWindow {
     }
     function explanation(key) {
         return ({
+                TSDT: "Transport Stream Description Table",
+                ATSC_EIT: "Event Information Table · ATSC PSIP",
+                AEIT: "Aggregate Event Information Table · ATSC",
+                AETT: "Aggregate Extended Text Table · ATSC",
+                DET: "Data Event Table · ATSC",
+                DST: "Data Service Table · ATSC",
+                LTST: "Long Term Service Table · ATSC",
+                NRT: "Network Resources Table · ATSC",
+                SVCT: "Satellite Virtual Channel Table · ATSC",
+                DCCT: "Directed Channel Change Table · ATSC",
+                DCCSCT: "Directed Channel Change Selection Code Table · ATSC",
+                AMT: "Address Map Table · ISDB",
+                DCT: "Download Control Table · ISDB",
+                DLT: "Download Table · ISDB",
+                ERT: "Event Relation Table · ISDB",
+                ITT: "Index Transmission Information Table · ISDB",
+                LDT: "Linked Description Table · ISDB",
+                LIT: "Local Event Information Table · ISDB",
+                NBIT: "Network Board Information Table · ISDB",
+                PCAT: "Partial Content Announcement Table · ISDB",
+                SDTT: "Software Download Trigger Table · ISDB",
+                CIT: "Content Identifier Table · DVB",
+                INT: "IP/MAC Notification Table · DVB",
+                RCT: "Related Content Table · DVB",
+                RNT: "Resolution Provider Notification Table · DVB",
+                SAT: "Satellite Access Table · DVB",
+                SGT: "Service Guide Table · SES Astra",
+                UNT: "Update Notification Table · DVB",
+                DFIT: "Downloadable Font Information Table · DVB",
+                MPE_FEC: "Multi-Protocol Encapsulation Forward Error Correction · DVB",
+                MPE_IFEC: "Multi-Protocol Encapsulation Inter-burst Forward Error Correction · DVB",
+                container_table: "Container Table · DVB TV-Anytime",
+                DSMCC_download_data_message: "DSM-CC Download Data Message · download data blocks",
+                DSMCC_user_to_network_message: "DSM-CC User-to-Network Message · download control",
+                DSMCC_stream_descriptors_table: "DSM-CC Stream Descriptors Table",
+                cable_emergency_alert_table: "Cable Emergency Alert Table · SCTE",
+                discontinuity_information_table: "Discontinuity Information Table · DVB",
+                selection_information_table: "Selection Information Table · DVB",
+                splice_information_table: "Splice Information Table · SCTE-35",
+                DTMB: "Digital Terrestrial Multimedia Broadcasting · signalling context",
+                BAT: "Bouquet Association Table",
+                RST: "Running Status Table",
+                AIT: "Application Information Table",
+                VCT: "Virtual Channel Table · ATSC",
+                DIT: "Discontinuity Information Table",
+                SIT: "Selection Information Table",
                 PAT: "Program Association Table",
                 PMT: "Program Map Table",
                 SDT: "Service Description Table",
@@ -203,6 +249,30 @@ ApplicationWindow {
                 TDT: "Time and Date Table"
             })[key] || key;
     }
+    function tableLabel(name) {
+        return ({
+            "DSMCC_user_to_network_message": "DSM-CC U-N",
+            "DSMCC_download_data_message": "DSM-CC Data",
+            "DSMCC_stream_descriptors_table": "DSM-CC SDT",
+            "container_table": "DVB Container",
+            "splice_information_table": "SCTE-35",
+            "cable_emergency_alert_table": "SCTE EAS",
+            "discontinuity_information_table": "DIT",
+            "selection_information_table": "SIT"
+        })[name] || name;
+    }
+    function isList(value) {
+        // QVariantList arrives as a QML sequence, not a JavaScript Array.
+        return Array.isArray(value) || (value !== null && typeof value === "object" && Number.isInteger(value.length) && value.length >= 0 && typeof value.forEach === "function" && typeof value.splice === "function");
+    }
+    function nativeWarningsText() {
+        let warnings = [], reported = detail.native_decode_warnings || [];
+        for (let i = 0; isList(reported) && i < reported.length; ++i)
+            if (typeof reported[i] === "string") warnings.push(reported[i]);
+        if (detail.native_xml_guarded)
+            warnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex.");
+        return warnings.join("\n");
+    }
     function valueText(key, value) {
         if (value === null || value === undefined)
             return "—";
@@ -224,7 +294,7 @@ ApplicationWindow {
             result.push({
                 path: path,
                 label: label,
-                value: branch ? (Array.isArray(value) ? value.length + " entries" : "") : valueText(label, value),
+                value: branch ? (isList(value) ? value.length + " entries" : "") : valueText(label, value),
                 depth: depth,
                 branch: branch,
                 closed: closed,
@@ -232,7 +302,7 @@ ApplicationWindow {
             });
             if (branch && !closed)
                 Object.keys(value).forEach(function (k) {
-                    node(path + "/" + k, Array.isArray(value) ? "[" + k + "]" : k, value[k], depth + 1);
+                    node(path + "/" + k, isList(value) ? "[" + k + "]" : k, value[k], depth + 1);
                 });
         }
         if (!section.id)
@@ -587,7 +657,7 @@ ApplicationWindow {
     function rowTitle(row) {
         if (tab === "Changes")
             return changeTitle(row);
-        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? row.name + " · PID " + hex(row.pid) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
+        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? tableLabel(row.name) + " · PID " + hex(row.pid) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
     }
     function rowSubtitle(row) {
         if (tab === "Changes")
@@ -980,6 +1050,86 @@ ApplicationWindow {
         }
     }
     Timer {
+        id: protocolUpgradeTimer
+        interval: 200
+        repeat: true
+        property real phase: 0
+        property var checks: ({})
+        property string savedId: ""
+        property string savedRaw: ""
+        onTriggered: {
+            let standard = core.env("SHOWPSISI_PROTOCOL_STANDARD");
+            let guarded = core.env("SHOWPSISI_PROTOCOL_GUARDED") === "1";
+            if (phase === 0) {
+                if (!backendReady) return;
+                extraPids.text = core.env("SHOWPSISI_PROTOCOL_PID");
+                let index = standardChoice.indexOfValue(standard);
+                checks.selector_present = index >= 0 && core.isExposed("standards");
+                core.click("standards");
+                core.key("Home");
+                for (let i = 0; i < index; ++i) core.key("Down");
+                core.key("Return");
+                checks.selector_value = standardChoice.currentValue === standard;
+                checks.analyze_click = core.click("analyzeSource");
+                phase++;
+                return;
+            }
+            if (!analysisState.complete || core.busy || core.inspecting || !detail.id) return;
+            if (phase === 1) {
+                savedId = selected;
+                savedRaw = detail.raw_hex;
+                checks.context = analysisState.standards_context === standard;
+                checks.native_table = detail.native_table?.name === core.env("SHOWPSISI_PROTOCOL_EXPECTED_TABLE");
+                checks.services_empty = serviceRows.length === 0 && tableRows.length > 0;
+                checks.initial_tables_fallback = tab === "Tables";
+                checks.services_click = core.click("tab_Services");
+                phase = 1.5;
+            } else if (phase === 1.5) {
+                checks.services_hint = recordEmptyHint.visible && core.isExposed("recordEmptyHint") && recordEmptyHint.text.indexOf("Open Tables for native signalling fields") >= 0;
+                checks.epg_click = core.click("tab_EPG");
+                phase = 2;
+            } else if (phase === 2) {
+                checks.epg_hint = tab === "EPG" && eventRows.length === 0 && recordEmptyHint.visible && recordEmptyHint.text.indexOf("an empty projection does not mean decoding failed") >= 0;
+                checks.epg_selection = selected === savedId && detail.raw_hex === savedRaw;
+                checks.tables_click = core.click("tab_Tables");
+                phase++;
+            } else if (phase === 3) {
+                checks.tables_selection = tab === "Tables" && rows.length > 0 && selected === savedId;
+                checks.guard_flag = !!detail.native_xml_guarded === guarded;
+                checks.warning_visible = guarded ? core.isExposed("nativeDecodeWarnings") && nativeDecodeWarningLabel.text.indexOf("namespace is not established") >= 0 && nativeDecodeWarningLabel.text.indexOf("Original wire bytes remain authoritative") >= 0 : !nativeDecodeWarningLabel.visible;
+                checks.xml_label = evidenceViews.itemAt(2).text === (guarded ? "Guarded XML" : "XML");
+                checks.xml_click = core.click("inspector_XML");
+                phase++;
+            } else if (phase === 4) {
+                checks.xml_evidence = inspectorView === "XML" && xmlEvidence.text === detail.tsduck_xml && (!guarded || xmlEvidence.text.indexOf("<generic_descriptor") >= 0);
+                checks.hex_click = core.click("inspector_Hex");
+                phase++;
+            } else if (phase === 5) {
+                checks.raw_evidence = inspectorView === "Hex" && hexEvidence.text.indexOf(savedRaw.slice(0, 32).match(/.{1,2}/g).join(" ")) >= 0;
+                checks.warning_in_hex = !guarded || core.isExposed("nativeDecodeWarnings");
+                checks.structure_click = core.click("inspector_Structure");
+                snapshot(-1, savedId);
+                phase++;
+            } else {
+                if (selected !== savedId || detail.id !== savedId) return;
+                checks.snapshot_preserved = tab === "Tables" && selected === savedId && detail.raw_hex === savedRaw;
+                checks.native_tree = treeRows.some(function (row) { return row.kind === "native"; });
+                let expanded = makeTree(detail, -1, {}, true);
+                checks.array_tree_labels = standard !== "dtmb" || (expanded.some(function (row) { return row.path === "fields/streams" && row.value === "1 entries"; }) && expanded.some(function (row) { return row.path === "fields/streams/0" && row.label === "[0]"; }));
+                checks.compact_title = sectionTitle.text.indexOf(tableLabel(detail.name)) === 0 && (!guarded || sectionTitle.text === "DSM-CC U-N");
+                checks.exact_title_tooltip = sectionTitleTip.text.indexOf(detail.name) >= 0 && sectionTitleTip.text.indexOf(explanation(detail.name)) >= 0;
+                if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+                core.testResult(JSON.stringify({
+                    passed: Object.keys(checks).every(function (key) { return checks[key]; }), checks: checks,
+                    standards_context: analysisState.standards_context, table_name: detail.native_table?.name,
+                    native_xml_guarded: !!detail.native_xml_guarded, raw_hex: detail.raw_hex,
+                    selected_id: selected, warning_text: nativeDecodeWarningLabel.text, xml_label: evidenceViews.itemAt(2).text
+                }));
+                stop();
+            }
+        }
+    }
+    Timer {
         id: inspectFailureTimer
         interval: 150
         repeat: true
@@ -1344,6 +1494,8 @@ ApplicationWindow {
             autoTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "plaintext")
             plainTextTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "protocol-upgrade")
+            protocolUpgradeTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "inspect-error")
             inspectFailureTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "export-destination")
@@ -1547,6 +1699,10 @@ ApplicationWindow {
                     {
                         label: "SCTE",
                         value: "scte"
+                    },
+                    {
+                        label: "DTMB",
+                        value: "dtmb"
                     }
                 ]
                 Accessible.name: "Broadcast standard context for next scan"
@@ -1703,7 +1859,7 @@ ApplicationWindow {
                             required property string modelData
                             width: ListView.view.width
                             height: 29
-                            text: modelData + "  " + (modelData === "All tables" ? (analysisState.tables || []).length : (analysisState.tables || []).filter(function (table) {
+                            text: tableLabel(modelData) + "  " + (modelData === "All tables" ? (analysisState.tables || []).length : (analysisState.tables || []).filter(function (table) {
                                     return table.name === modelData;
                                 }).length)
                             highlighted: tab === "Tables" && (filter === modelData || (!filter && modelData === "All tables"))
@@ -1713,7 +1869,7 @@ ApplicationWindow {
                             }
                             SafeTip {
                                 visible: anchorControl.hovered
-                                text: explanation(modelData)
+                                text: modelData + " · " + explanation(modelData)
                             }
                         }
                     }
@@ -1984,16 +2140,18 @@ ApplicationWindow {
                             }
                             SafeTip {
                                 visible: anchorControl.hovered
-                                text: (tab === "Services" ? "LCN: Logical channel number · SID: Service identifier · PMT: Program Map Table\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData)
+                                text: (tab === "Services" ? "LCN: Logical channel number · SID: Service identifier · PMT: Program Map Table\n" : "") + (tab === "Tables" ? modelData.name + " · " + explanation(modelData.name) + "\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData)
                             }
                         }
                         PlainLabel {
+                            id: recordEmptyHint
+                            objectName: "recordEmptyHint"
                             anchors.centerIn: parent
                             width: parent.width - 40
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
@@ -2067,7 +2225,10 @@ ApplicationWindow {
                         }
                     }
                     PlainLabel {
-                        text: detail.name ? detail.name + " · " + explanation(detail.name) : "Select a section"
+                        id: sectionTitle
+                        text: detail.name ? tableLabel(detail.name) + (tableLabel(detail.name) === detail.name ? " · " + explanation(detail.name) : "") : "Select a section"
+                        SafeTip { id: sectionTitleTip; visible: sectionTitleHover.hovered; text: detail.name + " · " + explanation(detail.name) }
+                        HoverHandler { id: sectionTitleHover }
                         Layout.fillWidth: true
                         elide: Text.ElideRight
                         color: ink
@@ -2104,15 +2265,26 @@ ApplicationWindow {
                             text: (detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff") + "\nTSDuck: " + (detail.native_decode_status || "not available") + "\nFirst evidence packet: " + num(detail.first_packet)
                         }
                     }
+                    PlainLabel {
+                        id: nativeDecodeWarningLabel
+                        objectName: "nativeDecodeWarnings"
+                        text: nativeWarningsText()
+                        visible: !!text
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: "#cca700"
+                        font.pixelSize: 11
+                    }
                     RowLayout {
                         Layout.fillWidth: true
                         spacing: 0
                         Repeater {
+                            id: evidenceViews
                             model: ["Structure", "Hex", "XML"]
                             NavItem {
                                 required property string modelData
                                 objectName: "inspector_" + modelData
-                                text: modelData
+                                text: modelData === "XML" && detail.native_xml_guarded ? "Guarded XML" : modelData
                                 highlighted: inspectorView === modelData
                                 onClicked: inspectorView = modelData
                             }
@@ -2231,6 +2403,7 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         clip: true
                         TextArea {
+                            id: hexEvidence
                             textFormat: TextEdit.PlainText
                             readOnly: true
                             selectByMouse: true
@@ -2255,6 +2428,7 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         clip: true
                         TextArea {
+                            id: xmlEvidence
                             textFormat: TextEdit.PlainText
                             text: detail.tsduck_xml || "No TSDuck XML is available for this section. Raw evidence remains in Hex."
                             readOnly: true

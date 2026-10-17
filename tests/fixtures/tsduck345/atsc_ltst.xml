@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Synthetic fixture using official TSDuck v3.45-4798 tsduck.tables.model.xml.
+     Not a captured stream or independent standards conformance vector. -->
+<tsduck>
+<LTST version="5" table_id_extension="0x1234"><source source_id="101"><data data_id="10" start_time="2026-10-16 13:00:00" ETM_location="2" length_in_seconds="600"><title_text><string language="zho" text="长期数据" /></title_text></data></source></LTST>
+</tsduck>

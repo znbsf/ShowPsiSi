@@ -3,153 +3,240 @@
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets. It does not tune, demodulate,
-decrypt conditional-access content, or validate an RF transmission standard.
-Three different claims must remain separate:
+decrypt conditional-access content, decode audio/video, or certify a receiver.
+Three claims must remain separate:
 
-1. **Verified application path**: a fixture or captured stream passed through the
-   ShowPsiSi JSON API and its resulting fields were asserted by a test.
-2. **SDK decoder available**: the linked TSDuck registry contains a decoder and
-   its XML model. This is not evidence that every field, malformed input,
-   operator variant, UI workflow, or edit/export operation has been tested.
-3. **Raw preservation / unknown**: bytes can be retained and inspected even when
-   there is no registered semantic decoder. A hex dump is not protocol support.
+1. **Verified application path:** a fixture or captured stream passed through the
+   real JSONL core and its fields and source bytes were asserted by a test.
+2. **SDK decoder registered:** the linked TSDuck registry contains a decoder.
+   This does not establish that every field, malformed input, broadcaster variant,
+   UI workflow, or edit/export operation was tested.
+3. **Raw preservation / unknown:** bytes can be retained without a semantic
+   decoder. A hex dump is not protocol conformance.
 
-The SDK used for this audit is **TSDuck 3.39-3956**, verified with `tstabcomp
---version`. Installed `tsduck.tables.model.xml` contains 45 table model entries,
-including the two generic table fallbacks, and 307 descriptor model entries.
-These are XML model counts, not a count of unique table IDs or a conformance score.
-The rebuilt application reports **43 registered table names and 306 registered
-descriptor names**. The running application's `capabilities.native_registry` is the authoritative
-inventory of the actually linked decoder registry. Future SDK versions may differ.
+The current SDK is official **TSDuck 3.45-4798**, with C++20 and separate TSDuck and
+TSCore libraries. On 2026-10-16 the running core reported **58 registered table
+names and 347 registered descriptor names**. `capabilities.native_sdk` reported
+3.45-4798 for the headers, TSDuck runtime and TSCore runtime, with version-symbol
+checks enforced. Its installed XML model has **60 table entries** (including two
+generic fallbacks) and **348 descriptor entries** (including the generic fallback).
+These counts were measured from the binary and model, not assumed from source-file
+counts. The old 3.39 baseline was 43/306 registered names. The live
+`capabilities.native_registry` is authoritative for the actually linked build.
+None of these counts is a conformance percentage.
 
 ## Standards and boundaries
 
-| Family | Applicable transport-stream decoding | Evidence and limits |
+| Family | Verified application behavior | SDK-only or excluded behavior |
 | --- | --- | --- |
-| MPEG systems | PAT, CAT, PMT, TSDT; registered MPEG descriptors and extension descriptors | Core fixture tests exercise PAT/PMT/CAT, multi-section PAT generation boundaries, and HEVC/ISO-639 descriptors in PMT. Generic registry decoding supplies additional table/descriptor fields. |
-| DVB-S/S2/S2X, DVB-T/T2, DVB-C/C2 | Common DVB SI such as NIT, BAT, SDT, EIT, TDT/TOT; registered satellite, terrestrial, cable and generation-specific delivery-system descriptors | Pinned-compiler synthetic NIT tests assert DVB-S/S2, DVB-T/T2 and DVB-C delivery parameters plus official references. Special-descriptor fixtures also assert DVB AC-4, subtitles, application signaling and a PMT-discovered AIT with application/profile/object-carousel metadata. The optional recorded terrestrial sample remains additional evidence. S2X/C2 and untested parameter combinations remain SDK-level. The RF modes are not distinct table parsers. |
-| ATSC transport-stream PSIP | MGT, TVCT/CVCT, ATSC_EIT, ETT, STT, RRT, DCCT, DCCSCT | Synthetic MGT/TVCT/STT/ATSC_EIT tests include a TVCT on an MGT-advertised nondefault PID, service-location components, captions, multiple-string text and content advisories. Other registered models are SDK-available. This does not claim ATSC 3.0 IP/ROUTE/MMT support. |
-| ISDB | Shared MPEG/SI plus BIT, CDT, DCT, DLT, ERT, ITT, LDT, LIT, NBIT, PCAT, SDTT | Synthetic BIT/CDT/SDTT/LDT/NBIT/ITT API tests and an ISDB NIT assert terrestrial delivery, TS information, partial reception and system-management descriptors. Japan/Brazil character and regional interpretations must not be inferred from the word ISDB alone. |
-| SCTE | Registered splice information and cable emergency alert models/descriptors | A PMT-discovered SCTE-35 PID test asserts time-signal PTS, segmentation fields/UPID and avail information. Other paths remain SDK-available; no full SCTE broadcast conformance claim. |
-| DTMB | MPEG TS and recognized PSI/SI inside a provided TS can use the relevant common decoders | Pinned `Standards` enum has no DTMB member. No verified DTMB-specific signaling fixture or complete DTMB decoder claim. Official Chinese sources distinguish GB 20600 RF transmission from GB/T 28161 service information and GB/T 28160 EPG; see the DTMB audit below. Unknown signaling stays raw. |
-| Operator / private / special | Registered private PDS descriptors, table-specific descriptors, extension descriptors; declared local extension fields | Scoped private descriptor fixture exists. Arbitrary unpublished syntax is not automatically knowable. No decryption, invented descriptor names, or blanket private-protocol support. |
+| MPEG systems | PAT/CAT/PMT, ISO-639 and HEVC descriptors; VANC registration inheritance/isolation; PDS-scoped AVS3 descriptor fields and guarded REGID ambiguity; DSM-CC DDB/DII module fields and block bytes | Additional registered descriptors remain individually unverified. No media decoding or general remux guarantee. |
+| DVB-S/S2/S2X, DVB-T/T2, DVB-C/C2 | NIT delivery parameters for S/S2/T/T2/C; common SI; AC-4, subtitles, application signaling and PMT-discovered AIT; container_table, DFIT, MPE_FEC/MPE_IFEC fields and opaque payloads | S2X/C2 and untested parameter combinations remain SDK-level. Delivery descriptors do not prove RF support. Font URI, compression wrapper and FEC bytes are not fetched, decompressed or repaired. |
+| ATSC transport-stream PSIP/data | MGT/TVCT/STT/EIT, including MGT-advertised PID discovery, captions and multiple strings; AEIT/AETT/DET/DST/LTST/NRT/SVCT synthetic fields | Other registered models are SDK-available. NRT fixture has private data but no resource entries; DST fixture has an application but no tap. No ATSC 3.0 IP/ROUTE/MMT claim. |
+| ISDB | BIT/CDT/SDTT/LDT/NBIT/ITT; NIT terrestrial/TS/partial-reception descriptors; AMT IPv4/IPv6 mapping on PID 0x002E; advanced cable normal fields and opaque extension bytes | Other registered models and operator profiles remain unverified. Advanced-cable syntax has an upstream reconstruction caveat. Japan/Brazil text and time profiles must be selected explicitly. |
+| SCTE | PMT-discovered SCTE-35 time-signal PTS, segmentation/UPID and avail fields | Other splice forms and cable emergency alert paths remain SDK-level; no complete SCTE conformance claim. |
+| DTMB | Explicit `dtmb` context; ITU J.1041 DRM descriptor fields and exact license-data bytes; common SDT with explicitly signaled UTF-8 Chinese/Greek text; wrong-family and truncated-DRM fallback | No blanket GB/T 28161, GB/T 28160 or broadcaster-profile support; no GB 20600 RF test, DRM decryption, license access or AVS media decoding. |
+| Operator / private | Astra SGT IDs/LCN/flags; scoped PDS and registration context; raw unknowns | Unpublished syntax is not inferred. SGT has no linked public standard in the index. No arbitrary private-protocol or generic edit/encode guarantee. |
 
-## DTMB scope audit (official sources checked 2026-10-16)
+Service and EPG lists remain convenience projections, primarily from common DVB
+SI. A populated native table tree can coexist with empty Services/EPG projections;
+the UIs explain that boundary. Inspect the native tree and original section bytes
+for fields outside those projections.
 
-The Chinese national standards portal lists separate documents:
+## DTMB scope and text
 
-- [GB 20600-2006](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=41F48525779777A75F0898B87E9BD24E): terrestrial transmission framing, channel coding and modulation.
+The SDK now has a DTMB standards flag. The `dtmb` choice activates that context;
+it does not select a Chinese character set or UTC+8. This follows the pinned
+compiler's `--china` behavior. The fixture's `--default-charset UTF-8` is separate,
+and the resulting service strings carry the on-wire 0x15 UTF-8 selectors.
+
+`DTMB_DRM_descriptor` represents ITU J.1041 clause 7.2.1. Tests assert the four
+format/encryption nibbles, opaque DRM bytes, native hierarchy, flat descriptor
+and raw section. This is inspection of encryption signaling, not decryption.
+A one-byte descriptor body is kept generic, and DVB context cannot label it as a
+DTMB DRM descriptor. The reference index points to the actual ITU source.
+
+The Chinese national standards portal separates:
+
+- [GB 20600-2006](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=41F48525779777A75F0898B87E9BD24E): terrestrial framing, channel coding and modulation.
 - [GB/T 28161-2011](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=59E83CA701AEB4248E115BC043688FEC): digital-television service information.
 - [GB/T 28160-2011](https://openstd.samr.gov.cn/bzgk/std/newGbInfo?hcno=0AACD4802F1BB724F1140ABF21F4A48B): digital-television electronic programme guides.
 
-The three official catalog entries were marked current on the audit date. This
-check establishes document identities and their different subjects; it is **not**
-a completed clause-by-clause implementation comparison. No normative PDF or
-DTMB-specific conformance vector was imported into the project. The portal's
-catalog text alone does not establish that all descriptor syntax, character sets,
-reserved identifiers or receiver obligations equal DVB behavior.
+The catalog entries were checked on 2026-10-16. No clause-by-clause GB/T comparison
+or independent DTMB conformance capture has been completed. PAT/PMT cannot identify
+RF modulation. A common-SI decoder pass does not validate any of these standards.
 
-For a demodulated TS from a DTMB service, the application's verified common MPEG
-PSI and recognized SI decoders may be useful. Report the actual tables, descriptors
-and raw bytes observed. Do not identify a transport stream's RF modulation from
-PAT/PMT alone, silently label a DVB preset as DTMB, or claim that a common-decoder
-pass validates GB 20600, GB/T 28161, GB/T 28160 or a broadcaster's private profile.
-The remaining acceptance work is a documented source capture/profile, applicable
-SI/text/EPG requirements and independent expected results, then positive and
-malformed-input API regressions against those requirements. RF reception, AVS
-media decoding and receiver conformance remain outside this PSI/SI editor.
+Chinese, Greek and accented BMP text are asserted in explicitly encoded SDT and
+ATSC multiple-string/fixed-UTF-16 fields. A separate compiler probe found that the
+pinned SDT XML compiler dropped a supplementary-plane emoji; that probe is not
+presented as successful text coverage. Supplementary broadcast-text fidelity,
+GB2312/GB18030 defaults and complete Chinese EPG semantics remain unverified.
+UTF-8 filesystem paths and service-edit byte limits have separate engine tests.
 
 ## Complete pinned XML table-model inventory
 
-AIT, ATSC_EIT, BAT, BIT, CAT, CDT, CIT, CVCT, DCCSCT, DCCT, DCT, DLT,
-DSMCC_stream_descriptors_table, EIT, ERT, ETT, INT, ITT, LDT, LIT, MGT,
-NBIT, NIT, PAT, PCAT, PMT, RCT, RNT, RRT, RST, SAT, SDT, SDTT, STT,
-TDT, TOT, TSDT, TVCT, UNT, cable_emergency_alert_table,
-discontinuity_information_table, generic_long_table, generic_short_table,
-selection_information_table, splice_information_table.
+AEIT, AETT, AIT, AMT, ATSC_EIT, BAT, BIT, cable_emergency_alert_table, CAT,
+CDT, CIT, container_table, CVCT, DCCSCT, DCCT, DCT, DET, DFIT,
+discontinuity_information_table, DLT, DSMCC_download_data_message,
+DSMCC_stream_descriptors_table, DSMCC_user_to_network_message, DST, EIT, ERT,
+ETT, generic_long_table, generic_short_table, INT, ITT, LDT, LIT, LTST, MGT,
+MPE_FEC, MPE_IFEC, NBIT, NIT, NRT, PAT, PCAT, PMT, RCT, RNT, RRT, RST,
+SAT, SDT, SDTT, selection_information_table, SGT, splice_information_table,
+STT, SVCT, TDT, TOT, TSDT, TVCT, UNT.
 
-Descriptor inventory is exposed from the live registry rather than duplicated
-here as a stale hard-coded list. Examples verified in the pinned headers include
-SatelliteDeliverySystemDescriptor, S2SatelliteDeliverySystemDescriptor,
-S2XSatelliteDeliverySystemDescriptor, S2Xv2SatelliteDeliverySystemDescriptor,
-TerrestrialDeliverySystemDescriptor, T2DeliverySystemDescriptor,
-CableDeliverySystemDescriptor, C2DeliverySystemDescriptor,
-C2BundleDeliverySystemDescriptor, and ISDBTerrestrialDeliverySystemDescriptor.
-These names establish decoder availability, not that this application tunes those
-systems or has tested every descriptor combination.
+The 15 newly registered table names compared with 3.39 all have application
+fixtures: AEIT, AETT, AMT, container_table, DET, DFIT,
+DSMCC_download_data_message, DSMCC_user_to_network_message, DST, LTST, MPE_FEC,
+MPE_IFEC, NRT, SGT and SVCT. This is one or a few representative paths for each,
+not all branches. The complete descriptor inventory is exposed by the runtime
+rather than duplicated as a stale hard-coded list.
 
-## Context, collisions, and private namespaces
+## Context, collisions and private namespaces
 
-`analyze.standards` selects `auto`, `dvb`, `atsc`, `isdb`,
-`isdb-japan`, `isdb-brazil`, or `scte` (see the live API schema). The SDK's exact
-standard flags are NONE, MPEG, DVB, SCTE, ATSC, ISDB, JAPAN and ABNT. Plain `isdb` selects common ISDB context only. The explicit profiles follow the
-pinned `tstabcomp --help` definitions: `isdb-japan` uses ARIB-STD-B24 and JST;
-`isdb-brazil` uses ISDB+ABNT, RAW-ISO-8859-15 and UTC-3. The core reports
-`text_charset` and `time_reference` and copies them into native decoder contexts.
-These settings interpret stream text/time; they do not identify the actual
-broadcast country from RF data.
+`analyze.standards` accepts `auto`, `dvb`, `atsc`, `isdb`, `isdb-japan`,
+`isdb-brazil`, `scte` and `dtmb`. Pinned SDK flags include MPEG, DVB, SCTE, ATSC,
+ISDB, JAPAN, ABNT and DTMB, plus `DVBONLY` for strict-DVB distinctions. The explicit `dvb` profile includes
+that flag to prevent unrelated ISDB descriptor guesses; auto mode stays inferential.
+`isdb-japan` selects ARIB-STD-B24 and JST; `isdb-brazil` selects ISDB+ABNT,
+RAW-ISO-8859-15 and UTC-3. Plain `isdb` does not infer a regional profile.
+The core reports `text_charset` and `time_reference` and propagates them into
+native decoding. Settings are interpretation choices, not location detection.
 
-Auto mode is best-effort evidence accumulation, not a proof of standard identity.
-Table ID 0xC7 means ATSC MGT or ISDB LDT; 0xC8 means ATSC TVCT or ISDB CDT.
-An ID alone is insufficient. Source PID, explicit standard context, table shape,
-and successful full-table deserialization matter. The SDK may prefer a registered
-fixed-PID interpretation even with a different requested family: in a tested ATSC
-context with explicitly included ISDB PIDs, CDT/LDT still decoded as ISDB. Thus
-the context is a disambiguation preference, not a strict protocol rejection filter.
-The pinned [registry lookup](https://github.com/tsduck/tsduck/blob/v3.39-3956/src/libtsduck/dtv/signalization/tsPSIRepository.cpp)
-returns the first matching registered decoder, checking each entry's fixed PID
-and standard flags in one pass. Static registration order can differ between
-platform builds. With deliberately contradictory `isdb` context for the same
-ATSC MGT/TVCT fixture, Linux produced generic raw fallback while the
-[Windows baseline diagnostic](https://github.com/znbsf/ShowPsiSi/actions/runs/38973641571/job/117217715481)
-produced the correct MGT/TVCT native fields. Both preserved the exact source bytes;
-neither decoded the fixtures as unrelated ISDB LDT/CDT. The portable regression
-accepts only those two safe outcomes and verifies raw bytes, required semantic
-fields when decoded, and the explicit-family reference policy. This establishes
-a bounded cross-platform dispatch difference, not broader Windows protocol
-conformance. The reference index remains filtered to the explicitly selected
-family, so contradictory `isdb` requests do not acquire ATSC reference links.
+Auto mode accumulates evidence and cannot prove standard identity. Table IDs
+0xC7 and 0xC8 overlap between ATSC MGT/TVCT and ISDB LDT/CDT. PID, explicit
+standards, complete table shape and successful deserialization all matter.
+Context is not a strict rejection filter: fixed-PID/registered evidence can still
+select a matching table in a contradictory requested family. The portable
+regression accepts only the correct ATSC fields or generic raw fallback for its
+contradictory fixture, never an unrelated ISDB table, and checks exact bytes.
+Reference links remain filtered to the requested family. Historical Windows
+registration-order evidence is retained in the old validation reports; it is not
+proof that the upgraded Windows SDK has been tested interactively.
 
-When input is ambiguous, choose the known standard explicitly and retain raw
-bytes. Enabling every standards flag simultaneously cannot resolve a collision.
+Descriptor interpretation also requires containing table ID, extension tag,
+PDS and registration context. The application retains actual wire PDS (zero when
+absent) and ordered `registration_ids` for flattened descriptors. Program-level
+PMT registrations precede local component registrations. A component's local
+registration must not leak into siblings or a later analysis. PDS is loop-local,
+not inherited indiscriminately. Positive VANC and missing-registration tests
+assert agreement between flattened descriptors and the native table hierarchy.
+The legacy missing-PDS tests retain exact unknown private bytes and no false links.
 
-Descriptor tags also have overlapping namespaces. Preserve containing table ID,
-DVB private-data-specifier (PDS), MPEG/DVB extension tag, and registration context.
-A PDS applies to the relevant descriptor loop; do not carry it indiscriminately
-between loops. Unknown private tags remain generic. Registration identifiers are
-recorded through DuckContext and must not accidentally leak between unrelated
-analysis sessions. A descriptor's tag alone must never select a private extension.
+Native JSON attribute keys remain lowercase for API compatibility. The companion
+`tsduck_xml` retains the SDK's exact XML spelling, including uppercase acronyms.
+A complete section/table generation is distinct from semantic validity:
+`native_table_complete` can be true while a malformed payload uses generic raw
+fallback. Tests truncate AMT, DET and DSM-CC DDB bodies while recomputing valid
+section CRCs and assert this distinction.
 
-The generic table tree is produced from a complete matching table generation,
-not by pretending one section of a multi-section table is the entire table.
-`native_table_complete` reports assembly completeness; the generic XML fallback
-is distinguishable from a semantic decoder. Existing high-level services/events
-are convenience projections, not an exhaustive representation of all standards.
-ATSC/ISDB fields remain accessible in the generic native tree even when no
-specialized service-list projection or editor exists.
+### DSM-CC namespace guard
+
+DII itself is an MPEG table, while the tested name and CRC module descriptors are
+registered by upstream as DVB table-specific descriptors for TID 0x3B. Explicit
+DVB context correctly decodes `dsmcc_name_descriptor` and `dsmcc_CRC32_descriptor`.
+Without DVB context, upstream 3.45 can label CRC tag 0x05 as an unrelated MPEG
+registration descriptor. The app instead emits generic raw module descriptors
+and a `native_decode_warnings` entry in that bounded DII case. Tests exercise
+`auto`, `atsc` and `isdb`, checking the native tree, XML, absent misleading links
+and original bytes. It does not globally reinterpret every tag 0x05.
+
+DDB/DII tests assert block/module identifiers, sizes, timing, transaction ID,
+block bytes and the two DVB module descriptors. They do not establish carousel
+file assembly, extraction, decompression, DSI object references or receiver behavior.
+
+### ISDB advanced-cable implementation caveat
+
+The official `tsISDBAdvancedCableDeliverySystemDescriptor.h` says its syntax was
+reconstructed from a JCTEA STD-003 block diagram and needs real-signal testing.
+The fixture tests that implementation's bit fields, exactly representable
+450,000,000 Hz frequency and extension-1 opaque bytes (including compiler padding
+to 88 bytes). It is not an independent interpretation of the full JCTEA standard.
 
 ## PID discovery and packet scope
 
-- PAT discovers PMT PIDs; PAT program zero can advertise a network PID.
-- ATSC PSIP uses 0x1FFB; MGT entries advertise additional table PIDs.
-- Pinned ISDB constants include SDTT 0x23 / terrestrial SDTT 0x28, BIT 0x24,
-  NBIT/LDT 0x25, additional EIT 0x26/0x27, CDT 0x29, and AMT 0x2E.
-- `extra_pids` explicitly includes otherwise unadvertised section PIDs. This is
-  necessary for operator-private tables and tables whose routing is not covered
-  by the application's current discovery path.
-- Presence of an ISDB IIP PID constant 0x1FF0 does not make IIP a generic PSI table.
-  Nor does seeing an arbitrary PES PID mean its payload should be parsed as SI.
-- A table that appears only before its advertising PAT/MGT is discovered is not
-  guaranteed to be recovered by forward-only discovery; repeat signaling or an
-  explicit PID selection avoids that issue.
+- PAT discovers PMT PIDs; PAT program zero can advertise a nondefault network PID.
+- ATSC PSIP has standard PIDs, and MGT entries advertise additional table PIDs.
+- ISDB known PIDs include SDTT 0x23/0x28, BIT 0x24, NBIT/LDT 0x25, additional EIT
+  0x26/0x27, CDT 0x29 and AMT 0x2E.
+- `extra_pids` selects unadvertised/operator PIDs. Most new synthetic tables use
+  this path; their mere registration does not imply automatic routing discovery.
+- An ISDB IIP PID constant does not make IIP a generic PSI table; an arbitrary PES
+  payload is not interpreted as SI merely because its PID was seen.
+- Forward-only discovery cannot guarantee a table transmitted only before the
+  PAT/MGT that advertises it. Repeated signaling or explicit PID inclusion avoids
+  that fixture issue.
 
-## Reproducible fixtures
+## Reproducible fixtures and measured paths
 
-`tests/test_protocol_coverage.py` contains CRC-correct binary sections generated
-using the pinned SDK's `tstabcomp` and the following model-valid XML. The tests
-packetize them as TS, invoke the real core, and assert semantic native tree names
-and fields. They are deliberately small synthetic fixtures, not captured RF
-samples or certification vectors.
+Legacy binary vectors in `tests/test_protocol_coverage.py` retain their exact
+3.39-3956 compiler provenance and bytes. All 26 legacy tests still run on 3.45.
+The six original special-fixture XML strings remain in the test module, and the
+original table/delivery source XML is retained below; the SDK upgrade does not
+rebrand their origin.
+
+Added sources and hex vectors are in
+[`tests/fixtures/tsduck345`](../tests/fixtures/tsduck345/README.md). Its manifest
+records exact compiler identity/arguments, XML and binary hashes, PID, context and
+CRC-correct bytes. Tests packetize the real bytes as TS and invoke the real core.
+No SDK, generated TS/BIN or external standard PDF is checked in.
+
+| Added fixture group | Asserted fields and evidence |
+| --- | --- |
+| DTMB PMT/SDT | DRM four format/encryption values, license bytes, Chinese/Greek provider/service strings and explicit UTF-8 selectors; wrong-context/truncated fallback |
+| ISDB AMT/NIT | IPv4/IPv6 prefixes, service IDs and private data; advanced-cable PLP/carrier fields, extension bytes and padding |
+| ATSC AEIT/AETT/LTST | Source/event/data IDs, MGT tag, ETM ID, starts/durations and multiple-string text |
+| ATSC DET/DST/NRT/SVCT | Download timing/ID, application/private bytes, Chinese short name, channel and satellite-carrier parameters |
+| DSM-CC DDB/DII | Module/block/transaction fields and bytes; correctly scoped name/CRC descriptors and conservative unknown-context output |
+| DVB container/DFIT/FEC/iFEC | Container ID, wrapper bytes, font fields/URI, real-time parameters and FEC bytes |
+| Astra SGT | Service/network IDs, channel number, new/visible flags and genre |
+| MPEG VANC / AVS3 namespaces | VANC program inheritance and ordered local context; AVS3 real-PDS fields; missing identifiers, sibling/session isolation and guarded REGID-only ambiguity |
+
+AVS3 fixtures assert profile/level, frame-rate, precision and colour fields with
+an actual loop-local AVSV PDS. A sibling without PDS and a later analysis stay
+generic. In the pinned SDK, a registered PrivateDual descriptor can be resolved
+incorrectly through AVSV registration alone; that exact observed-registration
+conflict is exposed as generic bytes plus a warning, consistently in flattened
+JSON and table XML/tree. It is not manually relabeled as a successfully decoded
+AVS3 descriptor. These are signaling tests, not AVS3 media decoding.
+
+Legacy regressions continue to cover current/next separation, complete generation
+assembly, version wrap/reuse, no borrowing stale sibling sections, packet loss and
+recovery, byte-identical duplicate packets, pointer-field boundaries, private PDS,
+extra-PID SDT isolation and precise snapshot-comparison cutoffs/order/pagination.
+They do not cover all EIT segment, transport error or broadcaster-profile patterns.
+
+## Validation and source references
+
+On 2026-10-16 the upgraded Linux core passed **43 protocol tests**, with no skips,
+including all 26 legacy tests. All **21 added XML sources** recompiled with the
+actual official 3.45-4798 `tstabcomp` and matched their stored bytes/hashes exactly.
+All 21 inputs also have API assertions. The Linux REGID-only AVS3 result is
+warned raw fallback; the portable regression also accepts correctly resolved AVS3
+with the expected fields, never an unrelated descriptor. Its real-PDS fixture is
+strictly semantic. Compilation alone is never claimed as semantic validation.
+
+Run the compiler reproduction and API checks using the commands in the fixture
+README. Set `SHOWPSISI_CORE` if the binary is outside `build/bin`, and the normal
+runtime library path when using an extracted SDK. Broader engine, MCP, Qt, Web,
+Windows and packaging validation is recorded separately; this document does not
+turn Linux API results into a Windows/macOS UI pass.
+
+Pinned upstream evidence includes:
+
+- [PSIRepository](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/signalization/tsPSIRepository.h): registry queries and context-aware lookup.
+- [DescriptorContext](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/signalization/tsDescriptorContext.cpp): table, standard, PDS and ordered registration context.
+- [DescriptorList](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/signalization/tsDescriptorList.cpp): list-local PDS and program-level registration inheritance.
+- [DSM-CC table](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/mpeg/tsDSMCCUserToNetworkMessage.cpp), [name descriptor](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCNameDescriptor.cpp), [CRC descriptor](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCCRC32Descriptor.cpp): why the namespace guard is necessary.
+- [AVS3 video](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/avs/tsAVS3VideoDescriptor.cpp) and [SMPTE ancillary data](https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/smpte/tsSMPTEAncDataDescriptor.cpp): private identifier registrations.
+
+Public specification links live separately in `references/standards.json`.
+A standard-level link is not a clause-compliance certificate or a claim that the
+latest document edition is fully implemented. No PDFs are bundled and optional
+reference browsing is outside parsing/packet analysis.
+
+## Legacy 3.39 compiler source XML
+
+These inputs generated the unchanged legacy binary vectors. They are retained as
+provenance for the original compiler, while their API assertions now run on 3.45.
 
 ```xml
 <tsduck>
@@ -164,116 +251,6 @@ samples or certification vectors.
   <ITT event_id="7"/>
 </tsduck>
 ```
-
-Run after building the current core: `python -m unittest discover -s tests -p
- 'test_protocol_coverage.py' -v` (set the runtime library path for an unpacked SDK).
-The fixture assertions are the evidence; merely compiling XML with TSDuck is not
-an application test pass.
-
-## Additional descriptor and transport regressions
-
-`SPECIAL_FIXTURE_XML` in `tests/test_protocol_coverage.py` retains the exact source
-XML for six additional binary fixtures. They were compiled by the pinned SDK;
-the test suite embeds the resulting section bytes, so ordinary tests do not need
-`tstabcomp`. When reproducing, use `--atsc` for the two ATSC sources, `--isdb` for
-the ISDB NIT, and default compiler context for DVB AIT/PMT and SCTE-35. The ISO-639,
-HEVC and application-signaling descriptors are asserted in their containing PMT;
-AIT descriptors are asserted in AIT, preserving their table-specific namespace.
-
-| Fixture | Measured application fields |
-| --- | --- |
-| DVB special PMT + AIT | HEVC profile/level; DVB AC-4 dialog flag; subtitle language/page ID; application type, name, profile version and object-carousel component tag; AIT PID discovered from PMT stream type 0x05 |
-| ATSC TVCT + EIT | PCR/component PIDs and language; long channel name; digital caption service/language; EIT event ID/start/duration/title and content rating |
-| ISDB NIT | Area code, guard interval, transmission mode, frequency, remote-control key, TS name, partial-reception service and broadcasting identifier |
-| SCTE-35 | PMT stream type 0x86 discovers the splice PID; time-signal PTS, PTS adjustment, segmentation ID/duration/type, UPID bytes and avail ID |
-
-The ISDB frequency is deliberately 473,000,000 Hz, exactly representable in this
-fixture's 1/7-MHz field. The pinned SDK converts with integer division; arbitrary
-Hz values may quantize. This is a signaling-field assertion, not RF tuning.
-
-Separate hand-built sections and TS packetization exercise:
-
-- Same-version current/next tables remain independently inspectable. Derived
-  services, SDT history and snapshot exports use current sections only.
-- Multi-section PAT association waits for the whole observed generation, including
-  a 31-to-0 version transition; incomplete new sections do not borrow older ones.
-- Reused 5-bit versions, including byte-identical repeated sections, cannot revive
-  a sibling from before an intervening version when inspecting a partial table.
-- A missing continuity counter in a spanning section discards the partial section;
-  a following intact section recovers with correct start/end packet evidence.
-- A byte-identical duplicate TS packet does not duplicate an observation or break
-  assembly. A nonzero pointer field can complete one section and start another
-  inside the same TS packet.
-- ATSC and ISDB native table descriptors agree with flattened inspection while
-  preserving the actual on-wire PDS value. Family-specific internal namespace
-  selection is not evidence that a private-data-specifier appeared in the stream.
-
-Independent snapshot-comparison regressions additionally verify within-packet
-wire observation order when two versions complete in the same TS packet, exact
-section-completion cutoffs, deterministic all/filtered pagination, the maximum
-allowed offset, repeated-record evidence, duplicate EIT identities and rescheduled
-events. A reused event ID with a different start time is removed+added; matching
-IDs in different networks remain separate.
-
-Canonical actual-TS service projection comes from SDT PID 0x11 only. An explicitly
-included extra-PID SDT still has raw/native inspection and table differences, but
-cannot shadow a canonical service by map ordering. Tests cover both arrival orders
-and an extra-PID-only capture. This projection rule does not discard source bytes
-or imply that a noncanonical placement conforms to DVB.
-
-These tests verify specific cases, not all MPEG transport-error, discontinuity,
-EIT segment, version-repetition or packet-loss patterns. In particular, EIT
-schedule segment semantics and full registration-dependent codec isolation remain
-separate work. There is no new generic edit/encode guarantee for these descriptors.
-
-## Verified pinned APIs and upstream source
-
-The inspected official SDK headers are packaged with the pinned developer release.
-Source links below target the release tag, rather than assuming current online API
-matches the older installed SDK:
-
-- [PSIRepository.h](https://github.com/tsduck/tsduck/blob/v3.39-3956/src/libtsduck/dtv/signalization/tsPSIRepository.h): `getTableFactory(TID, Standards, PID, cas)`, `getSectionDisplay`, `getRegisteredTableNames`, `getRegisteredDescriptorNames`.
-- `tsBinaryTable.h`: `toXML(DuckContext&, xml::Element*, const XMLOptions&)` selects registered decoders with generic fallback.
-- `tsDescriptor.h`: `toXML(DuckContext&, xml::Element*, PDS, TID, bool)` and `deserialize` preserve table/PDS context.
-- `tsTablesDisplay.h`: `displayTable`, `displaySection`, `displayDescriptor`, `displayDescriptorList` supply semantic display with raw fallback.
-- `tsNames.h`: `ts::names::TID(const DuckContext&, uint8_t, uint16_t, NamesFlags)`.
-- `tsEDID.h`: standard, private-PDS, MPEG/DVB extension, and table-specific descriptor identifiers.
-- `tsDuckContext.h`: `resetStandards`, `addStandards`, `setDefaultPDS`, registration-ID tracking/reset.
-- `tsStandards.h`, `tsTS.h`, `tsPSI.h`, and `tsduck.tables.model.xml`: standard flags, PID/table ID constants, exact model inventory.
-
-Public specification links are kept separately in `references/standards.json`.
-A reference to an overall standard is labeled as such; it does not assert an exact
-clause match or imply that the newest standard edition is fully implemented by
-TSDuck 3.39. No PDFs are bundled. Reference browsing is optional and does not run
-inside the parsing or packet-analysis path.
-
-## Validation result
-
-On 2026-10-16, **26 protocol API tests passed** against the rebuilt native core.
-The original nine were expanded with seventeen descriptor, discovery,
-packetization, generation and independent snapshot-comparison regressions. All six additional XML sources were
-independently recompiled with TSDuck 3.39-3956 and matched their embedded section
-bytes exactly.
-Besides the table fixtures, these check auto-mode fixed-PID evidence, exact-native
-or generic-raw handling of contradictory context, PDS isolation across descriptor
-loops and files, unknown private byte retention, registry counts, and correct
-standard links (including absence of an incorrect B10 link for CDT).
-A registration descriptor is included in the private fixture, but a claim that
-every registration-dependent private codec interpretation is covered would be
-unjustified; that remains a targeted future regression area.
-The optional official-reference index is 12,490 bytes on disk, with five sources,
-191 descriptor associations and 26 table associations. These associations are
-standard-level, not clause-level. CDT/SDTT have no B10 link because their SDK
-headers cite ARIB STD-B21 instead.
-
-## DVB delivery fixture source and measured fields
-
-The following 114-byte NIT was compiled by TSDuck 3.39-3956 `tstabcomp`,
-packetized, and decoded by the real core in `dvb` context. It covers selected
-representative settings, not every delivery-system variant. Assertions check
-frequency, symbol rate, modulation, bandwidth, S2 identifiers, and nested T2
-cell frequency; all six descriptors carry the official ETSI standard-level link.
-A separate test routes this NIT on PID 0x135 discovered from PAT program zero.
 
 ```xml
 <tsduck>

@@ -101,7 +101,7 @@
     },
     {
       "name": "query",
-      "description": "Read the latest observed current sections and derived actual-TS services from complete SDT on canonical PID 0x0011 (extra-PID SDTs stay table evidence) at a packet position. Observation state, not a guarantee of broadcast validity intervals.",
+      "description": "Read retained section evidence (including invalid raw variants), per-version coverage, packet-arrival distributions and latest observed current sections and derived actual-TS services from complete SDT on canonical PID 0x0011 (extra-PID SDTs stay table evidence) at a packet position. Observation state, not a guarantee of broadcast validity intervals.",
       "inputSchema": {
         "type": "object",
         "properties": {

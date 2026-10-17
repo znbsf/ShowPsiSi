@@ -586,6 +586,116 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator('#scan').is_disabled())
         self.assertRegex(self.page.locator('#runtime').inner_text().lower(),r'disconnected|unavailable|stopped')
 
+    def test_fixed_table_type_palette_has_distinct_symbols_and_colors(self):
+        # This tests authored presentation helpers, not fabricated decoder evidence.
+        names=['PAT','PMT','CAT','NIT','SDT','BAT','EIT','TDT','TOT','AIT','DSMCC_download_data_message']
+        values=self.page.evaluate("""names=>names.map(name=>{
+          const host=document.createElement('div');host.className='inspector';
+          host.innerHTML='<h2>'+categoryBadge({name})+'</h2>';
+          document.body.append(host);const badge=host.querySelector('.table-kind');
+          const result={name,category:tableCategory(name),color:getComputedStyle(badge).color,
+            background:getComputedStyle(badge).backgroundColor,title:badge.title,text:badge.textContent};
+          host.remove();return result;
+        })""",names)
+        self.assertEqual(len({v['color'] for v in values}),len(names))
+        self.assertEqual(len({v['category'][1] for v in values}),len(names))
+        for value in values:
+            self.assertIn(value['category'][1],value['text'])
+            self.assertIn(value['name'],value['title'])
+        self.assertEqual(self.page.evaluate("tableCategory('unknown private payload')[0]"),'other')
+        self.assertEqual(self.page.evaluate("tableCategory('DSMCC_user_to_network_message')[0]"),'dsmcc')
+
+    def test_section_evidence_crc_groups_arrival_and_scopes(self):
+        from make_fixture import section, descriptor, word, crc
+        def sdt(extension, number, last, name, bad=False):
+            desc=descriptor(0x48,b'\x01\x00'+bytes([len(name)])+name)
+            raw=bytearray(section(0x42,extension,1,word(2)+b'\xff'+word(100+number)+b'\xff'+word(0x8000+len(desc))+desc))
+            raw[6]=number; raw[7]=last; raw[-4:]=crc(raw[:-4]).to_bytes(4,'big')
+            if bad: raw[-1]^=1
+            return bytes(raw)
+        parts=[sdt(1,0,1,b'A'),sdt(1,1,1,b'B'),sdt(1,1,1,b'Bad B',True),
+               sdt(2,0,1,b'Missing sibling'),sdt(3,0,0,b'All bad',True),sdt(1,0,1,b'A')]
+        fixture=self.output/'section-evidence.ts'
+        fixture.write_bytes(b''.join(bytes([0x47,0x40,0x11,0x10+i,0])+raw+b'\xff'*(183-len(raw)) for i,raw in enumerate(parts)))
+        self.analyze(fixture)
+        state=self.page.evaluate('window.showpsisi.getState()')
+        self.assertEqual({g['validity'] for g in state['table_groups']},{'valid','mixed','all_invalid'})
+        self.page.locator('[data-tab="Tables"]').click()
+        bad=[r for r in state['tables'] if r['crc']['status']=='invalid']
+        self.assertEqual(len(bad),2)
+        self.assertFalse(self.page.locator('#show-bad-crc').is_checked())
+        self.assertEqual(self.page.locator('#list [role="option"]').count(),len(state['tables'])-2)
+        self.assertIn('Show bad CRC (2)',self.page.locator('.table-controls').inner_text())
+        self.page.locator('#show-bad-crc').check()
+        self.assertEqual(self.page.locator('#list [role="option"]').count(),len(state['tables']))
+        self.page.locator('#show-bad-crc').uncheck()
+        self.page.locator('#table-group-toggle').click()
+        branches=self.page.locator('.table-branch')
+        self.assertEqual(branches.count(),3)
+        for branch in branches.all():
+            if branch.locator('[role=option]').count():
+                self.assertEqual(branch.locator('[role=option][tabindex="0"]').count(),1)
+        self.assertIn('all_invalid',self.page.locator('#list').inner_text())
+        mixed=branches.filter(has_text='mixed')
+        mixed.locator('summary').click()
+        self.assertTrue(mixed.evaluate('(el)=>el.open'))
+        mixed.locator('summary').click()
+        self.assertFalse(mixed.evaluate('(el)=>el.open'))
+        self.page.locator('#table-group-toggle').click()
+        row=next(r for r in state['tables'] if r['extension']==1 and r['section']==0)
+        self.page.evaluate('id=>window.showpsisi.inspect(id)',row['id'])
+        self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=row['id'])
+        detail=self.page.evaluate('window.showpsisi.getDetail()')
+        identity=self.page.locator('.identity-line').inner_text()
+        self.assertIn('TID 0x42',identity)
+        self.assertIn(detail['crc']['transmitted_hex'],identity)
+        self.assertEqual(detail['distribution']['observation_count'],2)
+        self.page.locator('.arrival summary').click()
+        self.assertIn('not PCR',self.page.locator('.arrival').inner_text())
+        self.assertGreater(self.page.locator('.section-density span').count(),0)
+        self.page.locator('#section-group summary').click()
+        self.assertIn('mixed',self.page.locator('#section-group').inner_text())
+        self.page.locator('[data-scope="section"]').click()
+        self.page.locator('#tree-search').fill('TSDuck decoded structure')
+        self.assertIn('section-local',self.page.locator('#tree-area').inner_text())
+        self.page.locator('[data-scope="merged"]').click()
+        self.page.locator('[data-view="xml"]').click()
+        self.assertGreater(self.page.locator('.xml-tag').count(),0)
+        self.assertGreater(self.page.locator('.xml-string').count(),0)
+        self.assertEqual(self.page.locator('.evidence').inner_text(),detail['merged']['tsduck_xml'])
+        self.page.locator('[data-view="tree"]').click()
+        self.page.locator('#tree-search').fill('')
+        root=self.page.locator('[data-path="section"]')
+        for unused in range(5):
+            self.page.locator('#collapse-tree').click()
+            self.assertEqual(root.get_attribute('aria-expanded'),'false')
+            self.assertEqual(self.page.locator('#tree-area [role="treeitem"]:visible').count(),1)
+            root.focus(); root.press('ArrowRight')
+            self.assertEqual(root.get_attribute('aria-expanded'),'true')
+        for width,height in [(1000,680),(520,1000)]:
+            self.page.set_viewport_size({'width':width,'height':height})
+            self.page.locator('#section-group').evaluate('(el)=>el.open=true')
+            tree=self.page.locator('#tree-area')
+            self.assertGreaterEqual(tree.bounding_box()['height'],140)
+            tree.scroll_into_view_if_needed()
+            self.assertTrue(tree.is_visible())
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),width)
+        self.page.set_viewport_size({'width':1440,'height':1000})
+        self.page.locator('#inspector').evaluate('(el)=>el.scrollTop=0')
+        self.page.screenshot(path=str(self.artifacts/'section-evidence-mixed.png'),full_page=True)
+        # All-invalid source must not reveal filtered evidence by auto-selection.
+        only_bad=self.output/'only-bad-crc.ts'
+        raw=sdt(4,0,0,b'Bad CRC only',True)
+        only_bad.write_bytes(bytes([0x47,0x40,0x11,0x10,0])+raw+b'\xff'*(183-len(raw)))
+        self.analyze(only_bad)
+        self.assertFalse(self.page.evaluate('Boolean(window.showpsisi.getDetail().id)'))
+        self.assertEqual(self.page.locator('#list [role="option"]').count(),0)
+        self.page.locator('#show-bad-crc').check()
+        self.assertEqual(self.page.locator('#list [role="option"]').count(),1)
+        self.page.locator('#list [role="option"]').click()
+        self.page.wait_for_function('()=>window.showpsisi.getDetail().crc?.status==="invalid"')
+
+
     def test_historical_inspection_keeps_native_siblings_at_cutoff(self):
         from make_fixture import section,descriptor,word,crc
         def sdt(number,name):
@@ -604,6 +714,7 @@ class BrowserTests(unittest.TestCase):
         def names(value):
             return [node['children'][0]['attributes']['service_name'] for node in value['native_table']['children'] if node['name']=='service']
         self.assertEqual(names(detail),['A','Old B'])
+        old_b_id=next(row['id'] for row in detail['native_table_sources'] if row['section']==1)
         self.assertEqual(detail['count'],1)
         self.assertEqual(detail['last_packet'],0)
         self.assertEqual(detail['occurrences'],[0])
@@ -621,6 +732,18 @@ class BrowserTests(unittest.TestCase):
         self.page.evaluate('id=>window.showpsisi.snapshot(-1,id)',aid)
         self.page.wait_for_function('() => window.showpsisi.getDetail().native_table_at_packet === 4')
         self.assertEqual(names(self.page.evaluate('window.showpsisi.getDetail()')),['A','New B'])
+        # Inspecting a superseded fragment must never present legacy fallback XML
+        # as the current merged generation, even if candidate sibling IDs exist.
+        self.page.evaluate('id=>window.showpsisi.snapshot(4,id)',old_b_id)
+        self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=old_b_id)
+        superseded=self.page.evaluate('window.showpsisi.getDetail()')
+        self.assertFalse(superseded['merged']['complete'])
+        self.assertIsNone(superseded['merged']['native_table'])
+        self.assertIsNone(superseded['merged']['tsduck_xml'])
+        self.page.locator('[data-view="xml"]').click()
+        self.assertIn('XML unavailable for this scope',self.page.locator('.evidence').inner_text())
+        self.assertNotIn('Old B',self.page.locator('.evidence').inner_text())
+        self.assertNotIn('New B',self.page.locator('.evidence').inner_text())
 
     def test_standards_context_and_invalid_extra_pids(self):
         for standard in ('atsc','isdb-japan','dtmb'):
@@ -696,10 +819,10 @@ class BrowserTests(unittest.TestCase):
                 self.page.locator('[data-tab="Tables"]').click()
                 label={'DSMCC_download_data_message':'DSM-CC Data','DSMCC_user_to_network_message':'DSM-CC U-N'}.get(xml_name,xml_name)
                 self.assertIn(label,self.page.locator('.inspector-heading h2').inner_text())
-                self.assertEqual(self.page.locator('.table-kind').inner_text(),label)
-                self.assertIn(explanation,self.page.locator('.table-kind').get_attribute('title'))
+                self.assertIn(label,self.page.locator('#list .table-kind').first.inner_text())
+                self.assertIn(explanation,self.page.locator('#list .table-kind').first.get_attribute('title'))
                 if label != xml_name:
-                    self.assertIn(xml_name,self.page.locator('.table-kind').get_attribute('title'))
+                    self.assertIn(xml_name,self.page.locator('#list .table-kind').first.get_attribute('title'))
                     self.assertIn(xml_name,self.page.locator('.inspector-heading h2').get_attribute('title'))
                 self.assertEqual(self.page.locator('[data-filter="'+xml_name+'"] .family-label').inner_text(),label)
                 self.page.evaluate('id => window.showpsisi.snapshot(-1,id)',detail['id'])

@@ -131,3 +131,29 @@ artifacts include `artifacts/ux-standards/qt-final-tests.log`,
 Remaining work: real screen-reader/AT validation, full zoom/text-scale and forced
 colors audit, all-platform native dialogs, and true semantic field-to-byte mapping.
 No screenshot or limited color test establishes these capabilities.
+
+## Hosted Windows corrections and persistence regression
+
+The retained Windows compact comparison at 1000×680 initially measured an 89px
+field tree with a 153px saved timeline. Using the existing 4px spacing token
+instead of 5px gaps recovered nine pixels: the next hosted report measured 98px,
+with all 28 comparison checks passing. The 90px minimum assertion is unchanged.
+
+A subsequent persistence failure differed by exactly one keyboard step (604px
+rendered versus 580px restored). Fixed-delay test completion could terminate the
+process before its debounced save. The test now waits for an explicit matching
+persisted state, with a bounded five-second acknowledgement window. A deliberate
+700ms save delay exercises that condition without weakening restored-size checks.
+
+A separate deterministic graceful-close reproduction exposed a product bug:
+keyboard resize followed immediately by window close saved old 520/105px geometry
+instead of requested 544/129px, because SplitView polish had not applied the
+preferred sizes yet. Pending keyboard targets now survive until persistence;
+repeated keys accumulate, mouse drag supersedes pending targets, and Reset clears
+them. Tests also exercise clamping in a constrained window. Graceful close flushes
+pending intent; forced subprocess cleanup is explicitly not a graceful-close test.
+
+CI retains per-test layout reports, logs and available screenshots (5 MiB per file),
+including incomplete-result and QML-error failures. Required layout captures finish
+before result publication; closed-window tests retain their state report rather
+than claiming a post-close screenshot. Retained smoke runs use isolated settings.

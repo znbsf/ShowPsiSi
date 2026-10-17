@@ -21,9 +21,13 @@
 #include <QHash>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QProcessEnvironment>
 #include <cmath>
 #include <memory>
 #include <functional>
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
 
 class Bridge:public QObject {
     Q_OBJECT
@@ -105,7 +109,27 @@ class Bridge:public QObject {
     }
 public:
     Bridge(){
-        clock.start();m_root=qEnvironmentVariable("SHOWPSISI_ROOT",QDir::currentPath());m_sample=qEnvironmentVariable("SHOWPSISI_SAMPLE",m_root+"/samples/generated/lab.ts");
+        clock.start();
+        // Runtime discovery never trusts the working directory. Packaged resources
+        // live one level above bin; source builds may use an explicit absolute root.
+        const QDir executableDirectory(QCoreApplication::applicationDirPath());
+        const QString rootOverride=qEnvironmentVariable("SHOWPSISI_ROOT");
+        if(!rootOverride.isEmpty()){
+            if(!QDir::isAbsolutePath(rootOverride)){backendStopped("SHOWPSISI_ROOT must be an absolute directory.");return;}
+            m_root=QDir::cleanPath(rootOverride);
+        }else if(QFileInfo::exists(executableDirectory.filePath("showpsisi-portable.json"))){
+            m_root=QDir::cleanPath(executableDirectory.absoluteFilePath(".."));
+        }else{
+            for(const auto& relative:{"..","../..","../../..","."}){
+                const QString candidate=executableDirectory.absoluteFilePath(relative);
+                if(QFileInfo::exists(candidate+"/api/tools.json")){m_root=QDir::cleanPath(candidate);break;}
+            }
+        }
+        if(m_root.isEmpty()||!QFileInfo(m_root+"/api/tools.json").isFile()){
+            backendStopped("Required application resource api/tools.json is missing. Extract the complete portable archive.");return;
+        }
+        m_sample=qEnvironmentVariable("SHOWPSISI_SAMPLE",m_root+"/samples/generated/lab.ts");
+        if(!QDir::isAbsolutePath(m_sample)){backendStopped("SHOWPSISI_SAMPLE must be an absolute path.");return;}
         connect(&process,&QProcess::readyReadStandardOutput,this,[this]{
             buffer+=process.readAllStandardOutput();int nl;
             while((nl=buffer.indexOf('\n'))>=0){
@@ -123,10 +147,17 @@ public:
         connect(&process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,[this](int code,QProcess::ExitStatus status){
             backendStopped(QString("Backend stopped (%1, %2). %3").arg(code).arg(status==QProcess::CrashExit?"crash":"exit",stderrTail.trimmed()));
         });
-        QString binary=m_root+"/build/bin/showpsisi-core";
+        QString binary=executableDirectory.filePath("showpsisi-core");
 #ifdef Q_OS_WIN
         binary+=".exe";
 #endif
+        if(QFileInfo::exists(executableDirectory.filePath("showpsisi-portable.json"))){
+            for(const auto& name:{"tsduck.tables.model.xml","tsduck.dtv.names","tscore.time.xml","tscore.ip.names"}){
+                if(!QFileInfo(executableDirectory.filePath(name)).isFile()){
+                    backendStopped(QString("Required runtime model/name file missing: %1. Extract the complete portable archive.").arg(name));return;
+                }
+            }
+        }
         // Trusted local test/development configuration, never stream metadata.
         // Arguments are passed directly to QProcess; no shell interpolation.
         QStringList arguments={"--root",m_root};
@@ -141,7 +172,11 @@ public:
             }
             if(!valid){backendStopped("Invalid SHOWPSISI_CORE_ARGS_JSON: expected an array of at most 128 strings without null characters.");return;}
         }
-        process.start(qEnvironmentVariable("SHOWPSISI_CORE",binary),arguments);
+        binary=qEnvironmentVariable("SHOWPSISI_CORE",binary);
+        if(!QDir::isAbsolutePath(binary)||!QFileInfo(binary).isFile()){
+            backendStopped("Backend executable is missing or SHOWPSISI_CORE is not an absolute file path: "+binary);return;
+        }
+        process.start(binary,arguments);
         mark("native_setup");
     }
     ~Bridge(){process.closeWriteChannel();if(!process.waitForFinished(1000)){process.kill();process.waitForFinished(1000);}}
@@ -308,7 +343,31 @@ signals:
     void stateChanged();void detailChanged();void busyChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
 };
 int main(int argc,char**argv){
-    QGuiApplication app(argc,argv);app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");QQuickStyle::setStyle("Basic");
+    // Discover the marker before QGuiApplication loads any platform plugins.
+    // Windows uses the OS executable path, never argv[0] or the working directory.
+#ifdef Q_OS_WIN
+    wchar_t executablePath[32768];
+    const DWORD pathLength=GetModuleFileNameW(nullptr,executablePath,32768);
+    const QString executable=pathLength>0&&pathLength<32768?QString::fromWCharArray(executablePath,int(pathLength)):QString();
+#else
+    const QString executable=QFileInfo("/proc/self/exe").symLinkTarget();
+#endif
+    const bool packaged=!executable.isEmpty()&&QFileInfo::exists(QFileInfo(executable).absolutePath()+"/showpsisi-portable.json");
+    bool development=false;
+    for(int i=1;i<argc;++i)if(QString::fromLocal8Bit(argv[i])=="--showpsisi-development")development=true;
+    if(packaged&&!development){
+        for(const auto& name:QProcessEnvironment::systemEnvironment().keys()){
+            const QString upper=name.toUpper();
+            // Preserve display/accessibility preferences such as QT_SCALE_FACTOR.
+            // Only resource/plugin selectors and application test hooks are reset.
+            const QStringList discovery={"QT_PLUGIN_PATH","QT_QPA_PLATFORM_PLUGIN_PATH","QT_QPA_PLATFORM",
+                "QML_IMPORT_PATH","QML2_IMPORT_PATH","TSDUCK","TSDUCK_ROOT","TSCORE_ROOT","TSPLUGINS_PATH","TSLIBPATH"};
+            if(upper.startsWith("SHOWPSISI_")||discovery.contains(upper))
+                qunsetenv(name.toUtf8().constData());
+        }
+    }
+    QGuiApplication app(argc,argv);
+    app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");QQuickStyle::setStyle("Basic");
     Bridge bridge;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("core",&bridge);
     engine.loadFromModule("ShowPsiSi","Main");if(engine.rootObjects().isEmpty())return 1;
     bridge.attach(qobject_cast<QQuickWindow*>(engine.rootObjects().first()));return app.exec();

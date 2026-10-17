@@ -1,0 +1,4 @@
+Mbed TLS 3.6.6, as bundled in librist v0.2.20.
+Copyright The Mbed TLS Contributors
+Selected license: Apache-2.0 (from Apache-2.0 OR GPL-2.0-or-later).
+No NOTICE file is present in this bundled source subtree.

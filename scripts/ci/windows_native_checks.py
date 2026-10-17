@@ -100,6 +100,7 @@ def qt_smoke(artifacts):
         SHOWPSISI_SAMPLE=str(ROOT / "samples/generated/lab.ts"),
         SHOWPSISI_TEST_RESULT=str(report_path), SHOWPSISI_SCREENSHOT=str(output / "screen.png"),
         SHOWPSISI_TRACE=str(output / "trace.jsonl"), SHOWPSISI_ARTIFACT_DIR=str(output),
+        SHOWPSISI_SETTINGS_PATH=str(output / "settings.ini"),
         QT_DEBUG_PLUGINS="1", QT_FORCE_STDERR_LOGGING="1",
     )
     with (output / "ui.log").open("w", encoding="utf-8") as log:
@@ -144,10 +145,10 @@ def main():
     if args.qt:
         os.environ["SHOWPSISI_QT_TEST_ARTIFACTS"] = str(artifacts / "qt-interactions")
         qt_smoke(artifacts)
-        patterns = ["test_qt_ui.py"]
+        patterns = ["test_qt_ui.py", "test_qt_resource_paths.py"]
     else:
         patterns = ["test_engine.py", "test_protocol_coverage.py", "test_sdk_migration.py", "test_cloud_preview.py",
-                    "test_cancellation.py", "test_mcp_cancellation.py"]
+                    "test_cancellation.py", "test_mcp_cancellation.py", "test_portable_package.py"]
     results = [run_suite(pattern, artifacts) for pattern in patterns]
     if not all(results):
         raise SystemExit("Native regression failed, discovered zero executable tests, or unexpectedly skipped coverage. See logs above.")

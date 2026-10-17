@@ -1,0 +1,13 @@
+Copyright lines retained from librist v0.2.20 runtime sources and headers.
+See librist-COPYING.txt and component-specific license files.
+
+Copyright © 2019-2020 SipRadius LLC
+Copyright © 2020, VideoLAN and librist authors
+Copyright © 2021, VideoLAN and librist authors
+Copyright © 2024 SipRadius LLC
+Copyright © 2024-2026 SipRadius LLC
+librist. Copyright © 2019 SipRadius LLC. All right reserved.
+librist. Copyright © 2019-2020 SipRadius LLC. All right reserved.
+librist. Copyright © 2020 SipRadius LLC. All right reserved.
+librist. Copyright © 2024 SipRadius LLC. All right reserved.
+librist. Copyright © 2026 SipRadius LLC. All right reserved.

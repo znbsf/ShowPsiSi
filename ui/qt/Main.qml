@@ -37,6 +37,9 @@ ApplicationWindow {
     property color changedColor: "#dcdcaa"
     property var savedLayout: core.loadLayout()
     property bool layoutReady: false
+    // Keyboard requests precede SplitView polish; preserve intent until saved.
+    property real pendingInspectorSize: -1
+    property real pendingTimelineSize: -1
     property var comparison: ({})
     property var selectedChange: null
     property string comparisonSide: "after"
@@ -455,22 +458,35 @@ ApplicationWindow {
     function rememberLayout() {
         if (!layoutReady)
             return;
-        let value = { version: 1, explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height };
-        if (!core.saveLayout(value))
+        let value = { version: 1, explorer: explorerPane.width,
+            inspector: pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width,
+            timeline: pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height };
+        if (!core.saveLayout(value)) {
             notice = "Layout could not be saved. The current layout remains usable.";
+        } else {
+            pendingInspectorSize = -1;
+            pendingTimelineSize = -1;
+        }
     }
     function resetLayout() {
+        layoutSaveTimer.stop();
+        pendingInspectorSize = -1;
+        pendingTimelineSize = -1;
         explorerPane.SplitView.preferredWidth = 180;
         inspectorPane.SplitView.preferredWidth = 520;
         timelinePane.SplitView.preferredHeight = 105;
         notice = core.resetLayout() ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.";
     }
     function resizeInspector(delta) {
-        inspectorPane.SplitView.preferredWidth = Math.max(330, Math.min(workspace.width - explorerPane.width - 322, inspectorPane.width + delta));
+        pendingInspectorSize = Math.max(330, Math.min(workspace.width - explorerPane.width - 322,
+            (pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width) + delta));
+        inspectorPane.SplitView.preferredWidth = pendingInspectorSize;
         layoutSaveTimer.restart();
     }
     function resizeTimeline(delta) {
-        timelinePane.SplitView.preferredHeight = Math.max(105, Math.min(350, verticalWorkspace.height - 306, timelinePane.height + delta));
+        pendingTimelineSize = Math.max(105, Math.min(350, verticalWorkspace.height - 306,
+            (pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height) + delta));
+        timelinePane.SplitView.preferredHeight = pendingTimelineSize;
         layoutSaveTimer.restart();
     }
     function currentPacket() {
@@ -1205,7 +1221,7 @@ ApplicationWindow {
     }
     Timer {
         id: layoutSaveTimer
-        interval: 100
+        interval: core.env("SHOWPSISI_SCRIPT").indexOf("layout-") === 0 && core.env("SHOWPSISI_TEST_LAYOUT_SAVE_DELAY") ? Number(core.env("SHOWPSISI_TEST_LAYOUT_SAVE_DELAY")) : 100
         onTriggered: rememberLayout()
     }
     Timer {
@@ -1216,12 +1232,37 @@ ApplicationWindow {
         property real originalInspector: 0
         property real originalTimeline: 0
         property bool dragged: false
+        property int acknowledgementAttempts: 0
         onTriggered: {
             let mode = core.env("SHOWPSISI_SCRIPT");
             if (phase === 0) {
                 originalInspector = inspectorPane.width;
                 originalTimeline = timelinePane.height;
-                if (mode === "layout-set") {
+                if (mode === "layout-close") {
+                    let expectedInspector = inspectorPane.width + 48;
+                    let expectedTimeline = timelinePane.height + 48;
+                    core.key("Alt+Left");
+                    core.key("Alt+Left");
+                    core.key("Alt+Up");
+                    core.key("Alt+Up");
+                    win.close();
+                    let saved = core.loadLayout();
+                    core.testResult(JSON.stringify({passed: saved.inspector === expectedInspector && saved.timeline === expectedTimeline,
+                        saved:saved, expectedInspector:expectedInspector, expectedTimeline:expectedTimeline}));
+                    stop();
+                    return;
+                }
+                if (mode === "layout-key-drag" || mode === "layout-key-reset") {
+                    core.key("Alt+Left");
+                    core.key("Alt+Up");
+                    if (mode === "layout-key-drag") {
+                        core.drag("inspectorDivider", -40, 0);
+                        core.drag("timelineDivider", 0, -30);
+                    } else core.click("resetLayout");
+                } else if (mode === "layout-key-constrained") {
+                    win.width = 1000;
+                    win.height = 680;
+                } else if (mode === "layout-set") {
                     core.drag("inspectorDivider", -60, 0);
                     core.drag("timelineDivider", 0, -40);
                 } else if (mode === "layout-reset") {
@@ -1233,6 +1274,23 @@ ApplicationWindow {
                 phase++;
                 return;
             }
+            if (mode === "layout-key-drag" || mode === "layout-key-reset" || mode === "layout-key-constrained") {
+                let expectedInspector = inspectorPane.width, expectedTimeline = timelinePane.height;
+                let cleared = pendingInspectorSize < 0 && pendingTimelineSize < 0;
+                if (mode === "layout-key-reset") { expectedInspector = 520; expectedTimeline = 105; }
+                if (mode === "layout-key-constrained") {
+                    expectedInspector = Math.max(330, workspace.width - explorerPane.width - 322);
+                    expectedTimeline = Math.max(105, Math.min(350, verticalWorkspace.height - 306));
+                    for (let index = 0; index < 40; ++index) { core.key("Alt+Left"); core.key("Alt+Up"); }
+                    cleared = true;
+                }
+                win.close();
+                let saved = core.loadLayout();
+                core.testResult(JSON.stringify({passed: cleared && saved.inspector === expectedInspector && saved.timeline === expectedTimeline,
+                    saved:saved, expectedInspector:expectedInspector, expectedTimeline:expectedTimeline, pendingCleared:cleared}));
+                stop();
+                return;
+            }
             if (phase === 1 && mode === "layout-set") {
                 dragged = inspectorPane.width > originalInspector + 30 && timelinePane.height > originalTimeline + 20;
                 core.key("Alt+Left");
@@ -1240,14 +1298,20 @@ ApplicationWindow {
                 phase++;
                 return;
             }
+            let persisted = core.loadLayout();
+            let acknowledged = !layoutSaveTimer.running && Math.abs(persisted.inspector - inspectorPane.width) <= 1
+                && Math.abs(persisted.timeline - timelinePane.height) <= 1 && Math.abs(persisted.explorer - explorerPane.width) <= 1;
+            if (mode === "layout-set" && !acknowledged && ++acknowledgementAttempts < 20) return;
+            if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             core.testResult(JSON.stringify({
-                passed: recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                passed: (mode !== "layout-set" || acknowledged) && recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
                 explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height,
                 records: recordPane.width, workspace: workspace.width, dragged: dragged,
-                saved: core.loadLayout(),
+                windowWidth: win.width, windowHeight: win.height, savePending: layoutSaveTimer.running,
+                persistedAcknowledged: acknowledged, acknowledgementAttempts: acknowledgementAttempts,
+                saved: persisted,
                 invalid_rejected: !core.saveLayout({version:1,explorer:-1,inspector:520,timeline:105}) && !core.saveLayout({version:99,explorer:180,inspector:520,timeline:105})
             }));
-            if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             stop();
         }
     }
@@ -1569,7 +1633,7 @@ ApplicationWindow {
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
             lifecycleTestTimer.start();
     }
-    onClosing: if (layoutSaveTimer.running) rememberLayout()
+    onClosing: if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout()
 
     Shortcut {
         sequence: "Ctrl+K"
@@ -1876,7 +1940,10 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical
-            onResizingChanged: if (!resizing) layoutSaveTimer.restart()
+            onResizingChanged: {
+                if (resizing) pendingTimelineSize = -1;
+                else layoutSaveTimer.restart();
+            }
             handle: Rectangle {
                 objectName: "timelineDivider"
                 implicitHeight: 6
@@ -1887,7 +1954,10 @@ ApplicationWindow {
             SplitView.fillHeight: true
             SplitView.minimumHeight: tab === "Changes" ? 380 : 300
             orientation: Qt.Horizontal
-            onResizingChanged: if (!resizing) layoutSaveTimer.restart()
+            onResizingChanged: {
+                if (resizing) pendingInspectorSize = -1;
+                else layoutSaveTimer.restart();
+            }
             handle: Rectangle {
                 objectName: x < workspace.width / 3 ? "explorerDivider" : "inspectorDivider"
                 implicitWidth: 6

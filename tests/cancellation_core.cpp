@@ -19,7 +19,34 @@ static int runTestCore(int argc,char**argv) {
             if(used||analysis!=number||stage!=checkpoint)return;
             used=true;
             fs::path ready=prefix,release=prefix;ready += ".ready";release += ".release";
-            {std::ofstream out(ready);out<<J({{"stage",stage},{"analysis_number",analysis}}).dump()<<'\n';if(!out)throw std::runtime_error("Test gate ready-file write failed");}
+            // Existence is the checkpoint contract: never expose a partially
+            // written JSON document to a consumer watching the final path.
+            fs::path temporary=ready;temporary += ".tmp";
+            const std::string payload=J({{"stage",stage},{"analysis_number",analysis}}).dump()+"\n";
+            try {
+                std::ofstream out(temporary,std::ios::binary|std::ios::trunc);
+                if(!out)throw std::runtime_error("Test gate ready-file open failed");
+                out.put(payload.front());out.flush();
+                if(!out)throw std::runtime_error("Test gate ready-file write failed");
+                // Test-only deterministic seam: hold an incomplete private file
+                // until the test explicitly permits publication. No timed race.
+                if(std::getenv("SHOWPSISI_TEST_PAUSE_GATE_PUBLICATION")){
+                    fs::path publish=prefix;publish += ".publish-release";
+                    const auto began=Clock::now();
+                    while(!fs::exists(publish)){
+                        if(ms(began)>30000)throw std::runtime_error("Test gate publication timed out");
+                        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+                    }
+                }
+                out.write(payload.data()+1,std::streamsize(payload.size()-1));
+                out.close();
+                if(!out)throw std::runtime_error("Test gate ready-file close failed");
+                fs::rename(temporary,ready);
+            } catch(...) {
+                std::error_code ignored;
+                fs::remove(temporary,ignored);
+                throw;
+            }
             const auto began=Clock::now();
             while(!fs::exists(release)&&!(control&&control->cancelled.load())){
                 if(ms(began)>30000)throw std::runtime_error("Test gate timed out after 30 seconds");

@@ -621,11 +621,13 @@ class BrowserTests(unittest.TestCase):
         state=self.page.evaluate('window.showpsisi.getState()')
         self.assertEqual({g['validity'] for g in state['table_groups']},{'valid','mixed','all_invalid'})
         self.page.locator('[data-tab="Tables"]').click()
+        self.assertEqual(self.page.locator('.table-branch').count(),3)
+        self.page.locator('#table-group-toggle').click()
         bad=[r for r in state['tables'] if r['crc']['status']=='invalid']
         self.assertEqual(len(bad),2)
         self.assertFalse(self.page.locator('#show-bad-crc').is_checked())
         self.assertEqual(self.page.locator('#list [role="option"]').count(),len(state['tables'])-2)
-        self.assertIn('Show bad CRC (2)',self.page.locator('.table-controls').inner_text())
+        self.assertIn('Bad CRC (2)',self.page.locator('.table-controls').inner_text())
         self.page.locator('#show-bad-crc').check()
         self.assertEqual(self.page.locator('#list [role="option"]').count(),len(state['tables']))
         self.page.locator('#show-bad-crc').uncheck()
@@ -694,6 +696,120 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('#list [role="option"]').count(),1)
         self.page.locator('#list [role="option"]').click()
         self.page.wait_for_function('()=>window.showpsisi.getDetail().crc?.status==="invalid"')
+
+
+    def test_service_media_columns_preserve_classification_and_unknowns(self):
+        from test_service_metadata import ServiceMetadataTests
+        fixtures=ServiceMetadataTests()
+        parts=[fixtures.pat(),fixtures.pmt(),(0x11,fixtures.sdt(last=0)),fixtures.nit()]
+        path=self.output/'media-columns.ts'
+        path.write_bytes(b''.join(bytes([0x47,0x40|(pid>>8),pid&255,0x10,0])+raw+b'\xff'*(183-len(raw)) for pid,raw in parts))
+        self.analyze(path)
+        row=self.page.locator('.record.services').first
+        self.assertEqual(row.locator('.lcn').inner_text(),'7')
+        self.assertEqual(row.locator('.service-type').inner_text(),'Digital TV\n0x01')
+        self.assertIn('V 0x0200',row.inner_text())
+        self.assertIn('A 0x0201, 0x0202',row.inner_text())
+        self.assertNotIn('0x0203',row.locator('.media-pids').inner_text())
+        self.page.locator('#theme-toggle').click()
+        self.page.screenshot(path=str(self.artifacts/'editor-media-light.png'),full_page=True)
+        path=self.output/'unknown-media-columns.ts'
+        parts=[fixtures.pat(),(0x11,fixtures.sdt(last=0))]
+        path.write_bytes(b''.join(bytes([0x47,0x40|(pid>>8),pid&255,0x10,0])+raw+b'\xff'*(183-len(raw)) for pid,raw in parts))
+        self.analyze(path)
+        row=self.page.locator('.record.services').first
+        self.assertEqual(row.locator('.lcn').inner_text(),'—')
+        self.assertEqual(row.locator('.media-pids').get_attribute('title'),'PMT unavailable')
+        self.assertEqual(row.locator('.media-pids').inner_text(),'V —\nA —')
+
+    def test_table_card_pagination_keeps_all_sibling_sections(self):
+        from make_fixture import section, descriptor, word, crc
+        packets=[]
+        for extension in range(1,102):
+            for number in range(2):
+                desc=descriptor(0x48,b'\x01\x00\x01A')
+                raw=bytearray(section(0x42,extension,1,word(2)+b'\xff'+word(100+number)+b'\xff'+word(0x8000+len(desc))+desc))
+                raw[6]=number;raw[7]=1;raw[-4:]=crc(raw[:-4]).to_bytes(4,'big')
+                packets.append(bytes([0x47,0x40,0x11,0x10+(len(packets)%16),0])+raw+b'\xff'*(183-len(raw)))
+        fixture=self.output/'table-card-pages.ts';fixture.write_bytes(b''.join(packets))
+        self.analyze(fixture)
+        self.page.locator('[data-tab="Tables"]').click()
+        self.assertEqual(self.page.locator('.table-branch').count(),100)
+        self.assertEqual(self.page.locator('.table-branch [role="option"]').count(),200)
+        self.assertIn('of 101 tables',self.page.locator('#page-label').inner_text())
+        self.page.locator('#next').click()
+        self.assertEqual(self.page.locator('.table-branch').count(),1)
+        self.assertEqual(self.page.locator('.table-branch [role="option"]').count(),2)
+        self.page.locator('.table-branch > summary').click()
+        self.assertEqual(self.page.locator('.table-branch [role="option"]:visible').count(),2)
+        self.page.locator('#prev').click()
+        self.assertEqual(self.page.locator('.table-branch').count(),100)
+
+    def test_editor_theme_pid_columns_and_arrival_axis(self):
+        self.analyze()
+        p=self.page
+        p.wait_for_function('()=>window.showpsisi.getDetail().id')
+        pids=p.locator('.pid-row').evaluate_all('(els)=>els.map(e=>Number(e.dataset.pid))')
+        self.assertEqual(pids,sorted(pids))
+        self.assertGreater(len(pids),2)
+        self.assertIn('TYPE',p.locator('.service-head').inner_text())
+        self.assertIn('VIDEO / AUDIO PIDs',p.locator('.service-head').inner_text())
+        self.assertEqual(p.locator('.record.services .media-pids').count(),6)
+        state=p.evaluate('window.showpsisi.getState()')
+        for service, row in zip(state['services'],p.locator('.record.services').all()):
+            self.assertEqual(row.locator('.service-type .numeric').inner_text(),f"0x{service['service_type']:02X}")
+            for pid in service['audio_pids'] + service['video_pids']:
+                self.assertIn(f'0x{pid:04X}',row.locator('.media-pids').inner_text())
+        for theme in ('dark','light'):
+            if p.locator('html').get_attribute('data-theme') != theme: p.locator('#theme-toggle').click()
+            p.screenshot(path=str(self.artifacts/f'editor-services-{theme}.png'),full_page=True)
+        p.locator('#theme-toggle').click()
+        p.locator('[data-tab="Tables"]').click()
+        self.assertGreater(p.locator('.table-branch').count(),0)
+        branch=p.locator('.table-branch').first
+        branch.locator('summary').focus();branch.locator('summary').press('Enter')
+        self.assertTrue(branch.evaluate('(e)=>e.open'))
+        row=branch.locator('[role="option"]').first
+        row.focus();row.press('Enter')
+        p.wait_for_function('()=>!document.querySelector("#inspector .empty")')
+        p.locator('.arrival summary').click()
+        self.assertEqual(p.locator('.arrival .arrival-axis span').count(),5)
+        self.assertIn('packet positions',p.locator('.arrival .axis-basis').inner_text())
+        self.assertTrue(p.locator('#table-filter-tools #show-bad-crc').is_visible())
+        for theme in ('dark','light'):
+            if p.locator('html').get_attribute('data-theme') != theme:
+                p.locator('#theme-toggle').focus();p.locator('#theme-toggle').press('Enter')
+            self.assertEqual(p.locator('html').get_attribute('data-theme'),theme)
+            contrasts=p.locator('.btn:not(:disabled), .tabs button.active, .nav.active, .history-point').evaluate_all("""els => {
+              const rgb=s=>(s.match(/[0-9.]+/g)||[]).map(Number);
+              const lum=c=>c.slice(0,3).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);
+              return els.filter(e=>e.getClientRects().length).map(e=>{
+                let node=e,bg;
+                while(node){bg=rgb(getComputedStyle(node).backgroundColor);if(bg.length===3||bg[3]>0)break;node=node.parentElement;}
+                const fg=lum(rgb(getComputedStyle(e).color)),back=lum(bg||[255,255,255]);
+                return {text:e.textContent,ratio:(Math.max(fg,back)+.05)/(Math.min(fg,back)+.05)};
+              });
+            }""")
+            self.assertTrue(all(c['ratio']>=4.5 for c in contrasts),contrasts)
+            for width,height in [(1440,900),(1000,680),(520,1000)]:
+                p.set_viewport_size({'width':width,'height':height})
+                self.assertLessEqual(p.evaluate('document.documentElement.scrollWidth'),width)
+                self.assertGreaterEqual(p.locator('#tree-area').bounding_box()['height'],140)
+                p.screenshot(path=str(self.artifacts/f'editor-{theme}-{width}.png'),full_page=True)
+        p.set_viewport_size({'width':1440,'height':900})
+        p.reload()
+        self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
+        self.analyze()
+        p.locator('.pid-row').first.click()
+        pid=int(p.locator('.pid-row.active').get_attribute('data-pid'))
+        self.assertTrue(all('PID '+format(pid,'#06X').replace('0X','0x') in x.inner_text() for x in p.locator('.table-branch > summary').all()))
+        # Native timing metadata, no fabricated browser state.
+        timed=self.call('analyze',{'path':str(self.sample),'bitrate':1504000})
+        p.evaluate('()=>window.showpsisi.snapshot(-1)')
+        p.wait_for_function('()=>window.showpsisi.getState().timing?.seconds_per_packet===0.001')
+        self.assertIn('user supplied',p.locator('#timeline .axis-basis').inner_text())
+        self.assertIn('not PCR',p.locator('#timeline .axis-basis').inner_text())
+        self.assertTrue(all(x.inner_text().endswith(' s') for x in p.locator('#timeline .arrival-axis span').all()))
 
 
     def test_historical_inspection_keeps_native_siblings_at_cutoff(self):

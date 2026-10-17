@@ -33,7 +33,7 @@ try:
                     reports.append(p.evaluate('([mode,name,width,height])=>({mode,name,width,height,source:window.showpsisi.getState().source,records:window.showpsisi.getState().tables.length,tree:document.querySelector("#tree-area")?.getBoundingClientRect().toJSON(),documentWidth:document.documentElement.scrollWidth})',[mode,name,width,height]))
                 if mode=='final':
                     p.set_viewport_size({'width':1440,'height':900})
-                    p.locator('#table-group-toggle').click()
+                    if not p.locator('.table-branch').count(): p.locator('#table-group-toggle').click()
                     p.locator('.table-branch > summary').first.click()
                     p.screenshot(path=str(out/f'final-{name}-groups.png'),full_page=True)
                     p.locator('#table-group-toggle').click()

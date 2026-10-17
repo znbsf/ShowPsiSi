@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import tempfile
+import struct
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 
@@ -22,7 +24,8 @@ class PortablePackageTests(unittest.TestCase):
                      'bin/tscore.time.xml', 'bin/tscore.ip.names', 'bin/platforms/qwindows.dll',
                      'bin/qt.conf', 'bin/showpsisi-portable.json', 'api/tools.json', 'extensions/demo.json',
                      'references/standards.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'LICENSE',
-                     'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt']:
+                     'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt',
+                     'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico']:
             path = self.package / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture', encoding='utf-8')
@@ -74,6 +77,105 @@ class PortablePackageTests(unittest.TestCase):
         (self.package / 'api/tools.json').unlink()
         with self.assertRaisesRegex(RuntimeError, 'api/tools.json'):
             portable.manifest(self.package)
+
+    def test_missing_application_icon_fails(self):
+        for name in ('showpsisi.svg', 'showpsisi-256.png', 'showpsisi.ico'):
+            path = self.package / 'assets/icons' / name
+            saved = path.read_bytes()
+            path.unlink()
+            with self.assertRaisesRegex(RuntimeError, name):
+                portable.manifest(self.package)
+            path.write_bytes(saved)
+
+    def test_icon_change_invalidates_manifest(self):
+        portable.manifest(self.package)
+        (self.package / 'assets/icons/showpsisi.ico').write_bytes(b'changed icon')
+        with self.assertRaisesRegex(RuntimeError, 'changed'):
+            portable.verify_manifest(self.package)
+
+    def icon_pe_fixture(self):
+        icon = (ROOT / 'assets/icons/showpsisi.ico').read_bytes()
+        (self.package / 'assets/icons/showpsisi.ico').write_bytes(icon)
+        payloads, group = [], bytearray(struct.pack('<HHH', 0, 1, 7))
+        for index in range(7):
+            fields = struct.unpack('<BBBBHHII', icon[6 + 16 * index:22 + 16 * index])
+            length, offset = fields[6:]
+            payloads.append(icon[offset:offset + length])
+            group.extend(struct.pack('<BBBBHHIH', *fields[:7], index + 1))
+        payloads.append(bytes(group))
+        def resource(kind, indexes):
+            return SimpleNamespace(id=kind, directory=SimpleNamespace(entries=[
+                SimpleNamespace(id=i + 1, directory=SimpleNamespace(entries=[SimpleNamespace(
+                    id=1033, data=SimpleNamespace(struct=SimpleNamespace(
+                        OffsetToData=i, Size=len(payloads[i]))))])) for i in indexes]))
+        pe = mock.Mock()
+        pe.DIRECTORY_ENTRY_RESOURCE.entries = [resource(3, range(7)), resource(14, [7])]
+        pe.get_data.side_effect = lambda offset, length: payloads[offset]
+        return pe, payloads
+
+    def test_embedded_icon_is_bound_to_manifested_artwork(self):
+        pe, payloads = self.icon_pe_fixture()
+        with mock.patch.dict('sys.modules', {'pefile': SimpleNamespace(PE=lambda path: pe)}):
+            self.assertTrue(portable.embedded_application_icon(self.package)['verified'])
+            payloads[0] = bytes(len(payloads[0]))
+            with self.assertRaisesRegex(RuntimeError, 'does not match'):
+                portable.embedded_application_icon(self.package)
+        self.assertEqual(pe.close.call_count, 2)
+
+    def test_invalid_icon_group_links_are_rejected(self):
+        for corruption in ('header_only', 'truncated', 'count', 'missing_id', 'duplicate_id',
+                           'duplicate_size', 'wrong_size', 'wrong_length', 'wrong_planes',
+                           'wrong_language', 'missing_image', 'duplicate_image_id', 'trailing_bytes'):
+            with self.subTest(corruption=corruption):
+                pe, payloads = self.icon_pe_fixture()
+                group = bytearray(payloads[7])
+                if corruption == 'header_only':
+                    group = group[:6]
+                elif corruption == 'truncated':
+                    group = group[:-1]
+                elif corruption == 'count':
+                    struct.pack_into('<H', group, 4, 6)
+                elif corruption == 'missing_id':
+                    struct.pack_into('<H', group, 18, 99)
+                elif corruption == 'duplicate_id':
+                    struct.pack_into('<H', group, 32, 1)
+                elif corruption == 'duplicate_size':
+                    group[20] = group[6]
+                elif corruption == 'wrong_size':
+                    group[7] = 99
+                elif corruption == 'wrong_length':
+                    struct.pack_into('<I', group, 14, 1)
+                elif corruption == 'wrong_planes':
+                    struct.pack_into('<H', group, 10, 2)
+                elif corruption == 'wrong_language':
+                    pe.DIRECTORY_ENTRY_RESOURCE.entries[0].directory.entries[0].directory.entries[0].id = 0
+                elif corruption == 'missing_image':
+                    pe.DIRECTORY_ENTRY_RESOURCE.entries[0].directory.entries.pop(0)
+                elif corruption == 'duplicate_image_id':
+                    pe.DIRECTORY_ENTRY_RESOURCE.entries[0].directory.entries[1].id = 1
+                elif corruption == 'trailing_bytes':
+                    group += b'x'
+                payloads[7] = bytes(group)
+                pe.DIRECTORY_ENTRY_RESOURCE.entries[1].directory.entries[0].directory.entries[0].data.struct.Size = len(group)
+                with mock.patch.dict('sys.modules', {'pefile': SimpleNamespace(PE=lambda path: pe)}):
+                    with self.assertRaises(RuntimeError):
+                        portable.embedded_application_icon(self.package)
+                pe.close.assert_called_once()
+
+    def test_valid_unrelated_group_cannot_mask_invalid_default(self):
+        pe, payloads = self.icon_pe_fixture()
+        groups = pe.DIRECTORY_ENTRY_RESOURCE.entries[1].directory.entries
+        extra = SimpleNamespace(id=99, directory=SimpleNamespace(entries=[SimpleNamespace(
+            id=1033, data=SimpleNamespace(struct=SimpleNamespace(OffsetToData=8, Size=len(payloads[7]))))]))
+        groups.append(extra)
+        payloads.append(payloads[7])  # A complete valid secondary group.
+        broken = bytearray(payloads[7])
+        struct.pack_into('<H', broken, 18, 99)
+        payloads[7] = bytes(broken)
+        with mock.patch.dict('sys.modules', {'pefile': SimpleNamespace(PE=lambda path: pe)}):
+            with self.assertRaisesRegex(RuntimeError, 'does not match'):
+                portable.embedded_application_icon(self.package)
+        pe.close.assert_called_once()
 
     def test_test_helper_is_never_shipped(self):
         (self.package / 'bin/showpsisi-core-test.exe').write_text('fixture')

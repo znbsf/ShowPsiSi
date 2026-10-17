@@ -76,6 +76,31 @@ if(BUILD_QT_UI)
   find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2)
   qt_standard_project_setup(REQUIRES 6.5)
   qt_add_executable(showpsisi-qt ui/qt/main.cpp)
+  # PNG resources avoid introducing a runtime QtSvg/plugin dependency.
+  qt_add_resources(showpsisi-qt "application_icons"
+    PREFIX "/icons" BASE "assets/icons"
+    FILES assets/icons/showpsisi-16.png assets/icons/showpsisi-24.png
+          assets/icons/showpsisi-32.png assets/icons/showpsisi-48.png
+          assets/icons/showpsisi-64.png assets/icons/showpsisi-128.png
+          assets/icons/showpsisi-256.png)
+  if(WIN32)
+    enable_language(RC)
+    target_sources(showpsisi-qt PRIVATE assets/icons/showpsisi.rc)
+    target_include_directories(showpsisi-qt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons")
+  elseif(UNIX AND NOT APPLE)
+    # Desktop integration assets only; this is not a standalone Linux bundle.
+    include(GNUInstallDirs)
+    install(FILES assets/linux/org.showpsisi.ShowPsiSi.desktop
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/applications")
+    install(FILES assets/icons/showpsisi.svg
+      DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps"
+      RENAME org.showpsisi.ShowPsiSi.svg)
+    foreach(_icon_size IN ITEMS 16 24 32 48 64 128 256)
+      install(FILES "assets/icons/showpsisi-${_icon_size}.png"
+        DESTINATION "${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_icon_size}x${_icon_size}/apps"
+        RENAME org.showpsisi.ShowPsiSi.png)
+    endforeach()
+  endif()
   qt_add_qml_module(showpsisi-qt URI ShowPsiSi VERSION 1.0 QML_FILES ui/qt/Main.qml)
   target_link_libraries(showpsisi-qt PRIVATE Qt6::Quick Qt6::QuickControls2)
   set_target_properties(showpsisi-qt PROPERTIES WIN32_EXECUTABLE TRUE)

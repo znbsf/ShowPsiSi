@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>ShowPsiSi</title>
+  <desc>Transport stream packets connected to a branching PSI/SI inspection tree.</desc>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#263444"/><stop offset="1" stop-color="#111923"/>
+    </linearGradient>
+    <linearGradient id="packet" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#77DCEC"/><stop offset="1" stop-color="#4C9FFF"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#surface)"/>
+  <rect x="9" y="9" width="238" height="238" rx="51" fill="none" stroke="#435364" stroke-width="2"/>
+  <path d="M92 128H132M132 68V188M132 68H168M132 128H168M132 188H168" fill="none" stroke="#81B4D3" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="44" y="78" width="56" height="100" rx="12" fill="url(#packet)"/>
+  <path d="M60 108H84M60 128H84M60 148H84" stroke="#173448" stroke-width="8" stroke-linecap="round"/>
+  <rect x="164" y="48" width="40" height="40" rx="10" fill="#5FA9FF"/>
+  <rect x="164" y="108" width="40" height="40" rx="10" fill="#75D9E7"/>
+  <rect x="164" y="168" width="40" height="40" rx="10" fill="#E8B96A"/>
+</svg>

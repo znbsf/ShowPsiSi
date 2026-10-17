@@ -1,9 +1,42 @@
 # ShowPsiSi status
 
-Verified snapshot: 2026-10-17 UTC, merged `main`
-[`e5793c77ebb23efec5ad661a598c507ca3490403`](https://github.com/znbsf/ShowPsiSi/commit/e5793c77ebb23efec5ad661a598c507ca3490403).
-The latest hosted acceptance below is tied to that exact revision. Earlier local
-and historical results retain their stated scope; later commits need their own checks.
+## Latest delivered baseline — 2026-10-17 UTC
+
+Merged `main`: [`20ddf5f8ca58f7af0903f53ff31954dfe72b3f87`](https://github.com/znbsf/ShowPsiSi/commit/20ddf5f8ca58f7af0903f53ff31954dfe72b3f87), PR #12.
+All five jobs passed on this exact merged revision in
+[run 39035573853](https://github.com/znbsf/ShowPsiSi/actions/runs/39035573853).
+The [Windows Qt portable artifact](https://github.com/znbsf/ShowPsiSi/actions/runs/39035573853/artifacts/12101824078)
+was downloaded and verified against the source/runtime manifest: 683 files,
+669 reviewed dependency entries; ZIP SHA-256
+`4af65625a50015df173822742d458989215be93a0588b0157a42511782250958`.
+CI artifacts expire; this is not a formal release or installer.
+
+- PR #9 delivered the portable package and fail-closed runtime/licensing gates.
+- PR #10 refined editor-style layout, keyboard navigation and contrast.
+- PR #11 fixed asynchronous acceptance races using explicit acknowledgements.
+- PR #12 added section identity/CRC/arrival evidence, generation-aware merged and
+  per-section inspection, explicit invalid/missing states, fixed table colors,
+  functioning Qt tree expansion and structured XML coloring.
+- The PR #12 local core matrix passed 102 tests, including the real UHF22 capture;
+  Qt35, Web28 and contrast3 passed. Hosted Windows/Linux Qt35 and Web28 passed;
+  hosted CI allows one missing optional real-recording test, unlike the local run.
+- Windows portable contents and retained offscreen captures were inspected.
+  Full native Windows desktop interaction remains unverified.
+
+## Current iteration — in development
+
+User feedback on 2026-10-17 requests bundled app identity, light/dark themes,
+consistent chrome, numeric PID ordering, aligned list columns, LCN/service type
+and PMT audio/video PIDs, logical table cards, discreet CRC filtering and labeled
+arrival axes. These changes are being implemented and are **not yet delivered**.
+Time labels must retain their evidence basis; packet positions are not wall-clock
+timestamps. Conflicting or unsupported channel-number mappings must remain explicit.
+
+## Historical SDK migration snapshot
+
+The following records describe the earlier PR #7 baseline
+`e5793c77ebb23efec5ad661a598c507ca3490403`. Their test totals and acceptance scope
+are historical, not the current iteration's results.
 
 - PR #1 merged as `ac039f6`: modern workbenches and initial integrity loop.
 - PR #2 merged as `beb2e57`: Windows MSVC engine/Qt validation.

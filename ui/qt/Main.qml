@@ -11,30 +11,43 @@ ApplicationWindow {
     minimumHeight: 680
     visible: true
     title: "ShowPsiSi · Transport stream inspector"
-    color: "#181818"
+    property bool lightTheme: core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
+    property color surface: lightTheme ? "#f5f6f8" : "#181a1f"
+    property color panel: lightTheme ? "#ffffff" : "#20232a"
+    property color raised: lightTheme ? "#eef0f3" : "#2a2e37"
+    property color dividerColor: lightTheme ? "#cdd2da" : "#414650"
+    property color hoverSurface: lightTheme ? "#e5e9ef" : "#333944"
+    property color selectionSurface: lightTheme ? "#dceafd" : "#173951"
+    property color ink: lightTheme ? "#202733" : "#dce1e9"
+    property color muted: lightTheme ? "#566171" : "#abb4c2"
+    property color controlBorder: lightTheme ? "#8590a0" : "#778496"
+    property color blue: lightTheme ? "#155fbe" : "#78acfa"
+    property color warningColor: lightTheme ? "#805900" : "#e2c16d"
+    color: surface
     font.family: "Segoe UI"
     font.pixelSize: 12
-    palette.window: "#1f1f1f"
-    palette.windowText: "#cccccc"
-    palette.base: "#181818"
-    palette.text: "#cccccc"
-    palette.button: "#252526"
-    palette.buttonText: "#cccccc"
-    palette.highlight: "#007acc"
+    palette.window: panel
+    palette.windowText: ink
+    palette.base: surface
+    palette.text: ink
+    palette.button: raised
+    palette.buttonText: ink
+    palette.highlight: blue
     palette.highlightedText: "white"
-    palette.mid: "#454545"
-    property color ink: "#cccccc"
-    property color muted: "#a3a3a3"
-    property color controlBorder: "#7b8799"
-    property color blue: "#78acfa"
+    palette.mid: dividerColor
+    onLightThemeChanged: {
+        core.saveTheme(lightTheme ? "light" : "dark");
+        core.themeChrome(lightTheme, surface, ink);
+        core.highlightXml(xmlEvidence.textDocument, lightTheme);
+    }
     // Compact desktop tokens; not mobile target-size defaults.
     readonly property int spaceUnit: 4
     readonly property int fieldFontSize: 12
     readonly property int treeRowHeight: 28
     readonly property int focusWidth: 2
-    property color addedColor: "#b5cea8"
-    property color removedColor: "#f48771"
-    property color changedColor: "#dcdcaa"
+    property color addedColor: lightTheme ? "#326837" : "#b5cea8"
+    property color removedColor: lightTheme ? "#b42929" : "#f48771"
+    property color changedColor: lightTheme ? "#806000" : "#dcdcaa"
     property var savedLayout: core.loadLayout()
     property bool layoutReady: false
     // Keyboard requests precede SplitView polish; preserve intent until saved.
@@ -61,7 +74,7 @@ ApplicationWindow {
     property string evidenceScope: "Merged"
     property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
     property var siblingSections: (analysisState.tables || []).filter(function(r) { return (selectedGroup.section_ids || []).indexOf(r.id) >= 0 && (showInvalidSections || r.crc?.status !== "invalid"); })
-    property int hiddenInvalidCount: (analysisState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && (!filter || r.name === filter); }).length
+    property int hiddenInvalidCount: (analysisState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && (!filter || r.name === filter) && (pidFilter < 0 || r.pid === pidFilter); }).length
     // Fixed table identities, shared with the Web frontend. Never hash unknown names.
     function tableCategory(name) {
         let fixed = {
@@ -80,7 +93,10 @@ ApplicationWindow {
         if (/^DSMCC/.test(name || "")) return ["#bbb5ff","▥","DSM-CC data"];
         return ["#d5dce7","○","Other signalling"];
     }
-    function tableColor(name) { return tableCategory(name)[0]; }
+    function tableColor(name) {
+        let dark = {PAT:"#175eac",PMT:"#147358",CAT:"#b32e39",NIT:"#7946a9",SDT:"#786000",BAT:"#92502c",EIT:"#a33e80",TDT:"#396d27",TOT:"#9c5009",AIT:"#126f7a"};
+        return lightTheme ? (dark[name] || (/^DSMCC/.test(name || "") ? "#6551a5" : "#536173")) : tableCategory(name)[0];
+    }
     function groupSummary() {
         if (!selectedGroup.validity) return "";
         return (selectedGroup.validity === "all_invalid" ? "ALL INVALID" : selectedGroup.validity === "mixed" ? "MIXED VALID / INVALID" : "VALID") + " · " + (selectedGroup.observed_section_numbers || []).length + " observed sections" + ((selectedGroup.missing_section_numbers || []).length ? " · missing " + selectedGroup.missing_section_numbers.join(", ") : " · none missing") + (selectedGroup.selected_complete ? " · current assembly complete" : " · current assembly incomplete");
@@ -102,6 +118,8 @@ ApplicationWindow {
     property string selected: ""
     property int selectedService: -1
     property string filter: ""
+    property int pidFilter: -1
+    property var expandedTables: ({})
     property var preview: ({})
     property string notice: ""
     // Only scripted validation uses this explicitly supplied artifact directory.
@@ -117,9 +135,30 @@ ApplicationWindow {
         })
     property var treeRows: treeSearch.text.trim() ? filterTree(makeTree(detail, selectedService, {}, true), treeSearch.text) : makeTree(detail, selectedService, collapsed, false)
     property var serviceRows: analysisState.services || []
-    property var tableRows: (analysisState.tables || []).filter(function (t) {
-        return (!filter || t.name === filter) && (showInvalidSections || t.crc?.status !== "invalid");
+    property var rawTableRows: (analysisState.tables || []).filter(function (t) {
+        return (!filter || t.name === filter) && (pidFilter < 0 || t.pid === pidFilter) && (showInvalidSections || t.crc?.status !== "invalid");
     })
+    property var tableRows: logicalTableRows()
+    property int logicalTableCount: tableRows.filter(function(r) {return r.logical;}).length
+    function logicalTableRows() {
+        let out=[];
+        (analysisState.table_groups || []).forEach(function(g) {
+            let sections=rawTableRows.filter(function(r) {return g.section_ids.indexOf(r.id)>=0;});
+            if (!sections.length) return;
+            let first=sections.find(function(r) {return (g.selected_section_ids || []).indexOf(r.id)>=0;}) || sections[0];
+            let row=Object.assign({},first,{group:g,logical:true,sectionRecords:sections});
+            out.push(row);
+            if(expandedTables[g.id]) sections.forEach(function(r) {out.push(Object.assign({},r,{exact:true}));});
+        });
+        return out.length ? out : rawTableRows;
+    }
+    function toggleTableGroup(row) {
+        let next=Object.assign({},expandedTables); next[row.group.id]=!next[row.group.id]; expandedTables=next;
+    }
+    property var explorerRows: [{pid:-1,name:"All tables",count:(analysisState.table_groups || []).length}].concat((analysisState.table_groups || []).reduce(function(out,g) {
+        let row=out.find(function(r) {return r.pid===g.pid && r.name===g.name;});
+        if(row) row.count++; else out.push({pid:g.pid,name:g.name,count:1}); return out;
+    },[]).sort(function(a,b) {return a.pid-b.pid || a.name.localeCompare(b.name);}))
     property var tableFamilies: ["All tables"].concat((analysisState.tables || []).map(function (t) {
         return t.name;
     }).filter(function (name, index, all) {
@@ -565,6 +604,10 @@ ApplicationWindow {
         timelinePane.SplitView.preferredHeight = pendingTimelineSize;
         layoutSaveTimer.restart();
     }
+    function axisLabel(packet) {
+        let rate=analysisState.timing?.seconds_per_packet;
+        return rate !== null && rate !== undefined && rate > 0 ? (packet * rate).toFixed(3) + " s" : "#" + num(packet);
+    }
     function currentPacket() {
         return analysisState.selected_packet === null || analysisState.selected_packet === undefined ? Math.max(0, Number(analysisState.packets || 1) - 1) : analysisState.selected_packet;
     }
@@ -701,7 +744,7 @@ ApplicationWindow {
         if (!backendReady || !source.text.trim() || extraPidsValue === null)
             return;
         clearWorkspaceIntentions();
-        filter = "";
+        filter = ""; pidFilter = -1; expandedTables = {};
         recordSearch.clear();
         treeSearch.clear();
         tab = "Services";
@@ -753,15 +796,16 @@ ApplicationWindow {
         selectedChange = null;
         inspect(tab === "Services" || tab === "EPG" ? row.source_id : row.id, tab === "Services" ? row.id : undefined);
     }
+    function pidList(pids,status) { return status === "PMT unavailable" || !pids ? "unknown" : pids.length ? pids.map(function(p) {return hex(p);}).join(", ") : "none"; }
     function rowTitle(row) {
         if (tab === "Changes")
             return changeTitle(row);
-        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? tableCategory(row.name)[1] + " " + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
+        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? (row.exact ? "Section " + row.section + " · " : "") + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
     }
     function rowSubtitle(row) {
         if (tab === "Changes")
             return (row.changed_fields || []).join(", ") || "Presence changed · select to inspect source evidence";
-        return tab === "Services" ? (row.provider || "No provider") + " · SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) + (row.group ? " · " + row.group : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
+        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? "ext " + hex(row.extension) + " · v" + row.version + " · " + row.group.observed_section_numbers.length + " sections · " + (row.group.selected_complete ? "complete assembly" : "incomplete assembly") + " · " + row.group.validity : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
@@ -776,8 +820,8 @@ ApplicationWindow {
             wrapMode: Text.Wrap
         }
         background: Rectangle {
-            color: "#252526"
-            border.color: "#454545"
+            color: raised
+            border.color: dividerColor
             radius: 2
         }
     }
@@ -785,7 +829,7 @@ ApplicationWindow {
         id: fieldInput
         background: Rectangle {
             radius: 2
-            color: "#181818"
+            color: surface
             border.color: fieldInput.activeFocus ? blue : controlBorder
             border.width: fieldInput.activeFocus ? focusWidth : 1
             opacity: fieldInput.enabled ? 1 : 0.4
@@ -793,9 +837,18 @@ ApplicationWindow {
     }
     component FieldChoice: ComboBox {
         id: fieldChoice
+        indicator: PlainLabel {
+            text: "▾"
+            color: fieldChoice.enabled ? ink : muted
+            font.pixelSize: 16
+            width: 22
+            horizontalAlignment: Text.AlignHCenter
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+        }
         background: Rectangle {
             radius: 2
-            color: "#252526"
+            color: raised
             border.color: fieldChoice.activeFocus ? blue : controlBorder
             border.width: fieldChoice.activeFocus ? focusWidth : 1
             opacity: fieldChoice.enabled ? 1 : 0.4
@@ -823,7 +876,7 @@ ApplicationWindow {
         }
         background: Rectangle {
             radius: 2
-            color: !control.enabled ? "#252526" : control.primary ? (control.hovered ? "#086fae" : "#006fb9") : (control.hovered ? "#333333" : "#252526")
+            color: !control.enabled ? raised : control.primary ? (control.hovered ? "#086fae" : "#006fb9") : (control.hovered ? dividerColor : raised)
             border.color: control.activeFocus ? blue : controlBorder
             border.width: control.activeFocus ? focusWidth : 1
         }
@@ -836,20 +889,20 @@ ApplicationWindow {
         focusPolicy: Qt.StrongFocus
         contentItem: PlainLabel {
             text: nav.text
-            color: nav.highlighted && nav.foreground === ink ? "#ffffff" : nav.foreground
+            color: nav.foreground
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
             font.pixelSize: 11
         }
         background: Rectangle {
-            color: nav.highlighted ? "#37373d" : nav.hovered ? "#2a2d2e" : "transparent"
+            color: nav.highlighted ? selectionSurface : nav.hovered ? hoverSurface : "transparent"
             border.color: nav.activeFocus || nav.keyboardCurrent ? blue : "transparent"
             border.width: nav.activeFocus || nav.keyboardCurrent ? focusWidth : 0
         }
     }
     component Card: Rectangle {
-        color: "#1f1f1f"
-        border.color: "#333333"
+        color: panel
+        border.color: dividerColor
     }
     Connections {
         target: core
@@ -928,7 +981,7 @@ ApplicationWindow {
             }
         }
         function onCompletedPaint() {
-            if (core.env("SHOWPSISI_SCREENSHOT"))
+            if (core.env("SHOWPSISI_SCREENSHOT") && core.env("SHOWPSISI_SCRIPT") !== "refinement")
                 captureTimer.start();
         }
     }
@@ -1820,7 +1873,7 @@ ApplicationWindow {
             }
             if (phase === 2) {
                 if (!showInvalidSections || siblingSections.length !== 3) return;
-                checks.reveals_bad = tableRows.some(function(r) { return r.crc?.status === "invalid"; });
+                checks.reveals_bad = rawTableRows.some(function(r) { return r.crc?.status === "invalid"; }) && tableRows.some(function(r) { return r.group?.validity === "mixed"; });
                 core.click("expandAllSections"); phase=3; return;
             }
             if (phase === 3) {
@@ -1876,13 +1929,62 @@ ApplicationWindow {
             }
         }
     }
+    Timer {
+        id: refinementTestTimer
+        interval: 80
+        repeat: true
+        property int phase: 0
+        property var checks: ({})
+        property bool initialLight: false
+        property int initialTableCount: 0
+        property double deadline: Date.now()+20000
+        onTriggered: {
+            if(Date.now()>deadline) {stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting || !detail.id) return;
+            if(phase===0) {
+                initialLight=lightTheme; initialTableCount=logicalTableCount;
+                checks.numeric_pid_order=explorerRows.every(function(r,i) {return i===0 || explorerRows[i-1].pid<=r.pid;});
+                checks.grouped=tableRows.every(function(r) {return r.logical;}) && tableRows.length<=rawTableRows.length;
+                checks.packet_axis=analysisState.timing.seconds_per_packet > 0 ? axisLabel(1).endsWith(" s") : axisLabel(1)==="#1";
+                checks.service_columns=serviceRows.every(function(r) {return r.service_type!==undefined && r.service_type_name!==undefined && r.video_pids!==undefined && r.audio_pids!==undefined;});
+                if(core.env("SHOWPSISI_EXPECT_MEDIA")==="1") checks.media_evidence=serviceRows[0].video_pids.join(",")==="512" && serviceRows[0].audio_pids.join(",")==="513,514" && !!serviceRows[0].service_type_name;
+                tab="Tables";phase=10;return;
+            }
+            if(phase===10) {recordList.currentIndex=0;recordList.forceActiveFocus();core.key("Space");phase=1;return;}
+            if(phase===1) {
+                checks.expanded_exact=tableRows.some(function(r) {return r.exact;});
+                checks.stable_logical_count=logicalTableCount===initialTableCount && recordCountLabel.text.indexOf(initialTableCount + " tables · " + rawTableRows.length + " sections")===0;
+                recordList.currentIndex=1;core.key("Return");phase=2;return;
+            }
+            if(phase===2) {
+                checks.exact_selection=detail.id===rows[1].id;
+                checks.theme_click=core.click("themeToggle");phase=3;return;
+            }
+            if(phase===3) {
+                checks.theme_changed=lightTheme!==initialLight && core.loadTheme()===(lightTheme?"light":"dark");
+                core.click("themeToggle"); inspectorView="XML";phase=4;return;
+            }
+            if(phase===4) {
+                checks.xml_highlight=core.xmlHighlightActive(xmlEvidence.textDocument);
+                core.capture(core.env("SHOWPSISI_SCREENSHOT")+".xml.png");
+                inspectorView="Structure";tab="Services";defaultInspect();phase=5;return;
+            }
+            if(phase===5) {
+                checks.theme_restored=lightTheme===initialLight;
+                recordSearch.forceActiveFocus();core.key("Ctrl+A");core.key("Escape");
+                checks.input_focus=recordSearch.activeFocus;
+                checks.tree_minimum=tree.height>=90;
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks,theme:lightTheme?"light":"dark",tree_height:tree.height}));
+            }
+        }
+    }
     Component.onCompleted: {
         core.mark("ui_ready");
         if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
             width = 1000;
             height = 680;
         }
-        Qt.callLater(function () { layoutReady = true; });
+        Qt.callLater(function () { layoutReady = true; core.themeChrome(lightTheme, surface, ink); });
         let requestedStandard = core.env("SHOWPSISI_STANDARDS");
         if (requestedStandard) {
             let choice = standardChoice.indexOfValue(requestedStandard);
@@ -1891,6 +1993,7 @@ ApplicationWindow {
         }
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "refinement") refinementTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "section-allbad")
             allBadEvidenceTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "section-superseded")
@@ -2009,8 +2112,8 @@ ApplicationWindow {
     }
     header: Rectangle {
         height: 42
-        color: "#181818"
-        border.color: "#333333"
+        color: surface
+        border.color: dividerColor
         RowLayout {
             anchors.fill: parent
             anchors.leftMargin: 14
@@ -2040,6 +2143,12 @@ ApplicationWindow {
                 text: (core.availability === "disconnected" ? "DISCONNECTED" : core.cancelling ? "CANCELLING" : core.busy ? "SCANNING" : analysisState.analysis_status === "cancelled" ? "CANCELLED" : analysisState.detected_standards || "LOCAL") + " · Qt Quick"
                 color: muted
                 font.pixelSize: 11
+            }
+            Action {
+                objectName: "themeToggle"
+                text: lightTheme ? "Dark" : "Light"
+                Accessible.name: "Switch to " + (lightTheme ? "dark" : "light") + " theme"
+                onClicked: lightTheme = !lightTheme
             }
             Action {
                 objectName: "resetLayout"
@@ -2177,7 +2286,7 @@ ApplicationWindow {
             Layout.leftMargin: 12
             visible: extraPidsValue === null
             text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
-            color: "#f48771"
+            color: removedColor
             font.pixelSize: 11
         }
         ProgressBar {
@@ -2204,7 +2313,7 @@ ApplicationWindow {
             }
             PlainLabel {
                 text: issues.length + " issues · " + num(analysisState.crc_errors) + " cyclic redundancy check failures"
-                color: issues.length ? "#cca700" : muted
+                color: issues.length ? warningColor : muted
                 font.pixelSize: 11
             }
             Item {
@@ -2228,7 +2337,7 @@ ApplicationWindow {
             handle: Rectangle {
                 objectName: "timelineDivider"
                 implicitHeight: 6
-                color: SplitHandle.pressed ? blue : SplitHandle.hovered ? "#555555" : "#252526"
+                color: SplitHandle.pressed ? blue : SplitHandle.hovered ? controlBorder : raised
             }
         SplitView {
             id: workspace
@@ -2242,7 +2351,7 @@ ApplicationWindow {
             handle: Rectangle {
                 objectName: x < workspace.width / 3 ? "explorerDivider" : "inspectorDivider"
                 implicitWidth: 6
-                color: SplitHandle.pressed ? blue : SplitHandle.hovered ? "#555555" : "#252526"
+                color: SplitHandle.pressed ? blue : SplitHandle.hovered ? controlBorder : raised
             }
             Card {
                 id: explorerPane
@@ -2266,25 +2375,25 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        model: tableFamilies
+                        model: explorerRows
                         ScrollBar.vertical: ScrollBar {}
                         delegate: NavItem {
-                            required property string modelData
+                            required property var modelData
                             width: ListView.view.width
-                            height: 29
-                            foreground: tableColor(modelData)
-                            text: (modelData === "All tables" ? "" : tableCategory(modelData)[1] + " ") + tableLabel(modelData) + "  " + (modelData === "All tables" ? (analysisState.tables || []).length : (analysisState.tables || []).filter(function (table) {
-                                    return table.name === modelData;
-                                }).length)
-                            highlighted: tab === "Tables" && (filter === modelData || (!filter && modelData === "All tables"))
+                            height: 32
+                            highlighted: tab === "Tables" && pidFilter === modelData.pid && (filter === modelData.name || modelData.pid < 0)
+                            contentItem: RowLayout {
+                                spacing: 6
+                                PlainLabel { text: modelData.pid < 0 ? "≡" : tableCategory(modelData.name)[1]; color: tableColor(modelData.name); Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter }
+                                PlainLabel { visible:modelData.pid >= 0; text: hex(modelData.pid); color: muted; font.family:"monospace"; font.pixelSize:11; Layout.preferredWidth: 49 }
+                                PlainLabel { text: tableLabel(modelData.name); color: ink; Layout.fillWidth:true; elide:Text.ElideRight; font.pixelSize:11 }
+                                PlainLabel { text: modelData.count; color:muted; font.pixelSize:10; Layout.preferredWidth:18; horizontalAlignment:Text.AlignRight }
+                            }
                             onClicked: {
-                                filter = modelData === "All tables" ? "" : modelData;
-                                tab = "Tables";
+                                filter = modelData.pid < 0 ? "" : modelData.name;
+                                pidFilter = modelData.pid; tab = "Tables";
                             }
-                            SafeTip {
-                                visible: anchorControl.hovered
-                                text: tableCategory(modelData)[2] + " · " + modelData + " · " + explanation(modelData)
-                            }
+                            SafeTip { visible:anchorControl.hovered; text: "PID " + hex(modelData.pid) + " · " + modelData.name + " · " + explanation(modelData.name) }
                         }
                     }
                     TinyLabel {
@@ -2485,20 +2594,27 @@ ApplicationWindow {
                             Action { text: "Next"; enabled: backendReady && !core.comparing && comparison.next_offset !== null && comparison.next_offset !== undefined; onClicked: compareSnapshots(comparison.next_offset) }
                         }
                     }
-                    Action {
-                        objectName: "toggleInvalidSections"
-                        visible: tab === "Tables"
+                    RowLayout {
                         Layout.fillWidth: true
-                        Layout.leftMargin: 8
+                        Layout.leftMargin: 10
                         Layout.rightMargin: 8
-                        text: (showInvalidSections ? "Hide" : "Show") + " CRC-invalid sections (" + hiddenInvalidCount + ")"
-                        onClicked: showInvalidSections = !showInvalidSections
-                    }
-                    PlainLabel {
-                        text: (tab === "Tables" ? (filter || "All tables") : tab) + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
-                        Layout.margins: 10
-                        color: muted
-                        font.pixelSize: 11
+                        PlainLabel {
+                            id: recordCountLabel
+                            text: tab === "Tables" ? logicalTableCount + " tables · " + rawTableRows.length + " sections" + (recordSearch.text.trim() ? " · " + rows.length + " matching rows" : "") : tab + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            elide: Text.ElideRight
+                            color: muted
+                            font.pixelSize: 11
+                        }
+                        Action {
+                            objectName: "toggleInvalidSections"
+                            visible: tab === "Tables"
+                            implicitHeight: 24
+                            text: (showInvalidSections ? "✓ " : "") + "Bad CRC · " + hiddenInvalidCount
+                            onClicked: showInvalidSections = !showInvalidSections
+                            SafeTip { visible:anchorControl.hovered; text:"Include CRC-invalid evidence in table groups and exact sections" }
+                        }
                     }
                     PlainLabel {
                         visible: selectionHidden && !!recordSearch.text.trim()
@@ -2509,6 +2625,15 @@ ApplicationWindow {
                         wrapMode: Text.Wrap
                         color: muted
                         font.pixelSize: 11
+                    }
+                    RowLayout {
+                        visible: tab === "Services"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 10
+                        Layout.rightMargin: 10
+                        spacing: 8
+                        TinyLabel { text: "LCN"; Layout.preferredWidth: 38; horizontalAlignment:Text.AlignHCenter }
+                        TinyLabel { text: "SERVICE / STREAM DETAILS"; Layout.fillWidth:true }
                     }
                     ListView {
                         id: recordList
@@ -2523,38 +2648,65 @@ ApplicationWindow {
                         ScrollBar.vertical: ScrollBar { policy: tab === "Changes" ? ScrollBar.AlwaysOn : ScrollBar.AsNeeded }
                         Keys.onReturnPressed: if (currentIndex >= 0)
                             activate(rows[currentIndex])
-                        Keys.onSpacePressed: if (currentIndex >= 0)
-                            activate(rows[currentIndex])
+                        Keys.onSpacePressed: if (currentIndex >= 0) {
+                            let row=rows[currentIndex]; if(tab === "Tables" && row.logical) toggleTableGroup(row); else activate(row);
+                        }
                         delegate: ItemDelegate {
                             id: recordDelegate
                             required property var modelData
                             required property int index
                             objectName: tab === "Services" ? "service_" + modelData.id : tab === "Issues" ? "issue_" + modelData.code : "record_" + index
                             width: ListView.view.width
-                            height: tab === "Issues" ? 88 : 58
+                            height: tab === "Issues" ? 88 : tab === "Services" ? 94 : 58
                             focusPolicy: Qt.StrongFocus
+                            Keys.onSpacePressed: { if(tab === "Tables" && modelData.logical) toggleTableGroup(modelData); else activate(modelData); }
+                            Keys.onRightPressed: { if(tab === "Tables" && modelData.logical && !expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
+                            Keys.onLeftPressed: { if(tab === "Tables" && modelData.logical && expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
                             highlighted: tab === "Changes" ? !!selectedChange && selectedChange.key === modelData.key && selectedChange.kind === modelData.kind : tab === "Services" ? selected === modelData.source_id && selectedService === modelData.id : selected === (modelData.source_id || modelData.id)
                             background: Rectangle {
-                                color: recordDelegate.highlighted ? "#04395e" : recordDelegate.hovered ? "#2a2d2e" : "transparent"
+                                color: recordDelegate.highlighted ? selectionSurface : recordDelegate.hovered ? hoverSurface : "transparent"
                                 border.color: recordDelegate.activeFocus ? blue : "transparent"
                             }
-                            contentItem: Column {
-                                spacing: 5
-                                PlainLabel {
-                                    text: rowTitle(modelData)
-                                    width: parent.width
-                                    color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? "#cca700" : ink
-                                    elide: Text.ElideRight
-                                    font.pixelSize: 12
+                            contentItem: RowLayout {
+                                spacing: 8
+                                Item {
+                                    Layout.preferredWidth: tab === "Services" ? 38 : 20
+                                    Layout.fillHeight: true
+                                    PlainLabel {
+                                        anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
+                                        text: tab === "Services" ? (modelData.logical_channel_number === null || modelData.logical_channel_number === undefined ? "—" : modelData.logical_channel_number) : tab === "Tables" ? (modelData.logical ? (expandedTables[modelData.group.id] ? "▾" : "▸") : "·") : ""
+                                        color: tab === "Tables" ? tableColor(modelData.name) : muted
+                                        font.family: "monospace"
+                                    }
+                                    MouseArea { anchors.fill:parent; enabled:tab === "Tables" && !!modelData.logical; onClicked:toggleTableGroup(modelData) }
                                 }
-                                PlainLabel {
-                                    text: rowSubtitle(modelData)
-                                    width: parent.width
-                                    color: muted
-                                    font.pixelSize: 11
-                                    elide: Text.ElideRight
-                                    maximumLineCount: tab === "Issues" ? 3 : 1
-                                    wrapMode: tab === "Issues" ? Text.Wrap : Text.NoWrap
+                                Column {
+                                    Layout.fillWidth: true
+                                    spacing: 5
+                                    PlainLabel {
+                                        text: tab === "Services" ? (modelData.name || "Unnamed service") : rowTitle(modelData)
+                                        width: parent.width
+                                        color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? warningColor : ink
+                                        elide: Text.ElideRight
+                                        font.pixelSize: 12
+                                    }
+                                    PlainLabel {
+                                        text: rowSubtitle(modelData)
+                                        width: parent.width; color: muted; font.pixelSize: 11
+                                        elide: Text.ElideRight
+                                        maximumLineCount: tab === "Issues" ? 3 : 1
+                                        wrapMode: tab === "Issues" ? Text.Wrap : Text.NoWrap
+                                    }
+                                    PlainLabel {
+                                        visible: tab === "Services"
+                                        text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type")
+                                        width: parent.width; color: muted; font.pixelSize:11; elide:Text.ElideRight
+                                    }
+                                    PlainLabel {
+                                        visible: tab === "Services"
+                                        text: "V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
+                                        width: parent.width; color: muted; font.family:"monospace"; font.pixelSize:10; elide:Text.ElideRight
+                                    }
                                 }
                             }
                             onClicked: {
@@ -2563,7 +2715,7 @@ ApplicationWindow {
                             }
                             SafeTip {
                                 visible: anchorControl.hovered
-                                text: (tab === "Services" ? "LCN: Logical channel number · SID: Service identifier · PMT: Program Map Table\n" : "") + (tab === "Tables" ? modelData.name + " · " + explanation(modelData.name) + "\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData)
+                                text: (tab === "Services" ? "LCN: Logical channel number (" + (modelData.lcn_status || "unknown") + ") · SID: Service identifier · PMT: Program Map Table\nProvider: " + (modelData.provider || "unknown") + " · Group: " + (modelData.group || "unknown") + "\n" : "") + (tab === "Tables" ? modelData.name + " · " + explanation(modelData.name) + "\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData) + (tab === "Services" ? "\nType " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + "\nVideo PIDs: " + pidList(modelData.video_pids,modelData.media_status) + " · Audio PIDs: " + pidList(modelData.audio_pids,modelData.media_status) : "")
                             }
                         }
                         PlainLabel {
@@ -2598,7 +2750,7 @@ ApplicationWindow {
                         }
                         PlainLabel {
                             text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
-                            color: detail.valid === false ? "#f48771" : muted
+                            color: detail.valid === false ? removedColor : muted
                             font.pixelSize: 11
                         }
                     }
@@ -2751,7 +2903,7 @@ ApplicationWindow {
                         visible: !!text
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
-                        color: "#cca700"
+                        color: warningColor
                         font.pixelSize: 11
                     }
                     RowLayout {
@@ -2890,14 +3042,14 @@ ApplicationWindow {
                                 }
                                 PlainLabel {
                                     text: modelData.label
-                                    color: modelData.branch ? "#4ec9b0" : ink
+                                    color: modelData.branch ? (lightTheme ? "#147358" : "#4ec9b0") : ink
                                     font.pixelSize: fieldFontSize
                                     elide: Text.ElideMiddle
                                     Layout.fillWidth: true
                                 }
                                 PlainLabel {
                                     text: modelData.value
-                                    color: modelData.kind === "number" ? "#b5cea8" : modelData.kind === "string" ? "#d6a089" : muted
+                                    color: modelData.kind === "number" ? addedColor : modelData.kind === "string" ? (lightTheme ? "#955021" : "#d6a089") : muted
                                     font.family: "monospace"
                                     font.pixelSize: fieldFontSize
                                     elide: Text.ElideRight
@@ -2954,7 +3106,7 @@ ApplicationWindow {
                             id: xmlEvidence
                             textFormat: TextEdit.PlainText
                             text: (evidenceScope === "Section" ? detail.section_tsduck_xml : detail.merged?.tsduck_xml) || "No standalone native XML is available for this section. Exact section fields and bytes remain in Structure and Hex."
-                            Component.onCompleted: core.highlightXml(textDocument)
+                            Component.onCompleted: core.highlightXml(textDocument, lightTheme)
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap
@@ -3021,12 +3173,12 @@ ApplicationWindow {
             SplitView.maximumHeight: 350
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 9
-                spacing: 5
+                anchors.margins: 6
+                spacing: 2
                 RowLayout {
                     Layout.fillWidth: true
                     TinyLabel {
-                        text: "SECTION OCCURRENCES · RED = INVALID"
+                        text: "ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "PACKET INDEX · NO CLOCK")
                         Layout.fillWidth: true
                     }
                     PlainLabel {
@@ -3051,23 +3203,37 @@ ApplicationWindow {
                 }
                 Row {
                     Layout.fillWidth: true
-                    height: 20
+                    height: 12
                     spacing: 2
                     Repeater {
                         model: analysisState.density || []
                         Rectangle {
                             required property var modelData
                             width: Math.max(1, (parent.width - ((analysisState.density || []).length - 1) * 2) / Math.max(1, (analysisState.density || []).length))
-                            height: 20
-                            color: modelData.bad ? "#f48771" : "#3794ff"
+                            height: 12
+                            color: modelData.bad ? removedColor : "#3794ff"
                             opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
                             SafeTip {
                                 visible: binHover.hovered
-                                text: modelData.count + " sections / " + modelData.bad + " invalid"
+                                text: "Packet bin · " + modelData.count + " sections / " + modelData.bad + " invalid"
                             }
                             HoverHandler {
                                 id: binHover
                             }
+                        }
+                    }
+                }
+                RowLayout {
+                    objectName: "arrivalAxis"
+                    Layout.fillWidth: true
+                    Repeater {
+                        model: [0,0.25,0.5,0.75,1]
+                        PlainLabel {
+                            required property real modelData
+                            Layout.fillWidth: true
+                            horizontalAlignment: modelData === 0 ? Text.AlignLeft : modelData === 1 ? Text.AlignRight : Text.AlignHCenter
+                            text: axisLabel(Math.round(Math.max(0, Number(analysisState.packets || 1)-1) * modelData))
+                            color: muted; font.family:"monospace"; font.pixelSize:10
                         }
                     }
                 }
@@ -3097,7 +3263,7 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             height: 26
-            color: core.error ? "#5a1d1d" : "#181818"
+            color: core.error ? "#5a1d1d" : surface
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 10
@@ -3266,7 +3432,7 @@ ApplicationWindow {
                         verticalAlignment: Text.AlignVCenter
                     }
                     background: Rectangle {
-                        color: formatOption.highlighted ? "#37373d" : "#252526"
+                        color: formatOption.highlighted ? selectionSurface : raised
                         border.color: formatOption.activeFocus ? blue : "transparent"
                     }
                 }

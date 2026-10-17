@@ -270,3 +270,26 @@ provenance for the original compiler, while their API assertions now run on 3.45
 </NIT>
 </tsduck>
 ```
+
+## Service overview metadata refinement (2026-10-17, development)
+
+The service overview exposes the SDT service descriptor's numeric service type
+and SDK DVB service-type name,
+PAT-selected PMT PID, and audio/video PID lists classified by the linked SDK
+using PMT stream types and descriptors. A missing service descriptor or PMT is
+explicitly unknown, not a fabricated TV/audio classification. For example, private
+PES stream type 0x06 is not automatically audio; descriptor evidence matters.
+
+LCN projection currently supports SDK-resolved ordinary logical-channel-number
+descriptors with an explicit private-data specifier and exact ONID/TSID/SID
+association, plus the existing explicitly configured private extension. Candidate
+records retain source evidence, namespace and visibility. Different channel numbers
+or incompatible visibility produce a conflict, not an arbitrary winner. A missing
+LCN is not replaced with the service ID. Regional/list/HD-simulcast policies remain
+native inspection evidence and are not automatically selected by this projection.
+This is not a claim of universal operator LCN support.
+
+Arrival labels use packet positions unless the user supplies a transport bitrate;
+in that case elapsed seconds are explicitly an estimate from that bitrate. No PCR
+or wall-clock reconstruction is claimed. Logical table groups retain version,
+current/next, extension and section evidence rather than grouping by PID alone.

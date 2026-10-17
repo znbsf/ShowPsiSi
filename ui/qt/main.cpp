@@ -36,6 +36,8 @@
 #endif
 
 #include "XmlHighlighter.h"
+#include <QIcon>
+#include <QLibrary>
 
 class Bridge:public QObject {
     Q_OBJECT
@@ -287,6 +289,26 @@ public:
         for(const auto& item:bounds){bool ok=false;const double value=layout.value(item.first).toDouble(&ok);if(!ok||!std::isfinite(value)||value<item.second.first||value>item.second.second)return false;}
         return true;
     }
+    // Keep native move/resize/snap/accessibility. Windows DWM supports dark
+    // decorations (20), caption (35) and text (36); unsupported attributes are
+    // simply ignored. Linux/macOS window managers continue owning decorations.
+    Q_INVOKABLE void themeChrome(bool light, QColor caption, QColor text){
+#ifdef Q_OS_WIN
+        if(!window)return;
+        using SetAttribute=HRESULT(WINAPI*)(HWND,DWORD,LPCVOID,DWORD);
+        auto setAttribute=reinterpret_cast<SetAttribute>(QLibrary::resolve("dwmapi", "DwmSetWindowAttribute"));
+        if(!setAttribute)return;
+        const HWND handle=reinterpret_cast<HWND>(window->winId());
+        const BOOL dark=!light;setAttribute(handle,20,&dark,sizeof(dark));
+        const COLORREF background=RGB(caption.red(),caption.green(),caption.blue());
+        const COLORREF foreground=RGB(text.red(),text.green(),text.blue());
+        setAttribute(handle,35,&background,sizeof(background));setAttribute(handle,36,&foreground,sizeof(foreground));
+#else
+        Q_UNUSED(light); Q_UNUSED(caption); Q_UNUSED(text);
+#endif
+    }
+    Q_INVOKABLE QString loadTheme(){return layoutSettings()->value("workbenchTheme","dark").toString();}
+    Q_INVOKABLE void saveTheme(QString theme){auto settings=layoutSettings(); settings->setValue("workbenchTheme",theme=="light"?"light":"dark");settings->sync();}
     Q_INVOKABLE QVariantMap loadLayout(){
         auto settings=layoutSettings();
         const auto layout=QJsonDocument::fromJson(settings->value("workbenchLayout").toByteArray()).object().toVariantMap();
@@ -304,14 +326,21 @@ public:
             if(block.layout() && block.layout()->formats().size()>=3)return true;
         return false;
     }
-    Q_INVOKABLE void highlightXml(QObject* object){
+    Q_INVOKABLE void highlightXml(QObject* object, bool light=false){
         if(auto document=qobject_cast<QQuickTextDocument*>(object)) {
-            if(!document->property("xmlHighlighted").toBool()) {
-                new XmlHighlighter(document->textDocument()); document->setProperty("xmlHighlighted",true);
-            }
+            auto highlighter=dynamic_cast<XmlHighlighter*>(document->textDocument()->findChild<QObject*>("xmlSyntax"));
+            if(!highlighter) {highlighter=new XmlHighlighter(document->textDocument());highlighter->setObjectName("xmlSyntax");document->setProperty("xmlHighlighted",true);}
+            highlighter->setLight(light);
         }
     }
-    Q_INVOKABLE void capture(QString path){if(window){QDir().mkpath(QFileInfo(path).absolutePath());bool ok=window->grabWindow().save(path);mark(ok?"screenshot_saved":"screenshot_failed");}}
+    Q_INVOKABLE void capture(QString path){
+        if(!window)return;
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QSaveFile file(path);
+        const auto image=window->grabWindow();
+        const bool ok=file.open(QIODevice::WriteOnly) && image.save(&file,"PNG") && file.commit();
+        mark(ok?"screenshot_saved":"screenshot_failed");
+    }
     Q_INVOKABLE bool click(QString name){if(!window)return false;std::function<QQuickItem*(QQuickItem*)> find=[&](QQuickItem* p)->QQuickItem*{if(p->objectName()==name)return p;for(auto c:p->childItems())if(auto found=find(c))return found;return nullptr;};auto item=find(window->contentItem());if(!item||!item->isVisible()||!item->isEnabled())return false;QPointF pos=item->mapToScene(QPointF(item->width()/2,item->height()/2));QMouseEvent press(QEvent::MouseButtonPress,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::LeftButton,Qt::LeftButton,Qt::NoModifier);QCoreApplication::sendEvent(window,&press);QMouseEvent release(QEvent::MouseButtonRelease,pos,pos,window->mapToGlobal(pos.toPoint()),Qt::LeftButton,Qt::NoButton,Qt::NoModifier);QCoreApplication::sendEvent(window,&release);return true;}
     Q_INVOKABLE bool hover(QString name){
         if(!window)return false;
@@ -389,6 +418,10 @@ int main(int argc,char**argv){
         }
     }
     QGuiApplication app(argc,argv);
+    QIcon applicationIcon;
+    for(int size : {16,24,32,48,64,128,256}) applicationIcon.addFile(QString(":/icons/showpsisi-%1.png").arg(size), QSize(size,size));
+    QGuiApplication::setWindowIcon(applicationIcon);
+    QGuiApplication::setDesktopFileName("org.showpsisi.ShowPsiSi");
     app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");QQuickStyle::setStyle("Basic");
     Bridge bridge;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("core",&bridge);
     engine.loadFromModule("ShowPsiSi","Main");if(engine.rootObjects().isEmpty())return 1;

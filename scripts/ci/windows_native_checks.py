@@ -147,8 +147,8 @@ def main():
         qt_smoke(artifacts)
         patterns = ["test_qt_ui.py", "test_qt_resource_paths.py", "test_qt_evidence.py"]
     else:
-        patterns = ["test_engine.py", "test_section_evidence.py", "test_protocol_coverage.py", "test_sdk_migration.py", "test_cloud_preview.py",
-                    "test_cancellation.py", "test_mcp_cancellation.py", "test_portable_package.py"]
+        patterns = ["test_engine.py", "test_service_metadata.py", "test_section_evidence.py", "test_protocol_coverage.py", "test_sdk_migration.py", "test_cloud_preview.py",
+                    "test_cancellation.py", "test_mcp_cancellation.py", "test_portable_package.py", "test_application_icons.py"]
     results = [run_suite(pattern, artifacts) for pattern in patterns]
     if not all(results):
         raise SystemExit("Native regression failed, discovered zero executable tests, or unexpectedly skipped coverage. See logs above.")

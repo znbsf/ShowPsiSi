@@ -146,6 +146,57 @@ class UiAgentTests(unittest.TestCase):
                 saved = json.loads((captured / manifest['state']).read_text(encoding='utf-8'))
                 self.assertTrue(saved['settled'])
                 self.assertEqual(saved['selected'], state['selected'])
+                def settled(selected_id=None):
+                    end=time.monotonic()+20
+                    while time.monotonic()<end:
+                        current=request(session,'snapshot')
+                        if current['settled'] and (selected_id is None or current['selected']==selected_id):
+                            return current
+                        time.sleep(.05)
+                    self.fail('Workbench did not settle: '+str(current))
+                request(session,'action',{'name':'select_tab','value':'Tables'})
+                current=settled()
+                self.assertEqual(len(current['records']['groups']),len(groups))
+                expected_visible=[r for r in evidence_state['tables'] if r['crc']['status']!='invalid']
+                self.assertEqual(set(current['records']['sections']),{r['id'] for r in expected_visible})
+                request(session,'action',{'name':'set_bad_crc','value':True})
+                self.assertEqual(len(settled()['records']['sections']),len(evidence_state['tables']))
+                request(session,'action',{'name':'set_grouped','value':False})
+                self.assertFalse(settled()['records']['grouped'])
+                request(session,'action',{'name':'search_records','value':'PMT 0x0100'})
+                searched=settled()
+                self.assertEqual(len(searched['records']['groups']),1)
+                request(session,'action',{'name':'search_records','value':''})
+                request(session,'action',{'name':'set_grouped','value':True})
+                request(session,'action',{'name':'history_scope','value':True})
+                self.assertEqual(settled()['history']['entries'],evidence_state['table_history'])
+                # Each captured family can be inspected, scoped and jumped at exactly
+                # the packet advertised by the visible history control.
+                for tid in sorted({h['table_id'] for h in evidence_state['table_history']}):
+                    h=next(h for h in evidence_state['table_history'] if h['table_id']==tid)
+                    request(session,'action',{'name':'select_record','id':h['id']})
+                    settled(h['id'])
+                    request(session,'action',{'name':'history_scope','value':False})
+                    focused=settled()
+                    self.assertTrue(focused['history']['entries'])
+                    self.assertTrue(all(e['table_id']==tid and e['pid']==h['pid'] and e['extension']==h['extension'] for e in focused['history']['entries']))
+                    for scope in ('section','merged'):
+                        request(session,'action',{'name':'set_scope','value':scope})
+                        for view in ('Structure','Hex','XML','Decoded','Metadata','References'):
+                            request(session,'action',{'name':'set_view','value':view})
+                            inspected=settled()
+                            self.assertEqual(inspected['evidence_scope'],scope)
+                            self.assertFalse(inspected['diagnostics']['error'])
+                            self.assertFalse(inspected['diagnostics'].get('frontend_errors'))
+                    # Run the last family jump after all source records were visited;
+                    # early snapshots deliberately exclude future evidence.
+                target=focused['history']['entries'][0]
+                request(session,'action',{'name':'history_jump','index':0})
+                jumped=settled(target['id'])
+                self.assertEqual(jumped['packet'],target['at_packet'])
+                self.assertEqual(jumped['table_filter']['pid'],target['pid'])
+                self.assertIn(target['id'],jumped['records']['sections'])
+                (directory/'workbench-parity.json').write_text(json.dumps(jumped,indent=2),encoding='utf-8')
                 self.assertEqual(hashlib.sha256(sample.read_bytes()).hexdigest(), source_hash)
                 (directory / 'verified.json').write_text(json.dumps({'passed':True,'capture':capture},indent=2),encoding='utf-8')
             finally:

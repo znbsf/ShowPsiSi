@@ -1,5 +1,12 @@
 # Validation
 
+Workbench parity: `test_section_evidence.py` checks all-family content history,
+including repeated/reused versions, private, short, next and invalid evidence.
+The `workbench` cases in Qt/browser suites and `test_ui_agent.py` check matching
+record counts/search/modes, all inspector scopes/views, history filtering and
+exact advertised packet jumps using the real engine. Native mouse/keyboard
+acceptance remains a separate gate.
+
 Explorer parity: run `-k explorer_counts` with `test_qt_ui.py` and
 `test_web_ui.py`. Both use `explorer_fixture.py` through the actual engine:
 one PID carries SDT, BAT and unknown/private evidence, with multiple sections,

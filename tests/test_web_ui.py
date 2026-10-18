@@ -27,6 +27,42 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from cloud_preview import Bridge, Server
 
 class BrowserTests(unittest.TestCase):
+    def test_workbench_all_table_history_counts_and_inspector_views(self):
+        from explorer_fixture import explorer_fixture
+        path=self.output/'workbench.ts';path.write_bytes(explorer_fixture())
+        p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path)
+        state=p.evaluate('window.showpsisi.getState()')
+        p.locator('[data-tab="Tables"]').click()
+        self.assertIn('7 tables · 7 sections · 2 bad CRC hidden',p.locator('#result-count').inner_text())
+        p.locator('#show-bad-crc').check()
+        self.assertIn('7 tables · 9 sections',p.locator('#result-count').inner_text())
+        p.locator('#search').fill('SDT 0x0011')
+        self.assertEqual(p.locator('.table-branch').count(),2)
+        p.locator('#search').fill('')
+        for tid in sorted({h['table_id'] for h in state['table_history']}):
+            row=next(r for r in state['tables'] if r['table_id']==tid)
+            p.evaluate('id=>window.showpsisi.inspect(id)',row['id'])
+            p.wait_for_function('id=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().id===id',arg=row['id'])
+            history=p.evaluate('window.showpsisi.getUiState().history.entries')
+            self.assertTrue(history)
+            self.assertTrue(all(h['pid']==row['pid'] and h['table_id']==tid for h in history))
+            p.locator('[data-scope="section"]').click()
+            detail=p.evaluate('window.showpsisi.getDetail()')
+            p.locator('[data-view="decoded"]').click()
+            self.assertEqual(p.locator('.evidence').inner_text(),detail['section_native_text'] or 'Native section display unavailable. Raw bytes remain in Hex.')
+            p.locator('[data-view="xml"]').click()
+            if detail.get('section_tsduck_xml'):
+                self.assertEqual(p.locator('.evidence').inner_text(),detail['section_tsduck_xml'])
+            p.locator('[data-view="references"]').click()
+            p.locator('[data-view="tree"]').click()
+        p.locator('#history-scope').select_option('all')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().history.entries'),state['table_history'])
+        target=next((i,h) for i,h in enumerate(state['table_history']) if h['table_id']==2)
+        p.locator('[data-history="'+str(target[0])+'"]').click()
+        p.wait_for_function('packet=>window.showpsisi.getUiState().settled && window.showpsisi.getState().selected_packet===packet',arg=target[1]['at_packet'])
+        self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),target[1]['id'])
+        self.assertEqual(path.read_bytes(),explorer_fixture())
+
     def test_explorer_counts_shared_pid_keyboard_and_family_filter(self):
         from explorer_fixture import explorer_fixture
         source = self.output / 'explorer.ts'; source.write_bytes(explorer_fixture())
@@ -782,6 +818,11 @@ class BrowserTests(unittest.TestCase):
         self.assertGreater(self.page.locator('.section-density span').count(),0)
         self.page.locator('#section-group summary').click()
         self.assertIn('mixed',self.page.locator('#section-group').inner_text())
+        sibling=next(r for r in state['tables'] if r['extension']==1 and r['section']==1 and r['valid'])
+        self.page.locator('#section-choice').select_option(sibling['id'])
+        self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=sibling['id'])
+        self.page.locator('#section-choice').select_option(row['id'])
+        self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=row['id'])
         self.page.locator('[data-scope="section"]').click()
         self.page.locator('#tree-search').fill('TSDuck decoded structure')
         self.assertIn('section-local',self.page.locator('#tree-area').inner_text())
@@ -867,6 +908,12 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('.table-branch [role="option"]').count(),2)
         self.page.locator('.table-branch > summary').click()
         self.assertEqual(self.page.locator('.table-branch [role="option"]:visible').count(),2)
+        exact=self.page.locator('.table-branch [role="option"]').last
+        expected_id=exact.get_attribute('data-key')
+        exact.click()
+        self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=expected_id)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail().section'),1)
+
         self.page.locator('#prev').click()
         self.assertEqual(self.page.locator('.table-branch').count(),100)
 

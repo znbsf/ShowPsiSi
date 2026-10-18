@@ -76,6 +76,7 @@ if(BUILD_QT_UI)
   find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2)
   qt_standard_project_setup(REQUIRES 6.5)
   qt_add_executable(showpsisi-qt ui/qt/main.cpp ui/qt/AgentDebug.h)
+  qt_add_resources(showpsisi-qt "workbench_contract" PREFIX "/shared" BASE "ui/tauri/web" FILES ui/tauri/web/workbench.js)
   # PNG resources avoid introducing a runtime QtSvg/plugin dependency.
   qt_add_resources(showpsisi-qt "application_icons"
     PREFIX "/icons" BASE "assets/icons"

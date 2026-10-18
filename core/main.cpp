@@ -253,6 +253,8 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
     std::vector<Record> records; std::unordered_map<std::string,size_t> ids; J history=J::array();
     std::unordered_map<std::string,std::string> previous;
+    J tableHistory=J::array();
+    std::unordered_map<std::string,size_t> historySlots;
     uint64_t packets=0,totalBytes=0,observations=0,crcErrors=0; size_t stride=188,prefix=0;
     double bitrate=0,firstMs=-1,totalMs=0; Clock::time_point began;
     std::string standardsContext="auto",analysisStatus="idle";
@@ -498,6 +500,20 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             decode(r); ids[id]=records.size();records.push_back(std::move(r));it=ids.find(id);
         }
         Record& r=records[it->second];r.positions.push_back(first);r.ends.push_back(last);r.orders.push_back(observations);r.lastPacket=last;
+        // All captured table families, including short/private/invalid/next
+        // evidence. Each entry is a content transition of an exact section slot,
+        // not a claim that a multi-section generation was complete at arrival.
+        const std::string historyKey=key+":"+(r.current?"current":"next")+":"+(r.valid?"valid":"invalid");
+        auto slot=historySlots.find(historyKey);
+        if(slot==historySlots.end() || tableHistory[slot->second]["id"]!=id) {
+            historySlots[historyKey]=tableHistory.size();
+            tableHistory.push_back({{"id",id},{"event_id",tableHistory.size()},{"pid",pid},{"table_id",tid},{"extension",ext},
+                {"name",nativeTableName(r)},{"version",(data[1]&0x80)?J(ver):J()}, {"section",num},{"current",r.current},{"valid",r.valid},
+                {"first_packet",first},{"at_packet",last},{"last_packet",last},{"observations",1}});
+        } else {
+            auto& entry=tableHistory[slot->second]; entry["last_packet"]=last;
+            entry["observations"]=entry["observations"].get<uint64_t>()+1;
+        }
         if(!r.issues.empty() && r.issues[0]["code"]=="crc32")++crcErrors;
         if(r.valid&&r.current) {
             if(previous[key]!=id) {
@@ -671,6 +687,8 @@ public:
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
         out["table_groups"]=tableGroups(at,control);out["timing"]={{"packet_unit","zero-based TS packet index"},{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"bitrate_unit","bits/second for 188-byte TS packets"},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
+        out["table_history"]=tableHistory;
+        out["scope"]["table_history"]="entire scan; content transitions per PID/table/extension/section/current/validity; at_packet is first completed occurrence; not complete-generation transitions";
         if(demuxStatus.value("discontinuities",uint64_t(0))>0)out["diagnostics"].push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities on monitored PSI/SI PIDs (aggregate; packet locations not yet retained)"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
         return out;
     }
@@ -770,7 +788,7 @@ public:
         return out;
     }
     void clearEvidence() {
-        records.clear();ids.clear();history=J::array();previous.clear();pending=J::object();patchSections.clear();
+        records.clear();ids.clear();history=J::array();previous.clear();tableHistory=J::array();historySlots.clear();pending=J::object();patchSections.clear();
         observations=crcErrors=0;demuxStatus=J::object();
     }
     J analyze(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {

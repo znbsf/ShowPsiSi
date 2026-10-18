@@ -146,3 +146,55 @@ capture manifest/PNG/state correlation, frontend errors and source immutability.
 Settings and WebView profiles are isolated. Evidence stays in
 `artifacts/ui-agent-tests` or `SHOWPSISI_AGENT_TEST_ARTIFACTS`, including failures.
 Qt offscreen tests do not prove a physical Windows GPU/native-dialog workflow.
+
+## Record, inspector and history contract
+
+`ui/tauri/web/workbench.js` is the shared, platform-independent presentation
+model, embedded in Qt resources and served/bundled with Web. Both frontends
+use it for multiword AND search, logical-group/section counts, deterministic
+sorting, table identity history and the complete structure-tree hierarchy.
+The renderers retain native input, focus, escaping and screenshot mechanisms.
+
+- Tables retain every matching logical group, including all-invalid groups.
+  Counts separately name logical tables, visible distinct section payloads and
+  hidden bad-CRC payloads. Repeated arrivals never increment either table or
+  section count. Search matches a group or any source section and preserves its
+  contextual siblings. CRC filtering hides exact evidence, not the group.
+- Tables/Sections switches between grouped and flat views. Both page by 100
+  groups or exact section records. Selecting a group inspects its selected valid
+  representative (or first visible section) and toggles expansion; the fold
+  control and Space/Left/Right only expand/collapse. Exact section selection
+  inspects that section. Hidden evidence is retained explicitly in the inspector.
+- Structure, Hex, XML, Decoded, Metadata and References are available in both.
+  Section scope uses `section_native_table` / `section_tsduck_xml`; merged scope
+  uses the generation-safe `merged` wrapper. Decoded always shows the original
+  section's SDK text, and Hex always shows original bytes. Empty/incomplete
+  scopes remain explicit rather than substituting a different generation.
+- Density is scan-global. History defaults to the inspected table identity
+  (PID, table ID and extension, across versions/section slots/current-next).
+  All table history is also available, paged by 40 transitions. Entries retain
+  invalid and next evidence labels. `@` is the first **completion** packet and
+  clicking uses that exact cutoff, not a later repetition, and switches the
+  list to the target table (revealing invalid evidence when explicitly chosen). The evidence may be
+  an incomplete logical table at that position. Latest and snapshot comparison
+  remain available independently of history filtering.
+
+The engine's additive `table_history` array covers every captured table family,
+including unknown/private tables and short sections without version numbers
+(`version: null`). It records content transitions per PID/table/extension/
+section/current/validity slot; repeated identical payloads update observations
+and last_packet without creating another transition, and A → B → A yields three
+entries. `first_packet` is the first section-start packet, `at_packet` its first
+completion, `last_packet` the latest completion in that transition. The array is
+scan-global even in a historical query. The legacy SDT-only `history` field is
+retained for existing JSONL clients; neither frontend's main history bar uses it.
+No new PID acquisition or private descriptor semantics are inferred.
+
+UI snapshots additionally expose `records` (group/section IDs, hidden count,
+count text, grouped mode and page), `history` (scope, entries and page), and
+`evidence_scope`. Bounded additive actions are `select_record` (existing id),
+`set_bad_crc` / `set_grouped` / `history_scope` (boolean value), `search_records`
+(maximum 512 characters), `set_scope` (section/merged), `set_view` (one of the six
+visible view labels), and `history_jump` (index in the filtered history).
+These use the same frontend state/engine routes; arbitrary evaluation remains
+unsupported. They complement physical input acceptance, not replace it.

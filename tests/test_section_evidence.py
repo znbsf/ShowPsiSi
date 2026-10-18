@@ -7,6 +7,36 @@ from core_client import Core
 from make_fixture import section, descriptor, word, crc
 
 class SectionEvidenceTests(unittest.TestCase):
+    def test_all_table_history_transitions_and_exact_jump(self):
+        pat1=section(0,1,1,word(100)+word(0xe100))
+        pat2=section(0,1,2,word(100)+word(0xe101))
+        pmt=section(2,100,1,word(0xe200)+word(0xf000))
+        private=section(0x80,3,1,b'private-evidence')
+        tdt=b'\x70\x70\x05\xeb\x96\x12\x34\x56'
+        state=self.scan([(0,pat1),(0,pat1),(0,pat2),(0,pat1),(0x100,pmt),
+                         (0x11,private),(0x14,tdt),(0x14,tdt),
+                         self.sdt(last=0,current=False), self.sdt(last=0,bad=True)])
+        history=state['table_history']
+        self.assertEqual({h['table_id'] for h in history},{0,2,0x80,0x70,0x42})
+        pats=[h for h in history if h['table_id']==0]
+        self.assertEqual([h['version'] for h in pats],[1,2,1])
+        self.assertEqual([h['at_packet'] for h in pats],[0,2,3])
+        self.assertEqual(pats[0]['last_packet'],1)
+        self.assertEqual(pats[0]['observations'],2)
+        short=next(h for h in history if h['table_id']==0x70)
+        self.assertIsNone(short['version']);self.assertEqual(short['observations'],2)
+        self.assertTrue(any(not h['valid'] for h in history))
+        self.assertTrue(any(not h['current'] for h in history))
+        for h in history:
+            snapshot=self.core.call('query',{'at_packet':h['at_packet']})
+            self.assertIn(h['id'],[r['id'] for r in snapshot['tables']])
+            inspected=self.core.call('inspect',{'id':h['id'],'at_packet':h['at_packet']})
+            self.assertEqual(inspected['native_table_at_packet'],h['at_packet'])
+            self.assertEqual(inspected['pid'],h['pid'])
+            self.assertEqual(snapshot['table_history'],history)
+        cleared=self.scan([(0,pat2)])
+        self.assertEqual(len(cleared['table_history']),1)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.core=Core()
     def tearDown(self):

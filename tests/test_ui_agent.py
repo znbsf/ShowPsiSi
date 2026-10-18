@@ -124,6 +124,9 @@ class UiAgentTests(unittest.TestCase):
                 request(session, 'action', {'name':'search_tree', 'value':'service'})
                 searched = request(session, 'snapshot')
                 self.assertEqual(searched['tree_search'], 'service')
+                request(session, 'action', {'name':'search_tree', 'value':'Section header'})
+                header_search = request(session, 'snapshot')
+                self.assertTrue(any(r['label']=='pid' for r in header_search['tree']), header_search['tree'])
                 with self.assertRaisesRegex(RuntimeError, 'Unsupported'):
                     request(session, 'action', {'name':'eval', 'value':'arbitrary code'})
                 request(session, 'action', {'name':'search_tree', 'value':''})

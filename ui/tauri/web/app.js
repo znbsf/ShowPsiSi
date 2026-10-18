@@ -1098,10 +1098,8 @@ let treeNodesRendered = 0;
 function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1) {
   const path = parent ? parent + "/" + (node.id ?? index) : node.id;
   const needle = treeSearch.trim().toLowerCase();
-  const selfMatch = (node.label + " " + (node.value ?? ""))
-    .toLowerCase()
-    .includes(needle);
-  if (needle && !nodeMatches(node, needle)) return "";
+  const selfMatch = needle.split(/\s+/).every(term => (node.label + " " + (node.value ?? "")).toLowerCase().includes(term));
+  if (needle && !ancestorMatch && !nodeMatches(node, needle)) return "";
   if (++treeNodesRendered > 2500) return "";
   const accessible = `role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
   const kind = ["number", "string", "boolean"].includes(node.kind) ? node.kind : "meta";
@@ -1326,6 +1324,10 @@ function metadataPanel() {
 }
 function renderInspector() {
   const panel = $("#inspector");
+  // Read live disclosure state before replacing its DOM. The asynchronous
+  // toggle event may not have fired when a source-section change starts.
+  const previousSectionGroup = panel.querySelector("#section-group");
+  if (previousSectionGroup) sectionGroupOpen = previousSectionGroup.open;
   if (aggregateDiagnostic) {
     panel.innerHTML = `<div class="panel-title">TRANSPORT DIAGNOSTIC <span class="bad">AGGREGATE</span></div><div class="empty"><span class="empty-icon bad">⚠</span><h3>${esc(aggregateDiagnostic.code)}</h3><p>${esc(aggregateDiagnostic.detail)}</p><p>${num(aggregateDiagnostic.count)} observations across monitored SI PIDs. Individual packet locations are not indexed.</p></div>`;
     return;

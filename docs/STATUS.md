@@ -25,6 +25,14 @@ evidence-scope buttons and WebView2 group selection, Space/Enter folding.
 Both use a source-section selector and direct Section/Merged scope buttons;
 source selection preserves the historical comparison cutoff.
 
+Hosted PR validation caught Linux font-dependent wrapping in the inspector tabs,
+loss of matched branch descendants and the descriptor_tag search label, and a
+source-selector disclosure race before the browser toggle event. The follow-up
+reduces tab padding, keeps matched subtrees on both frontends, restores the label,
+and reads live disclosure state before replacement. The original 90px compact
+inspector threshold and browser assertions remain unchanged; final results are
+bound to the PR head below through hosted checks.
+
 Evidence remains ignored under `artifacts/workbench-*`. Original captures and
 isolated settings are preserved. One retained smoke launch without the documented
 offscreen/software environment exited during the scripted native save-dialog

@@ -336,15 +336,15 @@ ApplicationWindow {
     }
 
     function filterTree(allRows, text) {
-        let terms = searchTerms(text), keep = {}, ancestors = [];
+        let terms = searchTerms(text), keep = {}, matched = {}, ancestors = [];
         allRows.forEach(function (row, index) {
             while (ancestors.length && allRows[ancestors[ancestors.length - 1]].depth >= row.depth)
                 ancestors.pop();
             let value = (row.label + " " + row.value).toLowerCase();
-            if (terms.every(function (term) {
+            if (ancestors.some(function(parent) { return !!matched[parent]; }) || terms.every(function (term) {
                 return value.indexOf(term) >= 0;
             })) {
-                keep[index] = true;
+                keep[index] = true; matched[index] = true;
                 ancestors.forEach(function (parent) {
                     keep[parent] = true;
                 });
@@ -3195,6 +3195,8 @@ ApplicationWindow {
                             NavItem {
                                 required property string modelData
                                 objectName: "inspector_" + modelData
+                                leftPadding: 6
+                                rightPadding: 6
                                 text: modelData === "XML" && detail.native_xml_guarded ? "Guarded XML" : modelData
                                 highlighted: inspectorView === modelData
                                 onClicked: inspectorView = modelData

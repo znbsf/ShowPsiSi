@@ -65,6 +65,7 @@ workbench.sdkNode = function(node, sid) {
 };
 workbench.descriptorNode = function(d) {
   var meta=Object.assign({},d);delete meta.raw;delete meta.native;delete meta.fields;delete meta.extension;
+  meta.descriptor_tag=meta.tag;delete meta.tag;
   var children=[workbench.objectNode('meta','Descriptor header',meta)];
   if(Object.keys(d.fields || {}).length) children.push(workbench.objectNode('fields','Application decoded fields',d.fields));
   if(d.native) {var n=workbench.sdkNode(d.native,-1);n.id='native';children.push(n);}

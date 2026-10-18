@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "revision": "2026-10-18.1",
+  "description": "Curated factual names and nominal orbital positions, independently transcribed from linked fleet pages. Incomplete; no copied transponder listings. Publisher is source attribution, not a verified ownership claim. Review date is not source publication date or capture-time validity.",
+  "entries": [
+    {
+      "id": "apstar-6e",
+      "name": "APSTAR 6E / MPSat-3",
+      "longitude_degrees_east": 134,
+      "source": {
+        "publisher": "APSTAR",
+        "url": "https://www.apstar.com/resource",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "asiasat-5",
+      "name": "AsiaSat 5",
+      "longitude_degrees_east": 100.5,
+      "source": {
+        "publisher": "AsiaSat",
+        "url": "https://www.asiasat.com/",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "asiasat-6",
+      "name": "AsiaSat 6",
+      "longitude_degrees_east": 120,
+      "source": {
+        "publisher": "AsiaSat",
+        "url": "https://www.asiasat.com/",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "asiasat-7",
+      "name": "AsiaSat 7",
+      "longitude_degrees_east": 105.5,
+      "source": {
+        "publisher": "AsiaSat",
+        "url": "https://www.asiasat.com/",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "asiasat-8",
+      "name": "AsiaSat 8",
+      "longitude_degrees_east": 105.5,
+      "source": {
+        "publisher": "AsiaSat",
+        "url": "https://www.asiasat.com/",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "asiasat-9",
+      "name": "AsiaSat 9",
+      "longitude_degrees_east": 122,
+      "source": {
+        "publisher": "AsiaSat",
+        "url": "https://www.asiasat.com/",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "astra-1n",
+      "name": "ASTRA 1N",
+      "longitude_degrees_east": 19.2,
+      "source": {
+        "publisher": "SES",
+        "url": "https://www.ses.com/solutions/media-broadcasters/reach-neighborhoods",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "astra-1p",
+      "name": "ASTRA 1P",
+      "longitude_degrees_east": 19.2,
+      "source": {
+        "publisher": "SES",
+        "url": "https://www.ses.com/solutions/media-broadcasters/reach-neighborhoods",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "astra-3c",
+      "name": "ASTRA 3C",
+      "longitude_degrees_east": 23.5,
+      "source": {
+        "publisher": "SES",
+        "url": "https://www.ses.com/solutions/media-broadcasters/reach-neighborhoods",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "astra-2e",
+      "name": "ASTRA 2E",
+      "longitude_degrees_east": 28.2,
+      "source": {
+        "publisher": "SES",
+        "url": "https://www.ses.com/solutions/media-broadcasters/reach-neighborhoods",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "astra-2f",
+      "name": "ASTRA 2F",
+      "longitude_degrees_east": 28.2,
+      "source": {
+        "publisher": "SES",
+        "url": "https://www.ses.com/solutions/media-broadcasters/reach-neighborhoods",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "astra-2g",
+      "name": "ASTRA 2G",
+      "longitude_degrees_east": 28.2,
+      "source": {
+        "publisher": "SES",
+        "url": "https://www.ses.com/solutions/media-broadcasters/reach-neighborhoods",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "hotbird-13f",
+      "name": "HOTBIRD 13F",
+      "longitude_degrees_east": 13,
+      "source": {
+        "publisher": "Eutelsat",
+        "url": "https://www.eutelsat.com/satellite-network/GEO-fleet/eutelsat-13-east",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "hotbird-13g",
+      "name": "HOTBIRD 13G",
+      "longitude_degrees_east": 13,
+      "source": {
+        "publisher": "Eutelsat",
+        "url": "https://www.eutelsat.com/satellite-network/GEO-fleet/eutelsat-13-east",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "eutelsat-5-west-b",
+      "name": "EUTELSAT 5 WEST B",
+      "longitude_degrees_east": -5,
+      "source": {
+        "publisher": "Eutelsat",
+        "url": "https://www.eutelsat.com/satellite-network/GEO-fleet/eutelsat-5-west",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "eutelsat-7-west-a",
+      "name": "EUTELSAT 7 WEST A",
+      "longitude_degrees_east": -7,
+      "source": {
+        "publisher": "Eutelsat",
+        "url": "https://www.eutelsat.com/satellite-network/GEO-fleet/eutelsat-7/8-west",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "eutelsat-8-west-b",
+      "name": "EUTELSAT 8 WEST B",
+      "longitude_degrees_east": -8,
+      "source": {
+        "publisher": "Eutelsat",
+        "url": "https://www.eutelsat.com/satellite-network/GEO-fleet/eutelsat-7/8-west",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "apstar-5c",
+      "name": "APSTAR 5C",
+      "longitude_degrees_east": 138,
+      "source": {
+        "publisher": "APSTAR",
+        "url": "https://www.apstar.com/resource",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "apstar-6c",
+      "name": "APSTAR 6C",
+      "longitude_degrees_east": 134,
+      "source": {
+        "publisher": "APSTAR",
+        "url": "https://www.apstar.com/resource",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "apstar-6d",
+      "name": "APSTAR 6D",
+      "longitude_degrees_east": 134,
+      "source": {
+        "publisher": "APSTAR",
+        "url": "https://www.apstar.com/resource",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "apstar-7",
+      "name": "APSTAR 7",
+      "longitude_degrees_east": 76.5,
+      "source": {
+        "publisher": "APSTAR",
+        "url": "https://www.apstar.com/resource",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    },
+    {
+      "id": "apstar-9",
+      "name": "APSTAR 9",
+      "longitude_degrees_east": 142,
+      "source": {
+        "publisher": "APSTAR",
+        "url": "https://www.apstar.com/resource",
+        "reviewed_at": "2026-10-18",
+        "assignment_valid_from": null,
+        "assignment_valid_until": null
+      }
+    }
+  ]
+}

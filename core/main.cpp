@@ -247,6 +247,7 @@ struct Record {
 };
 
 #include "SignalMetadata.h"
+#include "SatelliteMetadata.h"
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
@@ -865,6 +866,7 @@ public:
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);
+        out["satellite_associations"]=satellitemeta::inspect(root,r);
         out["text_diagnostics"]=J::array();
         for(const auto& d:r.descriptors)for(const auto& t:d.value("text_diagnostics",J::array()))out["text_diagnostics"].push_back(t);
         out["text_diagnostic_scope"]="Selected section, supported DVB SI text fields only. ATSC multiple strings, native-only table loops and private text retain raw evidence without per-field diagnostics.";
@@ -1052,6 +1054,7 @@ public:
             J registry={{"table_names",J::array()},{"descriptor_names",J::array()},{"table_count",tables.size()},{"descriptor_count",descriptors.size()},{"note","Registered XML names (including aliases), not a guarantee that every payload or regional variant is supported. Explicit standards context resolves ambiguous identifiers."}};
             for(const auto& name:tables)registry["table_names"].push_back(name.toUTF8());for(const auto& name:descriptors)registry["descriptor_names"].push_back(name.toUTF8());result["native_registry"]=registry;return result;
         }
+        if(method=="lookup_satellite")return satellitemeta::lookup(root,args);
         if(method=="lookup_identifier"){
             const auto& value=args.at("value");
             if(!value.is_number_integer()||value<0||value>UINT32_MAX)throw std::runtime_error("Identifier value must be an integer in 0..4294967295");

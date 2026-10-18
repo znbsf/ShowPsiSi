@@ -69,7 +69,7 @@ Prefix=.
 Plugins=.
 QmlImports=qml
 '@ | Set-Content -LiteralPath (Join-Path $Bin 'qt.conf') -Encoding utf8NoBOM
-foreach ($File in @('api/tools.json', 'extensions/demo.json', 'references/standards.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico')) {
+foreach ($File in @('api/tools.json', 'extensions/demo.json', 'references/standards.json', 'references/satellites.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico')) {
     $Source = Join-Path $Root $File
     Require-File $Source
     $Target = Join-Path $Output $File

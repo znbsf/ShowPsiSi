@@ -1,5 +1,12 @@
 # Broadcast protocol coverage and evidence
 
+Satellite association adds an application-tested enrichment path for the ordinary
+DVB satellite delivery descriptor: strict wire BCD/units, section/transport
+provenance and nominal-slot **candidates** from an incomplete local catalog.
+It does not establish spacecraft identity, transponder correctness, RF reception,
+capture-date assignments or S2X identity support. See
+[satellite association](SATELLITE_ASSOCIATION.md) for tests and source boundaries.
+
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets. It does not tune, demodulate,

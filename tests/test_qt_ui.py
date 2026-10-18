@@ -43,6 +43,14 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_satellite_candidates_wire_sources_and_manual_lookup(self):
+        from test_satellite_metadata import satellite_fixture
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'satellite.ts';path.write_bytes(satellite_fixture())
+            report=self.run_script('satellite-metadata',directory,overrides={'SHOWPSISI_SAMPLE':str(path),'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertTrue(all(report['checks'].values()),report)
+            self.assertEqual(path.read_bytes(),satellite_fixture())
+
     def test_signal_metadata_language_encoding_and_id_lookup(self):
         from test_signal_metadata import metadata_fixture
         with tempfile.TemporaryDirectory() as directory:

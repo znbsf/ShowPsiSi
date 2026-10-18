@@ -1,5 +1,28 @@
 # ShowPsiSi status
 
+Satellite candidate association, 2026-10-18: developed on
+`codex/satellite-association` from `87ef81057fc164836f946116cf1523df65035546`
+(merged PR #15). Shared C++ lookup and Qt/Tauri Metadata retain wire parameters,
+transport/section provenance and catalog sources. The 22-record reference
+snapshot matches nominal GEO slots only; all results remain candidates and
+transponder/capture-time identity remains unverified.
+See [scope and reproducible checks](SATELLITE_ASSOCIATION.md).
+Local checks: strict engine regression 203 tests (202 passed, one optional
+untracked recording absent), Qt regression 56 passed plus retained smoke,
+Rust 6 passed, and real Windows Tauri/WebView2 satellite controls passed.
+The final ISDB guard and 22-record catalog passed the full engine gate and
+native Tauri run; Qt's complete gate preceded that core-only guard, with
+the final targeted Qt check retained separately. Hosted delivery remains pending.
+Validation uses an exact source mirror under the ignored
+`artifacts/satellite-association-validation`; the owner's existing dirty
+checkout and running applications are retained.
+Evidence: `artifacts/satellite-association-validation/artifacts/windows-engine-final`,
+`artifacts/windows-qt`, and `artifacts/native-satellite-final` inside that mirror.
+Native Tauri test teardown required terminating its owned process after the
+close deadline; no graceful-shutdown claim is made and no owned backend/WebView
+process remained. Browser preview's complete suite is delegated to hosted Linux
+CI because of the already documented local Chromium startup limitation.
+
 Local integration verified, 2026-10-18: `main` rebased onto remote
 `5342976025957aff561da2b324a6440a5039a107` (PR #13), plus the retained
 uncommitted UI refresh/agent diagnostics and conflict resolutions. Remote main

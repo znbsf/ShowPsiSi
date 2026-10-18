@@ -17,6 +17,23 @@
   },
   "tools": [
     {
+      "name": "lookup_satellite",
+      "description": "Read-only candidate GEO satellite lookup in an incomplete local reference catalog. Orbital position only; no confirmed identity or transponder validation. Raw query and catalog provenance retained. No scan required.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "orbital_position_degrees": {"type": "number", "minimum": 0, "maximum": 180},
+          "direction": {"type": "string", "enum": ["E", "W"]},
+          "tolerance_degrees": {"type": "number", "minimum": 0, "maximum": 1, "description": "Explicit orbital-position tolerance; default 0 means identical nominal slot."},
+          "frequency_hz": {"type": "number", "minimum": 1, "maximum": 1000000000000},
+          "symbol_rate": {"type": "number", "minimum": 1, "maximum": 1000000000},
+          "polarization": {"type": "string", "enum": ["horizontal", "vertical", "left", "right"]}
+        },
+        "additionalProperties": false
+      },
+      "annotations": {"readOnlyHint": true}
+    },
+    {
       "name": "lookup_identifier",
       "description": "Resolve a typed identifier using the installed SDK registry. Reference label only, not verified current ownership. No scan required.",
       "inputSchema": {

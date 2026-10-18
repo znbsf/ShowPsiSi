@@ -1,5 +1,10 @@
 # 扩展与 AI 原生接口
 
+卫星关联也由 C++ 引擎负责：`lookup_satellite` 和
+`inspect.satellite_associations` 读取同一个有来源的离线目录，Qt/Tauri 只呈现候选、
+原始参数、来源和不确定性。轨位匹配不确定真实星体；不以频率猜身份。
+边界和目录维护见 [卫星关联](SATELLITE_ASSOCIATION.md)。
+
 ## 当前运行结构
 
 ```mermaid

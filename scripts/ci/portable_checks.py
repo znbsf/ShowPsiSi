@@ -39,7 +39,7 @@ def manifest(package):
                 'bin/tscore.dll', 'bin/tsduck.tables.model.xml', 'bin/tsduck.dtv.names',
                 'bin/tscore.time.xml', 'bin/tscore.ip.names', 'bin/platforms/qwindows.dll',
                 'bin/qt.conf', 'bin/showpsisi-portable.json', 'api/tools.json', 'extensions/demo.json',
-                'references/standards.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'LICENSE',
+                'references/standards.json', 'references/satellites.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'LICENSE',
                 'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'redistribution-review.json',
                 'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico']
     for name in required:

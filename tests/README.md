@@ -1,5 +1,11 @@
 # Validation
 
+Satellite candidate contracts run with
+`python -m unittest discover -s tests -p test_satellite_metadata.py -v`.
+The strict native runner includes them. Run `-k satellite_candidates` against
+the Qt/browser UI suites for real control interactions and unchanged source
+assertions. Scope and catalog provenance: [satellite association](../docs/SATELLITE_ASSOCIATION.md).
+
 The signal-metadata suite (`test_signal_metadata.py`) runs through the real core
 without SDK compiler fixtures. It covers ID registry provenance and unknowns,
 bounded wire-string diagnostics, multilingual short/extended EIT text and

@@ -72,6 +72,17 @@ ApplicationWindow {
     property string inspectorView: "Structure"
     property string epgLanguage: ""
     property var identifierResult: ({})
+    property var satelliteResult: ({})
+    function satelliteText(x) {
+        let p=x.raw_parameters || {};
+        return "Candidates only · " + (x.status || x.error || "") + "\n" +
+            (p.orbital_position_degrees === undefined ? "No orbital position" : p.orbital_position_degrees + "° " + p.direction) +
+            " · " + (p.frequency_hz === undefined ? "frequency unspecified" : p.frequency_hz + " Hz") +
+            " · " + (p.symbol_rate === undefined ? "symbol rate unspecified" : p.symbol_rate + " sym/s") +
+            " · " + (p.polarization || "polarization unspecified") + "\n" +
+            (x.candidates || []).map(function(c){return c.name + " · candidate · Δ " + c.orbital_delta_degrees + "°\nSource: " + c.source.publisher + " · reviewed " + c.source.reviewed_at + "\n" + c.source.url;}).join("\n") +
+            "\n" + (x.uncertainty || "") + "\nOnly nominal orbital position is compared. Frequency, symbol rate, polarization and modulation are not checked.";
+    }
     function eventVariant(event) {
         let variants=event.language_variants || [];
         return variants.find(function(v) {return v.language_code === epgLanguage;}) || variants.find(function(v) {return v.language_code === event.default_language;}) || variants[0] || ({});
@@ -82,6 +93,10 @@ ApplicationWindow {
     }
     function metadataEntries() {
         let entries=[];
+        (detail.satellite_associations || []).forEach(function(x) {
+            entries.push({title:"Satellite candidates · " + (x.transport ? "TS " + hex(x.transport.transport_stream_id) + " / ONID " + hex(x.transport.original_network_id) : "section descriptor") + " · offset " + x.wire_source.section_offset,
+                text:satelliteText(x), evidence:JSON.stringify(x,null,2)});
+        });
         (detail.identifier_lookups || []).forEach(function(x) {
             entries.push({title:x.namespace + " · " + x.raw_hex, text:(x.label || "Unknown") + " · " + x.status + "\n" + x.uncertainty, evidence:JSON.stringify(x,null,2)});
         });
@@ -970,6 +985,7 @@ ApplicationWindow {
         }
         function onResponse(method, result) {
             if (method === "lookup_identifier") identifierResult=result;
+            if (method === "lookup_satellite") satelliteResult=result;
             if (method === "query") comparisonTestTimer.completedQueries++;
             if (method === "cancel_analysis") {
                 if (core.env("SHOWPSISI_SCRIPT") === "lifecycle-stale" || core.env("SHOWPSISI_SCRIPT") === "lifecycle-complete-race") {
@@ -2162,6 +2178,50 @@ ApplicationWindow {
             }
         }
     }
+    Timer {
+        id: satelliteTestTimer
+        interval: 100
+        repeat: true
+        property int phase: 0
+        property var checks: ({})
+        property double deadline: Date.now()+20000
+        onTriggered: {
+            if(Date.now()>deadline){stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting || !detail.id)return;
+            if(phase===0){checks.table_tab=core.click("tab_Tables");phase=1;return;}
+            if(phase===1){recordList.currentIndex=0;recordList.forceActiveFocus();core.key("Return");phase=2;return;}
+            if(phase===2){
+                if(detail.table_id!==0x40)return;
+                checks.metadata_tab=core.click("inspector_Metadata");phase=3;return;
+            }
+            if(phase===3){
+                let x=(detail.satellite_associations || [])[0];
+                checks.wire=!!x && x.raw_parameters.frequency_hz===11538000000 && x.wire_source.section_id===detail.id && !!x.raw_descriptor_hex;
+                checks.colocated=!!x && x.candidates.length===2 && x.confirmed_satellite===null;
+                checks.presentation=metadataEntries().some(function(e){return e.text.indexOf("HOTBIRD 13F")>=0 && e.text.indexOf("not checked")>=0 && e.evidence.indexOf("reviewed_at")>=0;});
+                satellitePosition.text="122";checks.lookup_click=core.click("satelliteQuery");phase=4;return;
+            }
+            if(phase===4){
+                if(!satelliteResult.status)return;
+                checks.single= satelliteResult.candidates.length===1 && satelliteResult.candidates[0].name==="AsiaSat 9" && satelliteResult.confirmed_satellite===null;
+                satellitePosition.text="5";satelliteDirection.currentIndex=1;checks.west_click=core.click("satelliteQuery");phase=5;return;
+            }
+            if(phase===5){
+                if(!satelliteResult.status)return;
+                checks.west=satelliteResult.candidates.length===1 && satelliteResult.candidates[0].name==="EUTELSAT 5 WEST B";
+                satelliteDirection.currentIndex=0;checks.no_match_click=core.click("satelliteQuery");phase=6;return;
+            }
+            if(phase===6){
+                if(!satelliteResult.status)return;
+                checks.no_match=satelliteResult.status==="no_catalog_match" && satelliteResult.candidates.length===0;
+                satellitePosition.text="181";checks.invalid_click=core.click("satelliteQuery");phase=7;return;
+            }
+            if(phase===7){
+                checks.invalid=!!satelliteResult.error && !satelliteResult.candidates;
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));
+            }
+        }
+    }
     Component.onCompleted: {
         core.mark("ui_ready");
         if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
@@ -2179,6 +2239,7 @@ ApplicationWindow {
             autoTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refinement") refinementTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "signal-metadata") metadataTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "satellite-metadata") satelliteTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "section-allbad")
             allBadEvidenceTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "section-superseded")
@@ -3393,6 +3454,26 @@ ApplicationWindow {
                                 wrapMode: TextEdit.WrapAnywhere
                                 text: JSON.stringify(identifierResult,null,2)
                             }
+                            PlainLabel { text: "Satellite candidates · nominal GEO slot"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: blue }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                FieldInput { id: satellitePosition; objectName: "satellitePosition"; Layout.fillWidth: true; placeholderText: "Degrees: 13.0"; Accessible.name: "Orbital position in degrees" }
+                                FieldChoice { id: satelliteDirection; objectName: "satelliteDirection"; model: ["E","W"]; implicitWidth: 65; Accessible.name: "Orbital direction" }
+                                Action {
+                                    objectName: "satelliteQuery"
+                                    text: "Candidates"
+                                    enabled: backendReady
+                                    onClicked: {
+                                        let value=satellitePosition.text.trim();
+                                        satelliteResult={};
+                                        if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180) {satelliteResult={error:"Enter degrees from 0 to 180"};return;}
+                                        core.send("lookup_satellite",{orbital_position_degrees:Number(value),direction:satelliteDirection.currentText});
+                                    }
+                                }
+                            }
+                            TextArea { objectName: "satelliteResult"; visible: Object.keys(satelliteResult).length > 0; text: satelliteText(satelliteResult); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
+                            Action { id: satelliteEvidence; visible: Object.keys(satelliteResult).length > 0; text: checked ? "Hide satellite lookup evidence" : "Satellite lookup evidence"; checkable: true; Layout.fillWidth: true }
+                            TextArea { visible: satelliteEvidence.checked && Object.keys(satelliteResult).length > 0; text: JSON.stringify(satelliteResult,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                             PlainLabel { text: detail.text_diagnostic_scope || "Analyze a stream to inspect metadata."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
                             Repeater {
                                 model: metadataEntries()

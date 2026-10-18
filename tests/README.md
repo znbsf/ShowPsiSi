@@ -1,5 +1,13 @@
 # Validation
 
+Explorer parity: run `-k explorer_counts` with `test_qt_ui.py` and
+`test_web_ui.py`. Both use `explorer_fixture.py` through the actual engine:
+one PID carries SDT, BAT and unknown/private evidence, with multiple sections,
+repetitions and bad CRC. Checks cover logical-group totals, single-list scope,
+keyboard focus/activation, cross-PID type filtering, zero-result types and
+snapshot counts. `test_ui_agent.py` additionally compares both native frontends'
+rendered explorer identities/counts against a separate real-engine analysis.
+
 Satellite candidate contracts run with
 `python -m unittest discover -s tests -p test_satellite_metadata.py -v`.
 The strict native runner includes them. Run `-k satellite_candidates` against

@@ -43,6 +43,18 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_explorer_counts_shared_pid_keyboard_and_family_filter(self):
+        from explorer_fixture import explorer_fixture
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'explorer.ts'
+            path.write_bytes(explorer_fixture())
+            report = self.run_script('explorer-parity', directory, timeout=40,
+                                     overrides={'SHOWPSISI_SAMPLE':str(path),'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'], 9, report)
+            self.assertTrue(all(report['checks'].values()), report)
+            self.assertEqual(report['explorer'][0]['count'], 7)
+            self.assertEqual(path.read_bytes(), explorer_fixture())
+
     def test_satellite_candidates_wire_sources_and_manual_lookup(self):
         from test_satellite_metadata import satellite_fixture
         with tempfile.TemporaryDirectory() as directory:

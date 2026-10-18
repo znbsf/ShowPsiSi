@@ -44,6 +44,19 @@ class UiAgentTests(unittest.TestCase):
                 self.assertTrue(state and state.get('settled') and state.get('tree'), state)
                 self.assertFalse(state['diagnostics']['error'])
                 self.assertFalse(state['diagnostics'].get('frontend_errors'))
+                from collections import Counter
+                from core_client import Core
+                engine = Core()
+                try:
+                    evidence_state = engine.call('analyze', {'path':str(sample),'standards':'dvb'})
+                finally:
+                    engine.close()
+                groups = evidence_state['table_groups']
+                counts = Counter((g['pid'], g['name'] or 'Private / other') for g in groups)
+                expected = [{'pid':-1,'name':'All tables','count':len(groups)}] + [dict(pid=pid,name=name,count=count) for (pid,name),count in sorted(counts.items())]
+                self.assertEqual([{k:r[k] for k in ('pid','name','count')} for r in state['explorer']], expected)
+                self.assertEqual(state['table_filter'], {'pid':-1,'name':'','count_unit':'logical_tables'})
+                self.assertFalse(any(r['selected'] for r in state['explorer']))
                 self.assertTrue(any(r['kind'] == 'number' for r in state['tree']), state['tree'])
                 self.assertTrue(any(r['kind'] == 'string' for r in state['tree']), state['tree'])
                 from test_ui_contrast import table_palettes

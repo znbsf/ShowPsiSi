@@ -1477,4 +1477,12 @@ dialog label { color: var(--muted); }
 .record.tables .cell-state { text-align: center; }
 
 /* PID names share the Qt category identity on the row surface in either theme. */
-.pid-row [data-table-name] { background: transparent; }
+.explorer-row [data-table-name] { background: transparent; }
+.pid-head, .explorer-row { display: grid; grid-template-columns: 16px 49px minmax(0,1fr) 18px; gap: 5px; }
+.explorer-row { padding: 0 8px; min-height: 32px; }
+.explorer-row .pid-table-icon { background: transparent; padding: 0; text-align: center; }
+.explorer-row .family-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.explorer-row .count { text-align: right; margin: 0; }
+.explorer-row.all-tables .family-label { grid-column: 2 / span 2; color: var(--text); }
+.table-controls { flex-wrap: wrap; }
+.table-controls select { max-width: 160px; min-width: 85px; padding: 3px; font-size: 11px; }

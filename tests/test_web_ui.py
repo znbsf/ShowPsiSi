@@ -907,6 +907,105 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#scan').click()
         self.assertIn('decimal or hexadecimal',self.page.locator('#notice').inner_text())
 
+    def test_refresh_field_error_comparison_state_and_density_slider(self):
+        """UI/UX refresh: adjacent field feedback, comparison empty state and
+        the density strip as one keyboard-reachable snapshot control."""
+        self.analyze()
+        # The reason for a rejected value stays next to the control; the footer
+        # live region keeps the same message for the status contract.
+        self.page.locator('#extra-pids').fill('0xNOPE')
+        self.page.locator('#scan').click()
+        self.assertIn('decimal or hexadecimal',self.page.locator('#notice').inner_text())
+        inline=self.page.locator('#extra-pids-error')
+        self.assertTrue(inline.is_visible())
+        self.assertIn('decimal or hexadecimal',inline.inner_text())
+        field=self.page.locator('#extra-pids')
+        self.assertEqual(field.get_attribute('aria-invalid'),'true')
+        self.assertEqual(field.get_attribute('aria-describedby'),'extra-pids-error')
+        self.assertTrue(field.evaluate('(element)=>element===document.activeElement'))
+        gap=self.page.evaluate('''() => {
+          const field=document.querySelector("#extra-pids").getBoundingClientRect();
+          const reason=document.querySelector("#extra-pids-error").getBoundingClientRect();
+          return reason.top-field.bottom;
+        }''')
+        self.assertLess(gap,60,'Field reason must stay beside the field, not only in the footer')
+        self.page.locator('#extra-pids').fill('0x30, 100')
+        self.assertTrue(self.page.locator('#extra-pids-error').is_hidden())
+
+        # Comparison mode replaces the record list, so its inspector must not
+        # ask for a record that is not on screen.
+        self.page.locator('[data-tab="Changes"]').click()
+        inspector=self.page.locator('#inspector').inner_text()
+        self.assertIn('Compare two observed states',inspector)
+        self.assertNotIn('Select a service, table, programme or issue',inspector)
+        self.page.locator('[data-tab="Services"]').click()
+
+        # One slider entry point, ticks, a painted fill, invalid marks that stay
+        # inside their own bin, and column alignment for the tables grid.
+        density=self.page.locator('#density')
+        self.assertEqual(density.get_attribute('role'),'slider')
+        self.assertEqual(density.get_attribute('tabindex'),'0')
+        self.assertEqual(self.page.locator('#density .bin').count(),80)
+        self.assertEqual(self.page.locator('#density .axis-basis').inner_text(),
+                         'Zero-based packet positions · no measured time available')
+        self.assertEqual(self.page.locator('#density .arrival-axis span').count(),5)
+        fill=self.page.evaluate('''() => {
+          const bins=[...document.querySelectorAll("#density .bin")];
+          const state=window.showpsisi.getState();
+          const index=bins.findIndex((_,i)=>(state.density?.[i]?.count||0)>0);
+          const bin=bins[index],style=getComputedStyle(bin);
+          return {index,background:style.backgroundColor,opacity:Number(style.opacity),
+                  fill:getComputedStyle(document.documentElement).getPropertyValue("--density-fill").trim()};
+        }''')
+        self.assertGreaterEqual(fill['index'],0)
+        self.assertEqual(fill['background'],'rgb(111, 157, 215)','A populated bin must paint the fill token')
+        self.assertGreater(fill['opacity'],0.2)
+        self.assertEqual(fill['fill'],'#6f9dd7')
+        containment=self.page.evaluate('''() => [...document.querySelectorAll(".bin-invalid")].map((bar)=>{
+          const parent=bar.parentElement.getBoundingClientRect(),box=bar.getBoundingClientRect();
+          return {parentWidth:parent.width,width:box.width,left:box.left,right:box.right,
+                  parentLeft:parent.left,parentRight:parent.right,height:box.height};
+        })''')
+        self.assertTrue(containment,'Expected at least one bin to show its invalid share')
+        for bar in containment:
+            self.assertGreaterEqual(bar['left'],bar['parentLeft']-0.5,'Invalid mark escaped its bin')
+            self.assertLessEqual(bar['right'],bar['parentRight']+0.5,'Invalid mark escaped its bin')
+            self.assertLessEqual(bar['width'],bar['parentWidth']+0.5,'Invalid mark spans the whole strip')
+            self.assertGreaterEqual(bar['height'],3)
+
+        # Clicking a bin moves the snapshot; repeated keys must each advance,
+        # End must reach the declared maximum and focus must survive the
+        # re-render each query causes.
+        box=self.page.locator('#density .bin').nth(40).bounding_box()
+        self.page.mouse.click(box['x']+box['width']/2,box['y']+box['height']/2)
+        self.page.wait_for_function('() => window.showpsisi.getState().selected_packet !== null')
+        packets=self.page.evaluate('window.showpsisi.getState().packets')
+        steps=[self.page.evaluate('window.showpsisi.getState().selected_packet')]
+        self.page.locator('#density').focus()
+        for _ in range(3):
+            self.page.keyboard.press('ArrowRight')
+            self.page.wait_for_function('(previous) => window.showpsisi.getState().selected_packet > previous',arg=steps[-1],timeout=8000)
+            steps.append(self.page.evaluate('window.showpsisi.getState().selected_packet'))
+        self.assertEqual(len(set(steps)),len(steps),steps)
+        self.assertEqual(steps,sorted(steps),steps)
+        self.assertEqual(self.page.evaluate('document.activeElement.id'),'density','Slider lost focus after re-render')
+        self.page.keyboard.press('End')
+        self.page.wait_for_function('(max) => window.showpsisi.getState().selected_packet === max',arg=packets-1,timeout=8000)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState().selected_packet'),packets-1)
+        self.page.wait_for_function('() => window.showpsisi.getUiState().settled === true',timeout=8000)
+        self.page.keyboard.press('Home')
+        self.page.wait_for_function('() => window.showpsisi.getState().selected_packet === 0',timeout=8000)
+        self.page.wait_for_function('() => window.showpsisi.getUiState().settled === true',timeout=8000)
+
+        self.page.locator('[data-tab="Tables"]').click()
+        # The latest workbench presents logical table cards, then expandable
+        # section rows; the obsolete flat-table column header no longer applies.
+        self.assertGreater(self.page.locator('.table-branch').count(), 0)
+        card = self.page.locator('.table-branch').first
+        card.locator('summary').first.click()
+        self.assertTrue(card.locator('[role="listbox"]').is_visible())
+        self.assertGreater(card.locator('.record.tables .table-kind').count(), 0)
+
     def test_new_protocol_tables_without_service_projection(self):
         manifest=json.loads((ROOT/'tests/fixtures/tsduck345/manifest.json').read_text(encoding='utf-8'))
         cases=(('ATSC_AEIT','AEIT','Aggregate Event Information Table',None),

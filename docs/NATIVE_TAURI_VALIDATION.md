@@ -158,3 +158,14 @@ Ignored evidence: `artifacts/native-tauri-cancellation-validation.json`,
 `web-cancellation-exit.txt`, `web-cancellation-final.inputs.sha256` and
 `web-ui-tests/cancellation-pending-narrow.png`. These results do not establish
 Windows/macOS interaction, installers, external-browser launching or performance.
+
+### Local Windows rebase integration, 2026-10-18
+
+With the MSYS2-distributed CMake driving MSVC/Ninja, the new Qt `.rc` icon
+resource exposed an empty `cmcldeps` launcher: the generated command started
+with `RC <input> ...` and failed with `RC1107`. The local build cache was
+reconfigured with `-DCMAKE_NINJA_CMCLDEPS_RC=OFF`, allowing the Windows SDK
+resource compiler to run directly. This is a local toolchain setting, not a
+source/resource deletion or security-policy change. Rebuild explicitly after
+changing icon resource inputs with this setting. Cargo continues to use a
+workspace-local TEMP/TMP for the previously recorded linker temp-file issue.

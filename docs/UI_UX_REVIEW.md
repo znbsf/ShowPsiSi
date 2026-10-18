@@ -86,3 +86,20 @@ See [the scoped standards review](UI_UX_STANDARDS.md) for the official-source
 research, verified gap plan, implementation boundaries and final acceptance
 record. This pass concentrates on predictable keyboard access and readable
 technical content rather than claiming a universal desktop design standard.
+
+## Follow-up refresh, 2026-10-18
+
+A second pass acted on the remaining findings from the reviews above plus a fresh
+live inspection (compiled Qt application and the real web workbench behind the
+loopback bridge). It moved validation feedback beside the field that failed,
+replaced the misleading comparison-mode inspector empty state, turned the
+occurrence-density strip into a labelled, keyboard-reachable snapshot control
+with a visible position cursor, raised every authored label to a 10 px floor,
+consolidated near-duplicate text colours onto role tokens, gave both workbenches
+consistent control labels, and added a
+scan progress affordance to the web workbench. Evidence, measured results and the
+items left open are recorded in [the historical refresh record](UI_UX_REFRESH.md).
+The subsequent PR #13 integration retains numeric PID ordering and logical table
+cards; [STATUS](STATUS.md) records the final native interaction checks.
+Field-to-byte highlighting, cross-navigation from identifier fields and EPG
+time-grid work remain unimplemented.

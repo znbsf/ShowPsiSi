@@ -1,5 +1,63 @@
 # ShowPsiSi status
 
+Local integration verified, 2026-10-18: `main` rebased onto remote
+`5342976025957aff561da2b324a6440a5039a107` (PR #13), plus the retained
+uncommitted UI refresh/agent diagnostics and conflict resolutions. Remote main
+was rechecked before launch and still matched. Both frontends now render the
+same fixed table colors/glyphs in the left PID explorer, with shared semantic
+structure-tree colors in dark and light themes.
+
+Windows local validation: Qt UI38, section evidence12, service metadata15,
+contrast5 and live UI-agent2 passed. The final Tauri binary was rechecked after
+its last asset rebuild. UI-agent tests validate rendered colors and glyphs in
+both themes, bounded navigation, screenshots/state and unchanged source bytes.
+Qt's automated UI matrix uses offscreen rendering; Tauri uses real WebView2.
+Both final applications were then launched as visible native Windows windows;
+actual captures and diagnostic readback confirmed completed analysis and no
+backend/frontend error. This does not assert native Save-dialog or full manual
+acceptance. The full browser Playwright matrix and hosted CI were not rerun.
+
+Evidence: `artifacts/rebase-qt-tests.log`, `artifacts/rebase-section-tests.log`,
+`artifacts/rebase-service-tests.log`, `artifacts/rebase-agent-tests`,
+`artifacts/rebase-agent-final`, and `artifacts/rebased-manual-ui-0baeb1c4`.
+The launch manifest records binary hashes and owned PIDs; the visible apps are
+left running for the user's trial. Original local files and diff remain in
+`artifacts/pre-rebase-20261018-121311` and retained stash `1325c76916aa40d5a1998e42afb75e11b1467fdf`.
+The newer publication checkpoint below supersedes this local-only status.
+See [UI diagnostics](UI_AGENT_DEBUG.md).
+
+## Native interaction and publication check — 2026-10-18
+
+The user requested direct interaction checks followed by commit/push. On the
+same `5342976` base plus this patch, actual Windows mouse/keyboard input exercised
+Qt SDT/PID filtering, logical section expansion, light theme, XML, ancestor-aware
+field search, timeline historical/latest selection, EPG/Issues, Open-file cancel,
+and the Save diagnostics button. Native WebView2 exercised PID filtering,
+logical expansion, light theme, timeline click and End/Home keys.
+
+This found two Web defects: count badges retained a dark background in light
+mode, and a fired keyboard debounce timer kept diagnostic `settled` false.
+The badges now use the theme surface; snapshot scheduling clears the timer
+handle on execution/cancellation. The rebuilt WebView2 app was operated again:
+End reached packet 177999, diagnostics reported settled with no backend/frontend
+error, and clicking Save diagnostics produced a complete real PNG/state bundle.
+Both production-frontend agent tests passed again; contrast coverage is now 6.
+Browser regression assertions require settled state after End/Home.
+
+Raw captures, state and runtime logs remain local in
+`artifacts/interaction-check-2eaa37f4` and `artifacts/interaction-final-agent`.
+Test profiles/settings are isolated. The new branch is
+`codex/ui-parity-agent-diagnostics`, published as PR #15. The first hosted run
+`39098070623` passed 31 of 32 browser cases; the new density test incorrectly
+expected the old word `packets` instead of the retained evidence label
+`Zero-based packet positions · no measured time available`. Its assertion now
+checks the full label and five axis ticks. Hosted acceptance requires the rerun.
+No source-stream edits or export were performed during this interaction check.
+
+The branch subsequently integrated `5ed626f` (PR #14 signal metadata).
+The shared source bar retains charset selection, adjacent PID validation,
+scan progress and diagnostics. Combined-source validation is pending below.
+
 ## Signal metadata iteration — 2026-10-18
 
 Implemented on `codex/signal-metadata`, based on main
@@ -37,7 +95,7 @@ under `artifacts/signal-metadata-validation/` in the original checkout: build lo
 WebView2 screenshots/results. Publication/CI state is reported with the PR; these
 local counts do not establish hosted delivery or a portable release.
 
-## Latest delivered baseline — 2026-10-17 UTC
+## Previously verified delivered baseline — 2026-10-17 UTC
 
 Merged `main`: [`20ddf5f8ca58f7af0903f53ff31954dfe72b3f87`](https://github.com/znbsf/ShowPsiSi/commit/20ddf5f8ca58f7af0903f53ff31954dfe72b3f87), PR #12.
 All five jobs passed on this exact merged revision in
@@ -60,12 +118,13 @@ CI artifacts expire; this is not a formal release or installer.
 - Windows portable contents and retained offscreen captures were inspected.
   Full native Windows desktop interaction remains unverified.
 
-## Current iteration — in development
+## Remote UI refinement — merged; hosted acceptance not refreshed locally
 
 User feedback on 2026-10-17 requests bundled app identity, light/dark themes,
 consistent chrome, numeric PID ordering, aligned list columns, LCN/service type
 and PMT audio/video PIDs, logical table cards, discreet CRC filtering and labeled
-arrival axes. These changes are being implemented and are **not yet delivered**.
+arrival axes. These changes are now in remote `main` at `5342976` (PR #13).
+The historical hosted evidence below still applies only to its named revision.
 Time labels must retain their evidence basis; packet positions are not wall-clock
 timestamps. Conflicting or unsupported channel-number mappings must remain explicit.
 
@@ -200,6 +259,22 @@ descriptor contexts retain generic bytes and show a warning instead of silently
 asserting another namespace. Guarded XML is labelled; wire bytes are authoritative.
 The split TSCore/TSDuck libraries, headers and runtime data must match; both
 version-specific ABI symbols are enforced.
+
+## UI/UX refresh before rebase, 2026-10-18 (historical local record)
+
+A presentation-only refresh of both workbenches was implemented and exercised on
+the assistant's Windows workspace: the compiled Qt application through its
+offscreen self-check and test subset, and the real web workbench behind the
+loopback bridge with a real Chromium and the real engine. It changes no engine
+code, no JSONL schema and none of the boundaries recorded above.
+[The refresh record](UI_UX_REFRESH.md) lists each change, the measured results and
+what remains unimplemented (field-to-byte highlighting, identifier
+cross-navigation, EPG time grid, i18n, drag-and-drop).
+
+These results apply to the former `6e9df85` checkout plus its dirty patch.
+The rebase integration at the top of this document supersedes its old family
+ordering and flat Qt record-column assumptions with PR #13's numeric PID
+explorer, logical table cards and service metadata. Its screenshots are historical.
 
 ## Remaining boundaries
 

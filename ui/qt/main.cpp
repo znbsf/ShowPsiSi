@@ -31,6 +31,7 @@
 #include <cmath>
 #include <memory>
 #include <functional>
+#include "AgentDebug.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -61,6 +62,7 @@ class Bridge:public QObject {
     int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0;
     quint64 generation=0;
     QHash<int,Request> methods;
+    QJsonArray recentResponses;
     QElapsedTimer clock;
     bool dataFrame=false,completeFrame=false;
     QQuickWindow* window=nullptr;
@@ -86,6 +88,9 @@ class Bridge:public QObject {
         if(!msg["result"].isObject()&&!msg["error"].isObject())return;
         const auto request=methods.take(id);
         const QString method=request.method;
+        recentResponses.append(QJsonObject{{"id",id},{"method",method},{"ok",!msg.contains("error")},
+            {"error",msg["error"].toObject().value("message")},{"at",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}});
+        if(recentResponses.size()>40)recentResponses.removeFirst();
         if(request.generation!=generation)return;
         if((method=="analyze"&&id!=activeAnalysis)||(method=="inspect"&&id!=latestInspect)||
            (method=="query"&&id!=latestQuery)||(method=="preview_rename"&&id!=latestPreview)||
@@ -118,6 +123,10 @@ class Bridge:public QObject {
         }
     }
 public:
+    Q_INVOKABLE QVariantMap diagnostics() const {
+        return {{"pending",methods.size()},{"recent_responses",recentResponses.toVariantList()},
+            {"backend",m_availability},{"error",m_error},{"stderr_tail",stderrTail}};
+    }
     Bridge(){
         clock.start();
         // Runtime discovery never trusts the working directory. Packaged resources
@@ -423,8 +432,10 @@ int main(int argc,char**argv){
     QGuiApplication::setWindowIcon(applicationIcon);
     QGuiApplication::setDesktopFileName("org.showpsisi.ShowPsiSi");
     app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");QQuickStyle::setStyle("Basic");
-    Bridge bridge;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("core",&bridge);
+    Bridge bridge;AgentDebug uiAgent;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("core",&bridge);
+    engine.rootContext()->setContextProperty("uiAgent",&uiAgent);
     engine.loadFromModule("ShowPsiSi","Main");if(engine.rootObjects().isEmpty())return 1;
-    bridge.attach(qobject_cast<QQuickWindow*>(engine.rootObjects().first()));return app.exec();
+    auto window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    bridge.attach(window);uiAgent.attach(window);return app.exec();
 }
 #include "main.moc"

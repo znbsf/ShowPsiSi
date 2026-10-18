@@ -113,7 +113,7 @@ ApplicationWindow {
     property string evidenceScope: "Merged"
     property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
     property var siblingSections: (analysisState.tables || []).filter(function(r) { return (selectedGroup.section_ids || []).indexOf(r.id) >= 0 && (showInvalidSections || r.crc?.status !== "invalid"); })
-    property int hiddenInvalidCount: (analysisState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && (!filter || r.name === filter) && (pidFilter < 0 || r.pid === pidFilter); }).length
+    property int hiddenInvalidCount: (analysisState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && tableMatches(r); }).length
     // Fixed table identities, shared with the Web frontend. Never hash unknown names.
     function tableCategory(name) {
         let fixed = {
@@ -166,7 +166,8 @@ ApplicationWindow {
         return JSON.stringify({settled: !core.busy && !core.inspecting && !core.comparing && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             selected: selected, selected_service: selectedService, packet: currentPacket(),
-            theme: lightTheme ? "light" : "dark", explorer: explorerRows, tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
+            theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
+            table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"}, tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
             focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
             tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
@@ -202,8 +203,11 @@ ApplicationWindow {
     property var treeRows: treeSearch.text.trim() ? filterTree(makeTree(detail, selectedService, {}, true), treeSearch.text) : makeTree(detail, selectedService, collapsed, false)
     property var serviceRows: analysisState.services || []
     property var rawTableRows: (analysisState.tables || []).filter(function (t) {
-        return (!filter || t.name === filter) && (pidFilter < 0 || t.pid === pidFilter) && (showInvalidSections || t.crc?.status !== "invalid");
+        return tableMatches(t) && (showInvalidSections || t.crc?.status !== "invalid");
     })
+    function tableMatches(t) {
+        return (!filter || (filter === "Private / other" ? !t.name || t.name === filter || t.name.indexOf("Unknown / private (") === 0 : t.name === filter)) && (pidFilter < 0 || t.pid === pidFilter);
+    }
     property var tableRows: logicalTableRows()
     property int logicalTableCount: tableRows.filter(function(r) {return r.logical;}).length
     function logicalTableRows() {
@@ -222,14 +226,28 @@ ApplicationWindow {
         let next=Object.assign({},expandedTables); next[row.group.id]=!next[row.group.id]; expandedTables=next;
     }
     property var explorerRows: [{pid:-1,name:"All tables",count:(analysisState.table_groups || []).length}].concat((analysisState.table_groups || []).reduce(function(out,g) {
-        let row=out.find(function(r) {return r.pid===g.pid && r.name===g.name;});
-        if(row) row.count++; else out.push({pid:g.pid,name:g.name,count:1}); return out;
-    },[]).sort(function(a,b) {return a.pid-b.pid || a.name.localeCompare(b.name);}))
-    property var tableFamilies: ["All tables"].concat((analysisState.tables || []).map(function (t) {
+        let name=g.name || "Private / other";
+        let row=out.find(function(r) {return r.pid===g.pid && r.name===name;});
+        if(row) row.count++; else out.push({pid:g.pid,name:name,count:1}); return out;
+    },[]).sort(function(a,b) {return a.pid-b.pid || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);}))
+    property string explorerFocusKey: JSON.stringify([-1,"All tables"])
+    function explorerKey(row) { return JSON.stringify([row.pid,row.name]); }
+    function explorerSelected(row) { return tab === "Tables" && pidFilter === row.pid && filter === (row.pid < 0 ? "" : row.name); }
+    function selectExplorer(row) {
+        filter = row.pid < 0 ? "" : row.name; pidFilter = row.pid;
+        explorerFocusKey = explorerKey(row); tab = "Tables";
+    }
+    function selectTableFamily(name) {
+        filter = name; pidFilter = -1; explorerFocusKey = JSON.stringify([-1,"All tables"]);
+    }
+    onExplorerRowsChanged: {
+        if (!explorerRows.some(function(row) {return explorerKey(row) === explorerFocusKey;})) explorerFocusKey = JSON.stringify([-1,"All tables"]);
+    }
+    property var tableFamilies: ["All tables"].concat(["PAT","PMT","SDT","EIT","NIT","CAT","BAT","TDT","TOT"].concat((analysisState.tables || []).map(function (t) {
         return t.name;
-    }).filter(function (name, index, all) {
-        return name && all.indexOf(name) === index;
-    }).sort())
+    })).filter(function (name, index, all) {
+        return name && name !== "Private / other" && all.indexOf(name) === index;
+    })).concat(["Private / other"])
     property var extraPidsValue: parseExtraPids(extraPids.text)
     function parseExtraPids(text) {
         let values = text.trim() ? text.trim().split(/[\s,]+/) : [];
@@ -1821,6 +1839,70 @@ ApplicationWindow {
             }
         }
     }
+    // Real shared-PID wire fixture, actual mouse/key delivery, no fabricated state.
+    Timer {
+        id: explorerParityTimer
+        interval: 150
+        repeat: true
+        property int phase: 0
+        property int ticks: 0
+        property var checks: ({})
+        function chooseFamily(keys) {
+            checks["family_click_"+phase] = core.click("tableFamilyFilter");
+            core.key("Home"); keys.forEach(function(key) {core.key(key);}); core.key("Return");
+        }
+        function finish() {
+            core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+            core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(key) {return checks[key];}),checks:checks,phase:phase,explorer:explorerRows}));
+            stop();
+        }
+        onTriggered: {
+            if (++ticks > 180) {checks.timeout=false; finish(); return;}
+            if (!analysisState.complete || core.busy || core.inspecting || core.comparing) return;
+            if (phase === 0) {
+                checks.logical_counts = explorerRows[0].count === 7 && analysisState.tables.length === 9 && explorerRows.find(function(r){return r.name==="SDT";}).count === 2;
+                checks.shared_pid_types = explorerRows.filter(function(r){return r.pid===17;}).length === 3;
+                checks.no_service_highlight = !explorerRows.some(explorerSelected);
+                checks.click_sdt = core.click("explorerRow:17:SDT");
+            } else if (phase === 1) {
+                checks.sdt_scope = pidFilter === 17 && filter === "SDT" && rawTableRows.length === 2;
+                core.key("Home"); core.key("Down"); core.key("Down");
+                checks.focus_does_not_select = filter === "SDT" && explorerRows[explorerList.currentIndex].name === "BAT";
+                core.key("Return");
+            } else if (phase === 2) {
+                checks.enter_selects_type = filter === "BAT" && pidFilter === 17 && rawTableRows.length === 1;
+                core.key("End"); core.key("Space");
+            } else if (phase === 3) {
+                checks.space_selects_pid = filter === "PMT" && pidFilter === 257 && rawTableRows.length === 1;
+                chooseFamily(["Down","Down"]);
+            } else if (phase === 4) {
+                checks.family_all_pids = filter === "PMT" && pidFilter === -1 && rawTableRows.length === 2 && !explorerRows.some(explorerSelected);
+                chooseFamily(["End"]);
+            } else if (phase === 5) {
+                checks.private_available = filter === "Private / other" && rawTableRows.length === 1;
+                chooseFamily(["Down","Down","Down","Down","Down"]);
+            } else if (phase === 6) {
+                checks.empty_type_available = filter === "NIT" && rawTableRows.length === 0;
+                checks.all_click = core.click("explorerRow:-1:All tables");
+                checks.bad_crc_click = core.click("toggleInvalidSections");
+            } else if (phase === 7) {
+                checks.all_resets_scope = filter === "" && pidFilter === -1 && explorerSelected(explorerRows[0]);
+                checks.bad_crc_preserves_counts = showInvalidSections && rawTableRows.length === 9 && explorerRows[0].count === 7;
+                snapshot(0);
+            } else if (phase === 8) {
+                if (analysisState.selected_packet !== 0) return;
+                checks.snapshot_counts = explorerRows[0].count === 1 && explorerRows.length === 2;
+                snapshot(-1);
+            } else {
+                if (analysisState.selected_packet !== null && analysisState.selected_packet !== undefined) return;
+                checks.latest_counts = explorerRows[0].count === 7;
+                tab = "Services";
+                checks.tab_highlight = !explorerRows.some(explorerSelected);
+                finish(); return;
+            }
+            phase++;
+        }
+    }
     // Native integration exercises the same controls and bridge as the workbench.
     Timer {
         id: lifecycleTestTimer
@@ -2262,6 +2344,8 @@ ApplicationWindow {
             lifecycleTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refresh")
             refreshTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "explorer-parity")
+            explorerParityTimer.start();
     }
     onClosing: if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout()
 
@@ -2622,21 +2706,44 @@ ApplicationWindow {
                         Layout.margins: 7
                     }
                     PlainLabel {
-                        text: (analysisState.standards_context || "auto").toUpperCase() + " · tables"
-                        color: ink
+                        text: "PID · TABLE TYPE · #"
+                        color: muted
                         Layout.margins: 7
+                        SafeTip { visible: explorerHeaderHover.hovered; text: "Logical tables, including hidden bad-CRC evidence. Repeated arrivals and section payloads do not increase this count." }
+                        HoverHandler { id: explorerHeaderHover }
                     }
                     ListView {
+                        id: explorerList
+                        objectName: "explorerList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
                         model: explorerRows
+                        activeFocusOnTab: true
+                        keyNavigationEnabled: false
+                        currentIndex: Math.max(0, explorerRows.findIndex(function(row) {return explorerKey(row) === explorerFocusKey;}))
+                        onCurrentIndexChanged: if (activeFocus) positionViewAtIndex(currentIndex, ListView.Contain)
+                        Keys.onPressed: function(event) {
+                            let next = currentIndex;
+                            if (event.key === Qt.Key_Home) next = 0;
+                            else if (event.key === Qt.Key_End) next = count - 1;
+                            else if (event.key === Qt.Key_Up) next = Math.max(0, next - 1);
+                            else if (event.key === Qt.Key_Down) next = Math.min(count - 1, next + 1);
+                            else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {selectExplorer(explorerRows[currentIndex]); event.accepted=true; return;}
+                            else return;
+                            explorerFocusKey = explorerKey(explorerRows[next]); event.accepted = true;
+                        }
                         ScrollBar.vertical: ScrollBar {}
                         delegate: NavItem {
                             required property var modelData
+                            required property int index
+                            objectName: "explorerRow:" + modelData.pid + ":" + modelData.name
+                            focusPolicy: Qt.NoFocus
+                            keyboardCurrent: explorerList.activeFocus && explorerList.currentIndex === index
+                            Accessible.name: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " " + tableLabel(modelData.name)) + " · " + modelData.count + " logical tables"
                             width: ListView.view.width
                             height: 32
-                            highlighted: tab === "Tables" && pidFilter === modelData.pid && (filter === modelData.name || modelData.pid < 0)
+                            highlighted: explorerSelected(modelData)
                             contentItem: RowLayout {
                                 spacing: 6
                                 PlainLabel { objectName: "explorerIcon:" + modelData.pid + ":" + modelData.name; text: modelData.pid < 0 ? "≡" : tableCategory(modelData.name)[1]; color: tableColor(modelData.name); Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter }
@@ -2645,12 +2752,12 @@ ApplicationWindow {
                                 PlainLabel { text: modelData.count; color:muted; font.pixelSize:10; Layout.preferredWidth:18; horizontalAlignment:Text.AlignRight }
                             }
                             onClicked: {
-                                filter = modelData.pid < 0 ? "" : modelData.name;
-                                pidFilter = modelData.pid; tab = "Tables";
+                                selectExplorer(modelData); explorerList.forceActiveFocus();
                             }
-                            SafeTip { visible:anchorControl.hovered; text: "PID " + hex(modelData.pid) + " · " + modelData.name + " · " + explanation(modelData.name) }
+                            SafeTip { visible:anchorControl.hovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
                         }
                     }
+                    TinyLabel { text: "↑ ↓ Home End · focus\nEnter / Space · select"; Layout.margins: 7 }
                     TinyLabel {
                         text: "EXTENSION"
                         Layout.margins: 7
@@ -2724,6 +2831,25 @@ ApplicationWindow {
                             recordList.forceActiveFocus();
                             if (rows.length)
                                 recordList.currentIndex = 0;
+                        }
+                    }
+                    RowLayout {
+                        visible: tab === "Tables"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 8
+                        Layout.rightMargin: 8
+                        PlainLabel { text: "Type"; color: muted }
+                        FieldChoice {
+                            id: tableFamilyChoice
+                            objectName: "tableFamilyFilter"
+                            Accessible.name: "Table type across all PIDs"
+                            Layout.fillWidth: true
+                            implicitHeight: 28
+                            model: tableFamilies.map(function(name, index) {return {label:index === 0 ? "All types" : tableLabel(name),value:index === 0 ? "" : name};})
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: Math.max(0, tableFamilies.indexOf(filter || "All tables"))
+                            onActivated: selectTableFamily(currentValue)
                         }
                     }
                     ColumnLayout {

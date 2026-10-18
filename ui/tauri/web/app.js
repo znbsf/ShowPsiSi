@@ -220,7 +220,7 @@ $("#app").innerHTML = `
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">↑ ↓ Home End <span>Move focus</span><br>Enter / Space <span>Select</span><br>Ctrl / ⌘ K <span>Search records</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only transport stream and manifest, without media or PCR.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><div class="actions"><button class="btn" id="export" disabled>Export SI-only TS + manifest</button><button class="btn" id="close-edit">Close</button></div></dialog>
@@ -573,7 +573,7 @@ async function snapshot(packet, id) {
   }
 }
 function isOtherTable(t) {
-  return !t.name || t.name === "Private / other";
+  return !t.name || t.name === "Private / other" || t.name.startsWith("Unknown / private (");
 }
 function tableFamilies() {
   return [
@@ -603,6 +603,52 @@ function tableMatches(t) {
     (pidFilter === null || Number(t.pid) === pidFilter) && (!filter ||
     (filter === "Private / other" ? isOtherTable(t) : t.name === filter))
   );
+}
+// Navigation counts engine logical groups, never distinct payloads or arrivals.
+function explorerRows() {
+  const groups = data.table_groups || [];
+  const rows = [];
+  for (const g of groups) {
+    const name = g.name || "Private / other";
+    const row = rows.find(r => r.pid === g.pid && r.name === name);
+    if (row) row.count++;
+    else rows.push({pid:g.pid, name, count:1});
+  }
+  rows.sort((a,b) => a.pid-b.pid || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return [{pid:-1,name:"All tables",count:groups.length}, ...rows];
+}
+let explorerFocusKey = JSON.stringify([-1,"All tables"]);
+const explorerKey = row => JSON.stringify([row.pid,row.name]);
+function explorerSelected(row) {
+  return tab === "Tables" && (pidFilter ?? -1) === row.pid && filter === (row.pid < 0 ? "" : row.name);
+}
+function selectExplorer(row) {
+  pidFilter = row.pid < 0 ? null : row.pid;
+  filter = row.pid < 0 ? "" : row.name;
+  explorerFocusKey = explorerKey(row);
+  changeTab("Tables"); page = 0; render();
+  [...$("#sidebar").querySelectorAll("button")].find(el => el.dataset.explorerKey === explorerFocusKey)?.focus();
+}
+function renderExplorer() {
+  const rows = explorerRows();
+  const restoreFocus = $("#sidebar").contains(document.activeElement);
+  if (!rows.some(row => explorerKey(row) === explorerFocusKey)) explorerFocusKey = explorerKey(rows[0]);
+  $("#sidebar").innerHTML = '<div class="pid-head" title="Logical tables, including hidden bad-CRC evidence. Repeated arrivals and section payloads do not increase this count."><span aria-hidden="true"></span><span>PID</span><span>TABLE TYPE</span><span>#</span></div>' + rows.map(row => {
+    const all = row.pid < 0, category = tableCategory(row.name);
+    return `<button class="nav explorer-row ${all ? 'all-tables' : 'pid-row'} ${explorerSelected(row) ? 'active' : ''}" data-pid="${row.pid}" data-filter="${esc(row.name)}" data-explorer-key="${esc(explorerKey(row))}" data-count="${row.count}" aria-pressed="${explorerSelected(row)}" tabindex="${explorerKey(row) === explorerFocusKey ? 0 : -1}" title="${all ? 'All tables' : 'PID ' + hex(row.pid) + ' · ' + esc(row.name)} · ${row.count} logical tables, including hidden bad-CRC evidence"><span class="pid-table-icon category-${category[0]}" aria-hidden="true">${all ? '≡' : category[1]}</span>${all ? '' : `<span class="numeric">${hex(row.pid)}</span>`}<span class="family-label category-${category[0]}" data-table-name="${esc(row.name)}">${esc(tableLabel(row.name))}</span><span class="count">${num(row.count)}</span></button>`;
+  }).join('');
+  const buttons = [...$("#sidebar").querySelectorAll("button")];
+  buttons.forEach((el, index) => {
+    el.onclick = () => selectExplorer(rows[index]);
+    el.onfocus = () => { explorerFocusKey = el.dataset.explorerKey; buttons.forEach(b => b.tabIndex = b === el ? 0 : -1); };
+    el.onkeydown = event => {
+      if (!["ArrowDown","ArrowUp","Home","End"].includes(event.key)) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length-1 : Math.max(0,Math.min(buttons.length-1,index+(event.key === "ArrowDown" ? 1 : -1)));
+      buttons[next].focus();
+    };
+  });
+  if (restoreFocus) buttons.find(el => el.dataset.explorerKey === explorerFocusKey)?.focus();
 }
 function render() {
   const stats = [
@@ -645,48 +691,7 @@ function render() {
   $("#standards").disabled = busy;
   $("#extra-pids").disabled = busy;
   $("#default-charset").disabled = busy;
-  $("#sidebar").innerHTML = [
-    "All tables",
-    ...tableFamilies(),
-    "Private / other",
-  ]
-    .map((t) => {
-      const count = (data.tables || []).filter(
-        (r) =>
-          t === "All tables" ||
-          (t === "Private / other" ? isOtherTable(r) : r.name === t),
-      ).length;
-      return `<button class="nav ${pidFilter === null && filter === (t === "All tables" ? "" : t) ? "active" : ""}" data-filter="${esc(t)}" ${tip(t)}><span class="table-icon category-${tableCategory(t)[0]}" aria-hidden="true">${t === "All tables" ? "▦" : tableCategory(t)[1]}</span><span class="family-label">${esc(tableLabel(t))}</span><span class="count">${num(count)}</span></button>`;
-    })
-    .join("");
-  $("#sidebar")
-    .querySelectorAll("button")
-    .forEach(
-      (el) =>
-        (el.onclick = () => {
-          pidFilter = null;
-          filter = el.dataset.filter === "All tables" ? "" : el.dataset.filter;
-          changeTab("Tables");
-          page = 0;
-          render();
-          [...$("#sidebar").querySelectorAll("button")].find((button) => button.dataset.filter === el.dataset.filter)?.focus();
-        }),
-    );
-  const pids = [...new Set((data.tables || []).map(r => Number(r.pid)))].sort((a,b) => a-b);
-  const pidPanel = document.createElement("div");
-  pidPanel.className = "pid-explorer";
-  pidPanel.innerHTML = '<div class="pid-head"><span>PID</span><span>TABLES</span><span>#</span></div>' + pids.map(pid => {
-    const tables = (data.tables || []).filter(r => r.pid === pid);
-    const categories = [...new Set(tables.map(r => r.name))];
-    const names = categories.map(tableLabel).join(" / ");
-    const labels = categories.map(name => `<span class="category-${tableCategory(name)[0]}" data-table-name="${esc(name || "")}"><span class="pid-table-icon" aria-hidden="true">${tableCategory(name)[1]}</span> ${esc(tableLabel(name))}</span>`).join(" / ");
-    return `<button class="nav pid-row ${pidFilter === pid ? 'active' : ''}" data-pid="${pid}" title="PID ${hex(pid)} · ${esc(names)}"><span class="numeric">${hex(pid)}</span><span class="family-label">${labels}</span><span class="count">${tables.length}</span></button>`;
-  }).join('');
-  $("#sidebar").prepend(pidPanel);
-  pidPanel.querySelectorAll('[data-pid]').forEach(el => el.onclick = () => {
-    pidFilter = Number(el.dataset.pid); filter = ''; changeTab('Tables'); page = 0; render();
-    $(`#sidebar [data-pid="${pidFilter}"]`)?.focus();
-  });
+  renderExplorer();
   $("#extension").innerHTML =
     `<div class="panel-title">DESCRIPTOR EXTENSION</div><strong>${esc(data.extension_id || "No extension reported")}</strong><p>Schema extensions use their declared scope. Native decoding follows the table context; raw evidence is retained.</p>`;
   $("#tabs").innerHTML = ["Services", "Tables", "EPG", "Issues", "Changes"]
@@ -809,7 +814,12 @@ function renderList() {
   $("#prev").disabled = page === 0;
   $("#next").disabled = start + PAGE_SIZE >= total;
   $("#service-head").innerHTML = tab === "Services" ? `<div class="service-head"><span ${tip("LCN")}>LCN</span><span>SERVICE / PROVIDER</span><span>TYPE</span><span ${tip("PMT")}>PMT PID</span><span>VIDEO / AUDIO PIDs</span></div>` : "";
-  $("#table-filter-tools").innerHTML = tab === "Tables" ? `<label title="Include invalid CRC sections. Issues always retains all evidence."><input id="show-bad-crc" type="checkbox" ${showBadCrc ? 'checked' : ''}> Bad CRC (${num((data.tables || []).filter(tableMatches).filter(isBadCrc).length)})</label><button class="btn small" id="table-group-toggle" aria-pressed="${groupedTables}" title="Switch between logical tables and individual sections">${groupedTables ? "Sections" : "Tables"}</button>` : "";
+  $("#table-filter-tools").innerHTML = tab === "Tables" ? `<label class="family-filter">Type <select id="table-family" aria-label="Table type across all PIDs"><option value="">All types</option>${[...tableFamilies(), "Private / other"].map(name => `<option value="${esc(name)}" ${filter === name ? "selected" : ""}>${esc(tableLabel(name))}</option>`).join("")}</select></label><label title="Include invalid CRC sections. Issues always retains all evidence."><input id="show-bad-crc" type="checkbox" ${showBadCrc ? 'checked' : ''}> Bad CRC (${num((data.tables || []).filter(tableMatches).filter(isBadCrc).length)})</label><button class="btn small" id="table-group-toggle" aria-pressed="${groupedTables}" title="Switch between logical tables and individual sections">${groupedTables ? "Sections" : "Tables"}</button>` : "";
+  $("#table-family")?.addEventListener("change", event => {
+    filter = event.target.value; pidFilter = null; page = 0;
+    explorerFocusKey = JSON.stringify([-1,"All tables"]);
+    render(); $("#table-family")?.focus();
+  });
   $("#table-group-toggle")?.addEventListener("click", () => { groupedTables = !groupedTables; page = 0; renderList(); });
   $("#show-bad-crc")?.addEventListener("change", e => { showBadCrc = e.target.checked; page = 0; renderList(); });
   $("#list").innerHTML = rows
@@ -885,7 +895,7 @@ function renderList() {
         }
       };
     });
-  if (tab === "Tables" && groupedTables) {
+  if (tab === "Tables" && groupedTables && groups.length) {
     const list = $("#list");
     list.setAttribute("role", "region");
     list.setAttribute("aria-label", "Table groups and source sections");
@@ -2111,7 +2121,7 @@ function uiState() {
     settled:!busy && !loadingDetail && !comparison.loading && pending.size === 0 && !pendingSnapshotTimer,
     runtime:{driver:env.driver,user_agent:navigator.userAgent},viewport:{width:innerWidth,height:innerHeight,device_pixel_ratio:devicePixelRatio},
     source:data.source || "",analysis_status:data.analysis_status || "idle",selected,selected_service:selectedService,packet:data.selected_packet,
-    theme, explorer:[...document.querySelectorAll(".pid-row [data-table-name]")].map(el=>({pid:Number(el.closest(".pid-row").dataset.pid),name:el.dataset.tableName,color:getComputedStyle(el).color,glyph:el.querySelector(".pid-table-icon").textContent})),
+    theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
     tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,

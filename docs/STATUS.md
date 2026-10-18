@@ -1,5 +1,24 @@
 # ShowPsiSi status
 
+Explorer parity, 2026-10-18, based on main `25a62e9` (including satellite
+Metadata): both frontends now use one All tables + PID/type navigation list,
+with engine logical-group counts and the same selection/focus contract.
+Web's duplicated family list moves to a Tables toolbar Type selector, also
+available in Qt. Known empty types, detected extension names, private evidence,
+bad-CRC visibility, historical snapshots and existing record views remain.
+See [the navigation and diagnostic contract](UI_AGENT_DEBUG.md#explorer-navigation-contract).
+
+Local Windows Qt regression: 41 UI + 6 resource + 10 evidence tests, plus retained
+smoke, passed; contrast 6 and both real-frontend diagnostic tests passed.
+Actual native Qt and WebView2 interaction used the same shared-PID wire fixture:
+SDT/BAT selection, focus-only arrow navigation, Enter activation and cross-PID
+PMT selection passed. Readback matched every explorer PID/name/count/selection
+and the active PMT scope. It also found and fixed Web's zero-result empty-state
+removal. Final browser/cross-platform acceptance and publication are recorded
+with the delivery PR; these local checks do not replace hosted CI.
+Ignored evidence: `artifacts/explorer-qt-full`, `artifacts/explorer-agent`,
+`artifacts/explorer-native`; originals and isolated test settings are retained.
+
 Satellite candidate association, 2026-10-18: developed on
 `codex/satellite-association` from `87ef81057fc164836f946116cf1523df65035546`
 (merged PR #15). Shared C++ lookup and Qt/Tauri Metadata retain wire parameters,

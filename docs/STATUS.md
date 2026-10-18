@@ -1,5 +1,14 @@
 # ShowPsiSi status
 
+Latest operation audit and handoff, 2026-10-18, on merged main `88506ba`:
+real Windows Qt/WebView2 edit, export and A/B comparison checks found remaining
+functional gaps, including Web BIN export / Use snapshot, Qt selection restore
+and source-evidence navigation. These are **not fixed** by the documentation
+handoff. Successful export readback, repro steps, local evidence and next
+acceptance gates are recorded in [the operation handoff](OPERATIONS_PARITY_HANDOFF.md).
+PR #18 and its postmerge CI are complete; this audit supersedes broad native
+Save-dialog unknowns below only for the explicitly exercised sample and flows.
+
 Workbench parity and all-table history, 2026-10-18, based on main `35bb665`:
 Qt/Web share `ui/tauri/web/workbench.js` for table/section counts, multiword
 search, ordering, structure-tree nodes and history scope. Both retain invalid

@@ -748,7 +748,7 @@ class ProtocolCoverageTests(unittest.TestCase):
         self.assertEqual(sorted(c['identity'].get('duplicate_index', 0) for c in initial['changes']), [0, 1])
         changed = self.core.call('diff_snapshots', {'from_packet': 1, 'to_packet': 2, 'kind': 'events'})
         self.assertEqual(changed['summary']['events'], {'added': 0, 'removed': 0, 'changed': 1, 'unchanged': 1})
-        self.assertEqual(changed['changes'][0]['changed_fields'], ['title'])
+        self.assertEqual(changed['changes'][0]['changed_fields'], ['language_variants', 'title'])
         moved = self.core.call('diff_snapshots', {'from_packet': 2, 'to_packet': 3, 'kind': 'events'})
         self.assertEqual(moved['summary']['events'], {'added': 2, 'removed': 2, 'changed': 0, 'unchanged': 0})
         self.assertEqual(len({c['key'] for c in moved['changes']}), 4)

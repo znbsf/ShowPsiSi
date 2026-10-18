@@ -1,5 +1,16 @@
 # Validation
 
+The signal-metadata suite (`test_signal_metadata.py`) runs through the real core
+without SDK compiler fixtures. It covers ID registry provenance and unknowns,
+bounded wire-string diagnostics, multilingual short/extended EIT text and
+fragment conflicts, event/version isolation, and semantic snapshot comparison.
+The `signal_metadata` tests in both UI suites operate real controls against that
+fixture. Run `python -m unittest discover -s tests -p test_signal_metadata.py -v`;
+use `-k signal_metadata` with `test_qt_ui.py` or `test_web_ui.py` for the UI checks.
+On Windows set `PYTHONUTF8=1` (including real-engine Python proxy fixtures) and
+`QT_QPA_FONTDIR` to the system Fonts directory for readable offscreen captures,
+as the hosted Windows setup does. Full suite evidence is separate from builds.
+
 Integration suites use the real native JSONL engine. Selected transport/error
 tests deliberately use scripted subprocess fixtures to inject invalid or late
 responses; they do not establish parser correctness. Build `showpsisi-core` first

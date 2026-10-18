@@ -17,6 +17,21 @@
   },
   "tools": [
     {
+      "name": "lookup_identifier",
+      "description": "Resolve a typed identifier using the installed SDK registry. Reference label only, not verified current ownership. No scan required.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "namespace": {"type": "string", "enum": ["original_network_id", "network_id", "bouquet_id", "ca_system_id", "private_data_specifier", "registration_id", "data_broadcast_id", "platform_id", "oui"]},
+          "value": {"type": "integer", "minimum": 0, "maximum": 4294967295},
+          "standards": {"type": "string", "enum": ["auto", "dvb", "atsc", "isdb", "isdb-japan", "isdb-brazil", "scte", "dtmb"]}
+        },
+        "required": ["namespace", "value"],
+        "additionalProperties": false
+      },
+      "annotations": {"readOnlyHint": true}
+    },
+    {
       "name": "capabilities",
       "description": "Discover tool schemas and implementation limits.",
       "inputSchema": {
@@ -36,6 +51,10 @@
         "properties": {
           "path": {
             "type": "string"
+          },
+          "default_charset": {
+            "type": "string",
+            "description": "Optional SDK input charset. DVB charsets honor explicit wire selectors; RAW charsets do not. Interpretation only, original bytes preserved."
           },
           "bitrate": {
             "type": "number",

@@ -14,7 +14,7 @@ The final ISDB guard and 22-record catalog passed the full engine gate and
 native Tauri run; Qt's complete gate preceded that core-only guard, with
 the final targeted Qt check retained separately. Hosted delivery remains pending.
 Validation uses an exact source mirror under the ignored
-`artifacts/satellite-association-validation`; the owner's existing dirty
+`artifacts/satellite-association-validation`; the owner's existing
 checkout and running applications are retained.
 Evidence: `artifacts/satellite-association-validation/artifacts/windows-engine-final`,
 `artifacts/windows-qt`, and `artifacts/native-satellite-final` inside that mirror.

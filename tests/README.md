@@ -149,6 +149,17 @@ acceptance. See [the scoped UX review](../docs/UI_UX_STANDARDS.md).
 The strict Qt job runs `test_qt_ui.py`, `test_qt_resource_paths.py`, and
 `test_qt_evidence.py` on Linux and Windows. Run any of those with
 `python -m unittest discover -s tests -p <filename> -v` in the native environment.
+On Windows, the suite inherits only `LD_LIBRARY_PATH` from its launcher, so a
+manual local run must also put the Qt binary directory on `PATH` and set
+`QT_QPA_FONTDIR` (the hosted workflow does this explicitly). A Qt executable that
+cannot find its DLLs exits with `0xC0000135` and is reported as a missing result,
+not as a product failure.
+
+`test_pid_explorer_logical_tables_and_density_cursor` runs the `refresh`
+self-check script. That script selects a snapshot through a density bin click and
+verifies the service heading, numeric PID ordering and filtering, logical
+tables, and the current-position cursor in the real application, with bounded
+waits so a stuck phase reports a failure instead of hanging.
 
 Export regression deliberately delays duplicate Save-dialog acceptance and checks
 that refused/repeated/cancelled operations preserve the original output and
@@ -167,3 +178,16 @@ See [CI completion contracts](../docs/CI_TEST_CONTRACT.md) for reproduced causes
 coverage, current/next/PID separation, generation-safe merged provenance, legal EIT
 schedule segment holes, short TOT CRC validation, and bounded histogram output for
 a 20,000-repeat burst. See [the additive contract](../docs/SECTION_EVIDENCE.md).
+
+## UI agent diagnostics and tree parity
+
+Set `SHOWPSISI_QT` and `SHOWPSISI_TAURI` to freshly built binaries, then run
+`python -m unittest discover -s tests -p test_ui_agent.py -v`. These are real
+frontend/engine tests: they assert rendered tree colors and glyphs, exercise the
+limited navigation API, reject arbitrary evaluation, and verify real PNG/state
+bundles while preserving the sample hash. Qt uses offscreen rendering; Windows
+Tauri uses WebView2. Missing binaries are reported as skips. Evidence (including
+failures) is retained under `artifacts/ui-agent-tests`; override it with
+`SHOWPSISI_AGENT_TEST_ARTIFACTS`. Each test isolates preferences and WebView data.
+Python-backed Qt fixtures explicitly use UTF-8 to match the JSONL protocol on
+Windows. See [UI agent contract and usage](../docs/UI_AGENT_DEBUG.md).

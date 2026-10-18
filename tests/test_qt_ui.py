@@ -32,7 +32,7 @@ def native_environment():
                  ROOT / '.deps/tsduck/usr/lib',
                  ROOT / '.deps/tsduck/usr/lib/x86_64-linux-gnu']
     env['LD_LIBRARY_PATH'] = os.pathsep.join(str(p) for p in libraries if p.exists()) + os.pathsep + env.get('LD_LIBRARY_PATH', '')
-    env.update(QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software',
+    env.update(QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', PYTHONIOENCODING='utf-8',
                SHOWPSISI_ROOT=str(ROOT), SHOWPSISI_AUTO='1',
                SHOWPSISI_CORE=env.get('SHOWPSISI_CORE', str(ROOT / ('build/bin/showpsisi-core' + EXE))),
                SHOWPSISI_SAMPLE=str(ROOT / 'samples/generated/lab.ts'))
@@ -489,6 +489,29 @@ for line in sys.stdin:
 
     def test_explicit_dvb_context(self):
         self.run_native_smoke('dvb')
+
+    def test_pid_explorer_logical_tables_and_density_cursor(self):
+        """Latest PID explorer and logical cards retain interactive bin selection."""
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-refresh-') as directory:
+            temp = Path(directory)
+            screenshot = temp / 'refresh.png'
+            report = self.run_script('refresh', temp, timeout=40)
+            self.assertEqual(report['families'][0], 'All tables')
+            self.assertEqual(report['phase'], 5)
+            self.assertTrue(all(report['checks'].values()), report['checks'])
+            for check in ('pid_order', 'service_columns', 'logical_tables',
+                          'pid_filter', 'bin_positions', 'bin_click',
+                          'bin_click_snapshot', 'density_cursor', 'latest_restored'):
+                self.assertIn(check, report['checks'])
+            self.assertGreater(report['service_columns_width'], 0)
+            self.assertGreater(report['record_list_width'], 0)
+            # The self-check restores the latest observed state, so the cursor
+            # must be reported from the selected snapshot, not the final state.
+            self.assertIsNone(report['selected_packet'])
+            self.assertGreaterEqual(report['density_cursor_x'], 0)
+            self.assertLessEqual(report['density_cursor_x'], 1440)
+            self.assertEqual(screenshot.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+            self.assertTrue(Path(str(screenshot) + '.cursor.png').is_file())
 
     def test_dtmb_and_guarded_dsmcc_native_views(self):
         """New selectors, empty projections and warnings use real SDK fixtures."""

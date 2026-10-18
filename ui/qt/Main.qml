@@ -122,6 +122,33 @@ ApplicationWindow {
     property var expandedTables: ({})
     property var preview: ({})
     property string notice: ""
+    function agentState() {
+        let diagnostics = core.diagnostics();
+        return JSON.stringify({settled: !core.busy && !core.inspecting && !core.comparing && diagnostics.pending === 0,
+            source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
+            selected: selected, selected_service: selectedService, packet: currentPacket(),
+            theme: lightTheme ? "light" : "dark", explorer: explorerRows, tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
+            focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
+            tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
+            source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
+    }
+    function agentAction(action) {
+        if (action.name === "select_tab" && ["Services", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;
+        else if (action.name === "set_theme" && ["dark", "light"].indexOf(action.value) >= 0) lightTheme = action.value === "light";
+        else if (action.name === "search_tree" && typeof action.value === "string" && action.value.length <= 512) treeSearch.text = action.value;
+        else if (action.name === "focus_tree" || action.name === "toggle_tree") {
+            let index = treeRows.findIndex(function(row) { return row.path === action.path; });
+            if (index < 0) return JSON.stringify({error: "Visible tree path not found"});
+            if (action.name === "toggle_tree") {
+                if (!treeRows[index].branch || treeSearch.text.trim()) return JSON.stringify({error: "Only an unfiltered branch can be toggled"});
+                toggle(action.path);
+            }
+            tree.currentIndex = index;
+            tree.positionViewAtIndex(index, ListView.Contain);
+            tree.forceActiveFocus();
+        } else return JSON.stringify({error: "Unsupported UI action"});
+        return JSON.stringify({accepted: true});
+    }
     // Only scripted validation uses this explicitly supplied artifact directory.
     property string artifactDir: core.env("SHOWPSISI_ARTIFACT_DIR")
     property var saveIntent: ({})
@@ -162,7 +189,7 @@ ApplicationWindow {
     property var tableFamilies: ["All tables"].concat((analysisState.tables || []).map(function (t) {
         return t.name;
     }).filter(function (name, index, all) {
-        return all.indexOf(name) === index;
+        return name && all.indexOf(name) === index;
     }).sort())
     property var extraPidsValue: parseExtraPids(extraPids.text)
     function parseExtraPids(text) {
@@ -336,7 +363,9 @@ ApplicationWindow {
                 BIT: "Broadcaster Information Table",
                 CDT: "Common Data Table",
                 TOT: "Time Offset Table",
-                TDT: "Time and Date Table"
+                TDT: "Time and Date Table",
+                "All tables": "Every observed section, grouped by family",
+                "Private / other": "Observed sections outside the known PSI / SI families; private meaning is never inferred from a tag alone"
             })[key] || key;
     }
     function tableLabel(name) {
@@ -1656,6 +1685,100 @@ ApplicationWindow {
             stop();
         }
     }
+    // UI/UX refresh self-check: family order, record column headers and the
+    // density cursor / bin selection, exercised through the real application.
+    Timer {
+        id: refreshTestTimer
+        interval: 200
+        repeat: true
+        property int phase: 0
+        property int waited: 0
+        property int marked: -1
+        property int targetBin: 0
+        property int targetPacket: -1
+        property real cursorXAtSnapshot: -1
+        property var checks: ({})
+        function finish() {
+            core.testResult(JSON.stringify({
+                passed: Object.keys(checks).every(function (key) {
+                    return checks[key];
+                }),
+                checks: checks,
+                phase: phase,
+                families: tableFamilies,
+                service_columns_width: serviceColumnHeader.width,
+                record_list_width: recordList.width,
+                density_cursor_x: cursorXAtSnapshot,
+                selected_packet: analysisState.selected_packet,
+                target_packet: targetPacket
+            }));
+            stop();
+        }
+        onTriggered: {
+            if (marked !== phase) {
+                marked = phase;
+                waited = 0;
+                core.mark("refresh_phase_" + phase);
+            } else if (++waited > 50) {
+                // Bounded wait: a stuck phase reports failure instead of hanging.
+                checks["timeout_phase_" + phase] = false;
+                finish();
+                return;
+            }
+            if (!analysisState.complete)
+                return;
+            if (phase < 3 && (!serviceRows.length || core.busy || core.inspecting || core.comparing))
+                return;
+            if (phase === 0) {
+                tab = "Services";
+                phase++;
+                return;
+            }
+            if (phase === 1) {
+                checks.pid_order = explorerRows.length > 1 && explorerRows[0].pid === -1 && explorerRows.every(function(row, i) { return i === 0 || row.pid >= explorerRows[i-1].pid; });
+                checks.service_columns = serviceColumnHeader.visible && serviceColumnHeader.width > 0 && serviceColumnHeader.height > 0;
+                tab = "Tables";
+                phase++;
+                return;
+            }
+            if (phase === 2) {
+                checks.logical_tables = tableRows.length > 0 && tableRows.every(function(row) { return row.logical && row.group && row.sectionRecords.length > 0; });
+                pidFilter = explorerRows[1].pid;
+                phase++;
+                return;
+            }
+            if (phase === 3) {
+                checks.pid_filter = tableRows.length > 0 && tableRows.every(function(row) { return row.pid === pidFilter; });
+                pidFilter = -1;
+                filter = "";
+                tab = "Services";
+                checks.bin_positions = densityStrip.binCount > 1 && densityStrip.packetAtBin(0) === 0 && densityStrip.packetAtBin(densityStrip.binCount - 1) === Number(analysisState.packets) - 1;
+                targetBin = Math.floor(densityStrip.binCount / 2);
+                targetPacket = densityStrip.packetAtBin(targetBin);
+                checks.bin_click = core.click("densityBin" + targetBin);
+                phase++;
+                return;
+            }
+            if (phase === 4) {
+                if (Number(analysisState.selected_packet) !== targetPacket)
+                    return;
+                checks.bin_click_snapshot = Number(analysisState.selected_packet) === targetPacket;
+                checks.density_cursor = densityCursor.visible && densityCursor.x >= 0 && densityCursor.x <= densityStrip.width;
+                cursorXAtSnapshot = densityCursor.x;
+                core.capture(core.env("SHOWPSISI_SCREENSHOT") + ".cursor.png");
+                snapshot(-1);
+                phase++;
+                return;
+            }
+            if (phase === 5) {
+                if (analysisState.selected_packet !== null && analysisState.selected_packet !== undefined)
+                    return;
+                checks.latest_restored = true;
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+                finish();
+            }
+        }
+    }
     // Native integration exercises the same controls and bridge as the workbench.
     Timer {
         id: lifecycleTestTimer
@@ -1882,7 +2005,7 @@ ApplicationWindow {
                 tree.positionViewAtIndex(treeRows.findIndex(function(r) { return r.path === "native"; }), ListView.Beginning); phase=29; return;
             }
             if (phase === 29) {
-                checks.native_mouse_fold = core.click("tree_native"); phase=30; return;
+                checks.native_mouse_fold = core.click("tree:native"); phase=30; return;
             }
             if (phase === 30) {
                 let nativeRow=treeRows.find(function(r) {return r.path === "native";});
@@ -1890,7 +2013,7 @@ ApplicationWindow {
                 tree.positionViewAtIndex(treeRows.findIndex(function(r) { return r.path === "native"; }), ListView.Beginning); phase=301; return;
             }
             if (phase === 301) {
-                checks.native_mouse_unfold = core.click("tree_native"); phase=31; return;
+                checks.native_mouse_unfold = core.click("tree:native"); phase=31; return;
             }
             if (phase === 31) {
                 let index=treeRows.findIndex(function(r) {return r.path === "native";});
@@ -2014,6 +2137,8 @@ ApplicationWindow {
             comparisonTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
             lifecycleTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "refresh")
+            refreshTestTimer.start();
     }
     onClosing: if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout()
 
@@ -2165,6 +2290,13 @@ ApplicationWindow {
                 enabled: backendReady
                 onClicked: core.send("capabilities", {})
             }
+            Action {
+                objectName: "saveDiagnostics"
+                text: "Save diagnostics"
+                enabled: !core.busy && !core.inspecting && !core.comparing
+                onClicked: notice = uiAgent.saveBundle()
+                SafeTip { visible: anchorControl.hovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
+            }
         }
     }
     ColumnLayout {
@@ -2189,7 +2321,7 @@ ApplicationWindow {
                 valueRole: "value"
                 model: [
                     {
-                        label: "Auto standards",
+                        label: "Standards: Auto",
                         value: "auto"
                     },
                     {
@@ -2384,9 +2516,9 @@ ApplicationWindow {
                             highlighted: tab === "Tables" && pidFilter === modelData.pid && (filter === modelData.name || modelData.pid < 0)
                             contentItem: RowLayout {
                                 spacing: 6
-                                PlainLabel { text: modelData.pid < 0 ? "≡" : tableCategory(modelData.name)[1]; color: tableColor(modelData.name); Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter }
+                                PlainLabel { objectName: "explorerIcon:" + modelData.pid + ":" + modelData.name; text: modelData.pid < 0 ? "≡" : tableCategory(modelData.name)[1]; color: tableColor(modelData.name); Layout.preferredWidth: 16; horizontalAlignment: Text.AlignHCenter }
                                 PlainLabel { visible:modelData.pid >= 0; text: hex(modelData.pid); color: muted; font.family:"monospace"; font.pixelSize:11; Layout.preferredWidth: 49 }
-                                PlainLabel { text: tableLabel(modelData.name); color: ink; Layout.fillWidth:true; elide:Text.ElideRight; font.pixelSize:11 }
+                                PlainLabel { objectName: "explorerLabel:" + modelData.pid + ":" + modelData.name; text: tableLabel(modelData.name); color: modelData.pid < 0 ? ink : tableColor(modelData.name); Layout.fillWidth:true; elide:Text.ElideRight; font.pixelSize:11 }
                                 PlainLabel { text: modelData.count; color:muted; font.pixelSize:10; Layout.preferredWidth:18; horizontalAlignment:Text.AlignRight }
                             }
                             onClicked: {
@@ -2627,6 +2759,7 @@ ApplicationWindow {
                         font.pixelSize: 11
                     }
                     RowLayout {
+                        id: serviceColumnHeader
                         visible: tab === "Services"
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
@@ -2662,6 +2795,10 @@ ApplicationWindow {
                             Keys.onSpacePressed: { if(tab === "Tables" && modelData.logical) toggleTableGroup(modelData); else activate(modelData); }
                             Keys.onRightPressed: { if(tab === "Tables" && modelData.logical && !expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
                             Keys.onLeftPressed: { if(tab === "Tables" && modelData.logical && expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
+                            leftPadding: 12
+                            rightPadding: 12
+                            topPadding: 8
+                            bottomPadding: 8
                             highlighted: tab === "Changes" ? !!selectedChange && selectedChange.key === modelData.key && selectedChange.kind === modelData.kind : tab === "Services" ? selected === modelData.source_id && selectedService === modelData.id : selected === (modelData.source_id || modelData.id)
                             background: Rectangle {
                                 color: recordDelegate.highlighted ? selectionSurface : recordDelegate.hovered ? hoverSurface : "transparent"
@@ -3020,7 +3157,7 @@ ApplicationWindow {
                         delegate: NavItem {
                             required property var modelData
                             required property int index
-                            objectName: "tree_" + modelData.path
+                            objectName: "tree:" + modelData.path
                             highlighted: tree.currentIndex === index
                             keyboardCurrent: tree.currentIndex === index && tree.activeFocus
                             Accessible.role: Accessible.ListItem
@@ -3037,11 +3174,13 @@ ApplicationWindow {
                                 spacing: 5
                                 PlainLabel {
                                     text: modelData.branch ? (modelData.closed ? "▸" : "▾") : "·"
+                                    objectName: "treeGlyph:" + modelData.path
                                     color: muted
                                     Layout.preferredWidth: 10
                                 }
                                 PlainLabel {
                                     text: modelData.label
+                                    objectName: "treeLabel:" + modelData.path
                                     color: modelData.branch ? (lightTheme ? "#147358" : "#4ec9b0") : ink
                                     font.pixelSize: fieldFontSize
                                     elide: Text.ElideMiddle
@@ -3049,6 +3188,7 @@ ApplicationWindow {
                                 }
                                 PlainLabel {
                                     text: modelData.value
+                                    objectName: "treeValue:" + modelData.path
                                     color: modelData.kind === "number" ? addedColor : modelData.kind === "string" ? (lightTheme ? "#955021" : "#d6a089") : muted
                                     font.family: "monospace"
                                     font.pixelSize: fieldFontSize
@@ -3201,25 +3341,76 @@ ApplicationWindow {
                         onClicked: snapshot(-1)
                     }
                 }
-                Row {
+                Item {
+                    id: densityStrip
                     Layout.fillWidth: true
-                    height: 12
-                    spacing: 2
-                    Repeater {
-                        model: analysisState.density || []
-                        Rectangle {
-                            required property var modelData
-                            width: Math.max(1, (parent.width - ((analysisState.density || []).length - 1) * 2) / Math.max(1, (analysisState.density || []).length))
-                            height: 12
-                            color: modelData.bad ? removedColor : "#3794ff"
-                            opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
-                            SafeTip {
-                                visible: binHover.hovered
-                                text: "Packet bin · " + modelData.count + " sections / " + modelData.bad + " invalid"
+                    height: 20
+                    readonly property int binCount: (analysisState.density || []).length
+                    readonly property real binWidth: Math.max(1, (width - Math.max(0, binCount - 1) * 2) / Math.max(1, binCount))
+                    readonly property bool interactive: backendReady && !!analysisState.complete
+                    function packetAtBin(index) {
+                        let packets = Number(analysisState.packets || 0);
+                        if (!packets) return 0;
+                        return Math.max(0, Math.min(packets - 1, Math.round(index * (packets - 1) / Math.max(1, binCount - 1))));
+                    }
+                    function binForPacket(packet) {
+                        let packets = Number(analysisState.packets || 0);
+                        if (!binCount) return -1;
+                        if (packet === null || packet === undefined || packets <= 1) return binCount - 1;
+                        return Math.max(0, Math.min(binCount - 1, Math.round(packet / (packets - 1) * (binCount - 1))));
+                    }
+                    Row {
+                        anchors.fill: parent
+                        spacing: 2
+                        Repeater {
+                            model: analysisState.density || []
+                            Rectangle {
+                                required property var modelData
+                                required property int index
+                                objectName: "densityBin" + index
+                                width: densityStrip.binWidth
+                                height: 20
+                                color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : "#3794ff"
+                                opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
+                                // Partially invalid bins keep the section colour and
+                                // add the invalid share instead of hiding the count.
+                                Rectangle {
+                                    visible: modelData.bad > 0 && !(modelData.count && modelData.bad >= modelData.count)
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    // A single invalid section in a dense bin is
+                                    // unreadable as a true proportion, so the
+                                    // share keeps a visible minimum height.
+                                    height: Math.max(3, parent.height * Math.min(1, modelData.bad / Math.max(1, modelData.count)))
+                                    color: removedColor
+                                    opacity: 0.95
+                                }
+                                SafeTip {
+                                    visible: binHover.hovered
+                                    text: "Bin " + (index + 1) + " · " + modelData.count + " sections / " + modelData.bad + " invalid" + (densityStrip.interactive ? " · click to load this position" : "")
+                                }
+                                HoverHandler {
+                                    id: binHover
+                                }
+                                TapHandler {
+                                    enabled: densityStrip.interactive
+                                    onTapped: snapshot(densityStrip.packetAtBin(index))
+                                }
                             }
-                            HoverHandler {
-                                id: binHover
-                            }
+                        }
+                    }
+                    Rectangle {
+                        id: densityCursor
+                        visible: densityStrip.binCount > 0 && analysisState.selected_packet !== null && analysisState.selected_packet !== undefined
+                        width: 2
+                        height: parent.height
+                        color: ink
+                        border.color: "#181818"
+                        x: {
+                            let index = densityStrip.binForPacket(analysisState.selected_packet);
+                            if (index < 0) return 0;
+                            return Math.max(0, index * (densityStrip.binWidth + 2) + densityStrip.binWidth / 2 - 1);
                         }
                     }
                 }

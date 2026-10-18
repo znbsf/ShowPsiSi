@@ -14,3 +14,7 @@ __pycache__/
 .env.*
 !.env.example
 ui/tauri/src-tauri/gen/schemas/
+
+# Historical local UI refresh captures; retained outside published evidence.
+docs/images/qt-refresh.png
+docs/images/web-refresh.png

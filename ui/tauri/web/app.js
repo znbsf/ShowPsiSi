@@ -185,6 +185,14 @@ let selected = "",
   scanEpoch = 0,
   cancelling = false,
   activeAnalyze = null;
+const recentResponses = [];
+const frontendErrors = [];
+function recordFrontendError(error) {
+  frontendErrors.push({at:new Date().toISOString(),message:String(error?.stack || error).slice(0,2048)});
+  if(frontendErrors.length > 20) frontendErrors.shift();
+}
+window.addEventListener("error", event=>recordFrontendError(event.error || event.message));
+window.addEventListener("unhandledrejection", event=>recordFrontendError(event.reason));
 let aggregateDiagnostic = null;
 let backendFailure = "";
 let comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: 0 };
@@ -207,8 +215,10 @@ const invoke = (...args) =>
         ),
       );
 $("#app").innerHTML = `
-<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="api">Agent API</button></header>
-<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="dtmb">DTMB</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
+<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="api">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></header>
+<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="dtmb">DTMB</option></select><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
+<div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
+<div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
 <main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">Ctrl / ⌘ K <span>Search records</span><br>↑ ↓ <span>Navigate records</span><br>← → <span>Expand tree</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
@@ -240,6 +250,17 @@ function notice(text, error = false) {
   $("#status-dot").classList.toggle("error", error);
   $("#notice").classList.toggle("error", error);
 }
+// Field-scoped validation feedback. The footer live region still carries the
+// announcement; this element keeps the reason next to the control that failed.
+function setExtraPidsError(message) {
+  const field = $("#extra-pids");
+  const error = $("#extra-pids-error");
+  field.setAttribute("aria-invalid", message ? "true" : "false");
+  error.textContent = message || "";
+  error.hidden = !message;
+  $("#source-feedback").hidden = !message;
+}
+$("#extra-pids").addEventListener("input", () => setExtraPidsError(""));
 function disableBackendActions() {
   if (!backendFailure) return;
   document
@@ -390,10 +411,12 @@ async function scan() {
           })
       : [];
   } catch (error) {
+    setExtraPidsError(String(error));
     notice(String(error), true);
     $("#extra-pids").focus();
     return;
   }
+  setExtraPidsError("");
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
@@ -523,6 +546,8 @@ function defaultInspect() {
   }
 }
 async function snapshot(packet, id) {
+  clearTimeout(pendingSnapshotTimer);
+  pendingSnapshotTimer = null;
   if (busy || backendFailure) return;
   if (tab === "Changes") changeTab("Services");
   const epoch = ++queryEpoch;
@@ -610,6 +635,11 @@ function render() {
   $("#cancel-scan").disabled = cancelling || activeAnalyze === null || !!backendFailure;
   $("#cancel-scan").textContent = cancelling ? "Cancelling…" : "Cancel";
   $("#cancel-scan").setAttribute("aria-busy", String(cancelling));
+  $("#scan-progress").hidden = !busy;
+  $("#scan-progress").setAttribute(
+    "aria-valuetext",
+    cancelling ? "Cancelling analysis" : busy ? "Analyzing transport stream" : "Idle",
+  );
   $("#source").disabled = busy;
   $("#standards").disabled = busy;
   $("#extra-pids").disabled = busy;
@@ -645,8 +675,10 @@ function render() {
   pidPanel.className = "pid-explorer";
   pidPanel.innerHTML = '<div class="pid-head"><span>PID</span><span>TABLES</span><span>#</span></div>' + pids.map(pid => {
     const tables = (data.tables || []).filter(r => r.pid === pid);
-    const names = [...new Set(tables.map(r => tableLabel(r.name)))].join(" / ");
-    return `<button class="nav pid-row ${pidFilter === pid ? 'active' : ''}" data-pid="${pid}" title="PID ${hex(pid)} · ${esc(names)}"><span class="numeric">${hex(pid)}</span><span class="family-label">${esc(names)}</span><span class="count">${tables.length}</span></button>`;
+    const categories = [...new Set(tables.map(r => r.name))];
+    const names = categories.map(tableLabel).join(" / ");
+    const labels = categories.map(name => `<span class="category-${tableCategory(name)[0]}" data-table-name="${esc(name || "")}"><span class="pid-table-icon" aria-hidden="true">${tableCategory(name)[1]}</span> ${esc(tableLabel(name))}</span>`).join(" / ");
+    return `<button class="nav pid-row ${pidFilter === pid ? 'active' : ''}" data-pid="${pid}" title="PID ${hex(pid)} · ${esc(names)}"><span class="numeric">${hex(pid)}</span><span class="family-label">${labels}</span><span class="count">${tables.length}</span></button>`;
   }).join('');
   $("#sidebar").prepend(pidPanel);
   pidPanel.querySelectorAll('[data-pid]').forEach(el => el.onclick = () => {
@@ -1043,7 +1075,7 @@ function fieldValue(key, value) {
   return String(value);
 }
 function leaf(label, value, key = label) {
-  return { label, value: fieldValue(key, value) };
+  return { label, value: fieldValue(key, value), kind: typeof value };
 }
 function objectNodes(object) {
   return Object.entries(object || {})
@@ -1107,9 +1139,10 @@ function nativeNode(node) {
       ...Object.entries(node.attributes || {}).map(([label, value]) => ({
         label,
         value,
+        kind: /^(?:0x[0-9a-f]+|[0-9]+)$/i.test(String(value)) ? "number" : "string",
       })),
       ...(node.children || []).map(nativeNode),
-      ...(node.text ? [{ label: "text", value: node.text }] : []),
+      ...(node.text ? [{ label: "text", value: node.text, kind: "string" }] : []),
     ],
   };
 }
@@ -1288,7 +1321,8 @@ function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1
   if (needle && !ancestorMatch && !nodeMatches(node, needle)) return "";
   if (++treeNodesRendered > 2500) return "";
   const accessible = `role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
-  const label = `<span class="node-label ${node.tone || ""}" title="${esc(fieldHelp[node.label] || node.label)}">${highlightedTreeText(node.label)}</span>${node.value !== undefined ? `<span class="node-value">${highlightedTreeText(node.value)}</span>` : ""}`;
+  const kind = ["number", "string", "boolean"].includes(node.kind) ? node.kind : "meta";
+  const label = `<span class="node-label ${node.tone || ""}" title="${esc(fieldHelp[node.label] || node.label)}">${highlightedTreeText(node.label)}</span>${node.value !== undefined ? `<span class="node-value" data-value-kind="${kind}">${highlightedTreeText(node.value)}</span>` : ""}`;
   if (!node.children)
     return `<div class="tree-leaf" ${accessible}>${label}</div>`;
   const opened = !!needle || openNodes.has(path);
@@ -1483,6 +1517,12 @@ function renderInspector() {
     return;
   }
   if (loadingDetail || detailError || !detail.name) {
+    if (tab === "Changes" && !loadingDetail && !detailError) {
+      // Comparison mode replaces the record list, so a "select a record" hint
+      // would point at nothing. Describe the workflow that is actually on screen.
+      panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="muted">COMPARISON</span></div><div class="empty"><span class="empty-icon">⇄</span><h3>Compare two observed states</h3><p>Choose packet cutoffs A and B in the record pane, then compare. Each change lists its own before/after evidence; selecting that evidence inspects the exact section here without moving the workbench snapshot. Use <em>Use snapshot</em> when you deliberately want the workbench to move to that cutoff.</p>${comparison.error ? `<p class="bad">${esc(comparison.error)}</p>` : ""}<p class="meta">Only observed valid current sections are compared. A missing observation is not proof that a service stopped broadcasting.</p></div>`;
+      return;
+    }
     panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR</div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError && !backendFailure ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
     $("#retry-inspect")?.addEventListener("click", () =>
       inspect(selected, selectedService, selectedKey, inspectionEvidence),
@@ -1598,9 +1638,49 @@ function renderInspector() {
   });
   $("#edit").onclick = openEdit;
 }
+function packetForBin(index, bins, packets) {
+  if (packets <= 1 || bins < 2) return 0;
+  return Math.max(
+    0,
+    Math.min(packets - 1, Math.round((index * (packets - 1)) / (bins - 1))),
+  );
+}
+function binForPacket(packet, bins, packets) {
+  if (packets <= 1 || bins < 2) return 0;
+  return Math.max(
+    0,
+    Math.min(bins - 1, Math.round((packet * (bins - 1)) / (packets - 1))),
+  );
+}
+let pendingSnapshotTimer = null;
+function snapshotAtBin(bin, bins, packets, immediate) {
+  const target = packetForBin(bin, bins, packets);
+  if (immediate) {
+    clearTimeout(pendingSnapshotTimer);
+    pendingSnapshotTimer = null;
+    snapshot(target);
+    return;
+  }
+  // Key auto-repeat coalesces; the last requested position wins.
+  clearTimeout(pendingSnapshotTimer);
+  pendingSnapshotTimer = setTimeout(() => {
+    pendingSnapshotTimer = null;
+    snapshot(target);
+  }, 140);
+}
 function renderTimeline() {
+  const bins = (data.density || []).length || 80;
+  const packets = Number(data.packets || 0);
+  // A query response re-renders the strip and replaces the focused slider, so
+  // remember whether the user was operating it and restore focus afterwards.
+  const sliderHadFocus = document.activeElement?.id === "density";
+  const dense = data.density || Array.from({ length: bins }, () => ({ count: 0, bad: 0 }));
+  const at = data.selected_packet === null || data.selected_packet === undefined ? null : Number(data.selected_packet);
+  const cursorPercent = at === null ? null : packets > 1 ? Math.min(100, (at / (packets - 1)) * 100) : 100;
+  const interactive = data.complete && !busy && !backendFailure;
+  const middle = packets > 1 ? Math.round((packets - 1) / 2) : 0;
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">80 packet-position bins <span class="legend-valid">■</span> sections <span class="bad">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="bins">${(data.density || Array.from({ length: 80 }, () => ({ count: 0, bad: 0 }))).map((b) => `<div class="bin ${b.bad ? "invalid" : ""}" style="--density:${b.count ? 0.3 + Math.min(0.7, b.count / 50) : 0.08}" title="${num(b.count)} sections · ${num(b.bad)} invalid"></div>`).join("")}</div>${arrivalAxis(0, Math.max(0,(data.packets || 1)-1))}<div class="history"><span class="meta">0</span>${(
+    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1))}</div><div class="history"><span class="meta">0</span>${(
       data.history || []
     )
       .slice(historyPage * 40, (historyPage + 1) * 40)
@@ -1620,7 +1700,34 @@ function renderTimeline() {
     renderTimeline();
   });
   $("#latest").onclick = () => snapshot(-1);
+  // Align the cursor with the real bin geometry; the percentage is the fallback
+  // used before layout or while the strip is hidden.
+  const cursor = $("#density .bin-cursor");
+  const binElements = [...document.querySelectorAll("#density .bin")];
+  if (cursor && at !== null && binElements.length && packets > 1) {
+    const element = binElements[binForPacket(at, bins, packets)];
+    if (element && element.offsetWidth)
+      cursor.style.left = element.offsetLeft + element.offsetWidth / 2 + "px";
+  }
+  if (sliderHadFocus) $("#density")?.focus({ preventScroll: true });
   $("#compare-snapshots").onclick = () => { changeTab("Changes"); render(); $("#compare-from").focus(); };
+  $("#density").addEventListener("click", (event) => {
+    const bin = event.target.closest("[data-bin]");
+    if (!bin || !interactive) return;
+    snapshotAtBin(Number(bin.dataset.bin), bins, packets, true);
+  });
+  $("#density").addEventListener("keydown", (event) => {
+    if (!interactive) return;
+    const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    // Same mapping as the cursor and bin clicks, so one step always moves by at
+    // least one packet and End reaches the declared maximum.
+    const current = at === null ? bins - 1 : binForPacket(at, bins, packets);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? bins - 1
+      : Math.max(0, Math.min(bins - 1, current + (event.key === "ArrowRight" ? 1 : -1)));
+    snapshotAtBin(next, bins, packets, false);
+  });
   $("#timeline")
     .querySelectorAll("[data-history]")
     .forEach(
@@ -1936,6 +2043,72 @@ $("#reset-layout").onclick = () => {
   saveLayout(true);
   notice(layoutStorageAvailable ? "Default layout restored" : "Default layout restored for this session");
 };
+// Stable IDs and semantic tree paths are the UI debugging contract. Never
+// accept arbitrary JavaScript, shell commands, edit/export actions or selectors.
+function uiState() {
+  const bounds = (el) => { const r = el.getBoundingClientRect(); return {x:r.x,y:r.y,width:r.width,height:r.height}; };
+  const visible = (el) => !!el.getClientRects().length && !el.closest("[hidden]") && getComputedStyle(el).visibility !== "hidden";
+  const tree = [...document.querySelectorAll("#tree-area [data-node-path]")].filter(visible).slice(0,2500).map(el => {
+    const row = el.querySelector(":scope > .tree-row") || el;
+    const label = row.querySelector(".node-label"), value = row.querySelector(".node-value");
+    return {path:el.dataset.nodePath,label:label?.textContent,value:value?.textContent || "",kind:value?.dataset.valueKind || "meta",
+      branch:el.classList.contains("tree-node"),closed:el.getAttribute("aria-expanded") === "false",bounds:bounds(row),
+      label_color:label ? getComputedStyle(label).color : "", value_color:value ? getComputedStyle(value).color : "",
+      glyph:getComputedStyle(row,"::before").content,glyph_color:getComputedStyle(row,"::before").color};
+  });
+  return {schema_version:1,frontend:env.runtime === "cloud-browser" ? "web" : "tauri",captured_at:new Date().toISOString(),
+    settled:!busy && !loadingDetail && !comparison.loading && pending.size === 0 && !pendingSnapshotTimer,
+    runtime:{driver:env.driver,user_agent:navigator.userAgent},viewport:{width:innerWidth,height:innerHeight,device_pixel_ratio:devicePixelRatio},
+    source:data.source || "",analysis_status:data.analysis_status || "idle",selected,selected_service:selectedService,packet:data.selected_packet,
+    theme, explorer:[...document.querySelectorAll(".pid-row [data-table-name]")].map(el=>({pid:Number(el.closest(".pid-row").dataset.pid),name:el.dataset.tableName,color:getComputedStyle(el).color,glyph:el.querySelector(".pid-table-icon").textContent})),
+    tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
+    controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
+      text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
+    diagnostics:{pending:pending.size,error:backendFailure || detailError,recent_responses:recentResponses.slice(),frontend_errors:frontendErrors.slice()},
+    source_map:{tree:"ui/tauri/web/app.js:sectionTree/drawNode",style:"ui/tauri/web/style.css",transport:"ui/tauri/src-tauri/src/main.rs"}};
+}
+function uiAction(action) {
+  if (action.name === "select_tab" && ["Services","Tables","EPG","Issues","Changes"].includes(action.value)) {
+    const target = [...document.querySelectorAll("[data-tab]")].find(el=>el.dataset.tab===action.value);
+    if (!target) throw new Error("Tab unavailable"); target.click();
+  } else if (action.name === "set_theme" && ["dark","light"].includes(action.value)) {
+    if (theme !== action.value) $("#theme-toggle").click();
+  } else if (action.name === "search_tree" && typeof action.value === "string" && action.value.length <= 512) {
+    treeSearch=action.value; const field=$("#tree-search"); if(field) field.value=treeSearch; renderTree();
+  } else if (["focus_tree","toggle_tree"].includes(action.name)) {
+    const target=[...document.querySelectorAll("#tree-area [data-node-path]")].find(el=>el.dataset.nodePath===action.path && el.getClientRects().length && !el.closest("[hidden]"));
+    if (!target) throw new Error("Visible tree path not found");
+    if(action.name === "toggle_tree") {
+      if(!target.classList.contains("tree-node") || treeSearch.trim()) throw new Error("Only an unfiltered branch can be toggled");
+      setTreeExpanded(target,target.getAttribute("aria-expanded")!=="true");
+    }
+    document.querySelectorAll('#tree-area [tabindex="0"]').forEach(el=>el.tabIndex=-1);
+    target.tabIndex=0;focusTreeItem(target);
+  } else throw new Error("Unsupported UI action");
+  return {accepted:true};
+}
+async function captureUi() {
+  if (env.runtime === "cloud-browser") throw new Error("Browser preview: use the browser screenshot tool together with showpsisi.getUiState(); native screenshot export requires the desktop app.");
+  // Paint the latest local navigation before capturing the actual WebView pixels.
+  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  return invoke("save_diagnostics",{state:uiState()});
+}
+$("#save-diagnostics").onclick=async()=>{
+  try { const result=await captureUi(); notice("Diagnostics saved: " + result.directory); }
+  catch(error) { notice("Diagnostics failed: " + String(error)); }
+};
+async function pollUiAgent() {
+  try {
+    const request=await invoke("agent_next");
+    if(request) {
+      let result;
+      try { result=request.method==="snapshot" ? uiState() : request.method==="capture" ? await captureUi() : uiAction(request.params || {}); }
+      catch(error) { result={error:String(error)}; }
+      await invoke("agent_reply",{id:request.id,result});
+    }
+  } catch(error) { console.error("UI agent transport stopped",error); return; }
+  setTimeout(pollUiAgent,100);
+}
 async function boot() {
   render();
   if (!native?.event?.listen) {
@@ -1960,6 +2133,8 @@ async function boot() {
     }
     const job = pending.get(msg.id);
     if (!job) return;
+    recentResponses.push({id:msg.id, method:job.method, ok:!msg.error, error:msg.error?.message || "", at:new Date().toISOString()});
+    if (recentResponses.length > 40) recentResponses.shift();
     pending.delete(msg.id);
     clearTimeout(job.timer);
     if (msg.error) {
@@ -1971,6 +2146,7 @@ async function boot() {
     else job.resolve(msg.result);
   });
   env = await invoke("environment");
+  if (env.agent_enabled) pollUiAgent();
   if (env.backend_alive === false)
     disconnectBackend("Native backend stopped. Restart the application.");
   if (backendFailure) return;
@@ -1991,6 +2167,7 @@ window.showpsisi = {
   getState: () => data,
   getDetail: () => detail,
   getComparison: () => comparison.result,
+  getUiState: uiState,
 };
 boot().catch((error) => {
   disconnectBackend("Backend connection failed: " + String(error));

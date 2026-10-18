@@ -106,7 +106,8 @@ class WorkbenchContrastTests(unittest.TestCase):
         for theme, tokens in self.web.items():
             for background in ('bg', 'surface', 'raised', 'selected', 'hover', 'input'):
                 for foreground in ('text', 'muted', 'green', 'red', 'accent', 'syntax-label',
-                                   'syntax-value', 'syntax-private', 'syntax-tag', 'syntax-string'):
+                                   'syntax-value', 'syntax-private', 'syntax-tag', 'syntax-string',
+                                   'tree-branch', 'tree-label', 'tree-number', 'tree-string', 'tree-meta'):
                     with self.subTest(theme=theme, foreground=foreground, background=background):
                         self.assert_ratio(tokens[foreground], tokens[background], 4.5, 'Web text')
                 for foreground in ('accent', 'control-border', 'control-border-hover'):
@@ -129,8 +130,7 @@ class WorkbenchContrastTests(unittest.TestCase):
             self.assertEqual(len({web[theme][name] for name in TABLES}), 11)
             for name in TABLES:
                 with self.subTest(theme=theme, table=name):
-                    if theme == 'dark':
-                        self.assertEqual(qt[theme][name], web[theme][name], 'Shared dark category identity')
+                    self.assertEqual(qt[theme][name], web[theme][name], 'Shared category identity')
                     for background in ('surface', 'panel', 'raised', 'selectionSurface', 'hoverSurface'):
                         self.assert_ratio(qt[theme][name], self.qt[theme][background], 4.5, 'Qt category')
                     for background in ('bg', 'surface', 'raised', 'selected', 'hover'):
@@ -170,6 +170,14 @@ class WorkbenchContrastTests(unittest.TestCase):
             for dark, light in colors:
                 for background in ('panel', 'surface'):
                     self.assert_ratio(light if theme == 'light' else dark, self.qt[theme][background], 4.5, 'XML syntax')
+
+    def test_tree_count_badges_follow_the_theme(self):
+        rules = [body for selector, body in css_rules(self.css) if selector == '.node-count']
+        self.assertTrue(rules)
+        backgrounds = [re.search(r'background:\s*([^;]+)', body).group(1) for body in rules if re.search(r'background:', body)]
+        self.assertEqual(backgrounds[-1], 'var(--raised)')
+        for theme, tokens in self.web.items():
+            self.assert_ratio(tokens['tree-meta'], tokens['raised'], 4.5, f'{theme} tree count')
 
     def test_palette_parsers_preserve_theme_scope_and_fail_closed(self):
         palettes = web_palettes(':root {--text:#ffffff;--bg:#000000;} :root {--text:#dddddd;} '

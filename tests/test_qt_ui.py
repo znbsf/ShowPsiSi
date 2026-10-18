@@ -43,6 +43,14 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_signal_metadata_language_encoding_and_id_lookup(self):
+        from test_signal_metadata import metadata_fixture
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'metadata.ts';path.write_bytes(metadata_fixture())
+            report=self.run_script('signal-metadata',directory,overrides={'SHOWPSISI_SAMPLE':str(path),'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertTrue(all(report['checks'].values()),report)
+            self.assertEqual(path.read_bytes(),metadata_fixture())
+
     def run_script(self, script, directory, settings=None, auto=True, overrides=None, on_running=None, timeout=25, after_report=None):
         binary = Path(os.environ.get('SHOWPSISI_QT', ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))
         if not binary.exists():

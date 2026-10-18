@@ -1,3 +1,11 @@
+.metadata-panel { overflow: auto; min-height: 0; padding: 8px 4px; }
+.metadata-panel pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; user-select: text; }
+.metadata-panel h3 { font-size: 12px; margin: 16px 0 8px; }
+.metadata-card { border: 1px solid var(--border); border-radius: 4px; padding: 10px; margin: 8px 0; }
+.metadata-card summary { cursor: pointer; }
+.metadata-query { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; }
+.metadata-query select, .metadata-query input { min-width: 0; max-width: 100%; }
+#default-charset { flex: 0 1 140px; min-width: 90px; width: 140px; }
 :root {
   color-scheme: dark;
   /* Surfaces and structure */

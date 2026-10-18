@@ -246,6 +246,8 @@ struct Record {
     J descriptors=J::array(),services=J::array(),events=J::array(),issues=J::array(),fields=J::object();
 };
 
+#include "SignalMetadata.h"
+
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
     std::vector<Record> records; std::unordered_map<std::string,size_t> ids; J history=J::array();
@@ -337,9 +339,14 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 else issue(r,"service_descriptor_invalid",p,"TSDuck rejected service descriptor");
             } else if(tag==0x4d) {
                 ts::ShortEventDescriptor native(duck,bin); d["name"]="short_event_descriptor";
-                if(native.isValid()) { result["title"]=native.event_name.toUTF8(); result["text"]=native.text.toUTF8(); d["fields"]=result; }
+                if(native.isValid()) { d["fields"]={{"language_code",native.language_code.toUTF8()},{"title",native.event_name.toUTF8()},{"text",native.text.toUTF8()}}; }
                 else issue(r,"short_event_descriptor_invalid",p,"TSDuck rejected event descriptor");
+            } else if(tag==0x4e&&r.tid>=0x4e&&r.tid<=0x6f) {
+                // Retain malformed fragments in the event's language evidence too.
+                d["name"]="extended_event_descriptor";
             }
+            // Diagnose the SDK/public identity before any user display-name override.
+            signalmeta::diagnose(r,d,duck.charsetIn());
             for(const auto& spec:extension.value("descriptors",J::array())) {
                 if(spec.at("tag")!=tag || spec.at("pds")!=pds) continue;
                 const auto& tids=spec.at("table_ids"); if(std::find(tids.begin(),tids.end(),J(r.tid))==tids.end()) continue;
@@ -459,7 +466,15 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 bool ok=ts::DecodeMJD(b.data()+p+2,ts::MJD_FULL,time);if(ok)time-=duck.timeReferenceOffset();
                 size_t len=u16(b,p+10)&0xfff;
                 J e={{"id",u16(b,p)},{"service_id",r.ext},{"ts_id",u16(b,8)},{"onid",u16(b,10)},{"title","Untitled event"},{"start",ok?time.toString().toUTF8():"Unknown"},{"duration_seconds",bcd(b[p+7])*3600+bcd(b[p+8])*60+bcd(b[p+9])},{"source_id",r.id}};
-                e.update(descriptors(r,p+12,p+12+len,r.ext));r.events.push_back(e);p+=12+len;
+                const size_t first=r.descriptors.size();
+                e.update(descriptors(r,p+12,p+12+len,r.ext));
+                e["language_variants"]=signalmeta::languages(r,first,duck);
+                e["default_language"]=nullptr;e["text"]="";
+                e["language_selection"]="First usable short description in language-code order; UI preference is presentation only";
+                for(const auto& variant:e["language_variants"])if(variant["short_status"]=="complete"){
+                    e["default_language"]=variant["language_code"];e["title"]=variant["title"];e["text"]=variant["short_text"];break;
+                }
+                r.events.push_back(e);p+=12+len;
             }
         }
     }
@@ -713,6 +728,7 @@ public:
                 const auto& r=records.at(ids.at(event.at("source_id").get<std::string>()));
                 J identity={{"original_network_id",event["onid"]},{"transport_stream_id",event["ts_id"]},{"service_id",event["service_id"]},{"pid",r.pid},{"table_id",r.tid},{"section",r.number},{"event_id",event["id"]},{"start",event["start"]}};
                 J content=event;content.erase("source_id");
+                signalmeta::removeSources(content["language_variants"]);
                 const std::string base=identity.dump();std::string key=base;size_t occurrence=0;
                 // Malformed duplicate identities within one section remain
                 // individually visible rather than overwriting one another.
@@ -775,6 +791,12 @@ public:
         duck.resetStandards(standards);duck.resetDefaultREGIDs();duck.setDefaultCharsetIn(nullptr);duck.setDefaultCharsetOut(nullptr);duck.setTimeReference(u"UTC");
         if(standardsContext=="isdb-japan"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"ARIB-STD-B24"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"ARIB-STD-B24"));duck.setTimeReference(u"JST");}
         if(standardsContext=="isdb-brazil"){duck.setDefaultCharsetIn(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setDefaultCharsetOut(ts::Charset::GetCharset(u"RAW-ISO-8859-15"));duck.setTimeReference(u"UTC-3");}
+        const auto charsetName=args.value("default_charset",std::string());
+        if(!charsetName.empty()){
+            const auto* charset=ts::Charset::GetCharset(ts::UString::FromUTF8(charsetName));
+            if(!charset)throw std::runtime_error("Unsupported default_charset: "+charsetName);
+            duck.setDefaultCharsetIn(charset);
+        }
         bitrate=args.value("bitrate",0.0);
         source=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
         TEST_CHECKPOINT("before_analysis",control);
@@ -842,6 +864,10 @@ public:
         J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
+        out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);
+        out["text_diagnostics"]=J::array();
+        for(const auto& d:r.descriptors)for(const auto& t:d.value("text_diagnostics",J::array()))out["text_diagnostics"].push_back(t);
+        out["text_diagnostic_scope"]="Selected section, supported DVB SI text fields only. ATSC multiple strings, native-only table loops and private text retain raw evidence without per-field diagnostics.";
         out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_xml_guarded"]=false;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
         out["section_native_text"]=nullptr;out["section_decode_scope"]="Exact original section; no renumbering or synthetic table assembly";
@@ -1026,6 +1052,13 @@ public:
             J registry={{"table_names",J::array()},{"descriptor_names",J::array()},{"table_count",tables.size()},{"descriptor_count",descriptors.size()},{"note","Registered XML names (including aliases), not a guarantee that every payload or regional variant is supported. Explicit standards context resolves ambiguous identifiers."}};
             for(const auto& name:tables)registry["table_names"].push_back(name.toUTF8());for(const auto& name:descriptors)registry["descriptor_names"].push_back(name.toUTF8());result["native_registry"]=registry;return result;
         }
+        if(method=="lookup_identifier"){
+            const auto& value=args.at("value");
+            if(!value.is_number_integer()||value<0||value>UINT32_MAX)throw std::runtime_error("Identifier value must be an integer in 0..4294967295");
+            const auto standard=args.value("standards",std::string("auto"));
+            if(std::set<std::string>{"auto","dvb","atsc","isdb","isdb-japan","isdb-brazil","scte","dtmb"}.count(standard)==0)throw std::runtime_error("Unknown standards context");
+            return signalmeta::lookup(args.at("namespace"),value,standard);
+        }
         if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return state(args.value("at_packet",UINT64_MAX));
         if(method=="diff_snapshots")return diffSnapshots(args);
@@ -1039,7 +1072,7 @@ public:
             require(candidate.is_object()&&candidate.contains("id")&&candidate["id"].is_string()&&!candidate["id"].get<std::string>().empty(),"nonempty string id required");
             require(candidate.contains("descriptors")&&candidate["descriptors"].is_array(),"descriptors must be an array");
             std::set<std::tuple<uint64_t,unsigned,unsigned>> descriptorScopes;
-            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_scope"};
+            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
             for(const auto& d:candidate["descriptors"]){
                 require(d.is_object(),"descriptor must be an object");
                 require(d.contains("tag")&&integer(d["tag"],255),"tag must be 0..255");

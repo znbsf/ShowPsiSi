@@ -70,6 +70,30 @@ ApplicationWindow {
         }
     }
     property string inspectorView: "Structure"
+    property string epgLanguage: ""
+    property var identifierResult: ({})
+    function eventVariant(event) {
+        let variants=event.language_variants || [];
+        return variants.find(function(v) {return v.language_code === epgLanguage;}) || variants.find(function(v) {return v.language_code === event.default_language;}) || variants[0] || ({});
+    }
+    function eventTitle(event) {
+        let variant=eventVariant(event);
+        return variant.language_code ? (variant.title || "No usable title") : (event.title || "Untitled event");
+    }
+    function metadataEntries() {
+        let entries=[];
+        (detail.identifier_lookups || []).forEach(function(x) {
+            entries.push({title:x.namespace + " · " + x.raw_hex, text:(x.label || "Unknown") + " · " + x.status + "\n" + x.uncertainty, evidence:JSON.stringify(x,null,2)});
+        });
+        (detail.text_diagnostics || []).forEach(function(x) {
+            entries.push({title:x.field + " · " + (x.language_code || "no language tag"), text:x.status + " · " + (x.effective_charset || "unknown charset") + " · " + x.basis + "\n" + x.decoded_text + "\nSelector: " + (x.selector_hex || "none") + " · section offset " + x.source.section_offset + "\nRaw: " + x.raw_hex + "\n" + (x.warnings || []).join("\n"), evidence:JSON.stringify(x,null,2)});
+        });
+        (detail.events || []).forEach(function(e) {
+            let v=eventVariant(e);
+            entries.push({title:"Event " + hex(e.id) + " · " + (v.language_code || "no language") + (epgLanguage && v.language_code !== epgLanguage ? " · fallback" : ""), text:eventTitle(e) + "\nShort: " + (v.short_status || "absent") + "\n" + (v.short_text || "") + "\nExtended: " + (v.extended_status || "absent") + "\n" + (v.extended_text === null || v.extended_text === undefined ? "No complete extended text" : v.extended_text) + "\n" + (v.warnings || []).join("\n"), evidence:JSON.stringify({event_id:e.id,service_id:e.service_id,source_id:e.source_id,variant:v},null,2)});
+        });
+        return entries.sort(function(a,b) {return Number(b.title.indexOf("Event ")===0)-Number(a.title.indexOf("Event ")===0);});
+    }
     property bool showInvalidSections: false
     property string evidenceScope: "Merged"
     property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
@@ -781,6 +805,7 @@ ApplicationWindow {
         core.send("analyze", {
             path: source.text.trim(),
             standards: standardChoice.currentValue,
+            default_charset: defaultCharset.text.trim(),
             extra_pids: extraPidsValue
         });
     }
@@ -829,7 +854,7 @@ ApplicationWindow {
     function rowTitle(row) {
         if (tab === "Changes")
             return changeTitle(row);
-        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? (row.exact ? "Section " + row.section + " · " : "") + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? row.title || "Untitled event" : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
+        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? (row.exact ? "Section " + row.section + " · " : "") + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? eventTitle(row) : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
     }
     function rowSubtitle(row) {
         if (tab === "Changes")
@@ -944,6 +969,7 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if (method === "lookup_identifier") identifierResult=result;
             if (method === "query") comparisonTestTimer.completedQueries++;
             if (method === "cancel_analysis") {
                 if (core.env("SHOWPSISI_SCRIPT") === "lifecycle-stale" || core.env("SHOWPSISI_SCRIPT") === "lifecycle-complete-race") {
@@ -2101,6 +2127,41 @@ ApplicationWindow {
             }
         }
     }
+    Timer {
+        id: metadataTestTimer
+        interval: 80
+        repeat: true
+        property int phase: 0
+        property var checks: ({})
+        property double deadline: Date.now()+20000
+        onTriggered: {
+            if(Date.now()>deadline){stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting || !detail.id)return;
+            if(phase===0){checks.epg_tab=core.click("tab_EPG");phase=1;return;}
+            if(phase===1){recordList.currentIndex=0;recordList.forceActiveFocus();core.key("Return");phase=2;return;}
+            if(phase===2){
+                if(detail.table_id!==0x4e)return;
+                checks.metadata_tab=core.click("inspector_Metadata");phase=3;return;
+            }
+            if(phase===3){
+                checks.encoding=detail.text_diagnostics.some(function(x){return x.basis==="wire_selector" && x.selector_hex==="15";});
+                checks.english=metadataEntries().some(function(x){return x.text.indexOf("First second")>=0;});
+                checks.language_control=core.click("epgLanguage");core.key("End");core.key("Return");phase=4;return;
+            }
+            if(phase===4){
+                checks.chinese=epgLanguage==="zho" && rowTitle(rows[0])==="新闻";
+                checks.incomplete=metadataEntries().some(function(x){return x.text.indexOf("incomplete")>=0 && x.text.indexOf("No complete extended text")>=0;});
+                identifierKind.currentIndex=3;identifierValue.text="0x0500";
+                checks.lookup_click=core.click("identifierQuery");phase=5;return;
+            }
+            if(phase===5){
+                if(!identifierResult.status)return;
+                checks.lookup=identifierResult.label.indexOf("Viaccess")>=0 && identifierResult.raw_hex==="0x0500" && !!identifierResult.source && !!identifierResult.uncertainty;
+                checks.sources=metadataEntries().some(function(x){return x.evidence.indexOf("section_id")>=0 && x.evidence.indexOf("raw_hex")>=0;});
+                core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));
+            }
+        }
+    }
     Component.onCompleted: {
         core.mark("ui_ready");
         if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
@@ -2117,6 +2178,7 @@ ApplicationWindow {
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refinement") refinementTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "signal-metadata") metadataTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "section-allbad")
             allBadEvidenceTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "section-superseded")
@@ -3043,12 +3105,13 @@ ApplicationWindow {
                         color: warningColor
                         font.pixelSize: 11
                     }
-                    RowLayout {
+                    Flow {
                         Layout.fillWidth: true
+                        Layout.preferredHeight: implicitHeight
                         spacing: 0
                         Repeater {
                             id: evidenceViews
-                            model: ["Structure", "Hex", "XML", "Decoded"]
+                            model: ["Structure", "Hex", "XML", "Decoded", "Metadata"]
                             NavItem {
                                 required property string modelData
                                 objectName: "inspector_" + modelData
@@ -3061,13 +3124,10 @@ ApplicationWindow {
                             objectName: "evidenceScope"
                             model: ["Merged", "Section"]
                             implicitHeight: 28
-                            Layout.preferredWidth: 100
+                            width: 100
                             currentIndex: evidenceScope === "Merged" ? 0 : 1
                             onActivated: { evidenceScope=currentText; collapsed={header:false}; }
                             Accessible.name: "Merged table or individual section evidence"
-                        }
-                        Item {
-                            Layout.fillWidth: true
                         }
                     }
                     RowLayout {
@@ -3252,6 +3312,100 @@ ApplicationWindow {
                             wrapMode: TextEdit.NoWrap
                             font.family: "monospace"
                             font.pixelSize: 11
+                        }
+                    }
+                    ScrollView {
+                        id: metadataScroll
+                        visible: inspectorView === "Metadata"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        clip: true
+                        contentWidth: availableWidth
+                        ColumnLayout {
+                            width: metadataScroll.availableWidth
+                            spacing: 8
+                            PlainLabel {
+                                text: "Selected section: ID names, text encoding and multilingual EPG. Reference labels do not verify current ownership."
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                            }
+                            FieldInput {
+                                id: defaultCharset
+                                objectName: "defaultCharset"
+                                Layout.fillWidth: true
+                                placeholderText: "Next scan default charset (e.g. UTF-8)"
+                                enabled: backendReady
+                                Accessible.name: "Default input charset for next scan"
+                                SafeTip { visible: anchorControl.hovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
+                            }
+                            FieldChoice {
+                                id: epgLanguageChoice
+                                objectName: "epgLanguage"
+                                Layout.fillWidth: true
+                                implicitHeight: 30
+                                model: ["Default"].concat((detail.events || []).reduce(function(all,e) { (e.language_variants || []).forEach(function(v) {if(all.indexOf(v.language_code)<0)all.push(v.language_code);});return all;}, []).sort())
+                                currentIndex: Math.max(0, model.indexOf(epgLanguage || "Default"))
+                                onActivated: epgLanguage=currentIndex === 0 ? "" : currentText
+                                Accessible.name: "Preferred EPG language"
+                            }
+                            FieldChoice {
+                                id: identifierKind
+                                objectName: "identifierKind"
+                                Layout.fillWidth: true
+                                implicitHeight: 30
+                                model: ["original_network_id","network_id","bouquet_id","ca_system_id","private_data_specifier","registration_id","data_broadcast_id","platform_id","oui"]
+                                Accessible.name: "Identifier namespace"
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                FieldInput { id: identifierValue; objectName: "identifierValue"; Layout.fillWidth: true; placeholderText: "ID: decimal or 0x hexadecimal"; Accessible.name: "Identifier value" }
+                                Action {
+                                    objectName: "identifierQuery"
+                                    text: "Look up"
+                                    enabled: backendReady
+                                    onClicked: {
+                                        let value=identifierValue.text.trim();
+                                        if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))) {identifierResult={error:"Enter a whole decimal or hexadecimal ID"};return;}
+                                        core.send("lookup_identifier",{namespace:identifierKind.currentText,value:Number(value),standards:detail.standards_context || standardChoice.currentValue});
+                                    }
+                                }
+                            }
+                            Action {
+                                id: identifierEvidence
+                                visible: Object.keys(identifierResult).length > 0
+                                text: checked ? "Hide lookup evidence" : "Show lookup evidence"
+                                checkable: true
+                                Layout.fillWidth: true
+                            }
+                            PlainLabel {
+                                visible: Object.keys(identifierResult).length > 0
+                                text: (identifierResult.label || identifierResult.error || identifierResult.status || "") + " · " + (identifierResult.raw_hex || "") + "\n" + (identifierResult.uncertainty || "")
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                            }
+                            TextArea {
+                                visible: identifierEvidence.checked && Object.keys(identifierResult).length > 0
+                                Layout.fillWidth: true
+                                readOnly: true
+                                selectByMouse: true
+                                textFormat: TextEdit.PlainText
+                                wrapMode: TextEdit.WrapAnywhere
+                                text: JSON.stringify(identifierResult,null,2)
+                            }
+                            PlainLabel { text: detail.text_diagnostic_scope || "Analyze a stream to inspect metadata."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
+                            Repeater {
+                                model: metadataEntries()
+                                ColumnLayout {
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    PlainLabel { text: modelData.title; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: blue }
+                                    TextArea { text: modelData.text; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
+                                    Action { id: evidenceToggle; text: checked ? "Hide original values and source" : "Original values and source"; checkable: true; Layout.fillWidth: true }
+                                    TextArea { visible: evidenceToggle.checked; text: modelData.evidence; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
+                                }
+                            }
                         }
                     }
                     ScrollView {

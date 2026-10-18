@@ -42,7 +42,46 @@ SI. A populated native table tree can coexist with empty Services/EPG projection
 the UIs explain that boundary. Inspect the native tree and original section bytes
 for fields outside those projections.
 
-## DTMB scope and text
+## Identifier, encoding and multilingual metadata
+
+The shared engine exposes nine reference namespaces: original network, network,
+bouquet, CA system, private data specifier, MPEG registration, data broadcast,
+platform and IEEE OUI. Names come from the installed TSDuck `.names` files,
+including registry ranges. Each answer preserves the numeric value, correct hex
+width, namespace, standards context, registry file/section, SDK version and an
+explicit uncertainty statement. An unknown result is not proof of an unassigned
+identifier; a label is not verification of current operator ownership. Auto or
+inapplicable standards return `context_required` for regional namespaces. OUI and
+MPEG registration are global; Japanese CA IDs use the separate ARIB registry.
+No physical-satellite identity or SID/PID/TSID ownership is inferred.
+
+Wire-string diagnostics cover service provider/name, short and extended event
+text and items, network/bouquet name, component text, and multilingual network,
+bouquet, service and component name descriptors encountered by the application's
+descriptor walker. Explicit selectors, default input charset, available versus
+declared bytes, decoded text, decoder failures and raw hex remain separate.
+Decoder success is not proof that the broadcaster used the expected encoding.
+ATSC multiple strings and native-only/private text loops retain SDK/raw evidence
+but are not claimed as per-field diagnostic coverage. Charset implementations
+outside the tested examples remain SDK capability, not application test evidence.
+
+DVB-layout EIT projections retain all language variants, exact source descriptors,
+extended item pairs, fragment numbers, missing/duplicate/conflicting fragments
+and assembly scope. Only complete valid non-conflicting fragments within one
+event loop are assembled; no merging across events, sections, versions or
+languages. The compatibility title/text selects the first usable short
+description in language-code order. UI language selection is presentation only.
+
+`test_signal_metadata.py` exercises real wire fixtures: reference names/ranges,
+unknown/context states, registration and CA descriptor provenance, explicit UTF-8
+and default ISO-8859-1, invalid/truncated selectors, RAW input behavior, language
+preservation, fragment reordering/items/duplicates/conflicts, event/version
+isolation, provenance-only snapshot changes and private display-name isolation.
+Both UI suites exercise the real engine with English/Chinese text and an
+incomplete Chinese extended description. These are synthetic signalling fixtures,
+not exhaustive charset, broadcaster or standards-conformance certification.
+
+## DTMB scope and text (regional context)
 
 The SDK now has a DTMB standards flag. The `dtmb` choice activates that context;
 it does not select a Chinese character set or UTC+8. This follows the pinned

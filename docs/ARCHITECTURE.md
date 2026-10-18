@@ -48,6 +48,17 @@ flowchart LR
 
 ## AI 原生：已经可调用的能力
 
+### ID、字符编码与多语言 EPG
+
+`core/SignalMetadata.h` 在 C++ 层生成三类只读解释，Qt 和 Tauri 共用结果：
+
+- `lookup_identifier` 不需要先扫描，按 ID 命名空间、位宽和标准上下文查询安装的 SDK 名称库。返回原始数字/十六进制值、名称或未知状态、名称库文件/节、SDK 版本及不确定性。名称库不等于当前运营商所有权核验；无法确认的资料日期为 null。
+- `inspect.identifier_lookups` 关联受支持的表头和原生描述符属性，指向原始 section、字段路径及所在表头/描述符偏移。不会通过 SID、PID、TSID 或轨道位置猜测运营商/卫星。
+- `inspect.text_diagnostics` 从已确定结构的原始字段提取有界字节，记录长度、字符集选择符、配置/生效字符集、解码状态及警告。`analyze.default_charset` 仅覆盖本次扫描的默认输入字符集；DVB 字符集尊重显式选择符，RAW 字符集不识别 DVB 前缀。它不是自动探测，也不会改写源文件或输出编码。
+- `events[].language_variants` 保留每种语言的全部短描述和扩展片段。仅在同一原始 EIT section 的同一事件内按语言和片段编号组合；缺失、冲突或无效片段不输出完整扩展文本。重复片段保留来源，完全一致的重复只组装一次。快照比较剔除来源位置的变化，返回值仍保留证据。
+
+两端 Metadata 视图均提供 ID 查询、逐字段诊断、语言选择及可展开的原始证据。首选语言缺失时明确标记回退；所选语言有冲突时显示状态，不借用另一语言的标题伪装成功。范围和验证边界见 [PROTOCOL_COVERAGE.md](PROTOCOL_COVERAGE.md)。
+
 “AI 原生”在这里是操作接口和证据结构的设计，而不是在 UI 附加聊天框。
 
 `api/tools.json` 是能力发现入口，同时用于后端参数验证和 MCP tools/list。当前操作：

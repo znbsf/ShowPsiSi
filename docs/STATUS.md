@@ -1,5 +1,42 @@
 # ShowPsiSi status
 
+## Signal metadata iteration — 2026-10-18
+
+Implemented on `codex/signal-metadata`, based on main
+`5342976025957aff561da2b324a6440a5039a107` (including PR #13):
+
+- Typed ID registry lookup and source-linked section identifiers, with explicit
+  unknown/context-required states and no claim of verified current ownership.
+- Bounded original-byte text diagnostics and per-scan default input charset.
+- Multilingual EIT short descriptions and extended fragment/item assembly,
+  preserving missing/conflicting/duplicate evidence and event/version boundaries.
+- Shared Metadata views, language selection and ID queries in Qt and Tauri.
+
+Local Windows evidence uses official TSDuck 3.45-4798, Qt 6.7.3 and MSVC 2022.
+The strict engine regression discovered 189 tests: 188 passed and the optional
+untracked real recording was absent. After the final private display-name guard,
+all 14 metadata tests passed (one more than that full run). Qt's strict regression
+passed 54 tests plus its retained smoke; the final metadata control test passed
+again. Locked Rust tests passed 6 and the native Tauri executable rebuilt.
+
+The actual Windows Tauri/WebView2 runtime (Edge 155.0.4283.62) was exercised through
+its local debugging interface with the real engine: English extended-text
+assembly, Chinese selection/incomplete state, charset diagnostics, ID lookup,
+source evidence and unchanged input bytes passed. This is feature interaction
+evidence, not native file-dialog or clean-machine acceptance. The validation
+launcher forcibly cleaned up its owned native app after the close wait; it is
+not graceful-shutdown evidence. Qt evidence is offscreen with system fonts.
+
+Local Chromium's pipe-based test launcher failed before usable pages; browser
+suite results must come from hosted Linux CI rather than being claimed locally.
+Source files were copied into an ignored writable validation directory because
+the managed worktree's child-process write permissions prevented local compiler
+outputs; implementation/test inputs were hash-compared. Ignored evidence lives
+under `artifacts/signal-metadata-validation/` in the original checkout: build logs,
+`engine-final2`, `qt-final`, `qt-metadata-final`, metadata test log and native
+WebView2 screenshots/results. Publication/CI state is reported with the PR; these
+local counts do not establish hosted delivery or a portable release.
+
 ## Latest delivered baseline — 2026-10-17 UTC
 
 Merged `main`: [`20ddf5f8ca58f7af0903f53ff31954dfe72b3f87`](https://github.com/znbsf/ShowPsiSi/commit/20ddf5f8ca58f7af0903f53ff31954dfe72b3f87), PR #12.

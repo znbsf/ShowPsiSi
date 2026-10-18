@@ -45,7 +45,8 @@ class EngineTests(unittest.TestCase):
             def call(i,method,params):
                 p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params})+'\n');p.stdin.flush();return json.loads(p.stdout.readline())['result']
             self.assertEqual(call(1,'initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['serverInfo']['name'],'ShowPsiSi')
-            tools=call(2,'tools/list',{})['tools'];self.assertEqual(len(tools),9);self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
+            tools=call(2,'tools/list',{})['tools'];self.assertEqual(len(tools),10);self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
+            self.assertTrue(next(t for t in tools if t['name']=='lookup_identifier')['annotations']['readOnlyHint'])
             r=call(3,'tools/call',{'name':'analyze','arguments':{'path':str(ROOT/'samples/generated/lab.ts')}});self.assertFalse(r['isError']);self.assertEqual(len(r['structuredContent']['services']),6)
             service=r['structuredContent']['services'][0]
             comparison=call(8,'tools/call',{'name':'diff_snapshots','arguments':{'from_packet':0,'to_packet':r['structuredContent']['packets']-1,'limit':1}})['structuredContent']
@@ -394,7 +395,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(result['summary']['services'],{'added':1,'removed':1,'changed':1,'unchanged':0})
         self.assertEqual(result['summary']['events'],{'added':1,'removed':0,'changed':1,'unchanged':0})
         event=next(c for c in result['changes'] if c['kind']=='events' and c['change']=='changed')
-        self.assertEqual(event['changed_fields'],['title']);self.assertEqual(event['before']['value']['title'],'Old event')
+        self.assertEqual(event['changed_fields'],['language_variants','title']);self.assertEqual(event['before']['value']['title'],'Old event')
         service=next(c for c in result['changes'] if c['kind']=='services' and c['change']=='changed')
         self.assertIn('components',service['changed_fields']);self.assertEqual(service['after']['value']['components']['pcr_pid'],0x201)
         reverse=self.core.call('diff_snapshots',{'from_packet':7,'to_packet':4})

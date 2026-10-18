@@ -27,6 +27,33 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from cloud_preview import Bridge, Server
 
 class BrowserTests(unittest.TestCase):
+    def test_signal_metadata_language_encoding_and_id_lookup(self):
+        from test_signal_metadata import metadata_fixture
+        path=self.output/'metadata.ts';path.write_bytes(metadata_fixture())
+        self.page.locator('#standards').select_option('dvb')
+        self.page.locator('#default-charset').fill('ISO-8859-1')
+        self.analyze(path)
+        self.page.locator('[data-tab="EPG"]').click()
+        self.page.locator('.record').first.click()
+        self.page.wait_for_function('() => window.showpsisi.getDetail()?.table_id === 0x4e')
+        self.page.locator('[data-view="metadata"]').click()
+        panel=self.page.locator('.metadata-panel')
+        self.assertIn('wire_selector',panel.inner_text())
+        self.assertIn('First second',panel.inner_text())
+        self.page.locator('#epg-language').select_option('zho')
+        self.assertIn('新闻',self.page.locator('#list').inner_text())
+        self.assertIn('incomplete',panel.inner_text())
+        self.assertIn('No complete extended text',panel.inner_text())
+        self.page.locator('.metadata-panel > details > summary').click()
+        self.page.locator('#identifier-kind').select_option('ca_system_id')
+        self.page.locator('#identifier-value').fill('0x0500')
+        self.page.locator('#identifier-query').click()
+        self.page.wait_for_function('() => document.querySelector("#identifier-result").textContent.includes("Viaccess")')
+        self.assertIn('not verified',self.page.locator('#identifier-result').inner_text())
+        self.page.locator('.metadata-card details summary').first.click()
+        self.assertIn('section_id',panel.inner_text())
+        self.assertEqual(path.read_bytes(),metadata_fixture())
+
     @classmethod
     def setUpClass(cls):
         from playwright.sync_api import sync_playwright

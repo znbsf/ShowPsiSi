@@ -919,7 +919,9 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(density.get_attribute('role'),'slider')
         self.assertEqual(density.get_attribute('tabindex'),'0')
         self.assertEqual(self.page.locator('#density .bin').count(),80)
-        self.assertIn('packets',self.page.locator('#density .axis-basis').inner_text())
+        self.assertEqual(self.page.locator('#density .axis-basis').inner_text(),
+                         'Zero-based packet positions · no measured time available')
+        self.assertEqual(self.page.locator('#density .arrival-axis span').count(),5)
         fill=self.page.evaluate('''() => {
           const bins=[...document.querySelectorAll("#density .bin")];
           const state=window.showpsisi.getState();

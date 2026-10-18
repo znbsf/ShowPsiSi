@@ -47,7 +47,11 @@ Browser regression assertions require settled state after End/Home.
 Raw captures, state and runtime logs remain local in
 `artifacts/interaction-check-2eaa37f4` and `artifacts/interaction-final-agent`.
 Test profiles/settings are isolated. The new branch is
-`codex/ui-parity-agent-diagnostics`; hosted acceptance is pending publication.
+`codex/ui-parity-agent-diagnostics`, published as PR #15. The first hosted run
+`39098070623` passed 31 of 32 browser cases; the new density test incorrectly
+expected the old word `packets` instead of the retained evidence label
+`Zero-based packet positions · no measured time available`. Its assertion now
+checks the full label and five axis ticks. Hosted acceptance requires the rerun.
 No source-stream edits or export were performed during this interaction check.
 
 ## Previously verified delivered baseline — 2026-10-17 UTC

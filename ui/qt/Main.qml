@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import "qrc:/shared/workbench.js" as Shared
 
 ApplicationWindow {
     id: win
@@ -109,6 +110,8 @@ ApplicationWindow {
         });
         return entries.sort(function(a,b) {return Number(b.title.indexOf("Event ")===0)-Number(a.title.indexOf("Event ")===0);});
     }
+    property bool arrivalOpen: false
+    property bool sectionGroupOpen: false
     property bool showInvalidSections: false
     property string evidenceScope: "Merged"
     property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
@@ -167,13 +170,23 @@ ApplicationWindow {
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
-            table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"}, tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
+            table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
+            records: {groups:tableModel.groups.map(function(g){return g.id;}),sections:rawTableRows.map(function(r){return r.id;}),hidden:tableModel.hidden,count_text:tableModel.count_text,grouped:groupedTables,page:tablePage},
+            history: {all:allTableHistory,entries:historyRows,page:historyPage}, evidence_scope:evidenceScope.toLowerCase(), tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
             focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
             tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
         if (action.name === "select_tab" && ["Services", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;
+        else if (action.name === "select_record" && typeof action.id === "string" && (analysisState.tables || []).some(function(r){return r.id===action.id;})) { tab="Tables";inspect(action.id); }
+        else if (action.name === "set_bad_crc" && typeof action.value === "boolean") showInvalidSections=action.value;
+        else if (action.name === "set_grouped" && typeof action.value === "boolean") groupedTables=action.value;
+        else if (action.name === "search_records" && typeof action.value === "string" && action.value.length<=512) recordSearch.text=action.value;
+        else if (action.name === "set_scope" && ["merged","section"].indexOf(action.value)>=0) evidenceScope=action.value==="merged"?"Merged":"Section";
+        else if (action.name === "set_view" && ["Structure","Hex","XML","Decoded","Metadata","References"].indexOf(action.value)>=0) inspectorView=action.value;
+        else if (action.name === "history_scope" && typeof action.value === "boolean") allTableHistory=action.value;
+        else if (action.name === "history_jump" && Number.isInteger(action.index) && action.index>=0 && action.index<historyRows.length) { activateHistory(historyRows[action.index]); }
         else if (action.name === "set_theme" && ["dark", "light"].indexOf(action.value) >= 0) lightTheme = action.value === "light";
         else if (action.name === "search_tree" && typeof action.value === "string" && action.value.length <= 512) treeSearch.text = action.value;
         else if (action.name === "focus_tree" || action.name === "toggle_tree") {
@@ -195,6 +208,12 @@ ApplicationWindow {
     property bool exporting: false
     property string exportFeedback: ""
     property url lastExportFolder: core.exportFolder()
+    property bool allTableHistory: false
+    property int historyPage: 0
+    property var historyRows: Shared.workbench.history(analysisState, detail, allTableHistory)
+    property string historyIdentity: [detail.pid,detail.table_id,detail.extension].join(":")
+    onHistoryIdentityChanged: historyPage=0
+    onAllTableHistoryChanged: historyPage=0
     property string snapshotTarget: ""
     property int snapshotTargetService: -1
     property var collapsed: ({
@@ -202,25 +221,35 @@ ApplicationWindow {
         })
     property var treeRows: treeSearch.text.trim() ? filterTree(makeTree(detail, selectedService, {}, true), treeSearch.text) : makeTree(detail, selectedService, collapsed, false)
     property var serviceRows: analysisState.services || []
-    property var rawTableRows: (analysisState.tables || []).filter(function (t) {
-        return tableMatches(t) && (showInvalidSections || t.crc?.status !== "invalid");
-    })
-    function tableMatches(t) {
-        return (!filter || (filter === "Private / other" ? !t.name || t.name === filter || t.name.indexOf("Unknown / private (") === 0 : t.name === filter)) && (pidFilter < 0 || t.pid === pidFilter);
-    }
+    property bool groupedTables: true
+    property int tablePage: 0
+    property string tableQuery: recordSearch.text
+    onTableQueryChanged: tablePage=0
+    property var tableModel: Shared.workbench.tables(analysisState, pidFilter, filter, showInvalidSections, recordSearch.text)
+    property var rawTableRows: tableModel.sections
+    property int logicalTableCount: tableModel.groups.length
     property var tableRows: logicalTableRows()
-    property int logicalTableCount: tableRows.filter(function(r) {return r.logical;}).length
+    onFilterChanged: tablePage = 0
+    onPidFilterChanged: tablePage = 0
+    onShowInvalidSectionsChanged: tablePage = 0
+    onGroupedTablesChanged: tablePage = 0
+    onTableModelChanged: {
+        let total=groupedTables ? tableModel.groups.length : tableModel.sections.length;
+        tablePage=Math.min(tablePage,Math.max(0,Math.ceil(total/100)-1));
+    }
+    function tableMatches(t) { return Shared.workbench.scope(t,pidFilter,filter); }
     function logicalTableRows() {
+        let total=groupedTables ? tableModel.groups.length : rawTableRows.length;
+        let start=Math.min(tablePage,Math.max(0,Math.ceil(total/100)-1))*100;
+        if(!groupedTables) return rawTableRows.slice(start,start+100);
         let out=[];
-        (analysisState.table_groups || []).forEach(function(g) {
+        tableModel.groups.slice(start,start+100).forEach(function(g) {
             let sections=rawTableRows.filter(function(r) {return g.section_ids.indexOf(r.id)>=0;});
-            if (!sections.length) return;
-            let first=sections.find(function(r) {return (g.selected_section_ids || []).indexOf(r.id)>=0;}) || sections[0];
-            let row=Object.assign({},first,{group:g,logical:true,sectionRecords:sections});
-            out.push(row);
+            let first=Shared.workbench.representative(g,sections);
+            out.push(Object.assign({},first || g,{group:g,logical:true,hiddenEvidence:!first,sectionRecords:sections}));
             if(expandedTables[g.id]) sections.forEach(function(r) {out.push(Object.assign({},r,{exact:true}));});
         });
-        return out.length ? out : rawTableRows;
+        return out;
     }
     function toggleTableGroup(row) {
         let next=Object.assign({},expandedTables); next[row.group.id]=!next[row.group.id]; expandedTables=next;
@@ -290,9 +319,9 @@ ApplicationWindow {
     property var issues: analysisState.diagnostics || []
     property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
-        return tab === "Changes" ? searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
+        return tab === "Tables" ? true : tab === "Changes" ? searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
     })
-    property bool selectionHidden: !!selected && !rows.some(function (row) {
+    property bool selectionHidden: !!selected && !(tab === "Tables" ? rawTableRows : rows).some(function (row) {
         if (tab === "Changes")
             return !!selectedChange && row.kind === selectedChange.kind && row.key === selectedChange.key;
         return tab === "Services" ? row.source_id === selected && row.id === selectedService : (row.source_id || row.id) === selected;
@@ -303,27 +332,19 @@ ApplicationWindow {
         });
     }
     function matchesRecord(row, text) {
-        let terms = searchTerms(text);
-        if (!terms.length)
-            return true;
-        let values = Object.keys(row).map(function (key) {
-            let value = row[key];
-            return typeof value === "number" ? String(value) + " " + hex(value) + " 0x" + value.toString(16) : typeof value === "string" ? value : "";
-        }).join(" ").toLowerCase();
-        return terms.every(function (term) {
-            return values.indexOf(term) >= 0;
-        });
+        return Shared.workbench.matches(row,text);
     }
+
     function filterTree(allRows, text) {
-        let terms = searchTerms(text), keep = {}, ancestors = [];
+        let terms = searchTerms(text), keep = {}, matched = {}, ancestors = [];
         allRows.forEach(function (row, index) {
             while (ancestors.length && allRows[ancestors[ancestors.length - 1]].depth >= row.depth)
                 ancestors.pop();
             let value = (row.label + " " + row.value).toLowerCase();
-            if (terms.every(function (term) {
+            if (ancestors.some(function(parent) { return !!matched[parent]; }) || terms.every(function (term) {
                 return value.indexOf(term) >= 0;
             })) {
-                keep[index] = true;
+                keep[index] = true; matched[index] = true;
                 ancestors.forEach(function (parent) {
                     keep[parent] = true;
                 });
@@ -463,187 +484,18 @@ ApplicationWindow {
         return String(value);
     }
     function makeTree(section, sid, hidden, expandAll) {
-        let result = [];
-        function node(path, label, value, depth) {
-            let branch = value !== null && typeof value === "object";
-            let closed = !expandAll && (hidden[path] === undefined ? (path === "arrivals" || path === "descriptor_audit" || path.endsWith("/meta") || /^service\/[^/]+\/fields$/.test(path)) : !!hidden[path]);
-            result.push({
-                path: path,
-                label: label,
-                value: branch ? (isList(value) ? value.length + " entries" : "") : valueText(label, value),
-                depth: depth,
-                branch: branch,
-                closed: closed,
-                kind: typeof value
-            });
-            if (branch && !closed)
-                Object.keys(value).forEach(function (k) {
-                    node(path + "/" + k, isList(value) ? "[" + k + "]" : k, value[k], depth + 1);
-                });
+        if(!section.id) return [];
+        let result=[];
+        function visit(node,parent,depth) {
+            let canonical=parent ? parent+"/"+node.id : node.id;
+            // Keep stable native diagnostic IDs while rendering the shared tree.
+            let path=canonical.replace(/^section\//,"").replace(/^assembly(?=\/|$)/,"provenance");
+            let branch=!!node.children;
+            let closed=branch && !expandAll && (hidden[path]===undefined ? !Shared.workbench.defaultOpen(canonical) : !!hidden[path]);
+            result.push({path:path,label:node.label,value:node.value || "",depth:depth,branch:branch,closed:closed,kind:node.kind || "meta"});
+            if(branch && !closed) node.children.forEach(function(child){visit(child,canonical,depth+1);});
         }
-        if (!section.id)
-            return result;
-        node("header", "Section header", {
-            table_id: section.table_id,
-            pid: section.pid,
-            version: section.version,
-            section: section.section,
-            last_section: section.last_section,
-            bytes: section.bytes,
-            valid: section.valid,
-            crc: section.crc || {},
-            extension: section.extension,
-            current_next: section.current
-        }, 0);
-        function sdkNode(path, value, depth, initiallyClosed) {
-            if (!value || !value.name)
-                return;
-            let attributes = value.attributes || {};
-            let identity = attributes.service_id || attributes.program_number || attributes.event_id || attributes.elementary_pid || attributes.elementary_PID || attributes.tag || "";
-            let service = (section.services || []).find(function (item) {
-                return Number(attributes.service_id) === item.id;
-            });
-            let closed = !expandAll && (hidden[path] === undefined ? initiallyClosed : !!hidden[path]);
-            result.push({
-                path: path,
-                label: value.name + (identity ? " · " + identity : "") + (service && service.name ? " · " + service.name : ""),
-                value: path === "native" && sid >= 0 ? "TSDuck · selected service" : "TSDuck",
-                depth: depth,
-                branch: true,
-                closed: closed,
-                kind: "native"
-            });
-            if (closed)
-                return;
-            let keys = Object.keys(attributes);
-            let descriptor = /descriptor$/.test(value.name);
-            let attributePath = path + "/attributes";
-            let attributesClosed = !expandAll && (hidden[attributePath] === undefined ? !descriptor : !!hidden[attributePath]);
-            if (keys.length)
-                result.push({
-                    path: attributePath,
-                    label: "Attributes",
-                    value: keys.length + " fields",
-                    depth: depth + 1,
-                    branch: true,
-                    closed: attributesClosed,
-                    kind: "native"
-                });
-            if (!attributesClosed)
-                keys.forEach(function (key) {
-                    let text = attributes[key];
-                    result.push({
-                        path: attributePath + "/" + key,
-                        label: key,
-                        value: text,
-                        depth: depth + 2,
-                        branch: false,
-                        closed: false,
-                        kind: /^(?:0x[0-9a-f]+|[0-9]+)$/i.test(text) ? "number" : "string"
-                    });
-                });
-            if (value.text)
-                node(path + "/text", "Text", value.text, depth + 1);
-            (value.children || []).forEach(function (child, index) {
-                let selectedChild = child.name === "service" && child.attributes && Number(child.attributes.service_id) === sid;
-                if (path === "native" && sid >= 0 && child.name === "service" && !selectedChild)
-                    return;
-                sdkNode(path + "/child/" + index, child, depth + 1, !(selectedChild || child.name === "service_descriptor"));
-            });
-        }
-        if (evidenceScope === "Merged" && section.merged?.native_table)
-            sdkNode("native", section.merged.native_table, 0, false);
-        if (evidenceScope === "Merged" && (section.native_table_sources || []).length) {
-            let sources={};
-            section.native_table_sources.forEach(function(source) {
-                sources["Section " + source.section + "/" + source.last_section + " · " + crcText(source)]={
-                    id:source.id,pid:source.pid,table_id:source.table_id,version:source.version,
-                    first_packet:source.first_packet,last_packet:source.last_packet,observations:source.count,
-                    crc:source.crc
-                };
-            });
-            node("provenance", section.merged?.complete ? "Merged source sections · exact evidence" : "Candidate source sections · no complete merge", sources, 0);
-        }
-        if (evidenceScope === "Section" && section.section_native_table)
-            sdkNode("native", section.section_native_table, 0, false);
-        if (evidenceScope === "Section" && section.section_native_text)
-            node("native_section_text", "SDK section display · see Decoded tab", "Exact original section; no merged siblings", 0);
-        node("fields", "Application decoded fields", section.fields || {}, 0);
-        let services = (section.services || []).filter(function (s) {
-            return sid < 0 || s.id === sid;
-        });
-        services.forEach(function (s) {
-            let path = "service/" + s.id;
-            result.push({
-                path: path,
-                label: "Service " + hex(s.id) + " · " + (s.name || "Unnamed"),
-                value: "",
-                depth: 0,
-                branch: true,
-                closed: !expandAll && !!hidden[path],
-                kind: "object"
-            });
-            if (expandAll || !hidden[path]) {
-                node(path + "/fields", "Service fields", s, 1);
-                (section.descriptors || []).filter(function (d) {
-                    return d.service_id === s.id;
-                }).forEach(function (d) {
-                    descriptor(path, d, 1);
-                });
-            }
-        });
-        function descriptor(parent, d, depth) {
-            let path = parent + "/descriptor/" + d.offset;
-            result.push({
-                path: path,
-                label: (d.native_decoded || d.extension ? "◆ " : "? ") + d.name + " · " + hex(d.tag, 2),
-                value: d.length + " B @ " + d.offset,
-                depth: depth,
-                branch: true,
-                closed: !expandAll && !!hidden[path],
-                kind: "descriptor"
-            });
-            if (expandAll || !hidden[path]) {
-                node(path + "/meta", "Descriptor header", {
-                    tag: d.tag,
-                    length: d.length,
-                    offset: d.offset,
-                    pds: d.pds,
-                    malformed: !!d.malformed,
-                    native_decoded: !!d.native_decoded,
-                    registration_ids: d.registration_ids || [],
-                    decode_note: d.native_decode_warning || (d.native_decoded ? "Native decoded" : d.extension ? "Configured extension" : "Unknown semantics; raw bytes preserved")
-                }, depth + 1);
-                if (Object.keys(d.fields || {}).length)
-                    node(path + "/fields", "Application decoded fields", d.fields, depth + 1);
-                if (d.native)
-                    sdkNode(path + "/native", d.native, depth + 1, false);
-                node(path + "/raw", "Raw bytes", d.raw || "", depth + 1);
-            }
-        }
-        (section.descriptors || []).filter(function (d) {
-            return !services.some(function (s) {
-                return s.id === d.service_id;
-            }) && (sid < 0 || d.service_id < 0);
-        }).forEach(function (d) {
-            descriptor("section", d, 0);
-        });
-        if (section.distribution)
-            node("arrivals", "Arrival distribution · packet positions", section.distribution, 0);
-        if ((section.descriptors || []).length) {
-            let descriptors=section.descriptors || [];
-            node("descriptor_audit", "Descriptor decode audit · selected section", {
-                scope:"Application-indexed descriptor loops; native-only table loops may contain additional descriptors",
-                native_decoded:descriptors.filter(function(d) {return d.native_decoded;}).length,
-                extension_decoded:descriptors.filter(function(d) {return !!d.extension;}).length,
-                generic_or_unresolved:descriptors.filter(function(d) {return !d.native_decoded && !d.extension;}).length,
-                warnings:descriptors.filter(function(d) {return !!d.native_decode_warning;}).map(function(d) {return hex(d.tag,2) + ": " + d.native_decode_warning;})
-            },0);
-        }
-        if ((section.events || []).length)
-            node("events", "Events", section.events, 0);
-        if ((section.issues || []).length)
-            node("issues", "Validation issues", section.issues, 0);
+        visit(Shared.workbench.structure(section,evidenceScope.toLowerCase(),sid),"",0);
         return result;
     }
     function toggle(path) {
@@ -842,6 +694,11 @@ ApplicationWindow {
             extra_pids: extraPidsValue
         });
     }
+    function activateHistory(entry) {
+        selectExplorer({pid:entry.pid,name:entry.name});
+        if(!entry.valid) showInvalidSections=true;
+        snapshot(entry.at_packet,entry.id);
+    }
     function snapshot(packet, id, sid) {
         if (!backendReady || !analysisState.complete) return;
         selectedChange = null;
@@ -876,6 +733,10 @@ ApplicationWindow {
         }) || (detail.services || [])[0];
     }
     function activate(row) {
+        if (tab === "Tables" && row.logical) {
+            toggleTableGroup(row);
+            if(row.hiddenEvidence) { notice="Bad-CRC evidence hidden. Enable Bad CRC to inspect."; return; }
+        }
         if (tab === "Changes") {
             inspectChange(row, row.after ? "after" : "before");
             return;
@@ -892,7 +753,7 @@ ApplicationWindow {
     function rowSubtitle(row) {
         if (tab === "Changes")
             return (row.changed_fields || []).join(", ") || "Presence changed · select to inspect source evidence";
-        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? "ext " + hex(row.extension) + " · v" + row.version + " · " + row.group.observed_section_numbers.length + " sections · " + (row.group.selected_complete ? "complete assembly" : "incomplete assembly") + " · " + row.group.validity : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
+        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? Shared.workbench.groupText(row.group) + " · " + arrivalText(row.group) + (row.hiddenEvidence ? " · Bad-CRC evidence hidden" : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
@@ -1089,8 +950,9 @@ ApplicationWindow {
         repeat: true
         onTriggered: {
             if (testStep === 0) {
-                if (!core.click("history_v1"))
+                if (!analysisState.history.length)
                     return;
+                snapshot(analysisState.history[0].last_packet,analysisState.history[0].id);
                 testStep++;
             } else if (testStep === 1) {
                 if (serviceRows[0]?.name !== "World News" || core.inspecting || detail.version !== 1)
@@ -1579,7 +1441,7 @@ ApplicationWindow {
             if (!analysisState.complete || core.busy || core.inspecting || core.comparing)
                 return;
             if (phase === 0) {
-                core.click("history_v1");
+                snapshot(analysisState.history[0].last_packet,analysisState.history[0].id);
                 phase++;
             } else if (phase === 1) {
                 if (detail.version !== 1) return;
@@ -1839,6 +1701,23 @@ ApplicationWindow {
             }
         }
     }
+    Timer {
+        id: workbenchPagingTimer
+        interval:100; repeat:true
+        property int phase:0
+        property int ticks:0
+        property string target:""
+        property var checks:({})
+        onTriggered: {
+            if(++ticks>150) {stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting) return;
+            if(phase===0) {tab="Tables";phase=10;return;}
+            if(phase===10) {checks.first=logicalTableCount===101 && tableRows.length===100;checks.next_click=core.click("tableNext");phase=1;return;}
+            if(phase===1) {checks.last=tablePage===1 && tableRows.length===1;target=tableRows[0].id;recordList.currentIndex=0;recordList.forceActiveFocus();core.key("Return");phase=2;return;}
+            if(phase===2) {checks.selected=detail.id===target && historyRows.length===1;snapshot(0);phase=3;return;}
+            if(phase===3) {checks.clamped=analysisState.selected_packet===0 && tablePage===0 && logicalTableCount===1 && tableRows.length===1;core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));}
+        }
+    }
     // Real shared-PID wire fixture, actual mouse/key delivery, no fabricated state.
     Timer {
         id: explorerParityTimer
@@ -2031,7 +1910,7 @@ ApplicationWindow {
             if(Date.now()>deadline) {stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
             if(!analysisState.complete || core.busy || core.inspecting) return;
             if(phase===0) {
-                checks.hidden_default=tableRows.length===0 && !detail.id && hiddenInvalidCount===1 && tab==="Tables";
+                checks.hidden_default=tableRows.length===1 && tableRows[0].hiddenEvidence && rawTableRows.length===0 && !detail.id && hiddenInvalidCount===1 && tab==="Tables";
                 checks.toggle_visible=core.click("toggleInvalidSections");phase=1;return;
             }
             if(phase===1) {
@@ -2064,7 +1943,7 @@ ApplicationWindow {
             if(phase===1) {
                 if(detail.id!==target) return;
                 checks.superseded=detail.merged.complete===false && detail.merged.tsduck_xml===null;
-                checks.no_old_native=treeRows.every(function(r) {return r.path!=="native";});
+                checks.no_old_native=treeRows.every(function(r) {return r.path.indexOf("native/")!==0;}) && !detail.merged.native_table;
                 inspectorView="XML";phase=2;return;
             }
             if(phase===2) {
@@ -2104,7 +1983,7 @@ ApplicationWindow {
             }
             if (!analysisState.complete || core.busy || core.inspecting || !detail.id) return;
             if (phase === 0) {
-                tab="Tables"; filter=""; selectedService=-1;
+                tab="Tables"; filter=""; selectedService=-1; sectionGroupOpen=true;
                 checks.hidden_crc = hiddenInvalidCount > 0 && tableRows.every(function(r) { return r.crc?.status !== "invalid"; });
                 target=(analysisState.tables || []).find(function(r) { return r.section === 0 && r.valid; }).id;
                 inspect(target,-1); phase=1; return;
@@ -2158,11 +2037,11 @@ ApplicationWindow {
             }
             if (phase === 4) {
                 checks.collapsed = treeRows.length < expandedCount && treeRows.every(function(r) { return r.depth === 0 && (!r.branch || r.closed); });
-                evidenceScope="Section"; collapsed={header:false}; phase=5; return;
+                checks.section_scope_click=core.click("sectionScope"); collapsed={header:false}; phase=5; return;
             }
             if (phase === 5) {
-                checks.section_scope = !treeRows.some(function(r) { return r.path === "native" || r.path === "provenance"; }) && !!detail.section_native_text;
-                inspectorView="XML"; evidenceScope="Merged"; phase=6; return;
+                checks.section_scope = !treeRows.some(function(r) { return r.path.indexOf("native/")===0 || r.path === "provenance"; }) && !!detail.section_native_text;
+                inspectorView="XML"; checks.merged_scope_click=core.click("mergedScope"); phase=6; return;
             }
             if (phase === 6) {
                 checks.xml_plain = xmlEvidence.textFormat === TextEdit.PlainText && xmlEvidence.text === detail.tsduck_xml;
@@ -2344,6 +2223,7 @@ ApplicationWindow {
             lifecycleTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refresh")
             refreshTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "workbench-paging") workbenchPagingTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "explorer-parity")
             explorerParityTimer.start();
     }
@@ -2981,13 +2861,14 @@ ApplicationWindow {
                         Layout.rightMargin: 8
                         PlainLabel {
                             id: recordCountLabel
-                            text: tab === "Tables" ? logicalTableCount + " tables · " + rawTableRows.length + " sections" + (recordSearch.text.trim() ? " · " + rows.length + " matching rows" : "") : tab + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
+                            text: tab === "Tables" ? tableModel.count_text : tab + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             elide: Text.ElideRight
                             color: muted
                             font.pixelSize: 11
                         }
+                        Action { visible: tab === "Tables"; objectName:"tableGroupToggle"; text: groupedTables ? "Sections" : "Tables"; implicitHeight:24; onClicked:groupedTables=!groupedTables }
                         Action {
                             objectName: "toggleInvalidSections"
                             visible: tab === "Tables"
@@ -2997,8 +2878,16 @@ ApplicationWindow {
                             SafeTip { visible:anchorControl.hovered; text:"Include CRC-invalid evidence in table groups and exact sections" }
                         }
                     }
+                    RowLayout {
+                        visible: tab === "Tables"
+                        Layout.fillWidth:true
+                        readonly property int total: groupedTables ? logicalTableCount : rawTableRows.length
+                        Action { objectName:"tablePrevious"; text:"Previous"; enabled:tablePage>0; onClicked:tablePage-- }
+                        PlainLabel { text: parent.total ? (Math.min(tablePage,Math.max(0,Math.ceil(parent.total/100)-1))*100+1)+"–"+Math.min((tablePage+1)*100,parent.total)+" of "+parent.total+(groupedTables?" tables":" sections") : "0 records"; color:muted; Layout.fillWidth:true }
+                        Action { objectName:"tableNext"; text:"Next"; enabled:(tablePage+1)*100<parent.total; onClicked:tablePage++ }
+                    }
                     PlainLabel {
-                        visible: selectionHidden && !!recordSearch.text.trim()
+                        visible: selectionHidden && (tab === "Tables" || !!recordSearch.text.trim())
                         text: "Selected evidence is retained; its record is hidden by this filter."
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
@@ -3039,7 +2928,7 @@ ApplicationWindow {
                             required property int index
                             objectName: tab === "Services" ? "service_" + modelData.id : tab === "Issues" ? "issue_" + modelData.code : "record_" + index
                             width: ListView.view.width
-                            height: tab === "Issues" ? 88 : tab === "Services" ? 94 : 58
+                            height: tab === "Issues" ? 88 : tab === "Services" ? 94 : modelData.logical ? 100 : 58
                             focusPolicy: Qt.StrongFocus
                             Keys.onSpacePressed: { if(tab === "Tables" && modelData.logical) toggleTableGroup(modelData); else activate(modelData); }
                             Keys.onRightPressed: { if(tab === "Tables" && modelData.logical && !expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
@@ -3080,8 +2969,8 @@ ApplicationWindow {
                                         text: rowSubtitle(modelData)
                                         width: parent.width; color: muted; font.pixelSize: 11
                                         elide: Text.ElideRight
-                                        maximumLineCount: tab === "Issues" ? 3 : 1
-                                        wrapMode: tab === "Issues" ? Text.Wrap : Text.NoWrap
+                                        wrapMode: Text.Wrap
+                                        maximumLineCount: tab === "Issues" || modelData.logical ? 3 : 1
                                     }
                                     PlainLabel {
                                         visible: tab === "Services"
@@ -3134,6 +3023,8 @@ ApplicationWindow {
                             text: "SECTION INSPECTOR"
                             Layout.fillWidth: true
                         }
+                        Action { text:(arrivalOpen?"▾ ":"▸ ")+"Arrival"; objectName:"arrivalToggle"; visible:!!detail.id; implicitHeight:20; onClicked:arrivalOpen=!arrivalOpen }
+                        Action { text:(sectionGroupOpen?"▾ ":"▸ ")+"Sections"; objectName:"sectionGroupToggle"; visible:(selectedGroup.section_ids || []).length>1 || selectedGroup.last_section>0; implicitHeight:20; onClicked:sectionGroupOpen=!sectionGroupOpen }
                         PlainLabel {
                             text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
                             color: detail.valid === false ? removedColor : muted
@@ -3225,7 +3116,7 @@ ApplicationWindow {
                         SafeTip { visible: arrivalsHover.hovered; text: "Packet-position distribution; not wall-clock timing. " + ((detail.distribution || {}).basis || "") + "\nGap packets min / mean / max: " + detail.distribution?.min_gap_packets + " / " + detail.distribution?.mean_gap_packets + " / " + detail.distribution?.max_gap_packets + (detail.distribution?.first_seconds !== null && detail.distribution?.first_seconds !== undefined ? "\nSeconds from supplied bitrate: " + detail.distribution.first_seconds + " → " + detail.distribution.last_seconds : "\nSeconds unavailable without a bitrate. No PCR-derived clock.") }
                     }
                     Row {
-                        visible: !!detail.distribution && !compactInspector
+                        visible: !!detail.distribution && arrivalOpen
                         Layout.fillWidth: true
                         Layout.preferredHeight: 12
                         spacing: 1
@@ -3242,8 +3133,9 @@ ApplicationWindow {
                             }
                         }
                     }
+
                     RowLayout {
-                        visible: siblingSections.length > 1
+                        visible: sectionGroupOpen && !!selectedGroup.id
                         Layout.fillWidth: true
                         spacing: 4
                         FieldChoice {
@@ -3260,12 +3152,13 @@ ApplicationWindow {
                     PlainLabel {
                         objectName: "sectionCoverage"
                         text: groupSummary()
-                        visible: !!text && !compactInspector
+                        visible: !!text && sectionGroupOpen
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         font.pixelSize: 11
                         color: selectedGroup.validity === "valid" ? muted : changedColor
                     }
+                    Action { visible:sectionGroupOpen && !!selectedGroup.id; text:(showInvalidSections?"Hide":"Show")+" bad CRC sections"; implicitHeight:24; onClicked:showInvalidSections=!showInvalidSections }
                     PlainLabel {
                         objectName: "inspectionCutoff"
                         visible: detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
@@ -3298,23 +3191,35 @@ ApplicationWindow {
                         spacing: 0
                         Repeater {
                             id: evidenceViews
-                            model: ["Structure", "Hex", "XML", "Decoded", "Metadata"]
+                            model: ["Structure", "Hex", "XML", "Decoded", "Metadata", "References"]
                             NavItem {
                                 required property string modelData
                                 objectName: "inspector_" + modelData
+                                leftPadding: 6
+                                rightPadding: 6
                                 text: modelData === "XML" && detail.native_xml_guarded ? "Guarded XML" : modelData
                                 highlighted: inspectorView === modelData
                                 onClicked: inspectorView = modelData
                             }
                         }
-                        FieldChoice {
+                        Row {
                             objectName: "evidenceScope"
-                            model: ["Merged", "Section"]
-                            implicitHeight: 28
                             width: 100
-                            currentIndex: evidenceScope === "Merged" ? 0 : 1
-                            onActivated: { evidenceScope=currentText; collapsed={header:false}; }
-                            Accessible.name: "Merged table or individual section evidence"
+                            height: 28
+                            Action {
+                                objectName: "sectionScope"
+                                text: "Section"; width: 50; height: 28
+                                highlighted: evidenceScope === "Section"
+                                onClicked: evidenceScope = "Section"
+                                Accessible.name: "Selected section evidence"
+                            }
+                            Action {
+                                objectName: "mergedScope"
+                                text: "Merged"; width: 50; height: 28
+                                highlighted: evidenceScope === "Merged"
+                                onClicked: evidenceScope = "Merged"
+                                Accessible.name: "Merged table evidence"
+                            }
                         }
                     }
                     RowLayout {
@@ -3615,6 +3520,23 @@ ApplicationWindow {
                             }
                         }
                     }
+                    ListView {
+                        visible: inspectorView === "References"
+                        Layout.fillWidth:true; Layout.fillHeight:true; clip:true
+                        model:specificationLinks; spacing:12; ScrollBar.vertical:ScrollBar {}
+                        delegate:Column {
+                            required property var modelData
+                            width:ListView.view.width; spacing:6
+                            PlainLabel { text:modelData.title || modelData.id; color:ink; width:parent.width; wrapMode:Text.Wrap; font.bold:true }
+                            PlainLabel { text:[modelData.version,modelData.scope,modelData.access,modelData.notes].filter(Boolean).join(" · "); color:muted; width:parent.width; wrapMode:Text.Wrap }
+                            TextArea { id:referenceUrl; text:modelData.url; width:parent.width; readOnly:true; selectByMouse:true; wrapMode:TextEdit.WrapAnywhere; textFormat:TextEdit.PlainText }
+                            Row {
+                                Action { text:"Open official source"; onClicked:if(!Qt.openUrlExternally(modelData.url)) notice="The official source could not be opened by the system browser." }
+                                Action { text:"Copy URL"; onClicked:{referenceUrl.selectAll();referenceUrl.copy();} }
+                            }
+                        }
+                        PlainLabel { visible:specificationLinks.length===0; text:"No verified specification link"; color:muted }
+                    }
                     ScrollView {
                         visible: inspectorView === "Decoded"
                         Layout.fillWidth: true
@@ -3679,9 +3601,13 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     TinyLabel {
-                        text: "ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "PACKET INDEX · NO CLOCK")
+                        text: "ALL ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "PACKET INDEX · NO CLOCK")
                         Layout.fillWidth: true
                     }
+                    FieldChoice { objectName:"historyScope"; Layout.preferredWidth:180; Layout.minimumWidth:180; model:["Selected table history","All table history"]; currentIndex:allTableHistory?1:0; onActivated:allTableHistory=currentIndex===1; implicitHeight:24 }
+                    PlainLabel { text:historyRows.length+" transitions"; color:muted; Layout.fillWidth:true; elide:Text.ElideRight }
+                    Action { objectName:"historyPrevious"; text:"Previous"; enabled:historyPage>0; onClicked:historyPage-- }
+                    Action { objectName:"historyNext"; text:"Next"; enabled:(historyPage+1)*40<historyRows.length; onClicked:historyPage++ }
                     PlainLabel {
                         text: analysisState.selected_packet === null || analysisState.selected_packet === undefined ? "Latest observed state" : "Snapshot @ " + num(analysisState.selected_packet)
                         color: muted
@@ -3797,14 +3723,14 @@ ApplicationWindow {
                     Row {
                         spacing: 6
                         Repeater {
-                            model: analysisState.history || []
+                            model: historyRows.slice(historyPage*40,(historyPage+1)*40)
                             Action {
                                 required property var modelData
-                                objectName: "history_v" + modelData.version
-                                text: modelData.label + " @ " + num(modelData.first_packet)
+                                objectName: "table_history_" + modelData.event_id
+                                text: Shared.workbench.historyText(modelData)
                                 implicitHeight: 24
                                 enabled: backendReady
-                                onClicked: snapshot(modelData.last_packet, modelData.id)
+                                onClicked: activateHistory(modelData)
                             }
                         }
                     }

@@ -1,5 +1,47 @@
 # ShowPsiSi status
 
+Workbench parity and all-table history, 2026-10-18, based on main `35bb665`:
+Qt/Web share `ui/tauri/web/workbench.js` for table/section counts, multiword
+search, ordering, structure-tree nodes and history scope. Both retain invalid
+groups, grouped/flat modes, 100-item pages and all six inspector views.
+Engine `table_history` covers all captured families, including short/private/
+next/invalid evidence; its first completion packet is the exact jump cutoff.
+History navigation also reveals its source table/invalid evidence. Legacy SDT
+`history` remains available for API compatibility. See the [workbench contract](UI_AGENT_DEBUG.md#record-inspector-and-history-contract).
+
+Local Windows validation: strict engine regression 204 passed; final Qt 43 UI + 6
+resource + 10 evidence tests and retained smoke passed, including the added
+101-table paging/snapshot-clamping check. Final native diagnostic checks cover
+both evidence scopes and all six views for every sample family, exact history
+jumps, record/section counts, searches, CRC visibility and immutable input.
+Actual Windows Qt and WebView2 mouse input selected and expanded PMT, inspected
+Decoded text, and followed its history to packet 1. Saved readback matched the
+selected source ID, cutoff, group/section counts and history entry exactly.
+The final Qt history scope control was also operated to expose all 19 sample
+transitions. The inspection caught and fixed its collapsed control width.
+Shared-tree array labels, compact layout and second-page section selection
+have dedicated regression coverage. Final native input also verified the Qt
+evidence-scope buttons and WebView2 group selection, Space/Enter folding.
+Both use a source-section selector and direct Section/Merged scope buttons;
+source selection preserves the historical comparison cutoff.
+
+Hosted PR validation caught Linux font-dependent wrapping in the inspector tabs,
+loss of matched branch descendants and the descriptor_tag search label, and a
+source-selector disclosure race before the browser toggle event. The follow-up
+reduces tab padding, keeps matched subtrees on both frontends, restores the label,
+and reads live disclosure state before replacement. The original 90px compact
+inspector threshold and browser assertions remain unchanged; final results are
+bound to the PR head below through hosted checks.
+
+Evidence remains ignored under `artifacts/workbench-*`. Original captures and
+isolated settings are preserved. One retained smoke launch without the documented
+offscreen/software environment exited during the scripted native save-dialog
+flow; the configured smoke passed. One compact test invocation lacked the font
+path and produced unreadable text; its valid-environment regression passed.
+These do not establish native file-dialog acceptance for this change. Browser
+Chromium follows the established hosted CI route, complementing actual Windows
+WebView2. Publication/merge acceptance is recorded on the delivery PR.
+
 Explorer parity, 2026-10-18, based on main `25a62e9` (including satellite
 Metadata): both frontends now use one All tables + PID/type navigation list,
 with engine logical-group counts and the same selection/focus contract.

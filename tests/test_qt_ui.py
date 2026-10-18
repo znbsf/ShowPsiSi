@@ -43,6 +43,24 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_workbench_paging_and_snapshot_clamping(self):
+        sys.path.insert(0,str(ROOT/'scripts'))
+        from make_fixture import section, word
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'pages.ts'
+            packets=[]
+            for i in range(101):
+                raw=section(0,i+1,1,word(100)+word(0xe100))
+                packets.append(bytes([0x47,0x40,0,0x10+(i%16),0])+raw+b'\xff'*(183-len(raw)))
+            path.write_bytes(b''.join(packets))
+            report=self.run_script('workbench-paging',directory,overrides={'SHOWPSISI_SAMPLE':str(path),'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertTrue(all(report['checks'].values()),report)
+
+    def test_workbench_shared_counts_views_and_all_table_history(self):
+        from test_ui_agent import UiAgentTests
+        binary = os.environ.get('SHOWPSISI_QT', str(ROOT / ('build/cloud/bin/showpsisi-qt' + EXE)))
+        UiAgentTests().exercise('qt', binary)
+
     def test_explorer_counts_shared_pid_keyboard_and_family_filter(self):
         from explorer_fixture import explorer_fixture
         with tempfile.TemporaryDirectory() as directory:

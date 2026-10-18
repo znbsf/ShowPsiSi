@@ -137,6 +137,7 @@ function categoryBadge(row) {
   return `<span class="table-kind category-${tone}" title="${esc(label + " · " + (row.name || row) + " · " + (glossary[row.name || row] || ""))}">${symbol} ${esc(tableLabel(row.name || row))}</span>`;
 }
 const isBadCrc = (row) => row.crc?.status === "invalid";
+let allTableHistory = false, historyIdentity = "";
 let showBadCrc = false, evidenceScope = "merged", groupedTables = true, sectionGroupOpen = false;
 const openTableGroups = new Set();
 function syntaxXml(xml) {
@@ -502,21 +503,9 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
     });
     if (epoch !== inspectEpoch) return;
     detail = result;
-    openNodes = new Set([
-      "section",
-      "section/fields",
-      "section/services",
-      `section/services/${sid}`,
-      `section/services/${sid}/descriptors`,
-      "section/descriptors",
-    ]);
-    const primaryDescriptor = (result.descriptors || []).find(
-      (d) => d.service_id === sid && d.tag === 0x48,
-    );
-    if (primaryDescriptor && sid >= 0)
-      openNodes.add(
-        `section/services/${sid}/descriptors/${primaryDescriptor.offset}`,
-      );
+    openNodes = new Set();
+    const visit=(node,parent='')=>{const path=parent?parent+'/'+node.id:node.id;if(workbench.defaultOpen(path)) openNodes.add(path);(node.children || []).forEach(child=>visit(child,path));};
+    visit(sectionTree());
     if (comparisonEvidence)
       notice(comparisonEvidence + " · evidence loaded · main snapshot unchanged");
     else if ($("#notice").classList.contains("error"))
@@ -529,6 +518,9 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
     if (epoch === inspectEpoch) {
       loadingDetail = false;
       renderInspector();
+      const identity=[detail.pid,detail.table_id,detail.extension].join(":");
+      if(identity!==historyIdentity) historyPage=0;
+      historyIdentity=identity; renderTimeline();
     }
   }
 }
@@ -545,6 +537,11 @@ function defaultInspect() {
     if (visible) inspect(visible.id);
     else { selectionReset(); renderInspector(); }
   }
+}
+function activateHistory(entry) {
+  selectExplorer({pid:entry.pid,name:entry.name});
+  if(!entry.valid) showBadCrc=true;
+  snapshot(entry.at_packet,entry.id);
 }
 async function snapshot(packet, id) {
   clearTimeout(pendingSnapshotTimer);
@@ -768,22 +765,8 @@ function recordRows() {
         : tab === "EPG"
           ? data.events || []
           : data.diagnostics || [];
-  if (search.trim()) {
-    const needle = search.trim().toLowerCase();
-    rows = rows.filter((row) =>
-      (
-        JSON.stringify(row) +
-        " " +
-        hex(row.pid) +
-        " " +
-        hex(row.id) +
-        " " +
-        hex(row.pmt_pid) + " " + hex(row.table_id, 2)
-      )
-        .toLowerCase()
-        .includes(needle),
-    );
-  }
+  if (tab === "Tables") return workbench.tables(data,pidFilter,filter,showBadCrc,search).sections;
+  rows = rows.filter(row=>workbench.matches(row,search));
   return tab === "Tables" ? [...rows].sort((a,b) => a.pid-b.pid || a.table_id-b.table_id || a.extension-b.extension || a.version-b.version || a.section-b.section) : rows;
 }
 function rowIdentity(r, index) {
@@ -795,6 +778,14 @@ function rowIdentity(r, index) {
         ? "issue:" + r.id + ":" + r.code + ":" + r.packet + ":" + index
         : r.id;
 }
+function navigateRecords(event,current) {
+  if(!['ArrowUp','ArrowDown','Home','End'].includes(event.key)) return;
+  event.preventDefault();
+  const items=[...$('#list').querySelectorAll('summary,[role="option"]')].filter(el=>el.getClientRects().length);
+  const i=items.indexOf(current);
+  const target=items[event.key==='Home'?0:event.key==='End'?items.length-1:Math.max(0,Math.min(items.length-1,i+(event.key==='ArrowDown'?1:-1)))];
+  items.forEach(el=>el.tabIndex=-1); if(target) {target.tabIndex=0;target.focus();}
+}
 function renderList() {
   $("#list").onscroll = () => { $("#service-head").scrollLeft = $("#list").scrollLeft; };
   $(".searchbar").hidden = tab === "Changes";
@@ -805,15 +796,16 @@ function renderList() {
     return;
   }
   const rows = recordRows();
-  const groups = tab === "Tables" && groupedTables ? (data.table_groups || []).filter(g => tableMatches(g) && (!search.trim() || g.section_ids.some(id => rows.some(r => r.id === id)))).sort((a,b) => a.pid-b.pid || a.table_id-b.table_id || a.extension-b.extension || a.version-b.version) : [];
+  const tableModel = workbench.tables(data,pidFilter,filter,showBadCrc,search);
+  const groups = tab === "Tables" && groupedTables ? tableModel.groups : [];
   const total = tab === "Tables" && groupedTables ? groups.length : rows.length;
   page = Math.max(0, Math.min(page, Math.ceil(total / PAGE_SIZE) - 1));
   const start = page * PAGE_SIZE;
-  $("#result-count").textContent = num(total);
+  $("#result-count").textContent = tab === "Tables" ? tableModel.count_text : num(total);
   $("#page-label").textContent = total ? `${num(start + 1)}–${num(Math.min(start + PAGE_SIZE, total))} of ${num(total)} ${tab === "Tables" && groupedTables ? "tables" : "records"}` : "0 records";
   $("#prev").disabled = page === 0;
   $("#next").disabled = start + PAGE_SIZE >= total;
-  $("#service-head").innerHTML = tab === "Services" ? `<div class="service-head"><span ${tip("LCN")}>LCN</span><span>SERVICE / PROVIDER</span><span>TYPE</span><span ${tip("PMT")}>PMT PID</span><span>VIDEO / AUDIO PIDs</span></div>` : "";
+  $("#service-head").innerHTML = tab === "Services" ? `<div class="service-head"><span ${tip("LCN")}>LCN</span><span>SERVICE / PROVIDER</span><span>TYPE</span><span ${tip("PMT")}>PMT PID</span><span>VIDEO / AUDIO PIDs</span></div>` : (tab === "Tables" && selected && !rows.some(r=>r.id===selected) ? '<p class="meta selection-hidden">Selected evidence is retained; its record is hidden by this filter.</p>' : "");
   $("#table-filter-tools").innerHTML = tab === "Tables" ? `<label class="family-filter">Type <select id="table-family" aria-label="Table type across all PIDs"><option value="">All types</option>${[...tableFamilies(), "Private / other"].map(name => `<option value="${esc(name)}" ${filter === name ? "selected" : ""}>${esc(tableLabel(name))}</option>`).join("")}</select></label><label title="Include invalid CRC sections. Issues always retains all evidence."><input id="show-bad-crc" type="checkbox" ${showBadCrc ? 'checked' : ''}> Bad CRC (${num((data.tables || []).filter(tableMatches).filter(isBadCrc).length)})</label><button class="btn small" id="table-group-toggle" aria-pressed="${groupedTables}" title="Switch between logical tables and individual sections">${groupedTables ? "Sections" : "Tables"}</button>` : "";
   $("#table-family")?.addEventListener("change", event => {
     filter = event.target.value; pidFilter = null; page = 0;
@@ -841,7 +833,7 @@ function renderList() {
   if (!rows.length)
     $("#list").innerHTML =
       `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${cancelling ? "Cancelling analysis…" : busy ? "Reading transport stream…" : data.analysis_status === "cancelled" ? "Analysis cancelled" : data.analysis_status === "failed" ? "Analysis failed" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${cancelling ? "Waiting for the engine to stop. The source file stays unchanged." : ["cancelled", "failed"].includes(data.analysis_status) ? "Partial results were cleared. Analyze again when you are ready." : !data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : ["Services", "EPG"].includes(tab) && (data.tables || []).length ? "This view shows derived " + (tab === "Services" ? "services" : "programme events") + ". Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "Choose another table family or packet snapshot."}</p></div>`;
-  const visible = rows.slice(start, start + PAGE_SIZE);
+  const visible = tab === "Tables" && groupedTables ? rows : rows.slice(start, start + PAGE_SIZE);
   $("#list")
     .querySelectorAll("[data-row]")
     .forEach((el) => {
@@ -862,30 +854,9 @@ function renderList() {
           el.dataset.key,
         );
       };
-      el.onclick = activate;
+      el.onclick = () => { const key=el.dataset.key;activate();requestAnimationFrame(()=>[...$('#list').querySelectorAll('[data-key]')].find(row=>row.dataset.key===key)?.focus()); };
       el.onkeydown = (e) => {
-        const options = [...$("#list").querySelectorAll('[role="option"]')].filter(el => el.getClientRects().length);
-        const index = options.indexOf(el);
-        if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
-          e.preventDefault();
-          const target =
-            options[
-              e.key === "Home"
-                ? 0
-                : e.key === "End"
-                  ? options.length - 1
-                  : Math.max(
-                      0,
-                      Math.min(
-                        options.length - 1,
-                        index + (e.key === "ArrowDown" ? 1 : -1),
-                      ),
-                    )
-            ];
-          options.forEach((x) => (x.tabIndex = -1));
-          target.tabIndex = 0;
-          target.focus();
-        }
+        navigateRecords(e,el);
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
           activate();
@@ -904,16 +875,29 @@ function renderList() {
     for (const g of groups.slice(start, start + PAGE_SIZE)) {
       const groupRows = g.section_ids.map(id => nodes.get(id)).filter(Boolean);
       // Preserve all-invalid group evidence even when its bad-CRC rows are hidden.
-      if (!groupRows.length && (showBadCrc || g.validity !== "all_invalid")) continue;
+
       const branch = document.createElement("details");
       branch.className = "table-branch";
       branch.open = openTableGroups.has(g.id);
-      branch.innerHTML = `<summary>${categoryBadge(g)} <span>PID ${hex(g.pid)} · TID ${hex(g.table_id,2)} · Ext ${hex(g.extension)} · v${g.version} · ${g.current ? "current" : "next"}<small>${esc(g.validity)} · observed ${g.observed_section_numbers?.length || 0}/${Number(g.last_section)+1} · missing ${(g.missing_section_numbers || []).join(', ') || 'none'} · selected ${g.selected_complete ? 'complete' : 'incomplete'}</small><small>${num(g.distribution?.observation_count)} observations · packets #${num(g.distribution?.first_packet)}–#${num(g.distribution?.last_packet)}</small></span></summary><div role="listbox" aria-label="Source sections"></div>`;
+      branch.innerHTML = `<summary data-group-id="${esc(g.id)}" aria-label="${esc(g.name)} table: select and expand"><button class="group-fold" tabindex="-1" aria-label="Expand or collapse table" type="button">${branch.open ? "▾" : "▸"}</button>${categoryBadge(g)} <span>PID ${hex(g.pid)} · TID ${hex(g.table_id,2)}<small>${esc(workbench.groupText(g))}</small><small>${num(g.distribution?.observation_count)} observations · packets #${num(g.distribution?.first_packet)}–#${num(g.distribution?.last_packet)}</small></span></summary><div role="listbox" aria-label="Source sections"></div>`;
+      const summary=branch.querySelector('summary');
+      summary.onclick=event=>{
+        if(event.target.closest('.group-fold')) return;
+        const row=workbench.representative(g,rows);
+        if(row) { branch.open ? openTableGroups.delete(g.id) : openTableGroups.add(g.id); event.preventDefault(); inspect(row.id); requestAnimationFrame(()=>[...list.querySelectorAll('summary')].find(el=>el.dataset.groupId===g.id)?.focus()); } else notice('Bad-CRC evidence hidden. Enable Bad CRC to inspect.');
+      };
+      summary.onkeydown=event=>{
+        if(event.key===' ' || event.key==='ArrowLeft' || event.key==='ArrowRight') {
+          event.preventDefault(); branch.open=event.key===' ' ? !branch.open : event.key==='ArrowRight';
+        }
+        navigateRecords(event,summary);
+      };
+      branch.querySelector('.group-fold').onclick=event=>{event.preventDefault();event.stopPropagation();branch.open=!branch.open;};
       const holder = branch.querySelector('[role="listbox"]');
       for (const row of groupRows) holder.append(row);
       if (!holder.querySelector('[tabindex="0"]') && groupRows.length) groupRows[0].tabIndex = 0;
       if (!groupRows.length) holder.innerHTML = '<p class="meta">Bad-CRC evidence hidden. Enable Show bad CRC to inspect.</p>';
-      branch.ontoggle = () => branch.open ? openTableGroups.add(g.id) : openTableGroups.delete(g.id);
+      branch.ontoggle = () => { branch.open ? openTableGroups.add(g.id) : openTableGroups.delete(g.id); branch.querySelector(".group-fold").textContent=branch.open?"▾":"▸"; };
       list.append(branch);
     }
   }
@@ -953,7 +937,7 @@ function changeTab(next) {
 function comparisonPresets() {
   const current = data.selected_packet ?? Math.max(0, data.packets - 1);
   return `<option value="">Choose current / history…</option><option value="${current}">Current snapshot · packet ${num(current)}</option><option value="0">Start · packet 0</option><option value="${Math.max(0, data.packets - 1)}">Latest · packet ${num(data.packets - 1)}</option>` +
-    (data.history || []).map((entry) => `<option value="${entry.last_packet}">${esc(entry.label)} · through packet ${num(entry.last_packet)}</option>`).join("");
+    (data.table_history || []).map((entry) => `<option value="${entry.last_packet}">${esc(workbench.historyText(entry))} · through packet ${num(entry.last_packet)}</option>`).join("");
 }
 function invalidateComparison() {
   ++comparison.epoch;
@@ -1086,223 +1070,10 @@ function fieldValue(key, value) {
   }
   return String(value);
 }
-function leaf(label, value, key = label) {
-  return { label, value: fieldValue(key, value), kind: typeof value };
-}
-function objectNodes(object) {
-  return Object.entries(object || {})
-    .filter(([, value]) => value !== undefined)
-    .map(([key, value]) =>
-      value && typeof value === "object"
-        ? {
-            label: key,
-            children: Array.isArray(value)
-              ? value.map((v, i) =>
-                  typeof v === "object"
-                    ? { label: `[${i}]`, children: objectNodes(v) }
-                    : leaf(`[${i}]`, v, key),
-                )
-              : objectNodes(value),
-          }
-        : leaf(key, value),
-    );
-}
-function descriptorNode(d, index) {
-  return {
-    label: d.name || "opaque_descriptor",
-    tone: d.malformed || (d.decode_status && d.decode_status !== "decoded") ? "bad" : d.extension ? "private" : "",
-    value: hex(d.tag, 2) + " · " + d.length + " B · @" + d.offset,
-    children: [
-      leaf("descriptor_tag", d.tag, "tag"),
-      leaf("decode_status", d.decode_status || "not reported"),
-      leaf("decode_scope", d.decode_scope || "not reported"),
-      leaf("decoder_registered", d.decoder_registered ?? null),
-      leaf("descriptor_length", d.length),
-      leaf("section_byte_offset", d.offset),
-      leaf("private_data_specifier", d.pds),
-      ...(d.extension ? [leaf("extension", d.extension)] : []),
-      ...objectNodes(d.fields),
-      ...(d.native
-        ? [
-            {
-              id: "native",
-              label: "Native decoded descriptor",
-              children: [nativeNode(d.native)],
-            },
-          ]
-        : []),
-      leaf("raw_bytes", d.raw),
-      ...(d.malformed
-        ? [
-            leaf(
-              "validation",
-              "Malformed descriptor: declared length exceeds loop",
-            ),
-          ]
-        : []),
-    ],
-    id: String(d.offset ?? index),
-  };
-}
-function nativeNode(node) {
-  return {
-    label: node.name,
-    children: [
-      ...Object.entries(node.attributes || {}).map(([label, value]) => ({
-        label,
-        value,
-        kind: /^(?:0x[0-9a-f]+|[0-9]+)$/i.test(String(value)) ? "number" : "string",
-      })),
-      ...(node.children || []).map(nativeNode),
-      ...(node.text ? [{ label: "text", value: node.text, kind: "string" }] : []),
-    ],
-  };
-}
-function nativeXmlTree() {
-  if (evidenceScope === "section") return {id:"native",label:"TSDuck decoded structure",value:"SDK table decoding is available in Merged table; fields and bytes here are section-local",children:[]};
-  const merged = detail.merged;
-  return {id:"native",label:"TSDuck decoded structure · merged table",
-    value: merged?.complete && merged.native_table ? "complete selected generation" : "No complete selected generation; no merged decode",
-    children: merged?.complete && merged.native_table ? [nativeNode(merged.native_table)] : []};
-}
-function sectionTree() {
-  const descriptors = detail.descriptors || [];
-  const services = detail.services || [];
-  const headerKeys = [
-    "pid",
-    "table_id",
-    "extension",
-    "version",
-    "section",
-    "last_section",
-    "bytes",
-    "valid",
-    "current",
-    "standards",
-    "standard",
-    "standard_context",
-    "standards_context",
-    "native_decode_status",
-    "crc",
-    "native_table_complete",
-    "native_table_at_packet",
-  ];
-  const header = headerKeys
-    .filter((k) => detail[k] !== undefined)
-    .flatMap((k) => typeof detail[k] === "object" ? [{id:k,label:k,children:objectNodes(detail[k])}] : [leaf(k, detail[k])]);
-  const children = [
-    { id: "header", label: "Section header", children: header },
-    {
-      id: "fields",
-      label: "Decoded fields",
-      children: objectNodes(detail.fields),
-    },
-  ];
-  if (services.length)
-    children.push({
-      id: "services",
-      label: "Services",
-      value:
-        selectedService >= 0
-          ? "1 of " + num(services.length)
-          : num(services.length),
-      children: services
-        .filter((s) => selectedService < 0 || s.id === selectedService)
-        .map((s) => ({
-          id: String(s.id),
-          label: s.name || "Service",
-          value: "SID " + hex(s.id),
-          children: [
-            {
-              id: "fields",
-              label: "Service fields",
-              children: objectNodes(
-                Object.fromEntries(
-                  Object.entries(s).filter(([k]) => k !== "source_id"),
-                ),
-              ),
-            },
-            {
-              id: "descriptors",
-              label: "Descriptors",
-              children: descriptors
-                .filter((d) => d.service_id === s.id)
-                .map(descriptorNode),
-            },
-          ],
-        })),
-    });
-  if (detail.events?.length)
-    children.push({
-      id: "events",
-      label: "Events",
-      value: num(detail.events.length),
-      children: detail.events.map((e) => ({
-        label: e.title || "Event",
-        value: hex(e.id),
-        children: objectNodes(e),
-      })),
-    });
-  const unowned = services.length
-    ? descriptors.filter((d) => !services.some((s) => s.id === d.service_id))
-    : descriptors;
-  if (unowned.length)
-    children.push({
-      id: "descriptors",
-      label: detail.events?.length
-        ? "Section descriptors (event ownership unavailable)"
-        : "Descriptors",
-      value: num(unowned.length),
-      children: unowned.map(descriptorNode),
-    });
-  const nativeTree = nativeXmlTree();
-  if (nativeTree) children.push(nativeTree);
-  if (detail.native_table_sources?.length) children.push({id:"assembly",label:detail.merged?.complete ? "Merged table source sections" : "Candidate sections · no completed merge",value: detail.merged?.complete ? "complete" : "partial / superseded", children: detail.native_table_sources.map((source, i) => ({id:source.id || i,label:`Section ${source.section ?? source.section_number ?? i}`, children:objectNodes(source)}))});
-  const audit = (detail.descriptors || []).filter(d => d.malformed || (d.decode_status && d.decode_status !== "decoded"));
-  if (audit.length) children.push({id:"audit",label:"Descriptor audit · unresolved / malformed",value:num(audit.length),tone:"bad",children:audit.map(descriptorNode)});
-  if (detail.issues?.length)
-    children.push({
-      id: "issues",
-      label: "Validation issues",
-      tone: "bad",
-      children: objectNodes(detail.issues),
-    });
-  children.push({
-    id: "evidence",
-    label: "Source evidence",
-    children: objectNodes({
-      first_packet: detail.first_packet,
-      last_packet: detail.last_packet,
-      first_file_offset: detail.first_file_offset,
-      offset_note: detail.offset_note,
-      native_table_at_packet: detail.native_table_at_packet,
-      inspection_scope: detail.inspection_scope,
-      occurrence_count: detail.occurrences?.length,
-      identity: detail.identity,
-      distribution: detail.distribution,
-      ...(detail.occurrences?.length
-        ? {
-            occurrences: detail.occurrences.slice(0, 500),
-            ...(detail.occurrences.length > 500
-              ? {
-                  display_note:
-                    "First 500 occurrence packets shown. Full occurrence list is available through the Agent API.",
-                }
-              : {}),
-          }
-        : {}),
-    }),
-  });
-  return {
-    id: "section",
-    label: detail.name + " section",
-    value: "v" + detail.version + " · " + (detail.valid ? "valid" : "invalid"),
-    children,
-  };
-}
+function sectionTree() { return workbench.structure(detail,evidenceScope,selectedService); }
 function nodeMatches(node, needle) {
   return (
-    (node.label + " " + (node.value ?? "")).toLowerCase().includes(needle) ||
+    needle.split(/\s+/).every(term=>(node.label + " " + (node.value ?? "")).toLowerCase().includes(term)) ||
     node.children?.some((n) => nodeMatches(n, needle))
   );
 }
@@ -1327,9 +1098,7 @@ let treeNodesRendered = 0;
 function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1) {
   const path = parent ? parent + "/" + (node.id ?? index) : node.id;
   const needle = treeSearch.trim().toLowerCase();
-  const selfMatch = (node.label + " " + (node.value ?? ""))
-    .toLowerCase()
-    .includes(needle);
+  const selfMatch = needle.split(/\s+/).every(term => (node.label + " " + (node.value ?? "")).toLowerCase().includes(term));
   if (needle && !ancestorMatch && !nodeMatches(node, needle)) return "";
   if (++treeNodesRendered > 2500) return "";
   const accessible = `role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
@@ -1517,10 +1286,10 @@ function referencePanel() {
 }
 function sectionGroupPanel() {
   const group = (data.table_groups || []).find(g => (g.section_ids || []).includes(detail.id));
-  if (!group || (group.last_section === 0 && group.section_ids.length === 1)) return '';
+  if (!group) return '';
   const sources = (data.tables || []).filter(r => group.section_ids.includes(r.id));
   const hidden = sources.filter(isBadCrc).length;
-  return `<details class="section-group" id="section-group" ${sectionGroupOpen ? "open" : ""}><summary>▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</summary><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<button class="btn small" data-section-id="${esc(r.id)}" aria-pressed="${r.id === detail.id}">§ ${r.section} · v${r.version} · ${r.valid ? 'valid' : 'invalid'} · CRC ${esc(r.crc?.transmitted_hex || r.crc?.status || 'unavailable')}</button>`).join('')}</div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</details>`;
+  return `<details class="section-group" id="section-group" ${sectionGroupOpen ? "open" : ""}><summary>▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</summary><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links"><select id="section-choice" aria-label="Select original section evidence">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<option value="${esc(r.id)}" ${r.id === detail.id ? 'selected' : ''}>Section ${r.section}/${r.last_section} · CRC ${esc(r.crc?.transmitted_hex || '—')} · ${esc(r.crc?.status || 'unavailable')} · #${r.first_packet}</option>`).join('')}</select></div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</details>`;
 }
 let epgLanguage = "", identifierResult = null, satelliteResult = null;
 function satelliteText(x) {
@@ -1555,6 +1324,10 @@ function metadataPanel() {
 }
 function renderInspector() {
   const panel = $("#inspector");
+  // Read live disclosure state before replacing its DOM. The asynchronous
+  // toggle event may not have fired when a source-section change starts.
+  const previousSectionGroup = panel.querySelector("#section-group");
+  if (previousSectionGroup) sectionGroupOpen = previousSectionGroup.open;
   if (aggregateDiagnostic) {
     panel.innerHTML = `<div class="panel-title">TRANSPORT DIAGNOSTIC <span class="bad">AGGREGATE</span></div><div class="empty"><span class="empty-icon bad">⚠</span><h3>${esc(aggregateDiagnostic.code)}</h3><p>${esc(aggregateDiagnostic.detail)}</p><p>${num(aggregateDiagnostic.count)} observations across monitored SI PIDs. Individual packet locations are not indexed.</p></div>`;
     return;
@@ -1577,12 +1350,13 @@ function renderInspector() {
     : [];
   if (detail.native_xml_guarded)
     nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
-  const xmlSource = evidenceScope === "merged" && detail.merged?.complete ? detail.merged.tsduck_xml : null;
+  const xmlSource = evidenceScope === "section" ? detail.section_tsduck_xml : detail.merged?.complete ? detail.merged.tsduck_xml : null;
   const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}">Merged table</button><span class="meta">Section: fields + bytes · Merged: SDK tree + XML</span></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "hex" ? "Section hex dump" : xmlLabel}">${view === "hex" ? esc(hexDump(detail.raw_hex)) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}">Merged table</button><span class="meta">Section: fields + bytes · Merged: SDK tree + XML</span></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? esc(hexDump(detail.raw_hex)) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
   $("#section-group")?.addEventListener("toggle", event => { if (event.target.isConnected) sectionGroupOpen = event.target.open; });
   panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); });
-  panel.querySelectorAll("[data-section-id]").forEach(el => el.onclick = () => inspect(el.dataset.sectionId));
+  const sectionChoice = panel.querySelector("#section-choice");
+  if (sectionChoice) sectionChoice.onchange = () => inspect(sectionChoice.value, -1, "", inspectionEvidence);
   $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#section-group").open = true; });
   $("#epg-language")?.addEventListener("change", e => { epgLanguage=e.target.value; renderList(); renderInspector(); $("#epg-language")?.focus(); });
   $("#identifier-query")?.addEventListener("click", async () => {
@@ -1730,6 +1504,8 @@ function snapshotAtBin(bin, bins, packets, immediate) {
   }, 140);
 }
 function renderTimeline() {
+  const history=workbench.history(data,detail,allTableHistory);
+  historyPage=Math.min(historyPage,Math.max(0,Math.ceil(history.length/40)-1));
   const bins = (data.density || []).length || 80;
   const packets = Number(data.packets || 0);
   // A query response re-renders the strip and replaces the focused slider, so
@@ -1741,17 +1517,16 @@ function renderTimeline() {
   const interactive = data.complete && !busy && !backendFailure;
   const middle = packets > 1 ? Math.round((packets - 1) / 2) : 0;
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">OCCURRENCE DENSITY</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1))}</div><div class="history"><span class="meta">0</span>${(
-      data.history || []
-    )
+    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1))}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
       .slice(historyPage * 40, (historyPage + 1) * 40)
       .map(
         (h, i) =>
-          `<button class="history-point" data-history="${historyPage * 40 + i}" ${busy || backendFailure ? "disabled" : ""}>${esc(h.label)} <span>@ ${num(h.first_packet)}</span></button>`,
+          `<button class="history-point" data-history="${historyPage * 40 + i}" ${busy || backendFailure ? "disabled" : ""}>${esc(workbench.historyText(h))}</button>`,
       )
       .join(
         "",
-      )}<span class="spacer"></span><span class="meta">${num(data.packets)} packets</span></div>${data.history?.length > 40 ? `<div class="history-pages"><button class="btn small" id="history-prev" ${historyPage === 0 ? "disabled" : ""}>← Earlier</button><span class="meta">Transitions ${num(historyPage * 40 + 1)}–${num(Math.min((historyPage + 1) * 40, data.history.length))} of ${num(data.history.length)}</span><button class="btn small" id="history-next" ${(historyPage + 1) * 40 >= data.history.length ? "disabled" : ""}>Later →</button></div>` : ""}`;
+      )}<span class="spacer"></span><span class="meta">${num(data.packets)} packets</span></div>${history.length > 40 ? `<div class="history-pages"><button class="btn small" id="history-prev" ${historyPage === 0 ? "disabled" : ""}>← Earlier</button><span class="meta">Transitions ${num(historyPage * 40 + 1)}–${num(Math.min((historyPage + 1) * 40, history.length))} of ${num(history.length)}</span><button class="btn small" id="history-next" ${(historyPage + 1) * 40 >= history.length ? "disabled" : ""}>Later →</button></div>` : ""}`;
+  $("#history-scope").onchange=event=>{allTableHistory=event.target.value==="all";historyPage=0;renderTimeline();};
   $("#history-prev")?.addEventListener("click", () => {
     historyPage--;
     renderTimeline();
@@ -1794,8 +1569,8 @@ function renderTimeline() {
     .forEach(
       (el) =>
         (el.onclick = () => {
-          const h = data.history[Number(el.dataset.history)];
-          snapshot(h.last_packet, h.id);
+          const h = history[Number(el.dataset.history)];
+          activateHistory(h);
         }),
     );
 }
@@ -2122,6 +1897,8 @@ function uiState() {
     runtime:{driver:env.driver,user_agent:navigator.userAgent},viewport:{width:innerWidth,height:innerHeight,device_pixel_ratio:devicePixelRatio},
     source:data.source || "",analysis_status:data.analysis_status || "idle",selected,selected_service:selectedService,packet:data.selected_packet,
     theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
+    records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
+    history:{all:allTableHistory,entries:workbench.history(data,detail,allTableHistory),page:historyPage},evidence_scope:evidenceScope,
     tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
@@ -2132,6 +1909,14 @@ function uiAction(action) {
   if (action.name === "select_tab" && ["Services","Tables","EPG","Issues","Changes"].includes(action.value)) {
     const target = [...document.querySelectorAll("[data-tab]")].find(el=>el.dataset.tab===action.value);
     if (!target) throw new Error("Tab unavailable"); target.click();
+  } else if (action.name === "select_record" && (data.tables || []).some(r=>r.id===action.id)) { changeTab("Tables");inspect(action.id);
+  } else if (action.name === "set_bad_crc" && typeof action.value === "boolean") {showBadCrc=action.value;page=0;render();
+  } else if (action.name === "set_grouped" && typeof action.value === "boolean") {groupedTables=action.value;page=0;renderList();
+  } else if (action.name === "search_records" && typeof action.value === "string" && action.value.length<=512) {search=action.value;page=0;$("#search").value=search;renderList();
+  } else if (action.name === "set_scope" && ["merged","section"].includes(action.value)) {evidenceScope=action.value;renderInspector();
+  } else if (action.name === "set_view" && ["Structure","Hex","XML","Decoded","Metadata","References"].includes(action.value)) {view={Structure:"tree",Hex:"hex",XML:"xml",Decoded:"decoded",Metadata:"metadata",References:"references"}[action.value];renderInspector();
+  } else if (action.name === "history_scope" && typeof action.value === "boolean") {allTableHistory=action.value;historyPage=0;renderTimeline();
+  } else if (action.name === "history_jump" && Number.isInteger(action.index) && action.index>=0 && action.index<workbench.history(data,detail,allTableHistory).length) {const h=workbench.history(data,detail,allTableHistory)[action.index];activateHistory(h);
   } else if (action.name === "set_theme" && ["dark","light"].includes(action.value)) {
     if (theme !== action.value) $("#theme-toggle").click();
   } else if (action.name === "search_tree" && typeof action.value === "string" && action.value.length <= 512) {

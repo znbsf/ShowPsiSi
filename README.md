@@ -4,27 +4,28 @@
 
 本轮在独立 Linux 云环境开发。既有 Qt、Linux Tauri 和 Chromium 工作台基线已连接真实引擎验证，包含 Linux 原生打开／保存对话框、编辑导出和回读；TSDuck 3.45 升级后的逐项验证范围见 [协议覆盖记录](docs/PROTOCOL_COVERAGE.md)。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
 
-## Windows 安装与更新（v0.2.0 已发布）
+## Windows 安装与更新（v0.3.0 已发布）
 
-当前安装版本面向 **Windows 10 1809 及以上／Windows 11 x64**，使用 Qt 工作台。
-从 [v0.2.0 Release](https://github.com/znbsf/ShowPsiSi/releases/tag/v0.2.0) 下载
-[安装包](https://github.com/znbsf/ShowPsiSi/releases/download/v0.2.0/ShowPsiSi-0.2.0-windows-x64-setup.exe) 或
-[免安装 ZIP](https://github.com/znbsf/ShowPsiSi/releases/download/v0.2.0/ShowPsiSi-0.2.0-windows-x64-portable.zip)，
-并核对同页的 SHA256SUMS。安装包目前**未做代码签名**；校验和不代表已有 SmartScreen 信誉。
-源提交、完整验证记录及尚未覆盖的范围见 [v0.2.0 验证记录](docs/releases/v0.2.0-validation.md)。
+当前安装版本面向 **Windows 10 1809 及以上／Windows 11 原生 x64**，使用 Qt 工作台。
+从 [v0.3.0 Release](https://github.com/znbsf/ShowPsiSi/releases/tag/v0.3.0) 下载
+[安装包](https://github.com/znbsf/ShowPsiSi/releases/download/v0.3.0/ShowPsiSi-0.3.0-windows-x64-setup.exe)（约 18.33 MB）或
+[免安装 ZIP](https://github.com/znbsf/ShowPsiSi/releases/download/v0.3.0/ShowPsiSi-0.3.0-windows-x64-portable.zip)（约 26.00 MB），
+并核对同页的 [SHA256SUMS](https://github.com/znbsf/ShowPsiSi/releases/download/v0.3.0/SHA256SUMS)。安装包目前**未做代码签名**；校验和不代表已有 SmartScreen 信誉。
+源提交、验证结果及尚未覆盖的范围见 [v0.3.0 验证记录](docs/releases/v0.3.0-validation.md)；[v0.2.0 历史记录](docs/releases/v0.2.0-validation.md)保留不变。
 
-- 新增可追溯原始信令的 Topology 关联工作区；关系来源、历史截面、主题和键盘导航沿用工作台逻辑。
+- 安装包与免安装包均附带匹配的微软 VC++ 运行库 DLL；无需另行下载或运行系统级运行库安装器。
+- 免安装 ZIP 解压到新目录后运行 Launch Qt.cmd；启动检查会提示本地 DLL 缺失、过旧或损坏。不要覆盖运行中的程序。
+- [对应源码附件](https://github.com/znbsf/ShowPsiSi/releases/download/v0.3.0/ShowPsiSi-0.3.0-corresponding-source.zip)（约 87.96 MB）单独提供，运行程序无需下载；许可证、来源说明及 Qt 替换权利仍随程序保留。
 - 安装到当前用户目录，保留现有用户设置；程序中 About / Updates 显示版本和本 GitHub 仓库。
-- 手动检查稳定新版本，查看说明，再选择下载。校验 SHA-256 后，由用户明确选择安装并退出。
-- 缺少所需微软 VC++ 运行库时，安装器会询问是否下载并打开微软官方安装程序；首次安装可能需要联网和管理员确认。
-- 运行中的实例或导出会阻止不安全的替换/退出。取消或网络错误不能被视为成功安装。
-- 独立 ZIP、源码构建及 Tauri 使用官方 Release 页面；不声称具备 Qt 安装版的自动安装流程。
+- 手动检查稳定新版本，查看说明，再选择下载。安装版校验 SHA-256 后，由用户明确选择安装并退出；免安装版打开匹配的官方 ZIP，手动校验并解压到新目录。
+- 运行中的实例或导出会阻止不安全的替换。取消或错误不能被视为成功安装。
 
-完整边界见 [安装器](docs/WINDOWS_INSTALLER.md) 和 [更新器](docs/UPDATES.md)。
+Windows 托管 CI 已验证本地 DLL 加载路径及安装／升级／卸载流程；**完全干净且断网的标准用户 Windows 环境仍未验证**。
+原生 Windows 文件对话框／GPU、真实旧客户端完整下载到安装的交接仍未验证。完整边界见 [安装器](docs/WINDOWS_INSTALLER.md) 和 [更新器](docs/UPDATES.md)。
 
-开发中的 v0.3.0 候选新增有界协议检查、独立 DVB-I XML 工作区和 app-local 运行库打包，尚未发布。
+v0.3.0 新增有界协议检查、独立 DVB-I XML 工作区和 app-local 运行库打包。
 当前功能与限制见 [协议支持范围](docs/PROTOCOL_COVERAGE.md#current-protocol-extension-support)，
-构建验收入口见 [测试契约](docs/PROTOCOL_TEST_PLAN.md)；[候选发布说明](docs/releases/v0.3.0.md)保留 Windows 验证边界。
+构建验收入口见 [测试契约](docs/PROTOCOL_TEST_PLAN.md)；[发布说明](docs/releases/v0.3.0.md)保留 Windows 验证边界。
 
 ## 编辑器式工作台
 

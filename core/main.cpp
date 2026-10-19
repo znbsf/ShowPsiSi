@@ -251,6 +251,7 @@ struct Record {
 
 #include "SignalMetadata.h"
 #include "SatelliteMetadata.h"
+#include "SignalTopology.h"
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
@@ -676,7 +677,7 @@ public:
     J state(uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) {
         checkCancelled(control);
         J out={{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
-        out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
+        out["analysis_revision"]=revision;out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
         const auto selected=latest(at);
         for(const auto& r:records) {
             checkCancelled(control);
@@ -877,13 +878,32 @@ public:
             throw;
         }
     }
+    J queryTopology(const J& args) {
+        if(!complete||packets==0)throw std::runtime_error("Complete a successful analysis before querying topology");
+        if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale topology analysis_revision");
+        const uint64_t at=args.value("at_packet",packets-1);
+        if(at>=packets)throw std::runtime_error("Topology at_packet must be within the completed analysis");
+        const auto selected=latest(at);std::vector<const Record*> full;J incomplete=J::array();std::set<std::string> seen;
+        for(const auto& [key,r]:selected){
+            const bool dvbLayout=standardsContext=="dvb"||standardsContext.rfind("isdb",0)==0;
+            const bool applicable=(r->pid==0&&r->tid==0)||r->tid==2||
+                (dvbLayout&&((r->pid==0x10&&(r->tid==0x40||r->tid==0x41))||(r->pid==0x11&&(r->tid==0x42||r->tid==0x46))))||
+                (standardsContext=="atsc"&&(r->tid==0xc8||r->tid==0xc9));
+            if(!applicable)continue;
+            if(completeGroup(*r,selected))full.push_back(r);else if(seen.insert(tableGroup(*r)).second)incomplete.push_back({{"code","incomplete_generation"},{"section_id",r->id},{"message","Selected current topology table generation is incomplete; no semantic relationships derived"}});
+        }
+        size_t raw=0;for(const auto& r:records)if(!r.ends.empty()&&r.ends.front()<=at)raw++;
+        ts::DuckContext topologyDuck(&NULLREP);topologyDuck.resetStandards(duck.standards());topologyDuck.setDefaultCharsetIn(duck.charsetIn());topologyDuck.setDefaultCharsetOut(duck.charsetOut());topologyDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
+        topology::Builder builder(full,topologyDuck,root,standardsContext,revision,at);return builder.build(args,raw,incomplete);
+    }
     J inspect(const J& args) {
+        if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale inspection analysis_revision");
         std::string id=args.at("id");if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
         const uint64_t cutoff=args.value("at_packet",r.lastPacket);
         auto observed=std::upper_bound(r.ends.begin(),r.ends.end(),cutoff);
         if(observed==r.ends.begin())throw std::runtime_error("Section was not observed at or before selected packet");
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
-        J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
+        J out=summary(r,cutoff);out["analysis_revision"]=revision;out["evidence_anchors"]=topology::anchors(r,standardsContext);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);
@@ -1113,6 +1133,7 @@ public:
         }
         if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return state(args.value("at_packet",UINT64_MAX));
+        if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
         if(method=="inspect")return inspect(args);
         if(method=="preview_rename")return preview(args);

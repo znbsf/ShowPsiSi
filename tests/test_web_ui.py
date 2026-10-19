@@ -27,6 +27,269 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from cloud_preview import Bridge, Server
 
 class BrowserTests(unittest.TestCase):
+    def topology_source(self, profile='dvb', sections=None):
+        from topology_fixture import parts, write_ts
+        source=write_ts(self.output/('topology-'+profile+'.ts'),sections or parts(profile))
+        self.page.locator('#standards').select_option(profile)
+        self.analyze(source)
+        self.page.locator('[data-tab="Topology"]').click()
+        self.page.wait_for_function('() => window.showpsisi.getTopology() && !window.showpsisi.getUiState().topology.loading')
+        return source
+
+    def select_topology_service(self):
+        node=self.page.evaluate('window.showpsisi.getTopology().nodes.find(n=>n.object_type === "service")')
+        self.page.locator('#search').fill(node['label'])
+        self.page.locator('[data-topology-node="'+node['node_id']+'"]').click()
+        return node
+
+    def test_topology_objects_all_sources_six_views_and_back(self):
+        source=self.topology_source()
+        original=source.read_bytes()
+        p=self.page
+        p.locator('#search').fill('Topology Lab')
+        first=p.locator('[data-topology-node]').first
+        first.focus();p.keyboard.press('ArrowDown')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().topology.selected_node'),'','Arrow focus must not activate an object')
+        self.assertEqual(p.locator('[data-topology-source]').count(),0)
+        node=self.select_topology_service()
+        selected=p.evaluate('window.showpsisi.getUiState().topology')
+        expected=p.evaluate('id=>workbench.topologyEvidence(window.showpsisi.getTopology().nodes.find(n=>n.node_id===id),window.showpsisi.getTopology().edges).length',node['node_id'])
+        self.assertEqual(p.locator('[data-topology-source]').count(),expected)
+        p.locator('[data-topology-source]').filter(has_text='name').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().topology.locator_resolution?.precision === "field"')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().inspection_context'),'topology')
+        self.assertEqual(p.locator('[data-source-highlight]').count(),1)
+        self.assertIn('Exact source field located',p.locator('#topology-locator-status').inner_text())
+        self.assertEqual(p.locator('#edit').is_enabled(),False)
+        p.screenshot(path=str(self.artifacts/'topology-exact-field-dark.png'))
+        for view in ('hex','xml','decoded','metadata','references','tree'):
+            p.locator('[data-view="'+view+'"]').click()
+            if view=='hex':self.assertGreater(p.locator('.source-byte').count(),0)
+        cutoff=p.evaluate('window.showpsisi.getState().selected_packet')
+        p.locator('#topology-show-table').click()
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().tab'),'Tables')
+        p.locator('#topology-back').click()
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().tab'),'Topology')
+        self.assertEqual(p.evaluate('document.activeElement.id'),'topology-show-table')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().topology.focused_node'),selected['focused_node'])
+        p.locator('#topology-back').click()
+        self.assertEqual(p.locator('#search').input_value(),node['label'])
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().topology.selected_node'),node['node_id'])
+        for index in range(expected):
+            p.locator('[data-topology-source]').nth(index).click()
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().topology.locator_resolution!==null')
+            state=p.evaluate('window.showpsisi.getUiState()')
+            detail=p.evaluate('window.showpsisi.getDetail()')
+            self.assertEqual(detail['id'],state['topology']['evidence_ref']['section_id'])
+            self.assertEqual(detail['native_table_at_packet'],state['topology']['evidence_ref']['at_packet'])
+            self.assertEqual(state['packet'],cutoff)
+            p.locator('#topology-back').click()
+        p.locator('.all-tables').click()
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().tab'),'Tables')
+        p.locator('[data-tab="Topology"]').click()
+        self.assertEqual(p.locator('#search').input_value(),node['label'])
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().topology.expanded_ids'),selected['expanded_ids'])
+        self.assertEqual(source.read_bytes(),original)
+
+    def test_topology_three_profiles_themes_and_keyboard(self):
+        for profile,title in (('dvb','DVB'),('atsc','ATSC 1.0'),('isdb-japan','ISDB Japan'),('isdb-brazil','ISDB Brazil'),('isdb','ISDB · region unspecified')):
+            with self.subTest(profile=profile):
+                self.topology_source(profile)
+                p=self.page
+                self.assertIn(title,p.locator('.topology-context').inner_text())
+                rows=p.locator('[data-topology-node]')
+                self.assertGreater(rows.count(),0)
+                rows.first.focus();p.keyboard.press('End');p.keyboard.press('Home')
+                p.keyboard.press('ArrowRight');p.keyboard.press('Enter')
+                self.assertNotEqual(p.evaluate('window.showpsisi.getUiState().topology.selected_node'),'')
+                p.keyboard.press('Tab')
+                self.assertFalse(p.evaluate('document.activeElement.matches("[data-topology-node]")'))
+                for width in (1440,1180,1000):
+                    p.set_viewport_size({'width':width,'height':900})
+                    for theme in ('dark','light'):
+                        if p.evaluate('window.showpsisi.getUiState().theme')!=theme:p.locator('#theme-toggle').click()
+                        self.assertTrue(p.locator('[data-tab="Topology"]').is_visible())
+                        self.assertGreaterEqual(rows.first.bounding_box()['height'],28)
+                p.locator('[data-tab="Services"]').click()
+
+    def test_topology_loading_stale_cutoff_and_rescan_response(self):
+        self.gate_native_messages()
+        from topology_fixture import parts, write_ts
+        source=write_ts(self.output/'topology-late.ts',parts())
+        p=self.page;p.locator('#standards').select_option('dvb');self.analyze(source)
+        p.evaluate('window.testGate.methods=["query_topology"]')
+        p.locator('[data-tab="Topology"]').click()
+        p.wait_for_function('()=>window.testGate.held.some(x=>x.method==="query_topology")')
+        self.assertTrue(p.evaluate('window.showpsisi.getUiState().topology.loading'))
+        self.assertIn('Loading',p.locator('#page-label').inner_text())
+        p.evaluate('window.showpsisi.snapshot(0)')
+        p.wait_for_function('()=>window.testGate.held.filter(x=>x.method==="query_topology").length===2')
+        p.evaluate('window.testGate.held.reverse();window.testGate.methods=[];window.testGate.release()')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertEqual(p.evaluate('window.showpsisi.getTopology().at_packet'),0)
+        self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),0)
+        p.evaluate('window.testGate.methods=["query_topology"];window.showpsisi.snapshot(-1)')
+        p.wait_for_function('()=>window.testGate.held.some(x=>x.method==="query_topology")')
+        old=p.evaluate('window.showpsisi.getState().revision')
+        p.locator('#scan').click()
+        p.wait_for_function('old=>window.showpsisi.getState().complete && window.showpsisi.getState().revision>old',arg=old)
+        p.wait_for_function('()=>window.testGate.held.filter(x=>x.method==="query_topology").length===2')
+        p.evaluate('window.testGate.methods=[];window.testGate.release()')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertEqual(p.evaluate('window.showpsisi.getTopology().analysis_revision'),p.evaluate('window.showpsisi.getState().revision'))
+
+    def test_topology_mismatch_missing_anchor_and_failed_refresh(self):
+        self.gate_native_messages()
+        self.topology_source();self.select_topology_service();p=self.page
+        p.evaluate('window.testGate.methods=["inspect"]')
+        p.locator('[data-topology-source]').filter(has_text='name').first.click()
+        p.wait_for_function('()=>window.testGate.held.some(x=>x.method==="inspect")')
+        self.assertIn('Locating exact source',p.locator('#topology-locator-status').inner_text())
+        # Deliberate fault injection into an authentic response is a rejection
+        # test, never evidence of successful protocol decoding.
+        p.evaluate('window.testGate.held.find(x=>x.method==="inspect").event.payload.result.pid=8191;window.testGate.methods=[];window.testGate.release()')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertIn('does not match pid',p.locator('#inspector').inner_text())
+        self.assertEqual(p.locator('[data-source-highlight]').count(),0)
+        p.locator('#topology-back').click()
+        p.evaluate('window.testGate.methods=["inspect"]')
+        p.locator('[data-topology-source]').filter(has_text='name').first.click()
+        p.wait_for_function('()=>window.testGate.held.some(x=>x.method==="inspect")')
+        p.evaluate('window.testGate.held.find(x=>x.method==="inspect").event.payload.result.evidence_anchors=[];window.testGate.methods=[];window.testGate.release()')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertIn('Located the exact section',p.locator('#topology-locator-status').inner_text())
+        self.assertEqual(p.locator('[data-source-highlight]').count(),0)
+        p.locator('#topology-back').click()
+        # A failed read must settle and remain visibly stale/error, never look
+        # like an empty success or disable retry indefinitely.
+        p.evaluate('window.testGate.methods=["query_topology"];window.showpsisi.snapshot(0)')
+        p.wait_for_function('()=>window.testGate.held.some(x=>x.method==="query_topology")')
+        p.evaluate('const x=window.testGate.held.find(x=>x.method==="query_topology");delete x.event.payload.result;x.event.payload.error={code:"test_read_failure",message:"Topology read failed"};window.testGate.methods=[];window.testGate.release()')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertIn('Topology read failed',p.locator('.topology-warning').first.inner_text())
+        self.assertTrue(p.locator('#retry-topology').is_enabled())
+        p.locator('#retry-topology').click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getTopology().at_packet===0')
+
+    def test_topology_pagination_search_all_objects_and_safe_labels(self):
+        from topology_fixture import pat, sdt
+        sections=[pat(programs=())]
+        for section in range(24):
+            services=tuple((100+i,'Bulk Service %03d'%i) for i in range(section*25,(section+1)*25))
+            sections.append(sdt(services=services,number=section,last=23))
+        self.topology_source(sections=sections)
+        p=self.page
+        state=p.evaluate('window.showpsisi.getUiState().topology')
+        self.assertGreater(state['total_nodes'],500)
+        self.assertEqual(state['loaded_nodes'],500)
+        self.assertIn('Search covers loaded objects only',p.locator('.topology-loaded-note').inner_text())
+        p.locator('#search').fill('Bulk Service 599')
+        self.assertEqual(p.locator('[data-topology-node]').count(),0)
+        p.locator('#topology-load-more').click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && !window.showpsisi.getTopology().page.has_more')
+        state=p.evaluate('window.showpsisi.getUiState().topology')
+        self.assertEqual(state['loaded_nodes'],state['total_nodes'])
+        self.assertTrue(p.locator('[data-topology-node]').filter(has_text='Bulk Service 599').is_visible())
+        p.locator('#search').fill('')
+        p.locator('[data-topology-node]').first.focus();p.keyboard.press('ArrowRight')
+        self.assertGreater(p.locator('[data-topology-more]').count(),0)
+        old=p.locator('[data-topology-node]').count();p.locator('[data-topology-more]').first.click()
+        self.assertGreater(p.locator('[data-topology-node]').count(),old)
+        self.assertEqual(len(p.locator('[data-topology-node]').evaluate_all('(els)=>els.map(e=>e.dataset.topologyNode)')),len(set(p.locator('[data-topology-node]').evaluate_all('(els)=>els.map(e=>e.dataset.topologyNode)'))))
+        # Real long-tree scrolling must survive source -> Tables -> Back, along
+        # with search, selection, expansion and keyboard focus, not just IDs.
+        p.locator('#search').fill('Bulk Service')
+        p.locator('[data-topology-node]').filter(has=p.get_by_text('Bulk Service 090',exact=True)).click()
+        selected=p.evaluate('window.showpsisi.getUiState().topology')
+        scroll=p.locator('#list').evaluate('(el)=>el.scrollTop')
+        self.assertGreater(scroll,500)
+        p.locator('[data-topology-source]').filter(has_text='name').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().topology.locator_resolution?.precision === "field"')
+        p.locator('#topology-show-table').click()
+        p.locator('#topology-back').click()
+        self.assertEqual(p.evaluate('document.activeElement.id'),'topology-show-table')
+        self.assertAlmostEqual(p.locator('#list').evaluate('(el)=>el.scrollTop'),scroll,delta=1)
+        p.locator('#topology-back').click()
+        self.assertEqual(p.locator('#search').input_value(),'Bulk Service')
+        self.assertAlmostEqual(p.locator('#list').evaluate('(el)=>el.scrollTop'),scroll,delta=1)
+        restored=p.evaluate('window.showpsisi.getUiState().topology')
+        for key in ('selected_node','focused_node','expanded_ids'):
+            self.assertEqual(restored[key],selected[key])
+        self.assertTrue(p.evaluate('document.activeElement.matches("[data-topology-source]")'))
+        # Untrusted broadcast names remain plain text, including markup-looking
+        # names. This new scan also clears prior selection/search/revision state.
+        p.locator('[data-tab="Services"]').click()
+        self.topology_source(sections=[pat(),sdt(services=((100,'<img src=x>'),))])
+        self.select_topology_service()
+        self.assertIn('<img src=x>',p.locator('#inspector').inner_text())
+        self.assertEqual(p.locator('#inspector img').count(),0)
+
+    def test_topology_comparison_newer_side_supersedes_pending_query(self):
+        self.gate_native_messages()
+        from topology_fixture import parts, sdt
+        self.topology_source(sections=parts()+[sdt(services=((100,'Later topology'),),version=2)])
+        p=self.page;p.locator('[data-tab="Changes"]').click()
+        p.locator('#compare-from').fill('3');p.locator('#compare-to').fill('4');p.locator('#run-comparison').click()
+        p.wait_for_function('()=>window.showpsisi.getComparison() && window.showpsisi.getUiState().settled')
+        p.evaluate('window.testGate.methods=["query_topology"]')
+        p.locator('[data-comparison-topology$=":A"]').first.click()
+        p.wait_for_function('()=>window.testGate.held.filter(x=>x.method==="query_topology").length===1')
+        p.locator('[data-tab="Changes"]').click()
+        p.locator('[data-comparison-topology$=":B"]').first.click()
+        p.wait_for_function('()=>window.testGate.held.filter(x=>x.method==="query_topology").length===2')
+        p.evaluate('window.testGate.held.reverse();window.testGate.methods=[];window.testGate.release()')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getTopology()?.at_packet===4')
+        self.assertIn('Comparison B',p.locator('.topology-context').inner_text())
+        self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),None)
+
+    def test_topology_delivery_and_satellite_candidates_keep_wire_provenance(self):
+        from topology_fixture import delivery_parts
+        self.topology_source(sections=delivery_parts())
+        p=self.page
+        snapshot=p.evaluate('window.showpsisi.getTopology()')
+        declarations=[n for n in snapshot['nodes'] if n['object_type']=='delivery_parameters']
+        self.assertEqual({n['attributes']['delivery_system'] for n in declarations},{'DVB-S2','DVB-C','DVB-T'})
+        candidates=[n for n in snapshot['nodes'] if n['object_type']=='satellite_candidate']
+        self.assertGreater(len(candidates),1,'Co-located candidates must remain ambiguous')
+        for node in declarations+candidates:
+            p.locator('#search').fill(node['label'])
+            p.locator('[data-topology-node="'+node['node_id']+'"]').click()
+            self.assertIn(node['label'],p.locator('#inspector h2').inner_text())
+            if node['object_type']=='satellite_candidate':
+                self.assertIn('Catalog reference sources',p.locator('#inspector').inner_text())
+                self.assertIn('unconfirmed',p.locator('#inspector').inner_text())
+                self.assertIn(node['parent_id'],{n['node_id'] for n in declarations})
+            p.locator('[data-topology-source]').first.click()
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().topology.locator_resolution?.precision === "container"')
+            self.assertIn('exact field position is unavailable',p.locator('#topology-locator-status').inner_text())
+            p.locator('[data-view="hex"]').click()
+            self.assertGreater(p.locator('.source-byte').count(),0)
+            self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),node['evidence'][0]['section_id'])
+            p.locator('#topology-back').click()
+        p.locator('#search').fill('')
+        p.screenshot(path=str(self.artifacts/'topology-satellite-candidates-dark.png'))
+        p.locator('#theme-toggle').click()
+        p.screenshot(path=str(self.artifacts/'topology-satellite-candidates-light.png'))
+
+    def test_topology_comparison_side_keeps_workspace_cutoff(self):
+        from topology_fixture import parts, sdt
+        self.topology_source(sections=parts()+[sdt(services=((100,'Later topology'),),version=2)])
+        p=self.page;p.locator('[data-tab="Changes"]').click()
+        p.locator('#compare-from').fill('3');p.locator('#compare-to').fill('4');p.locator('#run-comparison').click()
+        p.wait_for_function('()=>window.showpsisi.getComparison() && window.showpsisi.getUiState().settled')
+        before=p.evaluate('window.showpsisi.getState().selected_packet')
+        p.locator('[data-comparison-topology$=":A"]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getTopology()?.at_packet===3 && window.showpsisi.getUiState().settled')
+        self.assertIn('Comparison A',p.locator('.topology-context').inner_text())
+        self.select_topology_service();p.locator('[data-topology-source]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertFalse(p.locator('#topology-show-table').is_enabled())
+        self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),before)
+        p.locator('#topology-back').click();p.locator('#topology-back').click()
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().tab'),'Changes')
+        self.assertIsNotNone(p.evaluate('window.showpsisi.getComparison()'))
+        self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),before)
+
     def test_workbench_all_table_history_counts_and_inspector_views(self):
         from explorer_fixture import explorer_fixture
         path=self.output/'workbench.ts';path.write_bytes(explorer_fixture())

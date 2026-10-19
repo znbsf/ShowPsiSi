@@ -95,7 +95,7 @@ class Bridge:
         if command != 'request': raise ValueError('Unsupported bridge command')
         message = args.get('message')
         if not isinstance(message, dict) or set(message) - {'id','method','params'}: raise ValueError('Invalid JSONL request')
-        if message.get('method') not in {'capabilities','lookup_identifier','lookup_satellite','analyze','cancel_analysis','query','inspect','diff_snapshots','load_extension','preview_rename','export'}: raise ValueError('Unknown engine method')
+        if message.get('method') not in {'capabilities','lookup_identifier','lookup_satellite','analyze','cancel_analysis','query','query_topology','inspect','diff_snapshots','load_extension','preview_rename','export'}: raise ValueError('Unknown engine method')
         params = message.get('params', {})
         if not isinstance(params, dict): raise ValueError('Parameters must be an object')
         if message['method'] == 'export':

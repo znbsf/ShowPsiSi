@@ -84,3 +84,21 @@ All Qt integration paths use `qt_evidence.retain_qt_evidence`. Its bounded conte
 retains explicit files before temporary cleanup and preserves the original error
 if retention itself fails. The strict Qt runner executes its dedicated unit suite
 on both Linux and Windows, alongside native UI and resource-path tests.
+
+## Qt tooltip delegate lifetime
+
+Windows run `39212811287` reached the operation-parity dark-theme flow but
+failed the unchanged diagnostics gate on `Cannot read property 'hovered' of
+null` in the structure-tree tooltip. The tooltip's `anchorControl` tracks
+`Popup.parent`; that parent can become null while bindings still exist during
+delegate detach/retirement. This is a lifecycle defect exposed by platform
+ordering, not grounds to retry away or suppress QML diagnostics. The original
+log identifies the null anchor, but does not identify the exact retirement phase.
+
+The parity regression now opens a real inspector-tree tooltip, explicitly
+detaches its parent, checks hidden/false hover and empty parent-derived text,
+then rebinds it before continuing the real-engine evidence and edit flows.
+Both themes exercise this interval deterministically. Shared `SafeTip` hover
+and text bindings guard the absent parent; normal tooltip content and errors
+remain observable. Retain the existing rejection of any QML `TypeError` and
+`ReferenceError`, including errors emitted during teardown.

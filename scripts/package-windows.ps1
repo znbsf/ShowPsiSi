@@ -106,6 +106,7 @@ $QtCoreRelocation = @{
 }
 $Metadata = @{
     source_commit = $SourceCommit
+    application_version = $Record.application_version
     qt_version = '6.7.3'; qt_kit = 'win64_msvc2019_64'
     qt_origin = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_673/'
     tsduck_version = '3.45-4798'
@@ -123,7 +124,7 @@ $Metadata = @{
     qt_source_archives = $SourceIndex.qt_source_archives
     qt_build_configuration = $QtConfiguration
     qt_core_relocation = $QtCoreRelocation
-    windows_prerequisite = 'Windows 10/11 x64 with system D3Dcompiler_47.dll'
+    windows_prerequisite = 'Windows 10 version 1809 (build 17763) or newer / Windows 11, native x64, system D3Dcompiler_47.dll'
     native_windows_desktop_verified = $false
 }
 $Metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Output 'build-information.json') -Encoding utf8NoBOM

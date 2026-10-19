@@ -56,6 +56,9 @@ ApplicationWindow {
     property real pendingTimelineSize: -1
     property var comparison: ({})
     property var selectedChange: null
+    property var comparisonWorkspace: null
+    property int comparisonEvidenceIndex: 0
+    property var previewIntent: ({})
     property string comparisonSide: "after"
     property string comparisonError: ""
     property bool compactComparison: recordPane.width < 420 || recordPane.height < 520
@@ -66,8 +69,7 @@ ApplicationWindow {
     property string tab: "Services"
     onTabChanged: {
         if (tab !== "Changes" && selectedChange) {
-            selectedChange = null;
-            defaultInspect();
+            restoreComparisonWorkspace();
         }
     }
     property string inspectorView: "Structure"
@@ -565,7 +567,7 @@ ApplicationWindow {
             return;
         comparison = {};
         if (selectedChange)
-            defaultInspect();
+            restoreComparisonWorkspace();
         selectedChange = null;
         comparisonError = "";
         recordSearch.clear();
@@ -578,7 +580,7 @@ ApplicationWindow {
         let value = changeValue(row);
         return row.change.toUpperCase() + " · " + row.kind + " · " + (value.name || value.title || (row.kind === "tables" ? "Table " + hex(value.table_id, 2) : "SID " + hex(value.service_id === undefined ? value.id : value.service_id)));
     }
-    function changeFields(row) {
+    function changeFields(row, full) {
         if (!row)
             return "";
         return (row.changed_fields || []).map(function (field) {
@@ -586,18 +588,46 @@ ApplicationWindow {
                 return "Raw section bytes changed · compare A / B in Hex";
             let before = row.before ? row.before.value[field] : undefined;
             let after = row.after ? row.after.value[field] : undefined;
-            let render = function (value) { return value === undefined ? "—" : typeof value === "object" ? JSON.stringify(value) : valueText(field, value); };
+            let render = function (value) {
+                if (value === undefined) return "—";
+                if (value !== null && typeof value === "object" && !full)
+                    return Array.isArray(value) ? value.length + " entries" : "structured metadata";
+                return typeof value === "object" ? JSON.stringify(value) : valueText(field, value);
+            };
             return field + ": " + render(before) + " → " + render(after);
         }).join("\n");
     }
-    function inspectChange(row, sideName) {
+    function restoreComparisonWorkspace() {
+        let saved = comparisonWorkspace;
+        comparisonWorkspace = null;
+        selectedChange = null;
+        if (saved && saved.source === analysisState.source && saved.at === analysisState.selected_packet && saved.id) {
+            inspect(saved.id, saved.sid);
+            collapsed = saved.collapsed;
+            treeSearch.text = saved.search;
+            inspectorView = saved.view;
+            evidenceScope = saved.scope;
+        } else defaultInspect();
+    }
+    function comparisonPresets() {
+        return [{label:"Choose history…",packet:-1}, {label:"Current · #"+num(currentPacket()),packet:currentPacket()},
+            {label:"Start · #0",packet:0}, {label:"Latest · #"+num(Number(analysisState.packets || 1)-1),packet:Number(analysisState.packets || 1)-1}]
+            .concat((analysisState.table_history || []).map(function(h) {return {label:Shared.workbench.historyText(h),packet:h.at_packet};}));
+    }
+    function inspectChange(row, sideName, evidenceIndex) {
         if (!backendReady) return;
         let side = row && row[sideName];
         if (!side || !(side.evidence || []).length)
             return;
+        let index = evidenceIndex === undefined ? 0 : evidenceIndex;
+        let evidence = side.evidence[index];
+        if (!evidence) return;
+        if (!comparisonWorkspace) comparisonWorkspace = {id:selected, sid:selectedService, source:analysisState.source,
+            at:analysisState.selected_packet, collapsed:collapsed, search:treeSearch.text, view:inspectorView, scope:evidenceScope};
         selectedChange = row;
         comparisonSide = sideName;
-        inspect(side.evidence[0].id, row.kind === "services" ? side.value.id : -1, side.at_packet);
+        comparisonEvidenceIndex = index;
+        inspect(evidence.id, row.kind === "services" && evidence.table_id === 0x42 ? side.value.id : -1, side.at_packet);
         notice = "Inspecting " + (sideName === "before" ? "A" : "B") + " at packet " + num(side.at_packet) + ". The current workbench snapshot is unchanged.";
     }
     function inspect(id, sid, atPacket) {
@@ -635,7 +665,7 @@ ApplicationWindow {
         let intent = saveIntent;
         saveIntent = {};
         if (!backendReady || !analysisState.complete || exporting || !intent.token ||
-                intent.token !== preview.token || preview.after !== renameName.text ||
+                intent.token !== preview.token || preview.after !== renameName.text || preview.service_id !== editService.currentValue ||
                 intent.source !== analysisState.source || intent.at !== analysisState.selected_packet) {
             exportFeedback = "The preview changed. Preview the edit again before exporting.";
             return;
@@ -662,6 +692,8 @@ ApplicationWindow {
         preview = {};
         comparison = {};
         selectedChange = null;
+        comparisonWorkspace = null;
+        previewIntent = {};
         comparisonError = "";
         fromPacket.clear();
         toPacket.clear();
@@ -702,6 +734,9 @@ ApplicationWindow {
     function snapshot(packet, id, sid) {
         if (!backendReady || !analysisState.complete) return;
         selectedChange = null;
+        comparisonWorkspace = null;
+        previewIntent = {};
+        renameDialog.close();
         snapshotTarget = id || "";
         snapshotTargetService = sid === undefined ? -1 : sid;
         selected = "";
@@ -761,6 +796,10 @@ ApplicationWindow {
     component SafeTip: ToolTip {
         id: tip
         property var anchorControl: parent
+        // Popup.parent can clear before a delegate's bindings are torn down.
+        // Keep all parent-derived values safe throughout that detached interval.
+        readonly property bool anchorHovered: !!(anchorControl && anchorControl.hovered)
+        readonly property string anchorText: anchorControl ? String(anchorControl.text || "") : ""
         contentItem: PlainLabel {
             objectName: "plainTooltipContent"
             text: tip.text
@@ -785,6 +824,18 @@ ApplicationWindow {
     }
     component FieldChoice: ComboBox {
         id: fieldChoice
+        implicitHeight: Math.max(28, implicitContentHeight + topPadding + bottomPadding)
+        topPadding: 4
+        bottomPadding: 4
+        leftPadding: 10
+        rightPadding: 26
+        contentItem: PlainLabel {
+            text: fieldChoice.displayText
+            font: fieldChoice.font
+            color: fieldChoice.enabled ? ink : muted
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
         indicator: PlainLabel {
             text: "▾"
             color: fieldChoice.enabled ? ink : muted
@@ -915,6 +966,11 @@ ApplicationWindow {
                 }
             }
             if (method === "preview_rename") {
+                if (!renameDialog.visible || previewIntent.source !== analysisState.source ||
+                        previewIntent.at !== analysisState.selected_packet || previewIntent.id !== selected ||
+                        result.source_id !== selected || result.service_id !== editService.currentValue ||
+                        previewIntent.sid !== editService.currentValue || result.after !== renameName.text ||
+                        previewIntent.name !== renameName.text) return;
                 preview = result;
                 notice = "Preview ready · no source changes";
             }
@@ -1424,6 +1480,115 @@ ApplicationWindow {
                 invalid_rejected: !core.saveLayout({version:1,explorer:-1,inspector:520,timeline:105}) && !core.saveLayout({version:99,explorer:180,inspector:520,timeline:105})
             }));
             stop();
+        }
+    }
+    Timer {
+        id: operationsParityTestTimer
+        interval: 150
+        repeat: true
+        property real phase: 0
+        property var checks: ({})
+        property var change: null
+        property var initial: null
+        property int evidenceIndex: 0
+        property var tooltipProbe: null
+        property var tooltipOwner: null
+        property var statusTooltipOwner: null
+        onTriggered: {
+            if (!analysisState.complete || core.busy || core.inspecting || core.comparing || core.diagnostics().pending > 0) return;
+            if (phase === 0) {
+                let service = serviceRows.find(function(s) {return s.id === 101;});
+                inspect(service.source_id, service.id);
+                phase = 1;
+            } else if (phase === 1) {
+                let row = tree.itemAtIndex(0);
+                if (!row) return;
+                tooltipProbe = row.rowTooltip;
+                tooltipOwner = tooltipProbe.parent;
+                statusTooltipOwner = statusTooltip.parent;
+                tooltipProbe.open();
+                phase = 1.1;
+            } else if (phase === 1.1) {
+                if (!tooltipProbe.visible) return;
+                checks.tooltip_attached_values = tooltipProbe.anchorControl === tooltipOwner && tooltipProbe.anchorHovered === !!tooltipOwner.hovered && tooltipProbe.visible;
+                // Reproduce the Popup parent-detach interval deterministically;
+                // delegate retirement order differs between Windows and Linux.
+                tooltipProbe.parent = null;
+                statusTooltip.parent = null;
+                phase = 1.2;
+            } else if (phase === 1.2) {
+                checks.tooltip_detached_hidden = !tooltipProbe.anchorControl && !tooltipProbe.anchorHovered && !tooltipProbe.visible;
+                checks.tooltip_detached_text = statusTooltip.anchorText === "" && statusTooltip.text === "";
+                tooltipProbe.parent = tooltipOwner;
+                statusTooltip.parent = statusTooltipOwner;
+                phase = 1.3;
+            } else if (phase === 1.3) {
+                checks.tooltip_anchor_rebound = tooltipProbe.anchorControl === tooltipOwner && statusTooltip.anchorControl === statusTooltipOwner && statusTooltip.text === statusTooltipOwner.text;
+                core.hover("treeSearch");
+                tooltipProbe = null; tooltipOwner = null; statusTooltipOwner = null;
+                initial = {id:selected, sid:selectedService, at:analysisState.selected_packet};
+                openComparison();
+                fromPacket.text = String(analysisState.history[0].last_packet);
+                toPacket.text = String(Number(analysisState.packets)-1);
+                phase = 1.5;
+            } else if (phase === 1.5) {
+                // Tab visibility changes before layout polish; click the rendered control.
+                if (!core.isExposed("swapComparison")) return;
+                let a=fromPacket.text,b=toPacket.text;
+                checks.swap_control = core.click("swapComparison") && fromPacket.text === b && toPacket.text === a;
+                core.click("swapComparison");
+                checks.history_presets = comparisonPresets().some(function(p) {return p.packet === analysisState.table_history[0].at_packet;}) && core.isExposed("comparisonPresetA") && core.isExposed("comparisonPresetB");
+                compareSnapshots(0);
+                phase = 2;
+            } else if (phase === 2) {
+                change=(comparison.changes || []).find(function(r) {return r.kind === "services" && r.identity.service_id === 103;});
+                checks.service_change_found=!!change;
+                if (!change) { core.testResult(JSON.stringify({passed:false,checks:checks}));stop();return; }
+                inspectChange(change,"before",0);
+                phase = 3;
+            } else if (phase === 3) {
+                let evidence=change.before.evidence[evidenceIndex];
+                checks["evidence_"+evidenceIndex] = detail.id === evidence.id && detail.pid === evidence.pid && detail.native_table_at_packet === change.before.at_packet && analysisState.selected_packet === initial.at;
+                evidenceIndex++;
+                if (evidenceIndex < change.before.evidence.length) {
+                    comparisonSource.currentIndex=evidenceIndex;
+                    comparisonSource.activated(evidenceIndex);
+                } else {
+                    checks.multiple_sources=change.before.evidence.length >= 3;
+                    core.click("tab_Services");
+                    phase = 4;
+                }
+            } else if (phase === 4) {
+                checks.original_selection_restored = selected === initial.id && selectedService === initial.sid && detail.id === initial.id && analysisState.selected_packet === initial.at && !selectedChange;
+                openComparison();inspectChange(change,"before");
+                phase = 5;
+            } else if (phase === 5) {
+                core.click("useComparisonSnapshot");
+                phase = 6;
+            } else if (phase === 6) {
+                checks.applied_cutoff = tab === "Services" && selectedService === 103 && detail.id === change.before.evidence[0].id && detail.native_table_at_packet === change.before.at_packet && analysisState.selected_packet === change.before.at_packet;
+                core.click("rename");
+                checks.editor_original_target=editService.currentValue === 103 && renameName.text === "Sports HD";
+                editService.currentIndex = editService.model.findIndex(function(s) {return s.id === 102;});
+                editService.activated(editService.currentIndex);
+                checks.editor_switch_target=editService.currentValue === 102 && renameName.text === "Culture HD";
+                renameName.text="Discard this delayed preview";
+                core.click("preview");
+                renameName.text="Historical parity edit";
+                phase = 7;
+            } else if (phase === 7) {
+                checks.stale_reply_discarded=!preview.token && !exportButton.enabled;
+                core.click("preview");phase = 8;
+            } else if (phase === 8) {
+                checks.historical_target_preview=preview.service_id === 102 && preview.old_version === 1 && preview.after === "Historical parity edit" && exportButton.enabled;
+                checks.editor_choices_unclipped=[editService,exportFormat].every(function(choice) {return choice.height >= 28 && choice.contentItem.height >= choice.contentItem.implicitHeight;});
+                if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT") + ".edit.png");
+                editService.currentIndex=0;editService.activated(0);
+                checks.service_change_invalidates=!preview.token && !exportButton.enabled;
+                renameDialog.close();
+                core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k) {return checks[k];}),checks:checks}));
+                stop();
+            }
         }
     }
     Timer {
@@ -2217,6 +2382,8 @@ ApplicationWindow {
             exportTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("layout-") === 0)
             layoutTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "operations-parity")
+            operationsParityTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "comparison")
             comparisonTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
@@ -2227,7 +2394,19 @@ ApplicationWindow {
         if (core.env("SHOWPSISI_SCRIPT") === "explorer-parity")
             explorerParityTimer.start();
     }
-    onClosing: if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout()
+    onClosing: function(close) {
+        if (core.exportPending) {
+            close.accepted = false;
+            notice = "An export is still writing. Wait for its result before closing ShowPsiSi.";
+            return;
+        }
+        if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout();
+    }
+    UpdateDialog {
+        id: updateDialog
+        workBusy: core.busy || core.inspecting || core.comparing || core.exportPending || exporting || saveDialog.visible
+        lightTheme: win.lightTheme
+    }
 
     Shortcut {
         sequence: "Ctrl+K"
@@ -2338,6 +2517,7 @@ ApplicationWindow {
             }
             PlainLabel {
                 text: "PSI / SI INSPECTOR"
+                visible: win.width >= 1150
                 color: muted
                 font.pixelSize: 11
                 SafeTip {
@@ -2367,9 +2547,14 @@ ApplicationWindow {
                 text: "Reset layout"
                 onClicked: resetLayout()
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Drag the dividers to resize. Alt+Left/Right resizes the inspector; Alt+Up/Down resizes the timeline. Changes are saved on this computer."
                 }
+            }
+            Action {
+                objectName: "aboutUpdatesButton"
+                text: "About / Updates"
+                onClicked: updateDialog.open()
             }
             Action {
                 objectName: "agentApi"
@@ -2382,7 +2567,7 @@ ApplicationWindow {
                 text: "Save diagnostics"
                 enabled: !core.busy && !core.inspecting && !core.comparing
                 onClicked: notice = uiAgent.saveBundle()
-                SafeTip { visible: anchorControl.hovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
+                SafeTip { visible: anchorHovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
             }
         }
     }
@@ -2442,7 +2627,7 @@ ApplicationWindow {
                 ]
                 Accessible.name: "Broadcast standard context for next scan"
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
                 }
             }
@@ -2457,7 +2642,7 @@ ApplicationWindow {
                 enabled: backendReady
                 Accessible.name: "Additional packet identifiers, comma separated"
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Optional extra packet identifiers, decimal or hexadecimal, from 0 to 8191."
                 }
                 onAccepted: scan()
@@ -2478,7 +2663,7 @@ ApplicationWindow {
                 enabled: backendReady
                 onClicked: fileDialog.open()
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Open transport stream (Ctrl+O)"
                 }
             }
@@ -2498,7 +2683,7 @@ ApplicationWindow {
                 enabled: core.available && !core.cancelling
                 onClicked: cancelScan()
                 Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
-                SafeTip { visible: anchorControl.hovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
+                SafeTip { visible: anchorHovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
             }
         }
         PlainLabel {
@@ -2634,7 +2819,7 @@ ApplicationWindow {
                             onClicked: {
                                 selectExplorer(modelData); explorerList.forceActiveFocus();
                             }
-                            SafeTip { visible:anchorControl.hovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
+                            SafeTip { visible:anchorHovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
                         }
                     }
                     TinyLabel { text: "↑ ↓ Home End · focus\nEnter / Space · select"; Layout.margins: 7 }
@@ -2685,7 +2870,7 @@ ApplicationWindow {
                                     }
                                 }
                                 SafeTip {
-                                    visible: anchorControl.hovered
+                                    visible: anchorHovered
                                     text: explanation(modelData)
                                 }
                             }
@@ -2758,7 +2943,7 @@ ApplicationWindow {
                                 text: "Use current"
                                 enabled: backendReady && !!analysisState.complete && !core.comparing
                                 onClicked: { fromPacket.text = String(currentPacket()); comparison = {}; }
-                                SafeTip { visible: anchorControl.hovered; text: "Set A to the selected history snapshot, or the final packet in Latest view." }
+                                SafeTip { visible: anchorHovered; text: "Set A to the selected history snapshot, or the final packet in Latest view." }
                             }
                         }
                         RowLayout {
@@ -2782,7 +2967,33 @@ ApplicationWindow {
                                 text: "Use current"
                                 enabled: backendReady && !!analysisState.complete && !core.comparing
                                 onClicked: { toPacket.text = String(currentPacket()); comparison = {}; }
-                                SafeTip { visible: anchorControl.hovered; text: "Set B to the selected history snapshot, or the final packet in Latest view." }
+                                SafeTip { visible: anchorHovered; text: "Set B to the selected history snapshot, or the final packet in Latest view." }
+                            }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Repeater {
+                                model: ["A", "B"]
+                                FieldChoice {
+                                    required property string modelData
+                                    objectName: "comparisonPreset" + modelData
+                                    Layout.fillWidth: true
+                                    Layout.preferredWidth: 1
+                                    implicitHeight: 28
+                                    textRole: "label"
+                                    model: comparisonPresets()
+                                    enabled: backendReady && !!analysisState.complete && !core.comparing
+                                    Accessible.name: "Snapshot " + modelData + " from history"
+                                    displayText: modelData + " · History…"
+                                    onActivated: {
+                                        let choice = model[currentIndex];
+                                        if (choice && choice.packet >= 0) {
+                                            if (modelData === "A") fromPacket.text = String(choice.packet);
+                                            else toPacket.text = String(choice.packet);
+                                        }
+                                        currentIndex = 0;
+                                    }
+                                }
                             }
                         }
                         RowLayout {
@@ -2798,6 +3009,12 @@ ApplicationWindow {
                                 enabled: backendReady && !core.comparing
                                 onActivated: comparison = {}
                                 Accessible.name: "Snapshot change category"
+                            }
+                            Action {
+                                objectName: "swapComparison"
+                                text: "Swap A/B"
+                                enabled: backendReady && !!analysisState.complete && !core.comparing
+                                onClicked: { let before = fromPacket.text; fromPacket.text = toPacket.text; toPacket.text = before; }
                             }
                             Action {
                                 objectName: "runComparison"
@@ -2834,7 +3051,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                             color: changedColor
                             text: Object.keys(comparison.summary || {}).map(function (kind) { let count = comparison.summary[kind]; return kind + ": +" + count.added + " / −" + count.removed + " / ~" + count.changed; }).join("  ·  ")
-                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorControl.text }
+                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorText }
                             HoverHandler { id: comparisonSummaryHover }
                         }
                         PlainLabel {
@@ -2875,7 +3092,7 @@ ApplicationWindow {
                             implicitHeight: 24
                             text: (showInvalidSections ? "✓ " : "") + "Bad CRC · " + hiddenInvalidCount
                             onClicked: showInvalidSections = !showInvalidSections
-                            SafeTip { visible:anchorControl.hovered; text:"Include CRC-invalid evidence in table groups and exact sections" }
+                            SafeTip { visible:anchorHovered; text:"Include CRC-invalid evidence in table groups and exact sections" }
                         }
                     }
                     RowLayout {
@@ -2989,7 +3206,7 @@ ApplicationWindow {
                                 activate(modelData);
                             }
                             SafeTip {
-                                visible: anchorControl.hovered
+                                visible: anchorHovered
                                 text: (tab === "Services" ? "LCN: Logical channel number (" + (modelData.lcn_status || "unknown") + ") · SID: Service identifier · PMT: Program Map Table\nProvider: " + (modelData.provider || "unknown") + " · Group: " + (modelData.group || "unknown") + "\n" : "") + (tab === "Tables" ? modelData.name + " · " + explanation(modelData.name) + "\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData) + (tab === "Services" ? "\nType " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + "\nVideo PIDs: " + pidList(modelData.video_pids,modelData.media_status) + " · Audio PIDs: " + pidList(modelData.audio_pids,modelData.media_status) : "")
                             }
                         }
@@ -3039,30 +3256,47 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Action {
                                 objectName: "inspectBefore"
-                                text: "A · Before"
+                                text: compactInspector ? "A" : "A · Before"
+                                Accessible.name: "A · Before"
                                 primary: comparisonSide === "before"
                                 enabled: backendReady && !!selectedChange && !!selectedChange.before
                                 onClicked: inspectChange(selectedChange, "before")
                             }
                             Action {
                                 objectName: "inspectAfter"
-                                text: "B · After"
+                                text: compactInspector ? "B" : "B · After"
+                                Accessible.name: "B · After"
                                 primary: comparisonSide === "after"
                                 enabled: backendReady && !!selectedChange && !!selectedChange.after
                                 onClicked: inspectChange(selectedChange, "after")
                             }
-                            Item { Layout.fillWidth: true }
+                            FieldChoice {
+                                id: comparisonSource
+                                objectName: "comparisonSource"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 65
+                                implicitHeight: 28
+                                textRole: "label"
+                                model: selectedChange && selectedChange[comparisonSide] ? (selectedChange[comparisonSide].evidence || []).map(function(e) {return {label:e.name + " · PID " + hex(e.pid) + " · §" + e.section + " · " + e.id};}) : []
+                                currentIndex: comparisonEvidenceIndex
+                                enabled: backendReady && count > 0
+                                Accessible.name: "Comparison source evidence"
+                                onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
+                                SafeTip { visible: anchorHovered; text: comparisonSource.currentText }
+                            }
                             Action {
                                 objectName: "useComparisonSnapshot"
                                 text: "Use snapshot"
                                 enabled: backendReady && !!selectedChange && !core.inspecting
                                 onClicked: {
                                     let row = selectedChange, side = row[comparisonSide];
+                                    selectedChange = null;
+                                    comparisonWorkspace = null;
                                     tab = row.kind === "services" ? "Services" : row.kind === "events" ? "EPG" : "Tables";
                                     recordSearch.clear();
                                     snapshot(side.at_packet, side.evidence[0].id, row.kind === "services" ? side.value.id : -1);
                                 }
-                                SafeTip { visible: anchorControl.hovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
+                                SafeTip { visible: anchorHovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
                             }
                         }
                         PlainLabel {
@@ -3073,7 +3307,7 @@ ApplicationWindow {
                             elide: Text.ElideRight
                             font.pixelSize: 11
                             color: changedColor
-                            SafeTip { visible: changeHover.hovered; text: changeFields(selectedChange) }
+                            SafeTip { visible: changeHover.hovered; text: changeFields(selectedChange, true) }
                             HoverHandler { id: changeHover }
                         }
                     }
@@ -3238,8 +3472,8 @@ ApplicationWindow {
                             Keys.onEscapePressed: clear()
                             onAccepted: { tree.forceActiveFocus(); if (treeRows.length) tree.currentIndex=0; }
                         }
-                        Action { objectName: "expandAllSections"; text: "+"; Accessible.name: "Expand all fields"; onClicked: foldAll(false); SafeTip { visible: anchorControl.hovered; text: "Expand all fields" } }
-                        Action { objectName: "collapseAllSections"; text: "−"; Accessible.name: "Collapse all fields"; onClicked: foldAll(true); SafeTip { visible: anchorControl.hovered; text: "Collapse all fields" } }
+                        Action { objectName: "expandAllSections"; text: "+"; Accessible.name: "Expand all fields"; onClicked: foldAll(false); SafeTip { visible: anchorHovered; text: "Expand all fields" } }
+                        Action { objectName: "collapseAllSections"; text: "−"; Accessible.name: "Collapse all fields"; onClicked: foldAll(true); SafeTip { visible: anchorHovered; text: "Collapse all fields" } }
                     }
                     PlainLabel {
                         visible: inspectorView === "Structure" && !!treeSearch.text.trim()
@@ -3309,6 +3543,7 @@ ApplicationWindow {
                         delegate: NavItem {
                             required property var modelData
                             required property int index
+                            property alias rowTooltip: treeTooltip
                             objectName: "tree:" + modelData.path
                             highlighted: tree.currentIndex === index
                             keyboardCurrent: tree.currentIndex === index && tree.activeFocus
@@ -3355,7 +3590,8 @@ ApplicationWindow {
                                     win.toggle(modelData.path);
                             }
                             SafeTip {
-                                visible: anchorControl.hovered
+                                id: treeTooltip
+                                visible: anchorHovered
                                 text: modelData.label + (modelData.value ? ": " + modelData.value : "")
                             }
                         }
@@ -3429,7 +3665,7 @@ ApplicationWindow {
                                 placeholderText: "Next scan default charset (e.g. UTF-8)"
                                 enabled: backendReady
                                 Accessible.name: "Default input charset for next scan"
-                                SafeTip { visible: anchorControl.hovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
+                                SafeTip { visible: anchorHovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
                             }
                             FieldChoice {
                                 id: epgLanguageChoice
@@ -3581,7 +3817,8 @@ ApplicationWindow {
                             enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
                             onClicked: {
                                 preview = {};
-                                renameName.text = chosenService().name || "";
+                                editService.currentIndex = Math.max(0, (detail.services || []).findIndex(function(service) {return service.id === selectedService;}));
+                                renameName.text = ((detail.services || [])[editService.currentIndex] || {}).name || "";
                                 renameDialog.open();
                             }
                         }
@@ -3755,7 +3992,7 @@ ApplicationWindow {
                     SafeTip {
                         id: statusTooltip
                         visible: statusHover.hovered
-                        text: anchorControl.text
+                        text: anchorText
                     }
                     HoverHandler {
                         id: statusHover
@@ -3847,6 +4084,7 @@ ApplicationWindow {
         id: renameDialog
         title: "Preview service edit"
         onAboutToShow: exportFeedback = ""
+        onClosed: { preview = {}; previewIntent = {}; }
         anchors.centerIn: parent
         width: 500
         modal: true
@@ -3859,32 +4097,49 @@ ApplicationWindow {
                 color: muted
                 font.pixelSize: 11
             }
+            FieldChoice {
+                id: editService
+                objectName: "editService"
+                Layout.fillWidth: true
+                enabled: !exporting && !saveDialog.visible
+                textRole: "label"
+                valueRole: "id"
+                model: (detail.services || []).map(function(service) {return {id:service.id, label:(service.name || "Unnamed service") + " · SID " + hex(service.id), name:service.name};})
+                Accessible.name: "Service to rename"
+                onActivated: {
+                    preview = {}; previewIntent = {};
+                    renameName.text = (model[currentIndex] || {}).name || "";
+                    exportFeedback = "";
+                }
+            }
             FieldInput {
                 id: renameName
                 Layout.fillWidth: true
                 placeholderText: "New service name"
                 enabled: !exporting
                 selectByMouse: true
-                onTextChanged: preview = {}
+                onTextChanged: { preview = {}; previewIntent = {}; }
                 Accessible.name: "New service name"
             }
             Action {
                 objectName: "preview"
                 text: "Preview change"
                 primary: true
-                enabled: backendReady && !!analysisState.complete && renameName.text.trim().length > 0 && !!chosenService() && !exporting
+                enabled: backendReady && !!analysisState.complete && renameName.text.trim().length > 0 && editService.currentIndex >= 0 && !exporting && !saveDialog.visible
                 onClicked: {
                     preview = {};
                     exportFeedback = "";
+                    previewIntent = {id:selected, sid:editService.currentValue, name:renameName.text,
+                        source:analysisState.source, at:analysisState.selected_packet};
                     core.send("preview_rename", {
                         id: selected,
-                        service_id: chosenService().id,
+                        service_id: editService.currentValue,
                         name: renameName.text
                     });
                 }
             }
             PlainLabel {
-                text: preview.token ? preview.before + " → " + preview.after : "Preview the edit before exporting."
+                text: preview.token ? preview.before + " → " + preview.after + " · version " + preview.old_version + " → " + preview.new_version : "Preview the edit before exporting."
                 Layout.fillWidth: true
                 wrapMode: Text.Wrap
                 color: ink
@@ -3919,7 +4174,7 @@ ApplicationWindow {
                 id: exportButton
                 objectName: "export"
                 text: exporting ? "Exporting…" : "Save SI-only " + (exportFormat.currentValue || "ts").toUpperCase() + " + manifest…"
-                enabled: backendReady && !!analysisState.complete && !!preview.token && preview.after === renameName.text && !exporting
+                enabled: backendReady && !!analysisState.complete && !!preview.token && preview.after === renameName.text && preview.service_id === editService.currentValue && !exporting && !saveDialog.visible
                 onClicked: openExportDialog()
             }
             PlainLabel {

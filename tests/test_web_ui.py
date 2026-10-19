@@ -572,6 +572,129 @@ class BrowserTests(unittest.TestCase):
         self.page.wait_for_function('() => document.querySelector("#notice").textContent.includes("Native file dialogs")')
         self.assertIn('local TS file path',self.page.locator('#notice').inner_text())
 
+    def test_edit_format_save_intent_and_real_exports(self):
+        """Inject only Save choices; every preview/export remains a real engine call.
+
+        This verifies browser dispatch, not native file-dialog interaction.
+        """
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        self.page.evaluate("""() => {
+          const invoke = window.__TAURI__.core.invoke;
+          window.testSave = {options:[], resolve:null};
+          window.__TAURI__.core.invoke = (command,args) => {
+            if (command !== 'plugin:dialog|save') return invoke(command,args);
+            window.testSave.options.push(args.options);
+            return new Promise(resolve => {window.testSave.resolve=resolve;});
+          };
+        }""")
+        def preview(name):
+            self.page.locator('#rename').fill(name)
+            self.page.locator('#preview').click()
+            self.page.wait_for_function('() => !document.querySelector("#export").disabled')
+        def save_choice(choice):
+            self.page.locator('#export').click()
+            self.page.wait_for_function('() => !!window.testSave.resolve')
+            self.page.evaluate('choice=>{const resolve=window.testSave.resolve;window.testSave.resolve=null;resolve(choice);}',choice)
+        self.page.locator('#edit').click()
+        self.page.locator('#edit-service').select_option('102')
+        self.assertEqual(self.page.locator('#rename').input_value(),'Culture HD')
+        preview('Browser parity edit')
+        save_choice(None)
+        self.page.wait_for_function('() => !document.querySelector("#export").disabled')
+        self.assertTrue(self.page.locator('#edit-dialog').is_visible())
+        self.page.locator('#export').click()
+        self.page.wait_for_function('() => !!window.testSave.resolve')
+        self.page.locator('#rename').fill('Changed while Save was pending')
+        stale=self.output/'artifacts/stale-save.ts'
+        self.page.evaluate('path=>{const resolve=window.testSave.resolve;window.testSave.resolve=null;resolve(path);}',str(stale))
+        self.page.wait_for_function('() => document.querySelector("#diff").textContent.includes("preview changed")')
+        self.assertFalse(stale.exists())
+        self.assertTrue(self.page.locator('#export').is_disabled())
+        preview('Browser parity edit')
+        self.page.locator('#export-format').select_option('bin')
+        save_choice(str(self.output/'artifacts/wrong.ts'))
+        self.page.wait_for_function('() => document.querySelector("#diff").textContent.includes("Use a .bin")')
+        self.assertFalse((self.output/'artifacts/wrong.ts').exists())
+        for format_ in ('bin','ts'):
+            with self.subTest(format=format_):
+                if not self.page.locator('#edit-dialog').is_visible():
+                    self.page.locator('#edit').click()
+                    self.page.locator('#edit-service').select_option('102')
+                    preview('Browser parity edit')
+                self.page.locator('#export-format').select_option(format_)
+                output=self.output/('artifacts/parity-export.'+format_)
+                save_choice(str(output))
+                self.page.wait_for_function('() => !document.querySelector("#edit-dialog").open')
+                options=self.page.evaluate('window.testSave.options.at(-1)')
+                self.assertEqual(options['defaultPath'],'edited-si.'+format_)
+                self.assertEqual(options['filters'][0]['extensions'],[format_])
+                manifest=json.loads(Path(str(output)+'.manifest.json').read_text())
+                self.assertEqual(manifest['format'],format_)
+                self.assertEqual(manifest['edit']['service_id'],102)
+                self.assertEqual(manifest['edit']['after'],'Browser parity edit')
+                raw=output.read_bytes()
+                self.assertEqual(len(raw),manifest['bytes'])
+                if format_=='bin':
+                    from make_fixture import crc
+                    for section in manifest['sections']:
+                        part=raw[section['bin_offset']:section['bin_offset']+section['bytes']]
+                        self.assertEqual(((part[1]&15)<<8|part[2])+3,len(part))
+                        if part[1]&0x80 or part[0]==0x73:
+                            self.assertEqual(crc(part),0)
+                else:
+                    from core_client import Core
+                    core=Core()
+                    try: parsed=core.call('analyze',{'path':str(output)})
+                    finally: core.close()
+                    self.assertEqual(next(service['name'] for service in parsed['services'] if service['id']==102),'Browser parity edit')
+                    self.assertEqual(parsed['crc_errors'],0)
+                identities={path:(path.read_bytes(),path.stat().st_mtime_ns) for path in (output,Path(str(output)+'.manifest.json'))}
+                self.page.locator('#edit').click()
+                self.page.locator('#edit-service').select_option('102')
+                preview('Browser parity edit')
+                save_choice(str(output))
+                self.page.wait_for_function('() => document.querySelector("#diff").textContent.includes("already exists")')
+                self.assertFalse(self.page.locator('#export').is_disabled())
+                for path,identity in identities.items():
+                    self.assertEqual((path.read_bytes(),path.stat().st_mtime_ns),identity)
+                self.page.locator('#close-edit').click()
+        self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
+
+    def test_use_comparison_snapshot_preserves_side_and_edit_cutoff(self):
+        self.analyze()
+        self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        old=self.page.evaluate('window.showpsisi.getState()')
+        self.page.locator('#compare-snapshots').click()
+        self.page.locator('#compare-from').fill(str(old['history'][0]['last_packet']))
+        self.page.locator('#compare-to').fill(str(old['packets']-1))
+        self.page.locator('#run-comparison').click()
+        self.page.wait_for_function('() => !!window.showpsisi.getComparison()')
+        result=self.page.evaluate('window.showpsisi.getComparison()')
+        index=next(i for i,c in enumerate(result['changes']) if c['kind']=='services' and c['identity']['service_id']==103)
+        before=result['changes'][index]['before']
+        # Every distinct source keeps its side's exact cutoff without moving the workspace.
+        for evidence_index,evidence in enumerate(before['evidence']):
+            self.page.locator('[data-comparison-evidence="'+str(index)+':A:'+str(evidence_index)+'"]').click()
+            self.page.wait_for_function('id=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().id===id',arg=evidence['id'])
+            detail=self.page.evaluate('window.showpsisi.getDetail()')
+            self.assertEqual(detail['pid'],evidence['pid'])
+            self.assertEqual(detail['native_table_at_packet'],before['at_packet'])
+            self.assertEqual(self.page.evaluate('window.showpsisi.getState().selected_packet'),old['selected_packet'])
+        self.page.locator('[data-use-comparison="'+str(index)+':A"]').click()
+        self.page.wait_for_function('packet=>window.showpsisi.getUiState().settled && window.showpsisi.getState().selected_packet===packet',arg=before['at_packet'])
+        self.assertEqual(self.page.evaluate('window.showpsisi.getUiState().tab'),'Services')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getUiState().selected_service'),103)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail().native_table_at_packet'),before['at_packet'])
+        self.page.locator('#edit').click()
+        self.assertEqual(self.page.locator('#edit-service').input_value(),'103')
+        self.assertEqual(self.page.locator('#rename').input_value(),'Sports HD')
+        self.page.locator('#rename').fill('Historical parity edit')
+        self.page.locator('#preview').click()
+        self.page.wait_for_function('() => !document.querySelector("#export").disabled')
+        self.assertIn('version 1 → 2',self.page.locator('#diff').inner_text())
+        self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
+
     def test_preview_export_reparse_and_no_overwrite(self):
         self.analyze()
         self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
@@ -1263,6 +1386,15 @@ class BrowserTests(unittest.TestCase):
                 route.fulfill(response=response,json=value)
             else:
                 route.continue_()
+        self.page.add_init_script("""
+          let transport;
+          Object.defineProperty(window,'__TAURI__',{configurable:true,get:()=>transport,set:value=>{
+            transport=value;
+            const listen=value.event.listen;
+            value.event.listen=(name,callback)=>name==='core-close-blocked'
+              ? Promise.resolve(()=>{}) : listen(name,callback);
+          }});
+        """)
         self.page.route('**/__bridge/invoke',native_label)
         self.page.reload()
         self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
@@ -1302,6 +1434,12 @@ class BrowserTests(unittest.TestCase):
         self.assertFalse(self.page.locator('#notice').evaluate('(element)=>element.classList.contains("error")'))
         self.page.locator('[data-view="tree"]').click()
         self.assertGreater(self.page.locator('#tree-area').count(),0)
+        self.page.locator('#about').click()
+        self.page.locator('[data-project-link]').last.click()
+        self.page.wait_for_function('() => document.querySelector("#about-feedback").textContent.includes("Copy this address")')
+        self.assertIn('https://github.com/znbsf/ShowPsiSi/releases',self.page.locator('#about-feedback').inner_text())
+        self.assertEqual(len(self.page.context.pages),page_count)
+        self.page.locator('#close-about').click()
 
     def test_layout_persists_clamps_and_resets(self):
         self.analyze()

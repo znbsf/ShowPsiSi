@@ -13,3 +13,5 @@ For scan lifecycle changes, read docs/ANALYSIS_CANCELLATION.md. Engine state rem
 For delivery, interruption recovery and completion reporting, follow [docs/DELIVERY_RUNBOOK.md](docs/DELIVERY_RUNBOOK.md). Local tests alone are not delivery; resume from verified repository and hosted state within the user's authorized scope.
 
 For CI completion, state ordering, isolation and failure-evidence contracts, read [docs/CI_TEST_CONTRACT.md](docs/CI_TEST_CONTRACT.md).
+
+For Windows release work, read [release acceptance gates](docs/RELEASE_READINESS.md), [installer/runtime handling](docs/WINDOWS_INSTALLER.md), and [update-client trust and lifecycle](docs/UPDATES.md). Preserve exact source/artifact identity, explicit install consent, dependency review and active-export guards. A green CI run does not establish a clean Windows machine or publisher code-signing reputation.

@@ -25,6 +25,7 @@
 #include <QFileInfo>
 #include <QJsonParseError>
 #include <QHash>
+#include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QProcessEnvironment>
@@ -32,6 +33,7 @@
 #include <memory>
 #include <functional>
 #include "AgentDebug.h"
+#include "ReleaseUpdater.h"
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -47,6 +49,7 @@ class Bridge:public QObject {
     Q_PROPERTY(QString root READ root CONSTANT)
     Q_PROPERTY(QString sample READ sample CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool exportPending READ exportPending NOTIFY exportPendingChanged)
     Q_PROPERTY(bool cancelling READ cancelling NOTIFY cancellingChanged)
     Q_PROPERTY(bool available READ available NOTIFY availabilityChanged)
     Q_PROPERTY(QString availability READ availability NOTIFY availabilityChanged)
@@ -62,6 +65,7 @@ class Bridge:public QObject {
     int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0;
     quint64 generation=0;
     QHash<int,Request> methods;
+    QSet<int> pendingExports;
     QJsonArray recentResponses;
     QElapsedTimer clock;
     bool dataFrame=false,completeFrame=false;
@@ -84,8 +88,12 @@ class Bridge:public QObject {
         }
         if(!msg["id"].isDouble())return;
         const int id=msg["id"].toInt();
-        if(msg["id"]!=QJsonValue(id)||!methods.contains(id))return;
+        if(msg["id"]!=QJsonValue(id))return;
         if(!msg["result"].isObject()&&!msg["error"].isObject())return;
+        // Export lifetime is independent of view/query generations. Never let a
+        // navigation clear release the close/update guard before its terminal.
+        if(pendingExports.remove(id))emit exportPendingChanged();
+        if(!methods.contains(id))return;
         const auto request=methods.take(id);
         const QString method=request.method;
         recentResponses.append(QJsonObject{{"id",id},{"method",method},{"ok",!msg.contains("error")},
@@ -123,6 +131,8 @@ class Bridge:public QObject {
         }
     }
 public:
+    bool exportPending() const { return !pendingExports.isEmpty(); }
+    bool hasPendingOperations() const { return exportPending() || !methods.isEmpty() || m_busy || !queuedWrites.isEmpty(); }
     Q_INVOKABLE QVariantMap diagnostics() const {
         return {{"pending",methods.size()},{"recent_responses",recentResponses.toVariantList()},
             {"backend",m_availability},{"error",m_error},{"stderr_tail",stderrTail}};
@@ -198,13 +208,20 @@ public:
         process.start(binary,arguments);
         mark("native_setup");
     }
-    ~Bridge(){process.closeWriteChannel();if(!process.waitForFinished(1000)){process.kill();process.waitForFinished(1000);}}
+    ~Bridge(){
+        process.closeWriteChannel();
+        // Window close/update guards normally keep accepted writes alive. If an
+        // explicit application exit bypasses the window, drain those writes to
+        // EOF rather than killing the core halfway through its final output.
+        if(exportPending()){process.waitForFinished(-1);return;}
+        if(!process.waitForFinished(1000)){process.kill();process.waitForFinished(1000);}
+    }
     QVariantMap state()const{return m_state;} QVariantMap detail()const{return m_detail;}
     void backendStopped(const QString& reason){
         if(m_availability=="disconnected")return;
         m_availability="disconnected";m_error="Backend disconnected. Restart the application. "+reason;
         ++generation;activeAnalysis=0;m_busy=false;m_cancelling=false;
-        methods.clear();queuedWrites.clear();m_state.clear();clearIntentions();
+        methods.clear();queuedWrites.clear();pendingExports.clear();emit exportPendingChanged();m_state.clear();clearIntentions();
         emit availabilityChanged();emit errorChanged();emit busyChanged();emit cancellingChanged();emit stateChanged();
     }
     bool inspecting()const{return m_inspecting;}
@@ -244,6 +261,7 @@ public:
         if(method=="preview_rename")latestPreview=id;
         if(method=="diff_snapshots"){latestComparison=id;m_comparing=true;emit comparingChanged();}
         methods.insert(id,{method,generation});
+        if(method=="export"){pendingExports.insert(id);emit exportPendingChanged();}
         QJsonObject request{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}};
         QByteArray wire=QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
         if(process.state()==QProcess::Starting)queuedWrites+=wire;else if(process.write(wire)<0)backendStopped(process.errorString());
@@ -400,9 +418,21 @@ public:
     }
     Q_INVOKABLE void testResult(QString text){QSaveFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));const auto bytes=text.toUtf8();if(f.open(QIODevice::WriteOnly)&&f.write(bytes)==bytes.size()&&f.commit())mark("ui_test_done");else mark("ui_test_result_failed");}
 signals:
-    void stateChanged();void detailChanged();void busyChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
+    void stateChanged();void detailChanged();void busyChanged();void exportPendingChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
 };
 int main(int argc,char**argv){
+#ifdef Q_OS_WIN
+    // Presence, not ownership, protects every Qt/core instance from installer
+    // replacement. Keep the handle until all application objects are destroyed.
+    struct ApplicationLifetime {
+        HANDLE handle=CreateMutexW(nullptr,FALSE,L"Local\\ShowPsiSi.ApplicationLifetime");
+        ~ApplicationLifetime(){if(handle)CloseHandle(handle);}
+    } applicationLifetime;
+    if(!applicationLifetime.handle){
+        MessageBoxW(nullptr,L"ShowPsiSi could not create its installation safety guard. The application will not start.",L"ShowPsiSi startup error",MB_OK|MB_ICONERROR);
+        return 2;
+    }
+#endif
     // Discover the marker before QGuiApplication loads any platform plugins.
     // Windows uses the OS executable path, never argv[0] or the working directory.
 #ifdef Q_OS_WIN
@@ -431,9 +461,12 @@ int main(int argc,char**argv){
     for(int size : {16,24,32,48,64,128,256}) applicationIcon.addFile(QString(":/icons/showpsisi-%1.png").arg(size), QSize(size,size));
     QGuiApplication::setWindowIcon(applicationIcon);
     QGuiApplication::setDesktopFileName("org.showpsisi.ShowPsiSi");
-    app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");QQuickStyle::setStyle("Basic");
-    Bridge bridge;AgentDebug uiAgent;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("core",&bridge);
+    app.setOrganizationName("ShowPsiSi");app.setApplicationName("ShowPsiSi");app.setApplicationVersion(QStringLiteral(SHOWPSISI_VERSION));QQuickStyle::setStyle("Basic");
+    Bridge bridge;ReleaseUpdater updater;AgentDebug uiAgent;QQmlApplicationEngine engine;engine.rootContext()->setContextProperty("core",&bridge);
     engine.rootContext()->setContextProperty("uiAgent",&uiAgent);
+    updater.setInstallGuard([&bridge] { return !bridge.hasPendingOperations(); });
+    QObject::connect(&updater,&ReleaseUpdater::installerStarted,&app,&QCoreApplication::quit,Qt::QueuedConnection);
+    engine.rootContext()->setContextProperty("appUpdater",&updater);
     engine.loadFromModule("ShowPsiSi","Main");if(engine.rootObjects().isEmpty())return 1;
     auto window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     bridge.attach(window);uiAgent.attach(window);return app.exec();

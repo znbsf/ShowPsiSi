@@ -41,6 +41,7 @@ def manifest(package):
                 'bin/qt.conf', 'bin/showpsisi-portable.json', 'api/tools.json', 'extensions/demo.json',
                 'references/standards.json', 'references/satellites.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'LICENSE',
                 'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'redistribution-review.json',
+                'Launch Qt.cmd', 'README-portable.txt',
                 'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico']
     for name in required:
         if name not in files:
@@ -424,12 +425,20 @@ def review_inventory(value):
             or name in ('THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'source-index.json')}
 
 
+def portable_asset_name(version):
+    if not isinstance(version, str) or not re.fullmatch(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)', version):
+        raise RuntimeError('Portable release requires a canonical application version')
+    return f'ShowPsiSi-{version}-windows-x64-portable.zip'
+
+
 def archive(package, artifacts, output):
     if output.resolve().is_relative_to(package.resolve()) or output.with_suffix(output.suffix + '.sha256').resolve().is_relative_to(package.resolve()):
         raise RuntimeError('Archive and checksum must be outside the package tree')
     if output.exists():
         raise RuntimeError(f'Refusing existing/stale archive: {output}')
     value = verify_manifest(package)
+    if output.name != portable_asset_name(value['build'].get('application_version')):
+        raise RuntimeError('Portable asset name does not match its application version')
     validation = json.loads((artifacts / 'portable-validation.json').read_text(encoding='utf-8'))
     if not validation.get('passed') or validation.get('package_manifest_sha256') != digest(package / 'manifest.json'):
         raise RuntimeError('Runtime validation has not passed')

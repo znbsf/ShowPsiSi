@@ -151,6 +151,86 @@ class EngineTests(unittest.TestCase):
         schema=next(t for t in self.core.call('capabilities')['tools'] if t['name']=='preview_rename')['inputSchema']['properties']['name']
         self.assertEqual(schema['x-maxUtf8Bytes'],180)
 
+    def rename_safety_fixture(self, provider=b'Lab', service_descriptor=True, duplicate=False):
+        from make_fixture import section,descriptor,word
+        def service(sid,desc,flags=0xb000):return word(sid)+b'\xfe'+word(flags+len(desc))+desc
+        private=descriptor(0xe2,b'\xca\xfe\xba\xbe')
+        desc=descriptor(0x5f,b'\x53\x50\x53\x49')
+        if service_descriptor:desc+=descriptor(0x48,bytes([0x19,len(provider)])+provider+b'\x03Old')
+        if duplicate:desc+=descriptor(0x48,b'\x01\x00\x06Second')
+        desc+=private
+        other=descriptor(0x48,b'\x02\x03Lab\x05Other')+private
+        raw=section(0x42,1,31,word(2)+b'\xff'+service(101,desc)+service(102,other,0x4000))
+        packets=[];first=True;cc=0
+        while raw:
+            count=183 if first else 184;part=(b'\x00' if first else b'')+raw[:count];raw=raw[count:]
+            packets.append(bytes([0x47,0x40 if first else 0,0x11,0x10|cc])+part+b'\xff'*(184-len(part)))
+            first=False;cc=(cc+1)&15
+        path=Path(self.output('rename-safety.ts'));path.write_bytes(b''.join(packets));return path
+
+    def test_rename_rejects_descriptor_overflow_and_invalidates_old_token(self):
+        path=self.rename_safety_fixture(b'P'*100);source=path.read_bytes()
+        state=self.core.call('analyze',{'path':str(path),'standards':'dvb'});service=next(s for s in state['services'] if s['id']==101)
+        args={'id':service['source_id'],'service_id':101}
+        # 3 descriptor fields + 100 provider bytes + 152 name bytes exactly fill 255.
+        good=self.core.call('preview_rename',{**args,'name':'A'*152})
+        for name in ['A'*153,'A'*180]:
+            with self.subTest(length=len(name)),self.assertRaisesRegex(RuntimeError,'losslessly.*capacity'):
+                self.core.call('preview_rename',{**args,'name':name})
+            with self.assertRaisesRegex(RuntimeError,'stale'):
+                self.core.call('export',{'path':self.output('rejected.ts'),'preview_token':good['token']})
+        self.assertFalse(Path(self.output('rejected.ts')).exists())
+        self.assertEqual(self.core.call('query')['services'],state['services'])
+        good=self.core.call('preview_rename',{**args,'name':'A'*152})
+        exported=self.core.call('export',{'path':self.output('capacity.ts'),'preview_token':good['token'],'cycles':1,'null_packets':0})
+        readback=self.core.call('analyze',{'path':exported['path'],'standards':'dvb'})
+        edited=next(s for s in readback['services'] if s['id']==101)
+        self.assertEqual((edited['name'],edited['provider'],edited['type']),('A'*152,'P'*100,0x19))
+        self.assertEqual(path.read_bytes(),source)
+
+    def test_rename_rejects_lossy_regional_encoding(self):
+        path=self.rename_safety_fixture();source=path.read_bytes()
+        state=self.core.call('analyze',{'path':str(path),'standards':'isdb-brazil'});service=next(s for s in state['services'] if s['id']==101)
+        args={'id':service['source_id'],'service_id':101}
+        for name in ['中文服务','New 中文','😀']:
+            with self.subTest(name=name),self.assertRaisesRegex(RuntimeError,'losslessly.*charset'):
+                self.core.call('preview_rename',{**args,'name':name})
+        self.assertEqual(self.core.call('query')['services'],state['services'])
+        edit=self.core.call('preview_rename',{**args,'name':'São Paulo'})
+        exported=self.core.call('export',{'path':self.output('brazil.ts'),'preview_token':edit['token'],'cycles':1,'null_packets':0})
+        readback=self.core.call('analyze',{'path':exported['path'],'standards':'isdb-brazil'})
+        edited=next(s for s in readback['services'] if s['id']==101)
+        self.assertEqual((edited['name'],edited['provider'],edited['type']),('São Paulo','Lab',0x19))
+        self.assertEqual(path.read_bytes(),source)
+
+    def test_rename_preserves_other_services_and_descriptor_bytes(self):
+        path=self.rename_safety_fixture();state=self.core.call('analyze',{'path':str(path),'standards':'dvb'})
+        service=next(s for s in state['services'] if s['id']==101)
+        before=self.core.call('inspect',{'id':service['source_id']})
+        edit=self.core.call('preview_rename',{'id':service['source_id'],'service_id':101,'name':'Renamed'})
+        self.assertEqual((edit['old_version'],edit['new_version']),(31,0))
+        result=self.core.call('export',{'path':self.output('preserved.ts'),'preview_token':edit['token'],'cycles':1,'null_packets':0})
+        afterstate=self.core.call('analyze',{'path':result['path'],'standards':'dvb'})
+        edited=next(s for s in afterstate['services'] if s['id']==101);after=self.core.call('inspect',{'id':edited['source_id']})
+        unchanged=lambda detail:[(d['service_id'],d['raw']) for d in detail['descriptors'] if not (d['service_id']==101 and d['tag']==0x48)]
+        self.assertEqual(unchanged(after),unchanged(before))
+        self.assertEqual((edited['name'],edited['provider'],edited['type'],edited['encrypted']),('Renamed','Lab',0x19,True))
+        other=next(s for s in afterstate['services'] if s['id']==102)
+        self.assertEqual((other['name'],other['provider'],other['type'],other['encrypted']),('Other','Lab',2,False))
+
+    def test_rename_adds_missing_service_descriptor_but_rejects_duplicate(self):
+        path=self.rename_safety_fixture(service_descriptor=False)
+        state=self.core.call('analyze',{'path':str(path),'standards':'dvb'});service=next(s for s in state['services'] if s['id']==101)
+        edit=self.core.call('preview_rename',{'id':service['source_id'],'service_id':101,'name':'Added'})
+        exported=self.core.call('export',{'path':self.output('added.ts'),'preview_token':edit['token'],'cycles':1,'null_packets':0})
+        readback=self.core.call('analyze',{'path':exported['path'],'standards':'dvb'})
+        edited=next(s for s in readback['services'] if s['id']==101)
+        self.assertEqual((edited['name'],edited['provider'],edited['type']),('Added','',1))
+        path=self.rename_safety_fixture(duplicate=True)
+        state=self.core.call('analyze',{'path':str(path),'standards':'dvb'});service=next(s for s in state['services'] if s['id']==101)
+        with self.assertRaisesRegex(RuntimeError,'Ambiguous duplicate'):
+            self.core.call('preview_rename',{'id':service['source_id'],'service_id':101,'name':'Rejected'})
+
     def test_empty_snapshot_export_is_rejected(self):
         from make_fixture import section,word
         null=bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184

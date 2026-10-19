@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{io::{BufRead,BufReader,Read,Write},process::{Child,ChildStdin,Command,Stdio},sync::{Arc,Mutex},time::{Duration,Instant}};
+use std::{collections::HashSet,io::{BufRead,BufReader,Read,Write},process::{Child,ChildStdin,Command,Stdio},sync::{Arc,Mutex},time::{Duration,Instant}};
 use tauri::{Emitter,Manager};
 use serde_json::{json,Value};
 mod agent;
 use agent::{agent_next, agent_reply, save_diagnostics};
-struct Core { child:Mutex<Child>, input:Mutex<ChildStdin>, started:Instant, root:String, trace:Option<String> }
+struct Core { child:Mutex<Child>, input:Mutex<Option<ChildStdin>>, pending_exports:Arc<Mutex<HashSet<String>>>, started:Instant, root:String, trace:Option<String> }
 fn mark(core:&Core,event:&str) { if let Some(path)=&core.trace { if let Ok(mut f)=std::fs::OpenOptions::new().create(true).append(true).open(path) {let _=writeln!(f,"{}",json!({"event":event,"ms":core.started.elapsed().as_secs_f64()*1000.0,"wall_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64()*1000.0}));} } }
 #[tauri::command]
 fn request(message:Value,core:tauri::State<Core>)->Result<(),String>{
@@ -12,14 +12,45 @@ fn request(message:Value,core:tauri::State<Core>)->Result<(),String>{
         return Err("Native backend stopped. Restart the application.".into());
     }
     if message["method"]=="analyze" { mark(&core,"analyze_requested"); }
-    let mut input=core.input.lock().map_err(|e|e.to_string())?;
+    let mut input_guard=core.input.lock().map_err(|e|e.to_string())?;
+    let input=input_guard.as_mut().ok_or("The native backend is shutting down")?;
+    if message["method"]=="export" {
+        let id=export_request_id(&message).ok_or("Export requests require a valid request ID")?;
+        core.pending_exports.lock().map_err(|e|e.to_string())?.insert(id);
+    }
+    // Register before writing: even a very fast export must remain protected
+    // until its matching terminal response, independent of frontend navigation.
     writeln!(input,"{}",message).and_then(|_|input.flush()).map_err(|e|e.to_string())
 }
+
+fn export_request_id(message: &Value) -> Option<String> {
+    match message.get("id")? {
+        Value::Number(number) if number.as_u64().is_some() => Some(number.to_string()),
+        Value::String(text) if !text.is_empty() => Some(format!("string:{text}")),
+        _ => None,
+    }
+}
+fn settle_export(pending: &Mutex<HashSet<String>>, message: &Value) {
+    if message.get("event").is_some() ||
+        !(message.get("result").is_some_and(Value::is_object) || message.get("error").is_some_and(Value::is_object)) { return; }
+    if let Some(id)=export_request_id(message) { if let Ok(mut requests)=pending.lock() { requests.remove(&id); } }
+}
+fn has_pending_exports(core: &Core) -> bool {
+    // A dead backend cannot continue writing. Retain the guard on uncertainty.
+    if let Ok(mut child)=core.child.lock() {
+        if let Ok(Some(_))=child.try_wait() { return false; }
+    }
+    core.pending_exports.lock().map(|requests| !requests.is_empty()).unwrap_or(true)
+}
+fn is_official_project_link(url: &str) -> bool {
+    matches!(url, "https://github.com/znbsf/ShowPsiSi" | "https://github.com/znbsf/ShowPsiSi/releases")
+}
+
 #[tauri::command]
 fn environment(core:tauri::State<Core>,agent:tauri::State<agent::Agent>)->Value{json!({"agent_enabled":agent.enabled(),"backend_alive":core.child.lock().ok().and_then(|mut child| child.try_wait().ok()).map(|status| status.is_none()).unwrap_or(false),"root":core.root,"sample":std::env::var("SHOWPSISI_SAMPLE").unwrap_or_else(|_|format!("{}/samples/generated/lab.ts",core.root)),"auto":std::env::var("SHOWPSISI_AUTO").unwrap_or_default(),"delay":std::env::var("SHOWPSISI_AUTO_DELAY_MS").unwrap_or_default(),"driver":if cfg!(target_os = "windows") { "Tauri / WebView2" } else if cfg!(target_os = "macos") { "Tauri / WKWebView" } else { "Tauri / WebKitGTK" },"script":std::env::var("SHOWPSISI_SCRIPT").unwrap_or_default()})}
 #[tauri::command]
 fn milestone(event:String,core:tauri::State<Core>){mark(&core,&event);}
-// Only explicit user clicks on URLs in the bundled standards registry may launch a browser.
+// Only explicit user clicks on bundled standards or the two fixed project URLs may launch a browser.
 fn contains_reference(value: &Value, url: &str) -> bool {
     match value {
         Value::Object(map) => map.iter().any(|(key, value)|
@@ -82,13 +113,15 @@ fn run_reference_launcher(mut command: Command, timeout: Duration) -> Result<(),
 #[tauri::command]
 async fn open_reference(url: String, core: tauri::State<'_, Core>) -> Result<(), String> {
     if !is_https_reference(&url) {
-        return Err("Only HTTPS standards references are allowed".into());
+        return Err("Only approved HTTPS references are allowed".into());
     }
-    let path = std::path::Path::new(&core.root).join("references/standards.json");
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let registry: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    if !contains_reference(&registry, &url) {
-        return Err("URL is not in the bundled standards reference index".into());
+    if !is_official_project_link(&url) {
+        let path = std::path::Path::new(&core.root).join("references/standards.json");
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let registry: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if !contains_reference(&registry, &url) {
+            return Err("URL is not an official project link or a bundled standards reference".into());
+        }
     }
     #[cfg(target_os = "windows")]
     let mut command = { let mut c = Command::new("rundll32.exe"); c.arg("url.dll,FileProtocolHandler"); c };
@@ -110,19 +143,66 @@ fn main(){
         #[cfg(windows)] {use std::os::windows::process::CommandExt;command.creation_flags(0x08000000);}
         app.manage(agent::Agent::new().map_err(std::io::Error::other)?);
         let mut child=command.spawn()?;let input=child.stdin.take().unwrap();let output=child.stdout.take().unwrap();
-        app.manage(Core{child:Mutex::new(child),input:Mutex::new(input),started,root,trace:std::env::var("SHOWPSISI_TRACE").ok()});
-        let handle=app.handle().clone();std::thread::spawn(move||{for line in BufReader::new(output).lines(){match line{Ok(line)=>{if let Ok(value)=serde_json::from_str::<Value>(&line){let _=handle.emit("core-message",value);}},Err(_)=>break}}let _=handle.emit("core-message",json!({"event":"backend_exit","error":"Native backend stopped. Restart the application."}));});
+        let pending_exports=Arc::new(Mutex::new(HashSet::new()));
+        app.manage(Core{child:Mutex::new(child),input:Mutex::new(Some(input)),pending_exports:Arc::clone(&pending_exports),started,root,trace:std::env::var("SHOWPSISI_TRACE").ok()});
+        let handle=app.handle().clone();std::thread::spawn(move||{for line in BufReader::new(output).lines(){match line{Ok(line)=>{if let Ok(value)=serde_json::from_str::<Value>(&line){settle_export(&pending_exports,&value);let _=handle.emit("core-message",value);}},Err(_)=>break}}let _=handle.emit("core-message",json!({"event":"backend_exit","error":"Native backend stopped. Restart the application."}));});
         mark(&app.state::<Core>(),"native_setup");Ok(())
     }).invoke_handler(tauri::generate_handler![request,environment,milestone,open_reference,agent_next,agent_reply,save_diagnostics]).build(tauri::generate_context!()).expect("Tauri startup").run(|app,event|{
-        if let tauri::RunEvent::Exit = event {let core=app.state::<Core>();if let Ok(mut child)=core.child.lock(){let _=child.kill();let _=child.wait();};}
+        match event {
+            tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => {
+                if has_pending_exports(&app.state::<Core>()) {
+                    api.prevent_close();
+                    let _=app.emit("core-close-blocked", "An export is still running. Wait for it to finish before closing.");
+                }
+            },
+            tauri::RunEvent::ExitRequested { api, .. } => {
+                if has_pending_exports(&app.state::<Core>()) { api.prevent_exit(); }
+            },
+            tauri::RunEvent::Exit => {
+                let core=app.state::<Core>();
+                let drain=has_pending_exports(&core);
+                if let Ok(mut input)=core.input.lock() { input.take(); }
+                if let Ok(mut child)=core.child.lock(){
+                    // An explicit exit bypass can still reach here. Drain accepted
+                    // exports through EOF instead of interrupting final file writes.
+                    if !drain {let _=child.kill();}
+                    let _=child.wait();
+                };
+            },
+            _ => {},
+        }
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_reference, is_https_reference, run_reference_launcher};
+    use super::{contains_reference, is_https_reference, is_official_project_link, export_request_id, settle_export, run_reference_launcher};
+    use std::{collections::HashSet, sync::Mutex};
     use std::{process::Command, time::{Duration, Instant}};
     use serde_json::json;
+
+    #[test]
+    fn official_project_links_are_exact_and_bounded() {
+        assert!(is_official_project_link("https://github.com/znbsf/ShowPsiSi"));
+        assert!(is_official_project_link("https://github.com/znbsf/ShowPsiSi/releases"));
+        for url in ["http://github.com/znbsf/ShowPsiSi", "https://github.com/znbsf/ShowPsiSi/", "https://github.com/znbsf/ShowPsiSi/releases?next=evil", "https://github.com/attacker/ShowPsiSi", "https://github.com/znbsf/ShowPsiSi/releases/download/v1/evil.exe"] {
+            assert!(!is_official_project_link(url), "{url}");
+        }
+    }
+    #[test]
+    fn export_guard_requires_matching_terminal_response() {
+        let pending=Mutex::new(HashSet::from(["7".to_string(), "string:7".to_string()]));
+        for message in [json!({"id":7,"event":"progress","result":{}}), json!({"id":7,"result":null}), json!({"id":8,"result":{}})] {
+            settle_export(&pending,&message);
+            assert_eq!(pending.lock().unwrap().len(),2);
+        }
+        settle_export(&pending,&json!({"id":7,"result":{"output":"fixture"}}));
+        assert_eq!(pending.lock().unwrap().len(),1);
+        settle_export(&pending,&json!({"id":"7","error":{"message":"fixture"}}));
+        assert!(pending.lock().unwrap().is_empty());
+        assert!(export_request_id(&json!({"id":-1})).is_none());
+        assert!(export_request_id(&json!({"id":1.5})).is_none());
+    }
 
     fn exit_command(code: u8) -> Command {
         #[cfg(windows)]

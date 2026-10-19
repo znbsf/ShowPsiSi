@@ -202,6 +202,7 @@ let firstPaint = false,
   completePaint = false,
   preview = {},
   editTarget = null,
+  exportPending = false,
   treeSearch = "",
   openNodes = new Set(),
   view = "tree";
@@ -216,7 +217,7 @@ const invoke = (...args) =>
         ),
       );
 $("#app").innerHTML = `
-<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="api">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></header>
+<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></header>
 <div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="dtmb">DTMB</option></select><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional SDK charset for the next scan, e.g. ISO-8859-15 or UTF-8. Explicit DVB selectors take precedence."><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
@@ -224,7 +225,8 @@ $("#app").innerHTML = `
 <main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">↑ ↓ Home End <span>Move focus</span><br>Enter / Space <span>Select</span><br>Ctrl / ⌘ K <span>Search records</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
-<dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only transport stream and manifest, without media or PCR.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><div class="actions"><button class="btn" id="export" disabled>Export SI-only TS + manifest</button><button class="btn" id="close-edit">Close</button></div></dialog>
+<dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only TS or raw-section BIN and manifest. TS has no media or PCR; BIN needs its adjacent manifest for PID and source evidence.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><label for="export-format">Export format</label><select id="export-format"><option value="ts">TS · SI-only transport stream (.ts)</option><option value="bin">BIN · raw SI sections (.bin)</option></select><div class="actions"><button class="btn" id="export" disabled>Save SI-only TS + manifest…</button><button class="btn" id="close-edit">Close</button></div></dialog>
+<dialog id="about-dialog" aria-labelledby="about-title"><h2 id="about-title">About ShowPsiSi</h2><p>Qt and Tauri workbenches share the C++ / TSDuck signal engine.</p><p>Windows installer updates are available in the Qt edition; this frontend opens the official release page.</p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi" target="_blank" rel="noopener noreferrer">Official source repository</a></p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi/releases" target="_blank" rel="noopener noreferrer">Official releases and downloads</a></p><p id="about-feedback" role="status"></p><button class="btn" id="close-about">Close</button></dialog>
 <dialog id="api-dialog" aria-labelledby="api-title"><h2 id="api-title">Native agent API</h2><pre id="api-text"></pre><button class="btn" id="close-api">Close</button></dialog>`;
 let theme = "dark";
 try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
@@ -543,12 +545,15 @@ function activateHistory(entry) {
   if(!entry.valid) showBadCrc=true;
   snapshot(entry.at_packet,entry.id);
 }
-async function snapshot(packet, id) {
+async function snapshot(packet, id, sid = -1) {
   clearTimeout(pendingSnapshotTimer);
   pendingSnapshotTimer = null;
   if (busy || backendFailure) return;
   if (tab === "Changes") changeTab("Services");
   const epoch = ++queryEpoch;
+  editTarget = null;
+  invalidatePreview();
+  if ($("#edit-dialog").open) $("#edit-dialog").close();
   selectionReset();
   renderInspector();
   notice("Loading packet snapshot…");
@@ -558,7 +563,7 @@ async function snapshot(packet, id) {
     data = result;
     page = 0;
     render();
-    if (id) inspect(id);
+    if (id) inspect(id, sid);
     else defaultInspect();
     notice(
       packet < 0
@@ -993,7 +998,7 @@ function comparisonSide(side, label, change, index) {
   if (!side) return `<div class="comparison-side absent"><h4>${label}</h4><p>No observed record in this state</p></div>`;
   const value = side.value;
   const fields = [...new Set([...(change.changed_fields || []).filter((field) => field !== "payload"), ...(change.kind === "services" ? ["name", "provider", "pmt_pid"] : change.kind === "events" ? ["title", "start", "duration_seconds"] : ["name", "version", "bytes"])])].filter((field) => change.changed_fields?.includes(field) || Object.prototype.hasOwnProperty.call(value, field));
-  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span>${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · v${evidence.version} · section ${evidence.section}</button>`).join("")}</div></div>`;
+  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span>${side.evidence?.length ? `<button class="btn small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure ? "disabled" : ""} title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button>` : ""}${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · v${evidence.version} · section ${evidence.section}</button>`).join("")}</div></div>`;
 }
 function renderComparisonResults() {
   const result = comparison.result;
@@ -1014,6 +1019,18 @@ function renderComparisonResults() {
         : (value.name || "Table") + " · PID " + hex(identity.pid) + " · section " + identity.section;
     return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${change.changed_fields?.length ? `<p class="changed-fields">Changed: ${change.changed_fields.map(esc).join(", ")}</p>${change.changed_fields.includes("payload") ? '<p class="meta">Raw section payload differs. Open source evidence to inspect its bytes.</p>' : ""}` : ""}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div></article>`;
   }).join("") : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+  $("#list").querySelectorAll("[data-use-comparison]").forEach((el) => {
+    el.onclick = () => {
+      if (busy || backendFailure || result !== comparison.result) return;
+      const [index, letter] = el.dataset.useComparison.split(":");
+      const change = result.changes[Number(index)], side = letter === "A" ? change.before : change.after;
+      if (!side?.evidence?.length) return;
+      changeTab(change.kind === "services" ? "Services" : change.kind === "events" ? "EPG" : "Tables");
+      search = "";
+      $("#search").value = "";
+      snapshot(side.at_packet, side.evidence[0].id, change.kind === "services" ? change.identity.service_id : -1);
+    };
+  });
   $("#list").querySelectorAll("[data-comparison-evidence]").forEach((el) => {
     el.onclick = () => {
       const [index, letter, evidenceIndex] = el.dataset.comparisonEvidence.split(":");
@@ -1581,8 +1598,10 @@ function openEdit() {
     id: selected,
     services: detail.services || [],
     packet: data.selected_packet,
+    source: data.source, revision: data.revision, queryEpoch,
   };
   $("#export").disabled = true;
+  $("#export-format").disabled = exportPending;
   $("#diff").textContent = "";
   $("#edit-service").innerHTML = editTarget.services
     .map(
@@ -1629,42 +1648,58 @@ $("#preview").onclick = async () => {
     preview = result;
     $("#diff").textContent =
       `${result.before} → ${result.after} · version ${result.old_version} → ${result.new_version}`;
-    $("#export").disabled = !!backendFailure;
+    $("#export").disabled = !!backendFailure || exportPending;
   } catch (error) {
     if (target === editTarget) $("#diff").textContent = String(error);
   } finally {
     if (target === editTarget) $("#preview").disabled = !!backendFailure;
   }
 };
+$("#export-format").onchange = () => {
+  $("#export").textContent = "Save SI-only " + $("#export-format").value.toUpperCase() + " + manifest…";
+};
+function currentEditPreview(target, token) {
+  return !!target && target === editTarget && !!token && token === preview.token &&
+    target.source === data.source && target.revision === data.revision &&
+    target.packet === data.selected_packet && target.queryEpoch === queryEpoch &&
+    preview.after === $("#rename").value && preview.service_id === Number($("#edit-service").value);
+}
 $("#export").onclick = async () => {
-  if (backendFailure || busy || !preview.token || !editTarget) return;
-  const target = editTarget,
-    token = preview.token;
+  if (backendFailure || busy || exportPending || !preview.token || !editTarget) return;
+  const target = editTarget, token = preview.token, format = $("#export-format").value;
+  if (!["ts", "bin"].includes(format) || !currentEditPreview(target, token)) return;
+  exportPending = true;
   $("#export").disabled = true;
+  $("#export-format").disabled = true;
   try {
-    const path = await invoke("plugin:dialog|save", {
+    let path = await invoke("plugin:dialog|save", {
       options: {
-        defaultPath: "edited-si.ts",
-        filters: [{ name: "Transport stream", extensions: ["ts"] }],
+        defaultPath: "edited-si." + format,
+        filters: [{ name: format === "bin" ? "Raw SI sections" : "Transport stream", extensions: [format] }],
       },
     });
-    if (!path) {
-      if (target === editTarget) $("#export").disabled = !!backendFailure;
+    if (!path) return;
+    if (target !== editTarget) return;
+    if (!currentEditPreview(target, token)) {
+      $("#diff").textContent = "The preview changed. Preview the edit again before exporting.";
       return;
     }
-    if (target !== editTarget) return;
-    const params = { path, format: "ts", preview_token: token };
+    const filename = path.split(/[\\/]/).pop();
+    if (!filename.includes(".")) path += "." + format;
+    else if (!filename.toLowerCase().endsWith("." + format))
+      throw new Error("Use a ." + format + " output filename for this format.");
+    const params = { path, format, preview_token: token };
     if (target.packet != null) params.at_packet = target.packet;
     const result = await call("export", params);
     if (target !== editTarget) return;
-    notice(
-      "Exported " + num(result.bytes) + " bytes + manifest · " + result.path,
-    );
+    notice("Exported " + num(result.bytes) + " bytes + manifest · " + result.path);
     $("#edit-dialog").close();
   } catch (error) {
-    if (target !== editTarget) return;
-    $("#diff").textContent = String(error);
-    $("#export").disabled = !!backendFailure;
+    if (target === editTarget) $("#diff").textContent = String(error);
+  } finally {
+    exportPending = false;
+    $("#export-format").disabled = false;
+    $("#export").disabled = !!backendFailure || !currentEditPreview(editTarget, preview.token);
   }
 };
 $("#scan").onclick = scan;
@@ -1692,6 +1727,20 @@ $("#browse").onclick = async () => {
     notice(String(error), true);
   }
 };
+$("#about").onclick = () => $("#about-dialog").showModal();
+$("#close-about").onclick = () => $("#about-dialog").close();
+$("#about-dialog").querySelectorAll("[data-project-link]").forEach(link => {
+  link.onclick = async event => {
+    if (env.runtime === "cloud-browser") return;
+    event.preventDefault();
+    try {
+      await invoke("open_reference", {url:link.href});
+      $("#about-feedback").textContent = "Submitted to the system browser: " + link.href;
+    } catch (error) {
+      $("#about-feedback").textContent = "Could not open the system browser. Copy this address: " + link.href + " · " + String(error);
+    }
+  };
+});
 $("#api").onclick = async () => {
   $("#api-dialog").showModal();
   $("#api-text").textContent = "Loading capabilities…";
@@ -1992,6 +2041,9 @@ async function boot() {
     else job.resolve(msg.result);
   });
   env = await invoke("environment");
+  if (env.runtime !== "cloud-browser") await native.event.listen("core-close-blocked", () => {
+    notice("An export is still running. Wait for it to finish before closing.", true);
+  });
   if (env.agent_enabled) pollUiAgent();
   if (env.backend_alive === false)
     disconnectBackend("Native backend stopped. Restart the application.");

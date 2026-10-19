@@ -103,10 +103,10 @@ class NativeQtTests(unittest.TestCase):
         env.update(overrides or {})
         evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
         destination = Path(evidence_root) / self._testMethodName / script if evidence_root else None
-        if destination and script == 'refinement':
+        if destination and script in ('refinement', 'operations-parity'):
             destination = destination / (env.get('SHOWPSISI_THEME', 'dark') + '-' + env.get('SHOWPSISI_TEST_SIZE', 'normal'))
         logfile = directory / (script + '.log')
-        sources = [result, screenshot, Path(str(screenshot)+'.xml.png'), logfile, Path(str(screenshot) + '.scanning.png'), Path(str(screenshot) + '.cancelled.png')]
+        sources = [result, screenshot, Path(str(screenshot)+'.xml.png'), Path(str(screenshot)+'.edit.png'), logfile, Path(str(screenshot) + '.scanning.png'), Path(str(screenshot) + '.cancelled.png')]
         if env.get('SHOWPSISI_TRACE'):
             sources.append(Path(env['SHOWPSISI_TRACE']))
         with retain_qt_evidence(destination, sources):
@@ -351,6 +351,17 @@ for line in sys.stdin:
                     self.assertTrue(all(report['checks'].values()), report)
                     if arguments is not None:
                         self.assertIn('Invalid SHOWPSISI_CORE_ARGS_JSON', report['error'])
+
+    def test_operations_parity_selection_evidence_and_editor_target(self):
+        for theme in ('dark', 'light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-parity-') as directory:
+                report = self.run_script('operations-parity', directory, overrides={'SHOWPSISI_THEME':theme})
+                self.assertTrue(all(report['checks'].values()), report)
+                self.assertGreaterEqual(len(report['checks']), 12)
+                for check in ('tooltip_attached_values', 'tooltip_detached_hidden',
+                              'tooltip_detached_text', 'tooltip_anchor_rebound'):
+                    self.assertTrue(report['checks'][check], report)
+                self.assertEqual((Path(directory)/'operations-parity.png.edit.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
 
     def test_snapshot_comparison_and_evidence_cutoffs(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-comparison-') as directory:

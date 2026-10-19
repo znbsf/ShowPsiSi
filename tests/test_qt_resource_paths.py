@@ -8,10 +8,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/ci'))
 from qt_result import wait_for_qt_result
+from qt_evidence import retain_qt_evidence
 EXE = '.exe' if os.name == 'nt' else ''
 
 
@@ -54,22 +56,27 @@ class QtResourcePathTests(unittest.TestCase):
                    SHOWPSISI_AUTO='1' if script == 'smoke' else '0',
                    SHOWPSISI_ARTIFACT_DIR=str(self.base), SHOWPSISI_SCREENSHOT=str(self.base / 'screen.png'),
                    SHOWPSISI_SETTINGS_PATH=str(self.base / 'settings.ini'),
+                   SHOWPSISI_TRACE=str(self.base / 'trace.jsonl'),
                    QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software')
         env.update(overrides or {})
-        with (self.base / 'qt.log').open('w', encoding='utf-8') as log:
-            process = subprocess.Popen([str(self.package / 'bin' / self.binary.name), '--showpsisi-development'],
-                                       cwd=self.cwd, env=env, stdout=log, stderr=log)
-            try:
-                report = wait_for_qt_result(result, process, 60)
-            finally:
-                process.terminate()
+        evidence_root = os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS')
+        destination = Path(evidence_root) / self._testMethodName / 'resource-paths' if evidence_root else None
+        sources = [result, self.base / 'qt.log', self.base / 'screen.png', self.base / 'trace.jsonl']
+        with retain_qt_evidence(destination, sources):
+            with (self.base / 'qt.log').open('w', encoding='utf-8') as log:
+                process = subprocess.Popen([str(self.package / 'bin' / self.binary.name), '--showpsisi-development'],
+                                           cwd=self.cwd, env=env, stdout=log, stderr=log)
                 try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5)
-        self.assertTrue(report['passed'], report)
-        return report
+                    report = wait_for_qt_result(result, process, 60)
+                finally:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+            self.assertTrue(report['passed'], report)
+            return report
 
     def test_direct_executable_ignores_unrelated_cwd_and_uses_own_sample(self):
         source = self.package / 'samples/generated/lab.ts'
@@ -100,3 +107,44 @@ class QtResourcePathTests(unittest.TestCase):
         (self.package / 'bin' / ('showpsisi-core' + EXE)).unlink()
         report = self.run_qt('lifecycle-startup')
         self.assertIn('Backend executable is missing', report['error'])
+
+
+class QtResourceEvidenceTests(unittest.TestCase):
+    def exercise(self, report=None, failure=None):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run, evidence = root / 'run', root / 'evidence'
+            run.mkdir()
+            case = QtResourcePathTests()
+            case.base = run
+            case.package = run / 'package'
+            case.binary = Path('fake-qt' + EXE)
+            case.cwd = run
+            process = mock.Mock()
+            process.wait.return_value = 0
+            def publish(*args):
+                (run / 'result.json').write_text(json.dumps(report) if report is not None else '{')
+                (run / 'trace.jsonl').write_text('injected trace')
+                if failure:
+                    raise failure
+                return report
+            with mock.patch.dict(os.environ, SHOWPSISI_QT_TEST_ARTIFACTS=str(evidence)), \
+                 mock.patch('subprocess.Popen', return_value=process) as launch, \
+                 mock.patch(__name__ + '.wait_for_qt_result', side_effect=publish):
+                with self.assertRaises(AssertionError) as caught:
+                    case.run_qt('smoke')
+            if failure:
+                self.assertIs(caught.exception, failure)
+            retained = evidence / 'runTest' / 'resource-paths'
+            self.assertEqual((retained / 'result.json').read_bytes(), (run / 'result.json').read_bytes())
+            self.assertEqual((retained / 'trace.jsonl').read_text(), 'injected trace')
+            self.assertTrue((retained / 'qt.log').is_file())
+            process.terminate.assert_called_once()
+            process.wait.assert_called_once_with(timeout=10)
+            self.assertEqual(launch.call_args.kwargs['env']['SHOWPSISI_SETTINGS_PATH'], str(run / 'settings.ini'))
+
+    def test_incomplete_result_retains_original_error_and_evidence(self):
+        self.exercise(failure=AssertionError('injected publication failure'))
+
+    def test_complete_failure_retains_report_and_evidence(self):
+        self.exercise(report={'passed': False, 'error': 'injected acceptance failure'})

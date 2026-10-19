@@ -1,8 +1,8 @@
 # Windows release readiness
 
 Started 2026-10-19 on `dc37d90` in the assistant's Linux cloud workspace.
-This record tracks a release candidate, not a published release or completed
-Windows clean-machine acceptance.
+The first Windows Qt release was published on 2026-10-19 after the gates below.
+Publication does not establish Windows clean-machine acceptance.
 
 ## Intended deliverable
 
@@ -74,9 +74,34 @@ validation and regressions pass. Normal app shutdown during export can also
 interrupt the child engine and leave an incomplete final-looking output; the
 GUI lifecycle must guard this, without claiming arbitrary power-loss atomicity.
 
-## Current state
+## Current state: v0.1.0 published
 
-Cloud combined validation now passes 208 strict engine/package tests, 60 Qt
+[ShowPsiSi v0.1.0](https://github.com/znbsf/ShowPsiSi/releases/tag/v0.1.0) is public,
+with versioned Windows x64 setup and portable ZIP, common SHA256SUMS and
+release-provenance.json. Tag and release target exact source
+`3ec91ded1dde6c4f88b0e22635c02ae7c3633463`.
+
+PR20 merged at `827535b`; scoped recovery PR21 fixed bounded result-file access
+and evidence retention, PR23 preserved precise timestamp identity, and PR24
+corrected GitHub media negotiation and added a real hosted transport preflight.
+All five jobs in [fresh main CI #74](https://github.com/znbsf/ShowPsiSi/actions/runs/39232933794)
+passed. The exact four-artifact bundle passed independent manifest, redistribution,
+runtime, installer lifecycle, mutex and shortcut audits before publication.
+[Publisher run #2](https://github.com/znbsf/ShowPsiSi/actions/runs/39234373790)
+completed successfully, including full asset-byte readback before and after
+publication. Public latest metadata identifies the same stable release.
+
+See the [immutable version validation record](releases/v0.1.0-validation.md) for
+source/checksum identities and acceptance boundaries, and the
+[publication/recovery runbook](RELEASE_PUBLICATION.md) for subsequent explicit
+requests. No old PR artifact or failed-main result was substituted for the final
+source. Installer signing, clean-machine/missing-runtime bootstrap, native Windows
+dialogs/GPU and live future-version update handoff remain unverified. Portable
+updates remain manual ZIP downloads and new-folder replacement.
+
+## Earlier local checkpoint (historical)
+
+Before the final hosted release gates, cloud combined validation passed 208 strict engine/package tests, 60 Qt
 UI/resource/evidence tests plus the retained smoke, 38 sandboxed Chromium tests,
 40 updater cases, 17 installer contracts and 25 portable-package cases. A separate
 live Qt diagnostic check and nine Linux Tauri Rust tests also passed. These suites
@@ -88,7 +113,7 @@ installer stage/version binding, and unsafe replacement during active native
 processes. Final Qt editor screenshots were checked after correcting vertically
 clipped combo-box labels. Original failed attempts remain in the local evidence.
 
-The user authorized publishing this branch and its PR on 2026-10-19. Hosted
-Windows compilation/install/upgrade checks are next. No release assets have
-been published for this iteration. Detailed local evidence is retained under
+The user authorized publishing this branch and its PR on 2026-10-19. At that checkpoint, hosted
+Windows compilation/install/upgrade checks were still pending and no release
+assets had yet been published. The current outcome above supersedes that state. Detailed local evidence is retained under
 ignored `artifacts/release-readiness/` and component-specific artifact directories.

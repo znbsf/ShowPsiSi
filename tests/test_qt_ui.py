@@ -717,6 +717,30 @@ class QtResultPublicationTests(unittest.TestCase):
         self.assertEqual(self.wait([FileNotFoundError(), '', '{"passed":',
                                     '{"passed": true}']), {"passed": True})
 
+    def test_transient_permission_denial_waits_for_complete_json(self):
+        self.assertEqual(self.wait([PermissionError(13, 'sharing violation'), '',
+                                    '{"passed": true}']), {"passed": True})
+
+    def test_permission_denial_never_hides_completed_failure(self):
+        self.assertEqual(self.wait([PermissionError(), '{"passed": false}']), {"passed": False})
+
+    def test_permanent_permission_denial_fails_at_original_deadline(self):
+        with self.assertRaisesRegex(AssertionError, 'timeout=0.3s') as caught:
+            self.wait([PermissionError(13, 'access denied')] * 10)
+        self.assertIsInstance(caught.exception.__cause__, PermissionError)
+
+    def test_permission_denial_rereads_after_observing_exit(self):
+        self.assertEqual(self.wait([PermissionError(), '{"passed": true}'], exit_code=0), {"passed": True})
+
+    def test_exited_writer_with_persistent_denial_fails(self):
+        with self.assertRaisesRegex(AssertionError, 'exit=1') as caught:
+            self.wait([PermissionError()] * 2, exit_code=1)
+        self.assertIsInstance(caught.exception.__cause__, PermissionError)
+
+    def test_unrelated_io_errors_are_not_retried(self):
+        with self.assertRaisesRegex(OSError, 'injected I/O failure'):
+            self.wait([OSError('injected I/O failure')])
+
     def test_real_file_creation_does_not_end_wait_before_write(self):
         with tempfile.TemporaryDirectory(prefix='qt-result-publication-') as directory:
             path = Path(directory) / 'result.json'

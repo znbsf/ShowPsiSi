@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: true
 jobs:
   engine-web:
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -27,6 +30,25 @@ jobs:
         run: python -m unittest discover -s tests -p test_installer_package.py -v
       - name: Verified release publisher security regressions
         run: python -m unittest discover -s tests -p test_release_publisher.py -v
+      - name: Prepare known-text artifact transport probe
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: python scripts/ci/release_transport_probe.py --prepare
+      - name: Upload known-text transport probe
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        id: transport-probe
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-transport-probe-${{ github.run_attempt }}
+          path: artifacts/release-transport/probe.txt
+          if-no-files-found: error
+          retention-days: 1
+      - name: Verify live read-only publisher artifact transport
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PROBE_ARTIFACT_ID: ${{ steps.transport-probe.outputs.artifact-id }}
+          PROBE_ARCHIVE_DIGEST: ${{ steps.transport-probe.outputs.artifact-digest }}
+        run: python scripts/ci/release_transport_probe.py
       - name: Workbench text and control contrast regression
         run: python -m unittest discover -s tests -p test_ui_contrast.py -v
       - name: Install pinned official TSDuck SDK

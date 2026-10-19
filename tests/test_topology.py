@@ -41,6 +41,26 @@ class TopologyTests(unittest.TestCase):
                     self.assertTrue(any(a.get('field_id')==locator['field_id'] and a.get('container_id')==locator['container_id'] and a['byte_range']==span for a in detail['evidence_anchors']))
                 else:self.assertEqual(locator['precision'],'section')
         self.assertEqual(hashlib.sha256(self.path.read_bytes()).hexdigest(),self.before)
+    def test_initial_edge_sources_are_deduplicated_on_later_additions(self):
+        self.scan([nit(transports=((2,1,descriptor(0xfb,word(100)+word(100))),)),sdt()],profile='isdb-japan')
+        graph=self.graph()
+        for item in graph['edges']:
+            self.assertEqual(len(item['evidence']),len({json.dumps(e,sort_keys=True) for e in item['evidence']}),item)
+        reference=self.nodes(graph,'service_reference')[0]
+        offsets={e['locator']['byte_range']['offset'] for e in reference['evidence']}
+        self.assertEqual(len(offsets),2)  # Distinct original declarations survive.
+        self.assert_evidence(graph)
+
+    def test_initial_reference_edge_obeys_deduplicated_evidence_cap(self):
+        # Each node and each incrementally accumulated edge is below 2048.
+        # Joining the source-reference and SDT service exceeds that cap only
+        # when the final reference edge receives its initial evidence array.
+        declarations=[nit(network=i+1,transports=((2,1,descriptor(0xfb,word(100))),)) for i in range(600)]
+        services=[sdt(tid=tid,number=i,last=254) for tid in (0x42,0x46) for i in range(255)]
+        self.scan(declarations+services,profile='isdb-japan')
+        with self.assertRaisesRegex(RuntimeError,'per-object evidence limit'):
+            self.graph()
+
     def test_short_section_anchors_do_not_invent_long_header_fields(self):
         from make_fixture import crc
         tdt=bytes.fromhex('707005e190123456')

@@ -102,3 +102,18 @@ Both themes exercise this interval deterministically. Shared `SafeTip` hover
 and text bindings guard the absent parent; normal tooltip content and errors
 remain observable. Retain the existing rejection of any QML `TypeError` and
 `ReferenceError`, including errors emitted during teardown.
+
+## Windows result-file sharing during publication
+
+Main run `39223520677` (source `827535b999d8081b197f1d2e04d0750ea597ee2f`)
+failed the resource-path smoke while opening its result file with Windows
+`PermissionError: [Errno 13]`. The log does not establish whether the short-lived
+lock belonged to Qt or another process. A denied read is not a published result.
+The consumer now polls that specific result path within its original deadline,
+just as for a missing or incomplete result. Permanent denial and a writer that
+exits without a readable complete object still fail with the original cause;
+other I/O errors are not retried, and a complete failing report remains a failure.
+Regressions cover each of those cases. Resource-path runs also retain their
+explicit result/log/screenshot/trace evidence before temporary cleanup, including
+incomplete-result and completed-acceptance failures. No timeout, acceptance
+threshold, diagnostic gate, or production code changed.

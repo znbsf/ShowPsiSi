@@ -4,11 +4,14 @@
 
 本轮在独立 Linux 云环境开发。既有 Qt、Linux Tauri 和 Chromium 工作台基线已连接真实引擎验证，包含 Linux 原生打开／保存对话框、编辑导出和回读；TSDuck 3.45 升级后的逐项验证范围见 [协议覆盖记录](docs/PROTOCOL_COVERAGE.md)。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
 
-## Windows 安装与更新（发布准备中）
+## Windows 安装与更新（v0.1.0 已发布）
 
-首个安装版本面向 Windows 10/11 x64，使用 Qt 工作台。正式下载以
-[本仓库 Releases](https://github.com/znbsf/ShowPsiSi/releases) 为准；当前分支的安装候选和验证结果见
-[发布准备记录](docs/RELEASE_READINESS.md)。不要把尚未发布的候选称为稳定发行版。
+首个安装版本面向 **Windows 10 1809 及以上／Windows 11 x64**，使用 Qt 工作台。
+从 [v0.1.0 Release](https://github.com/znbsf/ShowPsiSi/releases/tag/v0.1.0) 下载
+[安装包](https://github.com/znbsf/ShowPsiSi/releases/download/v0.1.0/ShowPsiSi-0.1.0-windows-x64-setup.exe) 或
+[免安装 ZIP](https://github.com/znbsf/ShowPsiSi/releases/download/v0.1.0/ShowPsiSi-0.1.0-windows-x64-portable.zip)，
+并核对同页的 SHA256SUMS。安装包目前**未做代码签名**；校验和不代表已有 SmartScreen 信誉。
+源提交、完整验证记录及尚未覆盖的范围见 [v0.1.0 验证记录](docs/releases/v0.1.0-validation.md)。
 
 - 安装到当前用户目录，保留现有用户设置；程序中 About / Updates 显示版本和本 GitHub 仓库。
 - 手动检查稳定新版本，查看说明，再选择下载。校验 SHA-256 后，由用户明确选择安装并退出。

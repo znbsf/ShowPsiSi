@@ -111,7 +111,8 @@ class Builder {
         const std::string id=from+"/"+relation+"/"+to;
         if(edgeIndexes.count(id)){auto& e=edges[edgeIndexes.at(id)];for(const auto& r:evidence)addEvidence(e,r);if(resolution!="resolved")e["resolution_status"]=resolution;return;}
         edgeIndexes[id]=edges.size();
-        edges.push_back({{"edge_id",id},{"from",from},{"to",to},{"relation",relation},{"resolution_status",resolution},{"evidence",evidence}});
+        edges.push_back({{"edge_id",id},{"from",from},{"to",to},{"relation",relation},{"resolution_status",resolution},{"evidence",J::array()}});
+        for(const auto& source:evidence)addEvidence(edges.back(),source);
     }
     std::string transport(unsigned onid,unsigned tsid){return family+":ts:"+num(onid)+":"+num(tsid);}
     std::string service(unsigned onid,unsigned tsid,unsigned sid){return family+":service:"+num(onid)+":"+num(tsid)+":"+num(sid);}

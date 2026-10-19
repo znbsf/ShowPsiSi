@@ -56,3 +56,8 @@ DLLs from System32 into this package. The official runtime download and its
 terms are Microsoft's responsibility; this package does not install it.
 This candidate excludes D3Dcompiler_47.dll and all app-local Microsoft VC DLLs.
 Its runtime checks require the system-provided dependencies.
+
+EXPAT STATIC CORE DEPENDENCY
+Expat 2.9.0 is statically linked into showpsisi-core. MIT license and
+copyright notices: licenses/expat/COPYING.txt and UPSTREAM-NOTICES.txt.
+The embedded SipHash implementation uses the CC0-1.0 dedication.

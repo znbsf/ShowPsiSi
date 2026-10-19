@@ -111,6 +111,21 @@
     "licenses/tsduck/VATek-COPYRIGHT.txt": {
       "sha256": "80f4cb0c1790f875d7f69184bcac34e7024f07af4cc8ee95c0d609f8e5d346b5",
       "source": "https://github.com/VisionAdvanceTechnologyInc/vatek_sdk_2/tree/v3.12.1/api/core"
+    },
+    "licenses/expat/COPYING.txt": {
+      "sha256": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+      "source": "https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz",
+      "scope": "Expat static core dependency; exact upstream notices/provenance"
+    },
+    "licenses/expat/UPSTREAM-NOTICES.txt": {
+      "sha256": "0b2f34e75e15cd5a22f3973c27585e30dd8ee8cdb7a867bcdfbd1f2bf3368b81",
+      "source": "https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz",
+      "scope": "Expat static core dependency; exact upstream notices/provenance"
+    },
+    "licenses/expat/SOURCE-PROVENANCE.json": {
+      "sha256": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0",
+      "source": "https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz",
+      "scope": "Expat static core dependency; exact upstream notices/provenance"
     }
   },
   "notes": [
@@ -144,5 +159,22 @@
     }
   ],
   "qt_notice_collection": "licenses/qt/source-attributions.json",
-  "runtime_review_record": "redistribution-review.json"
+  "runtime_review_record": "redistribution-review.json",
+  "static_dependencies": [
+    {
+      "name": "Expat",
+      "version": "2.9.0",
+      "linkage": "static",
+      "license": "MIT; embedded SipHash CC0-1.0",
+      "source": "https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz",
+      "source_sha256": "1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051",
+      "source_bytes": 534052,
+      "vendored_manifest_sha256": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0",
+      "notice_files": {
+        "licenses/expat/COPYING.txt": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+        "licenses/expat/UPSTREAM-NOTICES.txt": "0b2f34e75e15cd5a22f3973c27585e30dd8ee8cdb7a867bcdfbd1f2bf3368b81",
+        "licenses/expat/SOURCE-PROVENANCE.json": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0"
+      }
+    }
+  ]
 }

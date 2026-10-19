@@ -223,3 +223,13 @@ failures) is retained under `artifacts/ui-agent-tests`; override it with
 `SHOWPSISI_AGENT_TEST_ARTIFACTS`. Each test isolates preferences and WebView data.
 Python-backed Qt fixtures explicitly use UTF-8 to match the JSONL protocol on
 Windows. See [UI agent contract and usage](../docs/UI_AGENT_DEBUG.md).
+
+## Signal topology
+
+`python -m unittest discover -s tests -p test_topology.py -v` exercises the
+production C++ graph and MCP contract across DVB, ATSC 1.0 and explicit ISDB
+profiles, exact source locators, adversarial identity/generation/cutoff cases and
+bounded pagination above 2,500 programs. Included in the strict engine runner.
+`topology_fixture.py` is the shared deterministic wire generator for frontend
+checks; it does not return mocked topology data. See
+[the API contract](../docs/TOPOLOGY_API.md) for explicit unsupported semantics.

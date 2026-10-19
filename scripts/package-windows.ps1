@@ -31,6 +31,7 @@ $Bin = Join-Path $Output 'bin'
 foreach ($File in @('showpsisi-core.exe', 'showpsisi-qt.exe')) { Require-File (Join-Path $BuildBin $File) }
 Require-File (Join-Path $BuildBin 'showpsisi-build.json')
 $Record = Get-Content -LiteralPath (Join-Path $BuildBin 'showpsisi-build.json') -Raw | ConvertFrom-Json
+Checked $Python @((Join-Path $PSScriptRoot 'ci/static_dependencies.py'), '--root', $Root, '--record', (Join-Path $BuildBin 'showpsisi-build.json'))
 if ($Record.source_commit -ne $SourceCommit -or $Record.source_root -ne $Root) { throw 'Production build record does not match source checkout.' }
 foreach ($File in @('showpsisi-core.exe', 'showpsisi-qt.exe')) {
     if ((Get-FileHash -LiteralPath (Join-Path $BuildBin $File) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Record.production.$File) { throw "Production input changed after build: $File" }
@@ -107,6 +108,7 @@ $QtCoreRelocation = @{
 $Metadata = @{
     source_commit = $SourceCommit
     application_version = $Record.application_version
+    static_dependencies = $Record.static_dependencies
     qt_version = '6.7.3'; qt_kit = 'win64_msvc2019_64'
     qt_origin = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_673/'
     tsduck_version = '3.45-4798'

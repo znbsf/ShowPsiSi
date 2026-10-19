@@ -40,7 +40,7 @@ None of these counts is a conformance percentage.
 | DVB-S/S2/S2X, DVB-T/T2, DVB-C/C2 | NIT delivery parameters for S/S2/T/T2/C; common SI; AC-4, subtitles, application signaling and PMT-discovered AIT; container_table, DFIT, MPE_FEC/MPE_IFEC fields and opaque payloads | S2X/C2 and untested parameter combinations remain SDK-level. Delivery descriptors do not prove RF support. Font URI, compression wrapper and FEC bytes are not fetched, decompressed or repaired. |
 | ATSC transport-stream PSIP/data | MGT/TVCT/STT/EIT, including MGT-advertised PID discovery, captions and multiple strings; AEIT/AETT/DET/DST/LTST/NRT/SVCT synthetic fields | Other registered models are SDK-available. NRT fixture has private data but no resource entries; DST fixture has an application but no tap. No ATSC 3.0 IP/ROUTE/MMT claim. |
 | ISDB | BIT/CDT/SDTT/LDT/NBIT/ITT; NIT terrestrial/TS/partial-reception descriptors; AMT IPv4/IPv6 mapping on PID 0x002E; advanced cable normal fields and opaque extension bytes | Other registered models and operator profiles remain unverified. Advanced-cable syntax has an upstream reconstruction caveat. Japan/Brazil text and time profiles must be selected explicitly. |
-| SCTE | PMT-discovered SCTE-35 time-signal PTS, segmentation/UPID and avail fields | Other splice forms and cable emergency alert paths remain SDK-level; no complete SCTE conformance claim. |
+| SCTE | PMT-discovered SCTE35 time-signal/segmentation; 2026-10-19 extension tests add EAS fields/discovery, insert/schedule command variants, additional descriptors and exact export/reopen (see checkpoint below) | No emergency receiver, splicer, encrypted cue decoding, SCTE35-2 or SCTE65 claim; complete normative text was not independently reviewed. |
 | DTMB | Explicit `dtmb` context; ITU J.1041 DRM descriptor fields and exact license-data bytes; common SDT with explicitly signaled UTF-8 Chinese/Greek text; wrong-family and truncated-DRM fallback | No blanket GB/T 28161, GB/T 28160 or broadcaster-profile support; no GB 20600 RF test, DRM decryption, license access or AVS media decoding. |
 | Operator / private | Astra SGT IDs/LCN/flags; scoped PDS and registration context; raw unknowns | Unpublished syntax is not inferred. SGT has no linked public standard in the index. No arbitrary private-protocol or generic edit/encode guarantee. |
 
@@ -139,7 +139,7 @@ rather than duplicated as a stale hard-coded list.
 ## Context, collisions and private namespaces
 
 `analyze.standards` accepts `auto`, `dvb`, `atsc`, `isdb`, `isdb-japan`,
-`isdb-brazil`, `scte` and `dtmb`. Pinned SDK flags include MPEG, DVB, SCTE, ATSC,
+`isdb-brazil`, `scte`, `dtmb` and the explicit `j94-system-b` extension. Pinned SDK flags include MPEG, DVB, SCTE, ATSC,
 ISDB, JAPAN, ABNT and DTMB, plus `DVBONLY` for strict-DVB distinctions. The explicit `dvb` profile includes
 that flag to prevent unrelated ISDB descriptor guesses; auto mode stays inferential.
 `isdb-japan` selects ARIB-STD-B24 and JST; `isdb-brazil` selects ISDB+ABNT,
@@ -339,3 +339,248 @@ Arrival labels use packet positions unless the user supplies a transport bitrate
 in that case elapsed seconds are explicitly an estimate from that bitrate. No PCR
 or wall-clock reconstruction is claimed. Logical table groups retain version,
 current/next, extension and section evidence rather than grouping by PID alone.
+
+## Public protocol extension checkpoint (2026-10-19, development branch)
+
+This checkpoint updates the earlier family table without replacing its historical
+SDK inventory or measured evidence. It is **bounded inspector support**, not
+completion of every clause of the named standards. The implementation/test loop
+and promotion gates are in [PROTOCOL_TEST_PLAN.md](PROTOCOL_TEST_PLAN.md).
+
+| Profile / feature | Verified real-core paths | SDK-only / absent paths and next boundary |
+| --- | --- | --- |
+| NorDig LCD v1/v2 within DVB | `test_nordig.py`: 20 tests; automatic DVB/default-auto recognition with actual PDS; v1 14-bit numbers; v2 names/countries/list IDs, 10-bit numbers and visibility; exact transport association, source/byte offsets, conflicts, generation and snapshot evidence | Receiver country/list choice, regional selection UX, HD-simulcast relationships and receiver service-ordering policy are absent. A single captured list is not automatically selected. |
+| SCTE18 EAS in TS | `test_scte_extensions.py`: EAS discovery in `scte`/`atsc`/`auto` at PID 0x1FFB, event/timing/priority/text/geography/exception fields, table-specific descriptors, source bytes and export/reopen | No alert receiver, playout, tuning, audio retrieval or cable OOB-link input. EAS descriptors are verified in the native table tree, not a new flat service projection. PID 0x1FFC remains explicit `extra_pids`. |
+| SCTE35-1 | Existing `test_protocol_coverage.py` time-signal/segmentation/UPID plus new SCTE tests for program/component/immediate/cancel insert, schedule variants, null/bandwidth/private commands, unspecified time and DTMF/audio/time descriptors; PMT discovery, encryption fallback, CRC and export | No splicer or wall-clock/PCR timing reconstruction; no encrypted cue decoding; no SCTE35-2 event-signalling claim. Exhaustive command/descriptor combinations remain unverified. |
+| AIT / HbbTV signalling | Existing PMT→AIT and object-carousel transport descriptor fixture; `test_application_signalling.py`: seven tests for HTTP transport/name/location identifiers, PMT discovery, exact bytes, UNT and byte-boundary truncation resilience | The later 12-test source-card increment adds AIT applications, scoped transport-label relations and exact evidence anchors under explicit DVB (see APPLICATION_SUMMARY_API.md); receiver selection UX, HTTP execution and HbbTV runtime/certification remain absent. |
+| DSM-CC | Existing `test_protocol_coverage.py` DII/DDB fixtures assert transaction/download/module/block metadata, payload bytes and descriptor-context guards | Module assembly, decompression, BIOP object/directory reconstruction and object export are absent. A decoded DII/DDB is not a reconstructed carousel. |
+| SSU / UNT | Initial OUI/version/transport/association/polling/URI inspection plus 11 source-summary tests cover full OUI/hash collisions, compatibility/target declarations, separate loops, scoped common/operational locations, conflicts, units, cutoffs and exact anchors; see [APPLICATION_SUMMARY_API.md](APPLICATION_SUMMARY_API.md). | Device eligibility and target selection, carousel joins, update reconstruction and installation are absent. Firmware URIs are inert evidence; schedule availability is not evaluated. |
+| SCTE65 / separately labelled J.94 System B | Edition-pinned ITU J.94 (10/2016) Annex B section parser and real-core fixtures cover NIT CDS/MMS, short-VCT VCM/DCM/ICM, NTT SNS/MTS and STT. Exact context/CRC/raw/header semantics remain explicit. | No current SCTE65 equivalence, complete-map assembly, receiver actions or RF/POD hardware claim. ATSC A/81 `SVCT` is a Satellite VCT, not this Short-form VCT. |
+| DVB-I | 49 real-core local XML import/query/inspect tests; see [DVB_I_API.md](DVB_I_API.md). Published TS 103 770 V1.2.1 namespaces, service/list/instances, alternate regional LCNs, nested regions, declared DVB triplets and DASH locations; exact bytes/hash and element/attribute paths retained. | Separate document input and revisions; no network/media/TS association, schema-wide conformance or DVB-I UI claim. Unsupported namespaces remain raw-only. |
+
+The SCTE extension suite contains **18** test methods and 11 pinned synthetic
+XML/binary vectors. The application-signalling suite uses two pinned XML/binary
+vectors. These compiler-derived fixtures and independently authored NorDig wire
+fixtures exercise the application API, but are not independent conformance
+streams. Their exact counts and outcomes must be read with the retained test
+summaries; fixture compilation alone is not semantic validation.
+
+### NorDig is automatically recognized inside DVB
+
+NorDig is a DVB regional receiver profile with private extensions, not a separate
+parser toggle. The shared `dvb` context covers DVB-S/T/C signalling; the app has
+no distinct NorDig enable switch or S/T/C parser switch. Actual NIT descriptor
+context, an earlier on-wire PDS `0x00000029` and the SDK's typed identity establish
+LCD v1/v2. A tag alone does not. Auto mode retains existing evidence inference;
+requested standards remain a context rather than a strict rejection filter.
+Tests include contradictory ATSC/ISDB contexts with and without the real PDS.
+
+The v2 projection is deliberately list-aware. `lcn_list_candidates` retain list
+name, country, ID, ONID/TSID/SID, original descriptor/entry offsets and section
+source. `lcn_list_status` is `none`, `selection_required` or `conflict`.
+A v2 candidate does not silently collapse to the ordinary `logical_channel_number`
+field or fall back to a v1 number. The UI can continue inspecting native trees,
+but a dedicated list-choice control has not been implemented or tested.
+
+A baseline defect was also corrected: the pinned SDK's NorDig v1 class is not
+an `AbstractLogicalChannelDescriptor` subclass, so the previously listed name
+alone did not populate ordinary LCN candidates. A typed v1 path now preserves its
+full 14-bit value. This is raw numeric preservation, not certification that every
+reserved allocation is appropriate for receiver navigation.
+
+The first increment rejects malformed nested lengths and overlong names from the
+v2 projection as a whole, retaining native/raw diagnostics. Candidate selection
+requires a valid current complete table generation and exact transport identity.
+A hidden or reserved allocation remains evidence; it is not deleted or selected.
+Existing PDS-loop isolation, CRC rules and semantic-diff source separation remain
+in force. Global cross-service list consistency and receiver conflict-resolution
+policy remain future work.
+
+### Edition and source boundaries
+
+- [NorDig official specifications](https://nordig.org/specifications-2/):
+  [Unified Requirements 3.2.2](https://nordig.org/wp-content/uploads/2016/03/NorDig-Unified-Requirements-ver.-3.2.2.pdf),
+  [Rules of Operation 3.2.2](https://nordig.org/wp-content/uploads/2016/03/NorDig-Rules-of-Operation-ver.-3.2.2.pdf)
+  and [Unified Test Plan 3.2.2](https://nordig.org/wp-content/uploads/2016/03/NorDig-Unified-Testplan-ver.-3.2.2.pdf), November 2025.
+  LCD syntax/association uses Requirements §12.2.9; the SDK header cites 3.1.1,
+  so the 3.2.2 wire layout was checked directly. Test Plan 14:12/13/14/23 inform
+  later coexistence, network, priority and update cases, not certification claims.
+- [SCTE18 catalogue](https://account.scte.org/standards/library/catalog/scte-18-emergency-alert-messaging-for-cable/):
+  2018 / ANSI J-STD-42-C; [SCTE35-1 catalogue](https://account.scte.org/standards/library/catalog/scte-35-1-digital-program-insertion-cueing-message-part-1-legacy-splice-based-and-time-based-signaling/):
+  2023r2. Search-indexed official metadata and pinned SDK source were available;
+  direct catalogue retrieval returned 403. Complete normative text was not
+  independently field-reviewed. See the SCTE fixture README for exact SDK links.
+- [SCTE65 official ANSI preview](https://webstore.ansi.org/preview-pages/SCTE/preview_SCTE%2B65%2B2016.pdf):
+  2016 (catalogue reaffirmed 2021) establishes the separate OOB scope; the preview
+  does not provide enough field syntax for a new decoder. The separately verified
+  [ITU J.94 (10/2016) full text](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-J.94-201610-I%21%21PDF-E&lang=e&type=items)
+  does provide System B Annex B syntax. See [CABLE_OOB_INPUT_DESIGN.md](CABLE_OOB_INPUT_DESIGN.md);
+  implementing that named edition does not establish all current SCTE65 semantics.
+- AIT and SSU use **ETSI TS 102 809 V1.3.1** and **TS 102 006 V1.4.1**.
+  [APPLICATION_SIGNALLING.md](APPLICATION_SIGNALLING.md) links the official PDFs,
+  clause mappings and HbbTV's published 2.0.4 / candidate 2.0.5 distinction.
+- DSM-CC syntax derives from ISO/IEC 13818-6 with DVB profiles. The pinned SDK's
+  DII/DDB implementation and fixture coverage are established; complete normative
+  object-carousel text and edition mapping must be reviewed before reconstruction.
+- DVB-I published **TS 103 770 V1.2.1** is distinct from **A177r8 / draft V1.3.1**.
+  The [input design](DVB_I_INPUT_DESIGN.md) links the official publication, schemas
+  and security boundaries. The draft is not silently treated as the baseline.
+
+No source PDF is bundled. A public download or SDK implementation is not evidence
+of unrestricted redistribution rights. Runtime behaviour, certification and
+physical reception are outside these parser tests.
+
+### Combined Linux checkpoint
+
+A fresh production and separate cancellation-helper build passed the strict
+engine runner on 2026-10-19: **259 discovered, 258 executed**, zero failures or
+errors, one allowed missing optional real-recording skip. This includes the 20
+NorDig, 18 SCTE and seven application-signalling tests. Ignored retained evidence
+is `artifacts/protocol-extension/engine/`, `engine-gate.log`, `build.log` and
+`checkpoint.json` (source-file/binary hashes). This is a Linux cloud result; no
+new Windows/native UI or real-recording result is asserted by this checkpoint.
+
+## First J.94 System B section checkpoint (2026-10-19, development)
+
+The explicit JSONL `analyze.standards="j94-system-b"` context now admits SI_base
+PID 0x1FFC and uses an independently authored parser for **ITU-T J.94 (10/2016)
+Annex B**, not an alias for ATSC/ISDB or a current SCTE65 equivalence claim.
+At this first checkpoint, `core/CableOobMetadata.h` covered NIT CDS/MMS and
+short-VCT VCM/DCM/ICM section records, with exact offsets and opaque record/section
+descriptors. NTT/STT were still pending (see the later increment below); descriptor
+semantics, map assembly, reference resolution and receiver activation remain unsupported. No new UI context selector or native
+UI acceptance is claimed.
+
+The first checkpoint of `tests/test_cable_oob.py` had 20 real-core methods with independently
+authored wire inputs. They assert both carrier unit scales and unsigned arithmetic,
+modulation/symbol-rate fields, digital/analogue/application/inactive VCM entries,
+DCM ranges and ICM placeholders. Negative coverage includes every payload-byte
+truncation of all five decoded forms, zero-bit/range/descriptor failures, unsupported
+versions/subtypes, 1024-byte resource boundary, short-style CRC verification,
+context/PID isolation, cutoffs, exact repeated/changed observations and export
+refusal without file creation.
+
+These sections have no ordinary long-section version/current/section numbering.
+Public header fields are null with `versioning_supported=false`; map completeness
+is false. Each exact section variant remains distinct evidence, including repeated
+occurrence counts. Snapshot differences mean newly observed variants, not an
+assertion of a receiver map transition. `native_table_complete` only establishes
+a complete CRC-valid section envelope; its decoder category must separately
+establish semantic success. J.94 snapshot export is deliberately refused until
+map selection/update policy is defined. Original section bytes remain inspectable.
+
+The official source, hash and future assembly tests remain documented in
+[CABLE_OOB_INPUT_DESIGN.md](CABLE_OOB_INPUT_DESIGN.md). The historical SCTE65 row
+above remains accurate about that separate standard: this increment establishes
+only the named ITU edition and its bounded section paths.
+
+### Reviewed combined-source Linux gate
+
+The reviewed J.94 build passed a combined development-source gate: **336
+discovered, 335 executed**, zero failures/errors, one allowed optional recording
+skip. Included suites were J.94 (20), NorDig (20), SCTE extensions (18), AIT/UNT
+inspection (7), AIT summaries (12), and the concurrently developed local DVB-I
+importer (45), plus existing engine/security regressions. This is not a claim
+that each concurrent feature has completed independent review or UI delivery.
+Retained exact-source/binary hashes and summaries are in
+`artifacts/protocol-extension/j94-reviewed-checkpoint.json`; independent J.94
+rerun evidence is `artifacts/protocol-review/j94-independent-tests-final.log`.
+
+Independent review found and closed active VCM zero-MMS acceptance and missing
+short-envelope CRC admission. Tests now distinguish inactive program zero and
+retain all CRC-absent bytes as invalid evidence. The SDK's internal ISDB guess
+from colliding table IDs is retained only as `sdk_inferred_standards` with a
+warning; the displayed context is explicitly selected J.94, not auto-identification.
+
+## J.94 NTT text and STT increment (2026-10-19, development)
+
+The edition-pinned System B section parser now also interprets NTT source-name
+subtable (SNS, subtype 6) and STT. These remain exact section observations: names
+are not joined to channel maps and signalled times do not activate VCM entries.
+
+NTT retains the declared ISO 639-2/B bytes, the 0xFFFFFF language wildcard,
+source/application identity, duplicate records, name/segment offsets, and opaque
+record/section descriptors. MTS modes follow B.8.1 and Tables B.50/B.52–B.55:
+listed BMP pages, 16-bit big-endian BMP, and the six special mode-zero mappings.
+Reserved pages/characters remain raw with `text_status=unsupported` and null
+complete text. Surrogate code units are `invalid_encoding`; they are not promoted
+to UTF-16 supplementary characters. Valid decoded segments remain inspectable,
+but unknown pieces are never silently omitted from an apparently complete name.
+Format effectors are retained and counted, then ignored as B.6.2 requires for
+NTT; they do not generate styling, control actions or executable content. Structural
+truncation and odd 16-bit lengths reject the whole semantic projection.
+
+The B.6.2 introductory prose refers to B.8.2 inconsistently. Its `source_name()`
+definition explicitly references B.8.1, and B.8 plus Table B.50 distinguish NTT
+MTS from the MSS format used by other tables/descriptors. This implementation
+follows those explicit syntax definitions; it does not reinterpret NTT as ATSC
+multiple-string structure.
+
+STT retains `system_time` and `gps_utc_offset`. Offset zero means the signalled
+seconds already represent UTC relative to 1980-01-06; otherwise offset is
+subtracted. Both GPS-epoch-relative UTC seconds and Unix UTC seconds use signed
+arithmetic, including inputs where the offset exceeds the time value. These are
+calculations from broadcast fields, not a validated capture clock or an instruction
+to change the system time. Descriptors remain opaque.
+
+The existing 1024-byte section cap and CRC-before-parser admission apply. SNS
+name length is 1–255 bytes, nested segment lengths cannot escape that name, and
+record/descriptor loops remain bounded by the section. No complete-map assembly,
+source-name selection policy, descriptor semantics, RF/POD reception or current
+SCTE 65 revision equivalence is claimed.
+
+This increment passes **30 J.94 real-core tests**, including ten new text/time
+methods and the extended every-payload-prefix truncation test. A second reviewer
+checked the official field/text/time definitions and independently reran all 30
+against production core SHA-256
+`5f2bb0f33b2cead530a5124d7dee46e551a0032790e6462743792624305d4115`.
+The fresh combined Linux development gate passes **371 tests with zero skips**;
+source/binary hashes were checked unchanged throughout. Evidence remains ignored:
+`artifacts/protocol-extension/ntt-stt-checkpoint.json`, the sibling build/focused/
+engine logs, and `artifacts/protocol-review/j94-ntt-stt-independent-tests.log`.
+The combined gate includes the committed DVB-I importer, UNT summaries and static
+Expat packaging checks. It is not a new Windows or native-UI acceptance claim.
+
+## Evidence-linked topology subset (2026-10-19 feature branch)
+
+The independent topology implementation adds `query_topology` with exact
+revision/cutoff/section provenance and typed graph relations. This is separate
+from the installer/portable release and does not redefine existing Services or
+semantic snapshot-diff results. Contract: [TOPOLOGY_API.md](TOPOLOGY_API.md).
+
+Application adapters implemented and exercised by real-core wire fixtures:
+
+- DVB canonical NIT/SDT, PAT-selected PMT and ES declarations; exact service
+  triplets, multiple network memberships, other-TS announcements, unresolved
+  PAT-only ONID, conflicting names/identities and PMT PID switches.
+- ATSC 1.0 complete TVCT/CVCT, one-/two-part channel forms, reserved encodings,
+  header TSID vs channel TSID, distinct duplicate observations, source references
+  with zero explicitly unidentified, inactive/analog/hidden channels and
+  independent service-location vs PMT conflicts.
+- ISDB explicit Japan/Brazil/unspecified profile basic NIT/SDT/PAT/PMT. Japan
+  TS-information remote key, raw transmission types and partial-reception service
+  references are tested. Brazil/unspecified regional descriptor semantics remain
+  unsupported, not guessed from the shared tag or transplanted from Japan.
+
+The `test_topology.py` suite uses production JSONL and MCP, checks each returned
+source against real `inspect` anchors and bytes, current/next/CRC/missing and
+reused-version boundaries, same-packet receive order, rollover, stale revisions,
+failed-analysis clearing, and more than 2,500 programs across bounded pages.
+`auto` remains explicit unresolved interpretation rather than guessing an ISDB/
+DVB family from their shared layouts or an ATSC family from a colliding table ID.
+
+Bounded DVB-S/S2/C/T delivery-parameter nodes and nominal satellite-candidate
+relations reuse the existing source-attributed local satellite lookup. Every
+parameter declaration retains its original NIT transport/descriptor identity;
+physical TP identity, actual spacecraft and capture-time assignment stay unknown.
+Unknown DVB-T center frequency retains null Hz plus other known parameters;
+raw reserved codes remain unnormalized. Co-located/no-match/unavailable-catalog
+states remain explicit, and ISDB same-tag
+interpretations are guarded. This does not add a transponder database or tuning.
+
+Unsupported topology projections are reported in every result: BAT/regional LCN,
+physical transponder/satellite identification, S2X/T2 expansion, full PSIP auxiliary/EPG, and ISDB
+BIT/CDT/SDTT/logo/broadcaster chains. Existing raw/Metadata access remains.
+A source anchor is section-scoped original bytes; no arbitrary merged-XML byte
+mapping or physical reception/media availability is claimed. Native Qt/WebView2
+interaction acceptance remains a separate test gate.

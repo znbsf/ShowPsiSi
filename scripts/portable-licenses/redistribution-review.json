@@ -3,8 +3,8 @@
   "review_complete": true,
   "reason": "Exact third-party runtime, source archive and notice bytes reconciled for this Windows x64 Qt/core CI candidate using the selected LGPLv3/permissive-license routes and Microsoft system/runtime prerequisites. Changes invalidate this record. This is not blanket legal assurance, native desktop acceptance, or public-release authorization.",
   "reviewed_files": {
-    "SOURCE_INFORMATION.txt": "028ab79fcf57a8cbf34d772afd6b8ad0f260e3905d62986033dc2c055d816653",
-    "THIRD_PARTY_NOTICES.txt": "72c8d9c846baa9aa132fc21813ffa91e0f7cfbf47a0c40c74780c1285daef773",
+    "SOURCE_INFORMATION.txt": "22e78efac63ceb0b8ea0c5abafe51254e884a5954c30889321b3a0a4c381f9b1",
+    "THIRD_PARTY_NOTICES.txt": "a5f6aebe6900c99d6c1034da946ac03fc66cd3e86067e640ca34c895600dc0ab",
     "bin/Qt6Core.dll": "05982ff42ba7ae3074badaee1a09ff7f45e694de815bb06b514b28c28cfe0500",
     "bin/Qt6Gui.dll": "ced3aef690624b1186660baa85c7d2c3319d46f5c0194eeafe39e2377643e1d4",
     "bin/Qt6LabsFolderListModel.dll": "90ee93d138cf89b6bcf78e11c5f7ee689d77f895f3b740a7ae1688e66d288f1f",
@@ -521,6 +521,9 @@
     "bin/tsduck.oui.names": "686be47ed82ace7dc2e55c528d887d82a8aa1bf0a1944a687541cadf3bdb3c97",
     "bin/tsduck.tables.model.xml": "698b93000b79387f23a45dd2d457a812df9fc7a871f069b68f4003dab1c6bc42",
     "licenses/ShowPsiSi-MIT.txt": "3b5770011c8dc35177edb269d177cd816f4e0fd5320a06e0135ba7bc8a0013fc",
+    "licenses/expat/COPYING.txt": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+    "licenses/expat/SOURCE-PROVENANCE.json": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0",
+    "licenses/expat/UPSTREAM-NOTICES.txt": "0b2f34e75e15cd5a22f3973c27585e30dd8ee8cdb7a867bcdfbd1f2bf3368b81",
     "licenses/nlohmann-json-MIT.txt": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14",
     "licenses/qt/README.txt": "cfbe66b20832290cba304cb060b618b5d9cef4d534c24bc83315a66d558ee184",
     "licenses/qt/qtbase/LICENSES/AFL-2.1.txt": "93bb4f7417aa775bab9026cc3d0af28aeb64451fc5a8ec651876785edd8eaf9b",
@@ -668,7 +671,7 @@
     "licenses/tsduck/cJSON-MIT.txt": "3384d75264549cd04a5c00538a15871785f3f6ba60a779781df747d591655892",
     "licenses/tsduck/librist-COPYING.txt": "b9841591a3452ee30033d8e3586c7b1244a0b2fc1dc6cb04576957c313cb2792",
     "licenses/tsduck/librist-COPYRIGHTS.txt": "037c20c6a1b61f74d3740e7cf24d7a834dcb0ff3fa1a32080edc148107d1fd1d",
-    "source-index.json": "8e8aa25a7a5eb93bacb54c6b79edc091d9c43b0c9ab19e4f187e9ed3fe1b4852",
+    "source-index.json": "79497d13dd5b0443fbb7b139c435db08ddd5d6741d27c4b8eafd3d59fa474f15",
     "sources/qtbase-everywhere-src-6.7.3.tar.xz": "8ccbb9ab055205ac76632c9eeddd1ed6fc66936fc56afc2ed0fd5d9e23da3097",
     "sources/qtdeclarative-everywhere-src-6.7.3.tar.xz": "937b70e441abf5bc4e50d44d26610e2714a28514acf3885cd36116cd610b9875",
     "sources/qtsvg-everywhere-src-6.7.3.tar.xz": "40142cb71fb1e07ad612bc361b67f5d54cd9367f9979ae6b86124a064deda06b"
@@ -686,6 +689,32 @@
     "qt_core_unmodified_on_deployment": true,
     "source_delivery": "Three pinned complete Qt module source archives must accompany binaries under sources/.",
     "native_windows_desktop_verified": false,
-    "runtime_prerequisites": "Windows 10/11 x64 system libraries, including D3Dcompiler_47.dll, plus Microsoft x64 VC v14 runtime >=14.51.36231.0. No Microsoft binaries redistributed."
-  }
+    "runtime_prerequisites": "Windows 10/11 x64 system libraries, including D3Dcompiler_47.dll, plus Microsoft x64 VC v14 runtime >=14.51.36231.0. No Microsoft binaries redistributed.",
+    "expat_static_source_review": {
+      "review_date_utc": "2026-10-19",
+      "official_release": "https://github.com/libexpat/libexpat/releases/tag/R_2_9_0",
+      "archive_sha256": "1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051",
+      "all_64_vendored_files_equal_official_archive": true,
+      "license_route": "MIT; embedded SipHash CC0-1.0. Full copyright/license headers preserved. CMake BSD buildsystem source notice remains in repository; it is not linked runtime code.",
+      "windows_static_link_and_package_verified": false,
+      "boundary": "Explicit source/notice review added to the existing exact runtime inventory. A fresh hosted build must verify actual Windows payload, static build metadata and runtime tests before distribution."
+    }
+  },
+  "static_dependencies": [
+    {
+      "name": "Expat",
+      "version": "2.9.0",
+      "linkage": "static",
+      "license": "MIT; embedded SipHash CC0-1.0",
+      "source": "https://github.com/libexpat/libexpat/releases/download/R_2_9_0/expat-2.9.0.tar.xz",
+      "source_sha256": "1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051",
+      "source_bytes": 534052,
+      "vendored_manifest_sha256": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0",
+      "notice_files": {
+        "licenses/expat/COPYING.txt": "31b15de82aa19a845156169a17a5488bf597e561b2c318d159ed583139b25e87",
+        "licenses/expat/UPSTREAM-NOTICES.txt": "0b2f34e75e15cd5a22f3973c27585e30dd8ee8cdb7a867bcdfbd1f2bf3368b81",
+        "licenses/expat/SOURCE-PROVENANCE.json": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0"
+      }
+    }
+  ]
 }

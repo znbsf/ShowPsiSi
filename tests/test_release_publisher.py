@@ -486,7 +486,7 @@ class PayloadTests(TemporaryTest):
         write_json(fixture.prerequisite, fixture.runtime)
         package = fixture.package
         for path in package.rglob('*.json'):
-            if path.name not in ('build-information.json', 'redistribution-review.json', 'manifest.json'):
+            if path.name not in ('build-information.json', 'redistribution-review.json', 'manifest.json', 'source-index.json', 'SOURCE-PROVENANCE.json'):
                 write_json(path, {})
         write_json(package / 'bin/showpsisi-portable.json', {'schema_version': 1, 'scope': 'qt-core', 'resource_root': '..'})
         opaque = package / 'licenses/qt/upstream-attribution.json'

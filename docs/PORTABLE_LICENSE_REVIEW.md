@@ -365,3 +365,41 @@ not blanket legal assurance, approval of an unrelated future inventory, native
 GUI acceptance, public-release authorization, or permission to ship an installer.
 The parent must publish the reviewed inputs and the next CI must revalidate
 and match them before a binary ZIP is uploaded.
+
+## Protocol increment: static Expat 2.9.0 (2026-10-19)
+
+The later protocol worktree adds Expat to the shared core for local DVB-I XML
+inspection. This does not alter the sealed first-release source. The official
+[Expat 2.9.0 release](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0)
+archive is 534,052 bytes, SHA-256
+`1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051`.
+All 64 vendored upstream files were independently compared byte-for-byte with
+that archive. `third_party/expat/SHOWPSISI_SOURCE.json` records the exact subset;
+its SHA-256 is `4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0`.
+
+Expat's [MIT notice](https://github.com/libexpat/libexpat/blob/R_2_9_0/expat/COPYING)
+and full leading copyright/license comments from each vendored library C/header
+file are preserved under `licenses/expat/`. The embedded SipHash source carries
+the CC0-1.0 dedication and attribution; those comments are retained too. The
+upstream CMake BSD buildsystem notice stays with the unmodified repository
+source; CMake files are not compiled into the runtime. These permissive terms
+do not introduce an accompanying-source obligation. The exact official archive
+link and vendored file hashes are provenance, not a future source-delivery
+promise. Existing three complete Qt source archives still accompany the binary.
+
+`scripts/ci/static_dependencies.py` pins this source and notice identity
+independently of each generated package manifest. Windows CI checks the entire
+source inventory before and after compilation and records the static component
+in the production build record. Staging checks the inventory again and requires
+that same component identity. Archive and installer gates require matching
+build/source-index metadata, all exact Expat notice bytes, and the prominent
+top-level notice/source text. Removing a static component and regenerating the
+package manifest or exact-file approval cannot clear these checks. Static code
+cannot be discovered by looking only for imported DLLs.
+
+The exact redistribution review adds these three notice/provenance files and
+updates only the three affected top-level notice/index hashes; existing runtime
+and Qt source pins are unchanged. This source/notice review is locally tested.
+Fresh hosted Windows static-link, staged payload, runtime and installer evidence
+are still required for this protocol increment; no clean-machine or native GUI
+acceptance is implied.

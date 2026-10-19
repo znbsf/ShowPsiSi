@@ -145,9 +145,9 @@ def main():
     if args.qt:
         os.environ["SHOWPSISI_QT_TEST_ARTIFACTS"] = str(artifacts / "qt-interactions")
         qt_smoke(artifacts)
-        patterns = ["test_qt_ui.py", "test_qt_resource_paths.py", "test_qt_evidence.py"]
+        patterns = ["test_qt_ui.py", "test_qt_topology.py", "test_topology_presentation.py", "test_dvbi_presentation.py", "test_qt_resource_paths.py", "test_qt_evidence.py", "test_protocol_presentation.py", "test_qt_protocol_cards.py"]
     else:
-        patterns = ["test_engine.py", "test_satellite_metadata.py", "test_signal_metadata.py", "test_service_metadata.py", "test_section_evidence.py", "test_protocol_coverage.py", "test_sdk_migration.py", "test_cloud_preview.py",
+        patterns = ["test_engine.py", "test_topology.py", "test_topology_presentation.py", "test_dvbi_presentation.py", "test_satellite_metadata.py", "test_signal_metadata.py", "test_service_metadata.py", "test_section_evidence.py", "test_protocol_coverage.py", "test_application_signalling.py", "test_application_summaries.py", "test_nordig.py", "test_scte_extensions.py", "test_cable_oob.py", "test_dvbi.py", "test_protocol_presentation.py", "test_sdk_migration.py", "test_cloud_preview.py",
                     "test_cancellation.py", "test_mcp_cancellation.py", "test_portable_package.py", "test_application_icons.py"]
     results = [run_suite(pattern, artifacts) for pattern in patterns]
     if not all(results):

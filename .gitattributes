@@ -2,3 +2,11 @@
 # Upstream whitespace is intentional; do not normalize vendored license texts.
 scripts/portable-licenses/** -text
 scripts/portable-licenses/licenses/** -text -whitespace
+
+# Vendored Expat is verified against exact upstream bytes.
+third_party/expat/** -text -whitespace
+
+# Compiler inputs and binary section fixtures have pinned byte hashes.
+tests/fixtures/application-signalling/** -text
+tests/fixtures/scte345/** -text
+tests/fixtures/tsduck345/** -text

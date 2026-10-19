@@ -75,6 +75,7 @@ try {
             Invoke-Checked 'python' @('-m', 'pip', 'freeze')
         }
         'Build' {
+            Invoke-Checked 'python' @('scripts/ci/static_dependencies.py', '--root', $Root)
             & (Join-Path $Root 'scripts/setup-tsduck.ps1') -Sdk $Sdk -ValidateOnly
             Assert-File (Join-Path $Qt 'lib/cmake/Qt6/Qt6Config.cmake')
             Invoke-Checked 'cmake' @('--version')
@@ -109,6 +110,9 @@ try {
                 compiler_version = $CompilerVersion.Matches[0].Groups[1].Value
                 production = @{}
             }
+            $StaticRecord = Join-Path $Artifacts 'static-dependencies.json'
+            Invoke-Checked 'python' @('scripts/ci/static_dependencies.py', '--root', $Root, '--output', $StaticRecord)
+            $BuildRecord.static_dependencies = @(Get-Content -LiteralPath $StaticRecord -Raw | ConvertFrom-Json)
             foreach ($Name in @('showpsisi-core.exe', 'showpsisi-qt.exe')) {
                 $BuildRecord.production[$Name] = (Get-FileHash -LiteralPath (Join-Path $Bin $Name) -Algorithm SHA256).Hash.ToLowerInvariant()
             }

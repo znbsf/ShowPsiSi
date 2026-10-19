@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <UNT version="3" current="true" action_type="1" OUI="0x001122" processing_order="0">
+    <SSU_event_name_descriptor ISO_639_language_code="eng"><name>Fixture update</name><text>Data inspection only</text></SSU_event_name_descriptor>
+    <devices><compatibilityDescriptor /><platform><target /><operational>
+      <SSU_location_descriptor data_broadcast_id="0x000A" association_tag="0x1234"><private_data>010203</private_data></SSU_location_descriptor>
+      <SSU_uri_descriptor max_holdoff_time="10" min_polling_interval="20" uri="https://example.invalid/update.bin" />
+    </operational></platform></devices>
+  </UNT>
+</tsduck>

@@ -13,6 +13,14 @@ commit, compiler version and hashes of the two production EXEs. Packaging reject
 mismatched build identities. Qt archives are retained during dependency setup so
 their exact downloaded names and SHA-256 hashes enter the package build record.
 
+The protocol increment also statically links pinned Expat 2.9.0. Static-code
+obligations are not detectable in PE imports: `static_dependencies.py` verifies
+its complete vendored source inventory before/after the Windows build and at
+staging. The build record, package source index and exact Expat notices must
+agree with the independently pinned component record. Missing notices/index or
+changed source fail closed even after package-manifest regeneration. See the
+[static Expat review](PORTABLE_LICENSE_REVIEW.md#protocol-increment-static-expat-290-2026-10-19).
+
 `scripts/package-windows.ps1` takes explicit BuildBin, Qt, Sdk, Output,
 LicenseBundle, SourceCommit and Python paths. Output must not already exist.
 It copies only the production EXEs, both matching TSDuck/TSCore 3.45-4798 DLLs,

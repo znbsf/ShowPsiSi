@@ -21,6 +21,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import static_dependencies
 
 
 def digest(path):
@@ -64,6 +65,9 @@ def verify_manifest(package):
     value = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))
     if value['files'] != inventory(package):
         raise RuntimeError('Package changed after manifest generation')
+    if value['build'] != static_dependencies.read_json(package / 'build-information.json'):
+        raise RuntimeError('Package build identity differs from manifest')
+    static_dependencies.verify_package(package, value['build'])
     return value
 
 

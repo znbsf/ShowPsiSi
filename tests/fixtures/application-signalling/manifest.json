@@ -1,0 +1,15 @@
+{
+  "compiler": "TSDuck 3.45-4798",
+  "command": "tstabcomp NAME.xml -o NAME.bin",
+  "synthetic": true,
+  "fixtures": {
+    "ait-http": {
+      "xml_sha256": "468f52a9d50edad4bc0834aebee6465d550461530190da1fc6246a9c13369c35",
+      "bin_sha256": "800ca3a4a11df679ad3dbbc7f824f64f16e287ea033506453b1dd24b239d6bd0"
+    },
+    "unt": {
+      "xml_sha256": "17dde42948a87aac0950f4465e12b58852f230f330607b824579a935844a9731",
+      "bin_sha256": "087cf80f1b63bb2e8d3c651b0786ca741973d9c46ea851b2a38e6abdd1e88625"
+    }
+  }
+}

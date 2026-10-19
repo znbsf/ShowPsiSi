@@ -95,8 +95,222 @@ workbench.structure = function(detail, scope, sid) {
     warnings:detail.descriptors.filter(function(d){return d.malformed || d.native_decode_warning;})}));
   if((detail.issues || []).length) children.push(workbench.objectNode('issues','Validation issues',detail.issues));
   children.push(workbench.objectNode('evidence','Source evidence',{first_packet:detail.first_packet,last_packet:detail.last_packet,first_file_offset:detail.first_file_offset,offset_note:detail.offset_note,native_table_at_packet:detail.native_table_at_packet,inspection_scope:detail.inspection_scope,identity:detail.identity,occurrences:(detail.occurrences || []).slice(0,500),display_note:(detail.occurrences || []).length>500?'First 500 occurrences; full list available through Agent API':'All indexed occurrences'}));
+  if((detail.evidence_anchors || []).length) children.splice(1,0,{id:'anchors',label:'Source evidence anchors · exact section',children:detail.evidence_anchors.map(function(anchor,i){return {id:String(i),label:anchor.label || anchor.display_path || anchor.field_id || anchor.container_id || 'Source anchor',value:anchor.value==null?(anchor.byte_range?'Section bytes '+anchor.byte_range.offset+'–'+(anchor.byte_range.offset+anchor.byte_range.length-1):'No byte range supplied'):workbench.value(anchor.label || '',anchor.value),children:[workbench.objectNode('locator','Engine source locator',anchor)]};})});
   return {id:'section',label:detail.name+' section',value:'v'+detail.version+' · '+(detail.valid?'valid':'invalid'),children:children};
 };
 workbench.defaultOpen = function(path) {
   return path==='section' || /^section\/(native|fields|services|descriptors)(?:$|\/)/.test(path) && !/\/(meta|attributes)$/.test(path);
+};
+
+// Pure presentation of engine-owned protocol summaries; no wire parsing or
+// transport/list selection. Keep card paging independent of record paging.
+workbench.protocolCards = function(detail, offset, limit) {
+  detail=detail || {};var items=[];
+  var source={section_id:detail.id,analysis_revision:detail.analysis_revision,at_packet:detail.native_table_at_packet,
+    table_identity:{pid:detail.pid,table_id:detail.table_id,extension:detail.extension,version:detail.version,section_number:detail.section,current:detail.current}};
+  (detail.descriptors || []).forEach(function(d) {
+    if(!d.lcn_list_decode_status)return;
+    if(d.lcn_list_decode_status!=='decoded') {
+      items.push(function(){return {title:'NorDig channel lists · '+d.lcn_list_decode_status,
+        text:(d.lcn_list_warnings || []).join('\n'),evidence:Object.assign({},source,{descriptor:d})};});return;
+    }
+    (d.lcn_lists || []).forEach(function(list) {
+      items.push(function(){return {title:'NorDig list '+list.channel_list_id+' · '+list.channel_list_name+' · '+list.country_code,
+        text:'DVB signalling · list not selected\n'+(list.services || []).map(function(s) {
+          return 'SID '+workbench.hex(s.service_id)+' → LCN '+s.number+' · '+(s.allocation_status || (s.visible?'visible':'hidden'))+(s.duplicate_service?' · duplicate service':'');
+        }).join('\n'),evidence:Object.assign({},source,{pid:detail.pid,descriptor_offset:d.offset,pds:d.pds,list:list})};});
+    });
+  });
+  var app=detail.application_signalling;
+  if(app) {
+    items.push(function(){return {title:'Application signalling · '+app.status,
+      text:'Read-only signalling. Applications and firmware are not executed.\n'+(app.diagnostics || []).map(function(x){return typeof x==='string'?x:JSON.stringify(x);}).join('\n'),
+      evidence:{schema_version:app.schema_version,analysis_revision:app.analysis_revision,at_packet:app.at_packet,interpretation_profile:app.interpretation_profile,scope:app.scope,unsupported_relations:app.unsupported_relations}};});
+    var related=Object.create(null);
+    (app.relations || []).forEach(function(r){(related[r.from] || (related[r.from]=[])).push(r);if(r.to!==r.from)(related[r.to] || (related[r.to]=[])).push(r);});
+    (app.objects || []).forEach(function(object) {
+      var relationships=related[object.node_id] || [];
+      items.push(function(){return {title:object.label || object.object_type,
+        text:(object.object_type || 'Object')+' · '+(object.resolution_status || 'unresolved')+'\n'+
+          Object.keys(object.identity || {}).filter(function(k){return k!=='descriptor_section_id' && !/node_id$/.test(k);}).map(function(k){return k.replace(/_/g,' ')+': '+workbench.value(k,object.identity[k]);}).join('\n')+'\n'+
+          Object.keys(object.attributes || {}).map(function(k){var v=object.attributes[k];return k.replace(/_/g,' ')+': '+(v && typeof v==='object'?JSON.stringify(v):String(v));}).join('\n')+'\n'+
+          (object.unresolved_reasons || []).map(function(x){return typeof x==='string'?x:JSON.stringify(x);}).join('\n'),
+        evidence:{object:object,relations:relationships,analysis_revision:app.analysis_revision,at_packet:app.at_packet}};});
+    });
+  }
+  limit=Math.max(1,Math.min(50,Number.isFinite(limit)?Math.floor(limit):20));
+  offset=Math.max(0,Number.isFinite(offset)?Math.floor(offset):0);
+  offset=items.length?Math.min(Math.floor(offset/limit)*limit,Math.floor((items.length-1)/limit)*limit):0;
+  return {cards:items.slice(offset,offset+limit).map(function(build){return build();}),offset:offset,limit:limit,total:items.length,
+    has_previous:offset>0,has_more:offset+limit<items.length};
+};
+
+// Topology is an engine-owned semantic projection. These helpers only format
+// returned objects and compare opaque evidence identities; they never join
+// protocol fields, parse XML or infer standards from names/table identifiers.
+workbench.topologyStatus = function(node) {
+  var labels={observed_here:'Observed here',announced_only:'Announced only',incomplete:'Incomplete',conflict:'Conflict',unresolved:'Unresolved',resolved:'Resolved'};
+  var status=node.observation_status || node.resolution_status || 'unresolved',resolution=node.resolution_status;
+  var text=labels[status] || String(status);
+  if(resolution && resolution!=='resolved' && resolution!==status) text=(labels[resolution] || String(resolution))+' · '+text;
+  return text;
+};
+workbench.topologyIdentity = function(node) {
+  var identity=node.identity || {},parts=[];
+  var fields=[['network_id','NID'],['original_network_id','ONID'],['transport_stream_id','TSID'],['service_id','SID'],['bouquet_id','BID'],['program_number','Program'],['pid','PID'],['table_id','TID'],['atsc_source_id','Source ID'],['component_tag','Tag']];
+  fields.forEach(function(field){var value=identity[field[0]];if(value!=null)parts.push(field[1]+' '+(typeof value==='number'?workbench.hex(value,field[0]==='table_id' || field[0]==='component_tag'?2:4):String(value)));});
+  var channel=identity.channel_number;
+  if(channel && channel.format==='two_part' && channel.major!=null && channel.minor!=null)parts.unshift('CH '+channel.major+'.'+channel.minor);
+  else if(channel && channel.format==='one_part' && channel.one_part!=null)parts.unshift('CH '+channel.one_part);
+  // Opaque graph links and unrecognized identities remain in the full inspector,
+  // not the narrow row. This is formatting, not a new protocol identity join.
+  return parts.join(' · ');
+};
+workbench.topologyFieldLabel = function(key) {
+  var labels={network_id:'Network ID (NID)',original_network_id:'Original network ID (ONID)',transport_stream_id:'Transport stream ID (TSID)',service_id:'Service ID (SID)',bouquet_id:'Bouquet ID (BID)',program_number:'MPEG program number',pid:'Packet identifier (PID)',table_id:'Table ID (TID)',atsc_source_id:'ATSC programme source ID',component_tag:'Component tag',channel_number:'Virtual channel number',program_node_id:'Program object reference',vct_context:'VCT context reference'};
+  return labels[key] || key.replace(/_/g,' ');
+};
+workbench.topologyIdentityDetails = function(node) {
+  return Object.keys(node.identity || {}).map(function(key){var value=node.identity[key];return workbench.topologyFieldLabel(key)+': '+(value && typeof value==='object'?JSON.stringify(value):workbench.value(key,value));}).join('\n');
+};
+workbench.topologySearch = function(node, query) {
+  var values=[];
+  function visit(value,key) {
+    if(value && typeof value==='object') Object.keys(value).forEach(function(k){visit(value[k],k);});
+    else if(value!=null) values.push(String(value),typeof value==='number'?workbench.hex(value):'',typeof value==='number'?workbench.hex(value,2):'');
+  }
+  visit({label:node.label,type:node.object_type,identity:node.identity,attributes:node.attributes,status:workbench.topologyStatus(node)},'');
+  var text=values.join(' ').toLowerCase();
+  return String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean).every(function(term){return text.indexOf(term)>=0;});
+};
+workbench.topologyNodes = function(snapshot) {
+  var nodes=[],seen={};
+  (snapshot.context_nodes || []).concat(snapshot.nodes || []).forEach(function(node){if(!seen[node.node_id]) {seen[node.node_id]=true;nodes.push(node);}});
+  return nodes;
+};
+workbench.validateTopology = function(snapshot,revision,cutoff) {
+  if(!snapshot || snapshot.schema_version!==1 || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.projections)) return 'Unsupported or incomplete topology response.';
+  if(snapshot.analysis_revision!==revision) return 'Topology belongs to a different analysis revision.';
+  if(snapshot.at_packet!==cutoff) return 'Topology cutoff does not match the requested snapshot.';
+  var seen={};
+  for(var i=0;i<snapshot.nodes.length;i++) {var n=snapshot.nodes[i];if(!n || typeof n.node_id!=='string' || !n.node_id || seen[n.node_id]) return 'Topology contains an invalid or repeated object identity.';seen[n.node_id]=true;}
+  return '';
+};
+workbench.mergeTopology = function(current,page) {
+  if(!current) return page;
+  if(current.analysis_revision!==page.analysis_revision || current.at_packet!==page.at_packet || current.interpretation_profile!==page.interpretation_profile) throw new Error('Topology page context changed. Reload this snapshot.');
+  var result=Object.assign({},page),nodes={},edges={};
+  workbench.topologyNodes(current).concat(workbench.topologyNodes(page)).forEach(function(n){nodes[n.node_id]=n;});
+  (current.edges || []).concat(page.edges || []).forEach(function(e){edges[e.edge_id]=e;});
+  result.nodes=Object.keys(nodes).map(function(id){return nodes[id];});result.context_nodes=[];
+  result.edges=Object.keys(edges).map(function(id){return edges[id];});
+  return result;
+};
+workbench.topologyRows = function(snapshot,family,query,expanded,limits) {
+  var nodes=workbench.topologyNodes(snapshot || {}),byId={},children={},matches={},include={},rows=[],hidden=0;
+  nodes=nodes.filter(function(n){return !family || family==='all' || n.family===family;});
+  nodes.forEach(function(n){byId[n.node_id]=n;children[n.node_id]=[];});
+  var roots=[];
+  nodes.forEach(function(n){if(n.parent_id && byId[n.parent_id]) children[n.parent_id].push(n.node_id);else roots.push(n.node_id);});
+  var searching=!!String(query || '').trim();
+  nodes.forEach(function(n){matches[n.node_id]=!searching || workbench.topologySearch(n,query);if(matches[n.node_id]) {var id=n.node_id,visited={};while(id && byId[id] && !visited[id]) {visited[id]=true;include[id]=true;id=byId[id].parent_id;}}});
+  var seen={};
+  function visit(ids,depth,parent,ancestorMatch) {
+    var available=ids.filter(function(id){return !searching || include[id] || ancestorMatch;});
+    var limit=limits && limits[parent || '$roots'] || 100;
+    available.slice(0,limit).forEach(function(id){
+      if(seen[id]) return;seen[id]=true;
+      var node=byId[id],branch=children[id].length>0,open=searching || !!(expanded && expanded[id]);
+      rows.push({node:node,depth:depth,parent_id:parent,has_children:branch,expanded:branch && open,match:matches[id],child_count:children[id].length});
+      if(open) visit(children[id],depth+1,id,ancestorMatch || (searching && matches[id]));
+    });
+    if(available.length>limit) {hidden+=available.length-limit;rows.push({more:true,parent_id:parent,depth:depth,remaining:available.length-limit});}
+  }
+  visit(roots,1,null,false);
+  return {rows:rows,total:nodes.length,matched:nodes.filter(function(n){return matches[n.node_id];}).length,hidden:hidden};
+};
+workbench.topologyEvidence = function(node,edges) {
+  var refs=[],seen={};
+  function add(ref,edge) {
+    var key=JSON.stringify([ref.section_id,ref.assertion_key,ref.role,ref.locator,edge ? edge.edge_id : '']);
+    if(seen[key])return;seen[key]=true;
+    refs.push({ref:ref,edge_id:edge ? edge.edge_id : null,relation:edge ? edge.relation : null,target:edge ? (edge.from===node.node_id?edge.to:edge.from) : null});
+  }
+  (node.evidence || []).forEach(function(ref){add(ref,null);});
+  (edges || []).filter(function(e){return e.from===node.node_id || e.to===node.node_id;}).forEach(function(e){(e.evidence || []).forEach(function(ref){add(ref,e);});});
+  return refs;
+};
+workbench.resolveTopologyEvidence = function(ref,detail) {
+  function fail(message){return {status:'mismatch',precision:'none',message:message,anchor_index:-1,byte_range:null};}
+  if(!ref || !detail || detail.id!==ref.section_id) return fail('Returned section does not match the requested evidence.');
+  if(detail.analysis_revision!==ref.analysis_revision) return fail('Evidence belongs to a different analysis revision.');
+  if(detail.native_table_at_packet!==ref.at_packet) return fail('Evidence cutoff does not match the topology snapshot.');
+  var identity=ref.table_identity || {},keys={pid:'pid',table_id:'table_id',extension:'extension',version:'version',section_number:'section',current:'current'};
+  for(var key in keys) if(identity[key]!=null && identity[key]!==detail[keys[key]]) return fail('Returned table identity does not match '+key+'.');
+  var locator=ref.locator || {},anchors=detail.evidence_anchors || [],index=-1,precision='section';
+  if(locator.precision==='field' && locator.field_id) {index=anchors.findIndex(function(a){return a.field_id===locator.field_id && a.precision==='field' && a.resolution_status==='resolved';});if(index>=0)precision='field';}
+  if(index<0 && locator.container_id) {index=anchors.findIndex(function(a){return a.container_id===locator.container_id && a.precision==='container' && a.resolution_status==='resolved';});if(index>=0)precision='container';}
+  var range=index>=0?anchors[index].byte_range:null;
+  if(range && (range.offset_scope!=='section_bytes' || !Number.isSafeInteger(range.offset) || !Number.isSafeInteger(range.length) || range.offset<0 || range.length<1 || range.offset+range.length>String(detail.raw_hex || '').length/2)) range=null;
+  if(range && precision===locator.precision && locator.byte_range && (range.offset!==locator.byte_range.offset || range.length!==locator.byte_range.length || range.offset_scope!==locator.byte_range.offset_scope)) range=null;
+  return {status:index>=0?'resolved':'fallback',precision:precision,anchor_index:index,path:index>=0?'section/anchors/'+index:'section',byte_range:range,
+    message:precision==='field'?'Exact source field located'+(range?' · section byte range available.':' · byte range not provided.'):
+      precision==='container'?'Located the source container; exact field position is unavailable.':'Located the exact section; a supported field/container anchor was not provided.'};
+};
+
+// DVB-I is an independent local XML document session. These helpers compare
+// engine-owned identities and present returned data; they do not parse XML.
+workbench.validateDvbi = function(snapshot,revision,sha) {
+  if(!snapshot || snapshot.schema_version!==1 || !snapshot.source || snapshot.source.kind!=='local_dvbi_xml') return 'Unsupported or incomplete DVB-I document response.';
+  if(!Number.isSafeInteger(snapshot.document_revision) || snapshot.document_revision<1 || typeof snapshot.source.sha256!=='string' || !snapshot.source.sha256) return 'DVB-I document identity is missing.';
+  if(revision!=null && snapshot.document_revision!==revision) return 'DVB-I document revision changed.';
+  if(sha!=null && snapshot.source.sha256!==sha) return 'DVB-I original source hash changed.';
+  if(snapshot.nodes!==undefined) {
+    if(!Array.isArray(snapshot.nodes))return 'DVB-I node page is invalid.';
+    var seen=Object.create(null);
+    for(var i=0;i<snapshot.nodes.length;i++){var n=snapshot.nodes[i];if(!n || typeof n.node_id!=='string' || !n.node_id || seen[n.node_id])return 'DVB-I node identity is invalid or repeated.';seen[n.node_id]=true;}
+  }
+  if(snapshot.page) {var p=snapshot.page;if(!Number.isSafeInteger(p.offset) || p.offset<0 || !Number.isSafeInteger(p.total) || p.total<0 || (p.has_more && (!Number.isSafeInteger(p.next_offset) || p.next_offset<=p.offset)))return 'DVB-I page does not make valid progress.';}
+  return '';
+};
+workbench.mergeDvbi = function(current,page) {
+  var error=workbench.validateDvbi(page,current?current.document_revision:null,current?current.source.sha256:null);if(error)throw new Error(error);
+  if(!Array.isArray(page.nodes))throw new Error('DVB-I query did not supply an object page.');
+  if(current && current.profile!==page.profile)throw new Error('DVB-I profile changed between pages.');
+  var result=Object.assign({},page),nodes=Object.create(null),ids=[];
+  ((current && current.nodes) || []).concat(page.nodes).forEach(function(node){if(!nodes[node.node_id])ids.push(node.node_id);nodes[node.node_id]=node;});
+  result.nodes=ids.map(function(id){return nodes[id];});return result;
+};
+workbench.dvbiRows = function(snapshot,query,expanded,limits) {
+  return workbench.topologyRows(snapshot || {},'all',query,expanded,limits);
+};
+workbench.dvbiEvidence = function(node) {
+  var refs=[],seen=Object.create(null);
+  function visit(value) {
+    if(!value || typeof value!=='object')return;
+    if(typeof value.element_id==='string' && value.document_revision!=null && typeof value.source_sha256==='string' && typeof value.path==='string') {
+      var key=JSON.stringify([value.document_revision,value.source_sha256,value.element_id,value.path,value.precision,value.attribute_name]);
+      if(!seen[key]){seen[key]=true;refs.push(value);}return;
+    }
+    Object.keys(value).forEach(function(key){visit(value[key]);});
+  }
+  visit(node && node.evidence);visit(node && node.attributes);return refs;
+};
+workbench.resolveDvbiEvidence = function(ref,detail) {
+  function fail(message){return {status:'mismatch',precision:'none',attribute_index:-1,path:'',original_byte_offset:null,message:message};}
+  if(!ref || !Number.isSafeInteger(ref.document_revision) || typeof ref.source_sha256!=='string' || !ref.source_sha256)return fail('No complete DVB-I source reference was supplied.');
+  var error=workbench.validateDvbi(detail,ref.document_revision,ref.source_sha256);if(error)return fail(error);
+  var element=detail.element;
+  if(!element || element.element_id!==ref.element_id)return fail('Returned XML element does not match the requested source.');
+  if((ref.line!=null && ref.line!==element.line) || (ref.column!=null && ref.column!==element.column))return fail('XML element-start location does not match the source reference.');
+  var attribute=-1,precision='element',status='resolved',path=element.path;
+  if(ref.precision==='attribute') {
+    if(ref.path!==element.path+'/@'+ref.attribute_name)return fail('XML attribute path does not match the source element.');
+    attribute=(element.attributes || []).findIndex(function(a){return 'Q{'+a.namespace+'}'+a.local_name===ref.attribute_name;});
+    if(attribute>=0){precision='attribute';path=ref.path;}else status='fallback';
+  } else if(ref.precision!=='element' || ref.path!==element.path)return fail('XML element path does not match the source reference.');
+  var offset=element.original_byte_offset;
+  if(!Number.isSafeInteger(offset) || offset<0 || offset>=detail.source.bytes || element.byte_offset_precision!=='element_start')offset=null;
+  return {status:status,precision:precision,attribute_index:attribute,path:path,line:element.line,column:element.column,line_precision:'element_start',original_byte_offset:offset,
+    message:precision==='attribute'?'Located the XML attribute. Line and byte positions identify the containing element start, not an exact attribute span.':status==='fallback'?'Located the XML element; the requested attribute is unavailable.':'Located the XML element. Original source and XML-normalized values are shown separately.'};
 };

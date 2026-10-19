@@ -58,6 +58,9 @@ TS_LIBTSDUCK_CHECK();
 #endif
 
 using J = nlohmann::json;
+#include "NorDigMetadata.h"
+#include "DvbiInput.h"
+#include "CableOobMetadata.h"
 using Bytes = std::vector<uint8_t>;
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -244,15 +247,18 @@ public:
 };
 
 struct Record {
-    std::string id,key; Bytes raw; unsigned pid=0,tid=0,ext=0,version=0,number=0,last=0; bool valid=true,current=true;
+    std::string id,key; Bytes raw; unsigned pid=0,tid=0,ext=0,version=0,number=0,last=0; bool valid=true,current=true,j94=false;
     std::vector<uint64_t> positions,ends,orders; uint64_t lastPacket=0;
     J descriptors=J::array(),services=J::array(),events=J::array(),issues=J::array(),fields=J::object();
 };
 
 #include "SignalMetadata.h"
 #include "SatelliteMetadata.h"
+#include "ApplicationSignalling.h"
+#include "SignalTopology.h"
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
+    dvbi::Store dvbiDocuments;
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
     std::vector<Record> records; std::unordered_map<std::string,size_t> ids; J history=J::array();
     std::unordered_map<std::string,std::string> previous;
@@ -266,6 +272,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     // A DVB table identity includes the network/transport identifiers in its
     // payload. table_id_extension alone is insufficient for SDT-other / EIT.
     static std::string tableGroup(const Record& r) {
+        if(r.j94)return r.key; // Exact observation variants; no fabricated J.94 map generation.
         std::string key=std::to_string(r.pid)+":"+std::to_string(r.tid)+":"+std::to_string(r.ext);
         if((r.tid==0x42||r.tid==0x46)&&r.raw.size()>=11)key+=":onid="+std::to_string(u16(r.raw,8));
         if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14)key+=":tsid="+std::to_string(u16(r.raw,8))+":onid="+std::to_string(u16(r.raw,10));
@@ -353,6 +360,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             }
             // Diagnose the SDK/public identity before any user display-name override.
             signalmeta::diagnose(r,d,duck.charsetIn());
+            nordigmeta::decode(d,bin,descriptorDuck,context,!namespaceConflict&&pdsOnWire&&pds==0x29&&tag==0x87&&(r.tid==0x40||r.tid==0x41));
             for(const auto& spec:extension.value("descriptors",J::array())) {
                 if(spec.at("tag")!=tag || spec.at("pds")!=pds) continue;
                 const auto& tids=spec.at("table_ids"); if(std::find(tids.begin(),tids.end(),J(r.tid))==tids.end()) continue;
@@ -375,6 +383,9 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 if(auto* lcn=dynamic_cast<ts::AbstractLogicalChannelDescriptor*>(native.get());lcn&&lcn->isValid()){
                     d["lcn_entries"]=J::array();
                     for(const auto& entry:lcn->entries)d["lcn_entries"].push_back({{"service_id",entry.service_id},{"number",entry.lcn},{"visible",entry.visible}});
+                }else if(auto* nordig=dynamic_cast<ts::NorDigLogicalChannelDescriptorV1*>(native.get());nordig&&nordig->isValid()){
+                    d["lcn_entries"]=J::array();
+                    for(const auto& entry:nordig->entries)d["lcn_entries"].push_back({{"service_id",entry.service_id},{"number",entry.lcn},{"visible",entry.visible}});
                 }
             }
             r.descriptors.push_back(d); p=next;
@@ -384,6 +395,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     void decode(Record& r) {
         const auto& b=r.raw; size_t end=b.size()>=4?b.size()-4:0;
         if(!r.valid)return;
+        if(r.j94){r.fields["j94_system_b"]=cableoob::parse(b);return;}
         if((r.tid==0x42||r.tid==0x46)&&b.size()>=15) {
             r.fields["transport_stream_id"]=r.ext; r.fields["original_network_id"]=u16(b,8);
             for(size_t p=11;p<end;) {
@@ -491,14 +503,18 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         unsigned ver=size>=8&&(b[1]&0x80)?(b[5]>>1)&31:0,num=size>=8&&(b[1]&0x80)?b[6]:0;
         std::string key=std::to_string(pid)+":"+std::to_string(tid)+":"+std::to_string(ext)+":"+std::to_string(num);
         std::string id=key+":"+fingerprint(b);
+        const bool j94=standardsContext=="j94-system-b"&&cableoob::table(tid);
+        if(j94){key+=":j94-observation="+fingerprint(b);id=key;}
         auto it=ids.find(id);
         if(it==ids.end()) {
             if(records.size()>=50000)throw std::runtime_error("Unique-section limit (50000) exceeded; narrow input");
-            Record r; r.id=id;r.key=key;r.raw=std::move(b);r.pid=pid;r.tid=tid;r.ext=ext;r.version=ver;r.number=num;r.valid=valid;
+            Record r; r.id=id;r.key=key;r.raw=std::move(b);r.pid=pid;r.tid=tid;r.ext=ext;r.version=ver;r.number=num;r.valid=valid;r.j94=j94;
             r.current=size>=8&&(data[1]&0x80)?(data[5]&1)!=0:true;r.last=size>=8&&(data[1]&0x80)?data[7]:0;
             // SectionDemux validates long-section CRCs, but short TOT/SCTE-35
             // integrity must also be checked before derived/export selection.
-            if(crcEvidence(r)["status"]=="invalid")issue(r,"crc32",size-4,"MPEG-2 CRC32 mismatch; excluded from derived services");
+            const auto crcStatus=crcEvidence(r)["status"];
+            if(crcStatus=="invalid")issue(r,"crc32",size-4,"MPEG-2 CRC32 mismatch; excluded from derived services");
+            else if(r.j94&&crcStatus!="valid")issue(r,"j94_crc_unavailable",0,"J.94 requires a complete verified CRC; raw bytes retained without semantic decoding");
             else if(!valid)issue(r,"invalid_section",0,"Rejected by TSDuck section demux");
             decode(r); ids[id]=records.size();records.push_back(std::move(r));it=ids.find(id);
         }
@@ -513,6 +529,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             tableHistory.push_back({{"id",id},{"event_id",tableHistory.size()},{"pid",pid},{"table_id",tid},{"extension",ext},
                 {"name",nativeTableName(r)},{"version",(data[1]&0x80)?J(ver):J()}, {"section",num},{"current",r.current},{"valid",r.valid},
                 {"first_packet",first},{"at_packet",last},{"last_packet",last},{"observations",1}});
+            if(r.j94){auto& item=tableHistory.back();for(const auto* field:{"extension","version","section","current"})item[field]=nullptr;item["versioning_supported"]=false;item["header_semantics"]="J.94 exact section observation; no wire version/section numbering";}
         } else {
             auto& entry=tableHistory[slot->second]; entry["last_packet"]=last;
             entry["observations"]=entry["observations"].get<uint64_t>()+1;
@@ -529,13 +546,14 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         if(observations==1&&onFirst)onFirst();
     }
     std::string nativeTableName(const Record& r) const {
+        if(r.j94)return cableoob::name(r.tid);
         const auto& table=ts::PSIRepository::Instance().getTable(ts::TID(r.tid),ts::SectionContext(ts::PID(r.pid),duck.standards()));
         if(table.factory&&!table.xml_name.empty())return table.xml_name.toUTF8();
         return tableName(r.tid)!="Private / other"?tableName(r.tid):"Unknown / private (table id "+std::to_string(r.tid)+")";
     }
     J crcEvidence(const Record& r) const {
         const auto& b=r.raw;
-        const bool carries=b.size()>=3&&((b[1]&0x80)!=0||r.tid==0x73||r.tid==0xfc);
+        const bool carries=b.size()>=3&&((b[1]&0x80)!=0||r.tid==0x73||r.tid==0xfc||r.j94);
         const bool knownNoCRC=r.tid==0x70||r.tid==0x71||r.tid==0x72||r.tid==0x7e;
         J out={{"status",!carries&&knownNoCRC?"not_present":"unavailable"},{"transmitted_hex",nullptr},{"calculated_hex",nullptr}};
         // Only interpret the trailing bytes as CRC when the whole declared section exists.
@@ -548,6 +566,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         return out;
     }
     J evidenceIdentity(const Record& r) const {
+        if(r.j94)return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",nullptr},{"version",nullptr},{"current_next",nullptr},{"section_number",nullptr},{"last_section_number",nullptr},{"versioning_supported",false},{"header_semantics","J.94 short envelope; exact section observation, not an assembled map"}};
         return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"current_next",r.current},{"section_number",r.number},{"last_section_number",r.last}};
     }
     J distribution(const std::vector<const Record*>& parts,uint64_t at,const std::shared_ptr<AnalysisControl>& control=nullptr) const {
@@ -575,6 +594,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at); size_t count=size_t(stop-r.ends.begin());
         J out={{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
         if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){out["segment_last_section_number"]=r.raw[12];out["last_table_id"]=r.raw[13];}
+        if(r.j94){for(const auto* key:{"extension","version","section","last_section","current"})out[key]=nullptr;out["versioning_supported"]=false;out["header_semantics"]="J.94 short envelope; no wire version/section numbering";}
         out["identity"]=evidenceIdentity(r);out["crc"]=crcEvidence(r);out["distribution"]=distribution({&r},at,control);
         return out;
     }
@@ -600,6 +620,13 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             result.push_back({{"id",key},{"name",nativeTableName(first)},{"identity",groupIdentity},{"pid",first.pid},{"table_id",first.tid},{"extension",first.ext},{"version",first.version},{"current",first.current},{"last_section",first.last},{"section_ids",ids},{"observed_section_numbers",seen},{"valid_section_numbers",good},{"invalid_section_numbers",bad},{"missing_section_numbers",missing},{"missing_valid_section_numbers",missingValid},{"selected_section_ids",selectedIds},{"selected_missing_section_numbers",selectedMissing},{"selected_complete",selectedMissing.empty()&&!selectedIds.empty()},{"validity",validCount?(invalidCount?"mixed":"valid"):"all_invalid"},{"valid_observations",validCount},{"invalid_observations",invalidCount},{"distribution",distribution(parts,at,control)},{"coverage_model",schedule?"observed EIT schedule segment ranges only":"section_number 0 through last_section_number"},{"expected_section_numbers",expected},{"schedule_unobserved_segments_unknown",schedule},{"coverage_scope","observed version across capture cutoff; selected_* uses generation-safe snapshot; repetitions are not missing sections; EIT schedule segment completeness not inferred"}});
         }
         std::sort(result.begin(),result.end(),[](const J& a,const J& b){return std::tuple(a["pid"].get<unsigned>(),a["table_id"].get<unsigned>(),a["extension"].get<unsigned>(),a["version"].get<unsigned>(),a["current"].get<bool>(),a["id"].get<std::string>())<std::tuple(b["pid"].get<unsigned>(),b["table_id"].get<unsigned>(),b["extension"].get<unsigned>(),b["version"].get<unsigned>(),b["current"].get<bool>(),b["id"].get<std::string>());});
+        for(auto& group:result)if(group["identity"].value("versioning_supported",true)==false){
+            for(const auto* key:{"extension","version","last_section","current"})group[key]=nullptr;
+            for(const auto* key:{"observed_section_numbers","valid_section_numbers","invalid_section_numbers","missing_section_numbers","missing_valid_section_numbers","selected_missing_section_numbers","expected_section_numbers"})group[key]=J::array();
+            group["versioning_supported"]=false;group["selected_complete"]=false;
+            group["coverage_model"]="exact J.94 section observation; map assembly unsupported";
+            group["coverage_scope"]="No inferred version, missing ranges or complete network/channel map";
+        }
         return result;
     }
     J derivedSnapshot(const std::map<std::string,const Record*>& selected) const {
@@ -630,6 +657,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 }
             }}
             s["lcn_candidates"]=J::array();
+            s["lcn_list_candidates"]=J::array();
             for(const auto& [unused,ptr]:selected){const auto& r=*ptr;if(!completeGroup(r,selected))continue;
                 for(const auto& d:r.descriptors){
                     auto add=[&](const J& number,const J& visible){s["lcn_candidates"].push_back({{"number",number},{"visible",visible},{"region",nullptr},{"namespace",d.value("extension",d.value("name",std::string("unknown")))},{"pds",d["pds"]},{"source_id",r.id},{"descriptor_offset",d["offset"]}});};
@@ -639,6 +667,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                         const size_t start=transport["descriptor_offset"],length=transport["descriptor_bytes"],offset=d["offset"];
                         if(transport["transport_stream_id"]!=s["ts_id"]||transport["original_network_id"]!=s["onid"]||offset<start||offset>=start+length)continue;
                         for(const auto& entry:d.value("lcn_entries",J::array()))if(entry["service_id"]==sid)add(entry["number"],entry["visible"]);
+                        if(r.tid==0x40||r.tid==0x41)nordigmeta::append(s,d,r.id);
                     }
                 }
             }
@@ -647,7 +676,8 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             const bool conflict=numbers.size()>1||visibility.size()>1||namespaces.size()>1;
             s["lcn_status"]=numbers.empty()?"unknown":conflict?"conflict":"known";
             s["logical_channel_number"]=numbers.size()==1&&!conflict?*numbers.begin():J();
-            s["lcn_scope"]="Explicit extension or SDK ordinary LCN descriptor with on-wire PDS and exact ONID/TSID/SID; regional/list and HD-simulcast mappings not selected";
+            nordigmeta::finish(s);
+            s["lcn_scope"]="Exact ONID/TSID/SID and on-wire namespace; NorDig v2 list candidates retain country/list evidence and require explicit selection; HD-simulcast mappings not selected";
             s["group"]=s.value(groupBy,J("Unassigned"));out["services"].push_back(s);
         }
         std::string sort=extension.value("organization",J::object()).value("sort_by",std::string("id"));
@@ -676,7 +706,12 @@ public:
     J state(uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) {
         checkCancelled(control);
         J out={{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
-        out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
+        out["analysis_revision"]=revision;out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
+        if(standardsContext=="j94-system-b"){
+            out["sdk_inferred_standards"]=out["detected_standards"];
+            out["detected_standards"]="MPEG (J.94 System B selected explicitly)";
+            out["standards_inference_warning"]="SDK family inference from colliding private table IDs is not evidence of ATSC/ISDB in the explicit J.94 profile";
+        }
         const auto selected=latest(at);
         for(const auto& r:records) {
             checkCancelled(control);
@@ -712,8 +747,9 @@ public:
                 J identity={{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"section",r.number}};
                 if((r.tid==0x42||r.tid==0x46)&&r.raw.size()>=11)identity["original_network_id"]=u16(r.raw,8);
                 if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){identity["transport_stream_id"]=u16(r.raw,8);identity["original_network_id"]=u16(r.raw,10);}
-                J value=summary(r,at);value["complete_group"]=completeGroup(r,selected);
+                J value=summary(r,at);value["complete_group"]=!r.j94&&completeGroup(r,selected);
                 J content={{"version",r.version},{"last_section",r.last},{"payload",r.id}};
+                if(r.j94){identity=evidenceIdentity(r);identity["observation_key"]=r.key;content["version"]=nullptr;content["last_section"]=nullptr;}
                 result["tables"][key]={identity,value,content,{&r}};
                 if(completeGroup(r,selected)){
                     if(r.tid==0&&r.pid==0)patEvidence[r.ext].push_back(&r);
@@ -728,8 +764,10 @@ public:
                 std::set<J> semanticCandidates;
                 for(auto candidate:content["lcn_candidates"]){candidate.erase("source_id");candidate.erase("descriptor_offset");semanticCandidates.insert(std::move(candidate));}
                 content["lcn_candidates"]=semanticCandidates;
+                content["lcn_list_candidates"]=nordigmeta::semanticCandidates(content["lcn_list_candidates"]);
                 std::vector<const Record*> sources={&r};
-                for(const auto& candidate:service["lcn_candidates"]){
+                J allCandidates=service["lcn_candidates"];for(const auto& candidate:service["lcn_list_candidates"])allCandidates.push_back(candidate);
+                for(const auto& candidate:allCandidates){
                     const auto* source=&records.at(ids.at(candidate["source_id"].get<std::string>()));
                     if(std::find(sources.begin(),sources.end(),source)==sources.end())sources.push_back(source);
                 }
@@ -837,6 +875,11 @@ public:
         ts::SectionDemux demux(duck,nullptr,this);for(unsigned pid:{0u,1u,2u,0x10u,0x11u,0x12u,0x13u,0x14u,0x16u,0x1bu,0x1cu,0x1eu,0x1fu})demux.addPID(pid);
         if(standardsContext=="auto"||standardsContext.rfind("isdb",0)==0){for(unsigned pid=0x20;pid<=0x29;pid++)demux.addPID(pid);demux.addPID(0x17);demux.addPID(0x2e);}
         if(standardsContext=="auto"||standardsContext=="atsc")for(unsigned pid:{0x1ff7u,0x1ff9u,0x1ffbu})demux.addPID(pid);
+        // SCTE18 EAS can use the ATSC PSIP PID. Explicit SCTE context must not
+        // hide these already-TS-framed alerts that auto/ATSC mode can inspect.
+        // Other unadvertised/OOB capture PIDs still require extra_pids.
+        if(standardsContext=="scte")demux.addPID(ts::PID_PSIP);
+        if(standardsContext=="j94-system-b")demux.addPID(0x1ffc);
         for(const auto& pid:args.value("extra_pids",J::array())){if(!pid.is_number_integer()||pid<0||pid>8191)throw std::runtime_error("extra_pids entries must be integers in 0..8191");demux.addPID(pid.get<unsigned>());}
         for(auto pid:extension.value("extra_pids",J::array()))demux.addPID(pid.get<unsigned>());
         demux.setInvalidSectionHandler(this);demux.setCurrentNext(true,true);demux.trackInvalidSectionVersions(true);
@@ -877,13 +920,32 @@ public:
             throw;
         }
     }
+    J queryTopology(const J& args) {
+        if(!complete||packets==0)throw std::runtime_error("Complete a successful analysis before querying topology");
+        if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale topology analysis_revision");
+        const uint64_t at=args.value("at_packet",packets-1);
+        if(at>=packets)throw std::runtime_error("Topology at_packet must be within the completed analysis");
+        const auto selected=latest(at);std::vector<const Record*> full;J incomplete=J::array();std::set<std::string> seen;
+        for(const auto& [key,r]:selected){
+            const bool dvbLayout=standardsContext=="dvb"||standardsContext.rfind("isdb",0)==0;
+            const bool applicable=(r->pid==0&&r->tid==0)||r->tid==2||
+                (dvbLayout&&((r->pid==0x10&&(r->tid==0x40||r->tid==0x41))||(r->pid==0x11&&(r->tid==0x42||r->tid==0x46))))||
+                (standardsContext=="atsc"&&(r->tid==0xc8||r->tid==0xc9));
+            if(!applicable)continue;
+            if(completeGroup(*r,selected))full.push_back(r);else if(seen.insert(tableGroup(*r)).second)incomplete.push_back({{"code","incomplete_generation"},{"section_id",r->id},{"message","Selected current topology table generation is incomplete; no semantic relationships derived"}});
+        }
+        size_t raw=0;for(const auto& r:records)if(!r.ends.empty()&&r.ends.front()<=at)raw++;
+        ts::DuckContext topologyDuck(&NULLREP);topologyDuck.resetStandards(duck.standards());topologyDuck.setDefaultCharsetIn(duck.charsetIn());topologyDuck.setDefaultCharsetOut(duck.charsetOut());topologyDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
+        topology::Builder builder(full,topologyDuck,root,standardsContext,revision,at);return builder.build(args,raw,incomplete);
+    }
     J inspect(const J& args) {
+        if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale inspection analysis_revision");
         std::string id=args.at("id");if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
         const uint64_t cutoff=args.value("at_packet",r.lastPacket);
         auto observed=std::upper_bound(r.ends.begin(),r.ends.end(),cutoff);
         if(observed==r.ends.begin())throw std::runtime_error("Section was not observed at or before selected packet");
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
-        J out=summary(r,cutoff);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
+        J out=summary(r,cutoff);out["analysis_revision"]=revision;out["evidence_anchors"]=topology::anchors(r,standardsContext);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);
@@ -894,7 +956,19 @@ public:
         out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_xml_guarded"]=false;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
         out["section_native_text"]=nullptr;out["section_decode_scope"]="Exact original section; no renumbering or synthetic table assembly";
-        if(r.valid){
+        if(r.j94){
+            out["application_decoder"]="ITU-T J.94 (10/2016) Annex B; independent bounded section parser";
+            out["section_decode_scope"]="Exact J.94 section; SDK decoding suppressed to avoid colliding ATSC/ISDB identities";
+            out["native_xml_guarded"]=true;out["tsduck_xml"]=nullptr;
+            out["inspection_scope"]["native_table"]="Exact observed J.94 section only; no map assembly";
+            out["native_table_complete"]=r.valid;
+            if(r.valid){
+                const auto& decoded=r.fields.at("j94_system_b");
+                out["native_table_sources"].push_back(summary(r,cutoff));
+                out["native_decode_status"]=decoded["decode_status"]=="decoded"?"application J.94 section decoder":"generic raw fallback";
+                out["native_table"]=cableoob::tree(decoded,decoded["decode_status"]=="decoded"?cableoob::name(r.tid):"generic_short_table");
+            }
+        }else if(r.valid){
             std::ostringstream displayText;ts::DuckContext displayDuck(&NULLREP,&displayText);
             displayDuck.resetStandards(duck.standards());displayDuck.setDefaultCharsetIn(duck.charsetIn());displayDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
             ts::TablesDisplay display(displayDuck);ts::Section exact(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK);display.displaySection(exact);
@@ -968,11 +1042,23 @@ public:
             }else{ts::SectionFile file(duck);file.add(std::make_shared<ts::Section>(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK));out["tsduck_xml"]=file.toXML().toUTF8();out["native_decode_status"]=superseded?"inspected section superseded at selected packet; raw section retained":"incomplete table; raw section retained";}
         }
         const auto& nativeClass=ts::PSIRepository::Instance().getTable(ts::TID(r.tid),ts::SectionContext(ts::PID(r.pid),duck.standards()));
-        out["table_decoder_registered"]=nativeClass.factory!=nullptr;
-        out["table_decode_category"]=!r.valid?"invalid_evidence":!out["native_table_complete"].get<bool>()?"incomplete_or_superseded":out["native_decode_status"]=="generic raw fallback"?(nativeClass.factory?"registered_decoder_fallback":"unknown_or_unsupported"):"decoded";
+        out["table_decoder_registered"]=!r.j94&&nativeClass.factory!=nullptr;
+        out["table_decode_category"]=!r.valid?"invalid_evidence":!out["native_table_complete"].get<bool>()?"incomplete_or_superseded":out["native_decode_status"]=="generic raw fallback"?(!r.j94&&nativeClass.factory?"registered_decoder_fallback":"unknown_or_unsupported"):"decoded";
+        if(r.j94)out["assembly_limitation"]="J.94 network/channel maps are not assembled; native_table_complete means this exact CRC-valid section envelope only. No receiver activation, reference resolution or snapshot export.";
         if(r.tid==0x3b||r.tid==0x3c)out["assembly_limitation"]="DSM-CC download transaction/module/block reassembly is not implemented; section identity and original bytes are retained";
         J sourceIds=J::array();for(const auto& part:out["native_table_sources"])sourceIds.push_back(part["id"]);
         out["merged"]={{"complete",out["native_table_complete"]},{"source_ids",sourceIds},{"native_table",out["native_table_complete"].get<bool>()?out.value("native_table",J()):J()},{"tsduck_xml",out["native_table_complete"].get<bool>()?out.value("tsduck_xml",J()):J()},{"scope","selected observed table generation; raw_hex, fields and descriptors above belong only to the inspected section"}};
+        if(r.j94){out["merged"]["complete"]=false;out["merged"]["scope"]="J.94 map merging is unsupported; native_table is exact section evidence only";}
+        if(r.tid==0x74||r.tid==0x4b){
+            std::vector<const Record*> applicationSources;
+            for(const auto& [key,part]:latest(cutoff,r.current))if(tableGroup(*part)==tableGroup(r))applicationSources.push_back(part);
+            std::sort(applicationSources.begin(),applicationSources.end(),[](auto* a,auto* b){return a->number<b->number;});
+            ts::DuckContext applicationDuck(&NULLREP);applicationDuck.resetStandards(duck.standards());applicationDuck.setDefaultCharsetIn(duck.charsetIn());
+            applicationsignalling::Builder builder(applicationDuck,applicationSources,revision,cutoff,standardsContext);
+            out["application_signalling"]=builder.build(r,out["native_table_complete"],out["native_decode_status"]);
+            if(!out.contains("evidence_anchors"))out["evidence_anchors"]=J::array();
+            for(const auto& anchor:out["application_signalling"]["evidence_anchors"])out["evidence_anchors"].push_back(anchor);
+        }
         out["references"]=J::array();out["reference_warnings"]=J::array();
         J sources=J::array();
         try {
@@ -1002,6 +1088,7 @@ public:
             if((mask&ts::Standards::DTMB)!=ts::Standards::NONE)families.insert("DTMB");
         }else if(standardsContext.rfind("isdb",0)==0)families.insert("ISDB");
         else if(standardsContext=="dvb")families.insert("DVB");else if(standardsContext=="atsc")families.insert("ATSC");else if(standardsContext=="scte")families.insert("SCTE");else if(standardsContext=="dtmb")families.insert("DTMB");
+        if(standardsContext=="j94-system-b")families.insert("J94_SYSTEM_B");
         if(standardsContext=="isdb-japan")families.insert("JAPAN");if(standardsContext=="isdb-brazil")families.insert("ABNT");
         auto references=[&](const std::string& name,const char* kind){
             J found=J::array();for(const auto& reference:sources){bool context=false;for(const auto& family:reference["standards"])context=context||families.count(family.get<std::string>());const auto& names=reference[kind];if(context&&std::find(names.begin(),names.end(),J(name))!=names.end()){
@@ -1059,6 +1146,7 @@ public:
         return pending;
     }
     J exportData(const J& args) {
+        if(std::any_of(records.begin(),records.end(),[](const Record& r){return r.j94;}))throw std::runtime_error("J.94 snapshot export is unsupported until map/version selection is defined; original sections remain inspectable");
         if(!complete||records.empty())throw std::runtime_error("Complete a successful analysis before exporting");
         const std::string format=args.value("format",std::string("ts"));if(format!="ts"&&format!="bin")throw std::runtime_error("format must be ts or bin");
         fs::path path=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
@@ -1111,8 +1199,16 @@ public:
             if(std::set<std::string>{"auto","dvb","atsc","isdb","isdb-japan","isdb-brazil","scte","dtmb"}.count(standard)==0)throw std::runtime_error("Unknown standards context");
             return signalmeta::lookup(args.at("namespace"),value,standard);
         }
+        if(method=="import_dvbi"){
+            const auto path=args.at("path").get<std::string>();
+            dvbi::validateLocalPath(path);
+            return dvbiDocuments.importDocument(args,pathFromUtf8(path));
+        }
+        if(method=="query_dvbi")return dvbiDocuments.query(args);
+        if(method=="inspect_dvbi")return dvbiDocuments.inspect(args);
         if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return state(args.value("at_packet",UINT64_MAX));
+        if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
         if(method=="inspect")return inspect(args);
         if(method=="preview_rename")return preview(args);
@@ -1124,7 +1220,7 @@ public:
             require(candidate.is_object()&&candidate.contains("id")&&candidate["id"].is_string()&&!candidate["id"].get<std::string>().empty(),"nonempty string id required");
             require(candidate.contains("descriptors")&&candidate["descriptors"].is_array(),"descriptors must be an array");
             std::set<std::tuple<uint64_t,unsigned,unsigned>> descriptorScopes;
-            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
+            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_list_candidates","lcn_list_status","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
             for(const auto& d:candidate["descriptors"]){
                 require(d.is_object(),"descriptor must be an object");
                 require(d.contains("tag")&&integer(d["tag"],255),"tag must be 0..255");

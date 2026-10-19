@@ -147,6 +147,7 @@ class InstallerPackageTests(unittest.TestCase):
         self.fixture = fixture
         (self.package / 'build-information.json').write_text(json.dumps({
             'source_commit': 'a' * 40, 'application_version': '0.1.0', 'crt_mode': 'Prerequisite',
+            'static_dependencies': portable.static_dependencies.DEPENDENCIES,
             'crt_minimum_version': installer.MINIMUM_RUNTIME}))
         fixture.approve_fixture()
         self.prerequisite = self.root / 'vc-runtime.json'
@@ -178,6 +179,12 @@ class InstallerPackageTests(unittest.TestCase):
         self.assertNotIn('vc_redist.x64.exe', files)
         self.assertNotIn('*', files)
         self.assertEqual(len(files.splitlines()), len(portable.inventory(self.package)) + 2)
+
+    def test_omitted_static_notice_blocks_installer_even_with_refreshed_inventory(self):
+        (self.package / 'licenses/expat/COPYING.txt').unlink()
+        self.fixture.approve_fixture()
+        with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
+            self.prepare()
 
     def test_old_version_fixture_cannot_have_release_asset_name(self):
         result = self.prepare(upgrade_fixture=True)
@@ -213,7 +220,7 @@ class InstallerPackageTests(unittest.TestCase):
         (self.package / 'SOURCE_INFORMATION.txt').write_text('changed')
         portable.manifest(self.package)
         self.fixture.validation()
-        with self.assertRaisesRegex(RuntimeError, 'redistribution review'):
+        with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
             self.prepare()
 
     def test_new_manifest_without_matching_runtime_validation_is_rejected(self):

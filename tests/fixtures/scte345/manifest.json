@@ -1,0 +1,128 @@
+{
+  "generator": "tstabcomp: TSDuck - The MPEG Transport Stream Toolkit - version 3.45-4798",
+  "model": "https://github.com/tsduck/tsduck/tree/v3.45-4798/src/libtsduck/dtv",
+  "scope": "Synthetic SCTE18/SCTE35-1 section inspection, not certified conformance or splice/receiver behavior",
+  "fixtures": {
+    "bandwidth": {
+      "xml": "bandwidth.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc301100000000005a00fff0000700000fb39f49",
+      "sha256": "2b126196fc79d52bfe37f4cebe8e3f2d35e60294f05a4df39f5f9586a1ee7e77",
+      "xml_sha256": "6ec7ecdf3e9ae65629558014e690a589af80f483b501487c76fcaed53ce10ef3"
+    },
+    "descriptors": {
+      "xml": "descriptors.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc303c00000000005a00fff001067f002a010a435545490c9f31323341040a435545491f05656e674d0310435545490000075bcd15075bca0000259504c326",
+      "sha256": "9ff2ddf7c3d0edea369a7e4c7e79190a8e8a60240883639c20edd4f11f760fac",
+      "xml_sha256": "49ba29d0c3df8c5c76659b95e6bfac85bc27d359c0782b2b2aed29151cb50ca8"
+    },
+    "eas": {
+      "xml": "eas.xml",
+      "standard": "scte",
+      "pid": 8187,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "d8b0b00000c700000004d257585203544f521f01656e670100001753796e74686574696320746f726e61646f206472696c6c1e58009080000ffffb0064fc07fc020065003602656e670100001353796e7468657469632074657374206f6e6c796672610100001445786572636963652073796e7468e97469717565012a0c5b02fffc04fc017fffff0066fc2300032101f40104012201f50216011481096472696c6c2e7761760101f60000007b01c8b1a9451d",
+      "sha256": "bdb6cb3a01d439da6d095ad33a086d98addfcd49a70dd5f5ad81712f1160e256",
+      "xml_sha256": "258ee4ffdf8127cc305ec649725206a13a675a912a338e5e6cd3773795877a14"
+    },
+    "insert_cancel": {
+      "xml": "insert_cancel.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc301600000000005a00fff005050000007dff000016930752",
+      "sha256": "fdc238edcc97f7686e969602c91e3c85137fcc90951247feadff8af7b4a4b23f",
+      "xml_sha256": "b2fb48d7a01b1275c28fd454fa45ec454bf19e3452c1ea509a067daf99d0adb9"
+    },
+    "insert_components": {
+      "xml": "insert_components.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc302800000000005a00fff017050000007c7f0f0203fe00015f9004fe00015f9100380000000072fd0b85",
+      "sha256": "71cd76ca17f5e16327ac265ce8431bce77fe43adabd8816298e39ddc33df04e3",
+      "xml_sha256": "a8bb8dd815426c3e1ebeb5f78048fc767cffc0e8aa9f59b97f3ce551cf69915e"
+    },
+    "insert_immediate": {
+      "xml": "insert_immediate.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc301b00000000005a00fff00a050000007f7fdf003a00000000abb193b4",
+      "sha256": "274356287eb7b831ac6cba96e5ff39b974fb0f97d04ae385c74d32d71b483905",
+      "xml_sha256": "5681a43c41dbb4cd1d1c4b10948df923ff8b4be988129cbb5122dda0b8ae04d1"
+    },
+    "insert_program": {
+      "xml": "insert_program.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc302500000000005a00fff014050000007b7fefffffffffa4fe000dbba0003702040000924c0652",
+      "sha256": "48675450b72a8283d9c6710cb4fb58193507b5fb3d7a5b94e0525d17fb8ce211",
+      "xml_sha256": "73c12d1c2e9d02f0b4a8d34fe3a6a4b1f00aabb8d4200ba548fb003bdbb5196a"
+    },
+    "null": {
+      "xml": "null.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc301100000000005a00fff0000000000ab8d8dc",
+      "sha256": "11277d96c8d7ce3f3d1310eb47322aa151edb9b515603580f60bf359aee51c69",
+      "xml_sha256": "9f7720eeea4ef50364b2008d83fdae2ba08aabd7d54da620011e0ac85eca8e15"
+    },
+    "private": {
+      "xml": "private.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc301900000000005a00fff008ff11223344deadbeef00008ae20103",
+      "sha256": "1d1ce47dd2e70ef93e88ba1286a0f6654cd693d7f78c642903fd7afc7d632ca3",
+      "xml_sha256": "4ad86141adf604c0227c8494f18d24fcd6ddebb9b10f89514fb6650fcfaac8af"
+    },
+    "schedule": {
+      "xml": "schedule.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc302500000000005a00fff01404010000007e7fff58009092fe0002bf200039000000008e54d0a9",
+      "sha256": "505907c5ce64b02b447bab770928c5ea39e8254d55dc11439a635d229a2471ad",
+      "xml_sha256": "9080380fc200a820fff76a86cec204e5c6bd4735c46036cbeec0585cdea297b5"
+    },
+    "schedule_components": {
+      "xml": "schedule_components.xml",
+      "standard": "scte",
+      "pid": 338,
+      "compiler_args": [
+        "--atsc"
+      ],
+      "hex": "fc302c00000000005a00fff01b0402000000807f1f02055800909206580090ce003b000000000081ff0000a2c13195",
+      "sha256": "5f4ae6944b98bbcc524afac911866c4f945a38bd1f1c43da4d62f97bfb75e6f5",
+      "xml_sha256": "3d9fe98b89f7b933b2ab3ffb7162b59173c89938549277f70b26f6426a53d73c"
+    }
+  }
+}

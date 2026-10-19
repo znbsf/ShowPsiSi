@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <splice_information_table pts_adjustment="90">
+    <time_signal />
+    <splice_DTMF_descriptor preroll="12" DTMF="123A" />
+    <splice_audio_descriptor>
+      <audio component_tag="5" ISO_code="eng" Bit_Stream_Mode="2" Num_Channels="6" Full_Srvc_Audio="true" />
+    </splice_audio_descriptor>
+    <splice_time_descriptor TAI_seconds="123456789" TAI_ns="123456000" UTC_offset="37" />
+  </splice_information_table>
+</tsduck>

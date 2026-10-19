@@ -62,3 +62,10 @@ https://aka.ms/vc14/vc_redist.x64.exe
 The x64 runtime must be at least 14.51.36231.0 (or the higher recorded minimum).
 Install it separately under Microsoft's terms. No automatic installation is
 performed by the portable application.
+
+EXPAT STATIC CORE DEPENDENCY
+Expat 2.9.0: unmodified official library sources, statically linked.
+Exact archive URL, SHA-256 and vendored file inventory are in
+licenses/expat/SOURCE-PROVENANCE.json and source-index.json.
+MIT/CC0 do not require an accompanying source archive; the pinned
+source reference is provenance, not an unfulfilled source offer.

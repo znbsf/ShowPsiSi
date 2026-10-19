@@ -317,6 +317,36 @@
       }
     },
     {
+      "id": "scte18",
+      "title": "ANSI/SCTE 18 — Emergency Alert Messaging for Cable",
+      "version": "2018 (ANSI J-STD-42-C)",
+      "standards": [
+        "SCTE",
+        "ATSC"
+      ],
+      "url": "https://account.scte.org/standards/library/catalog/scte-18-emergency-alert-messaging-for-cable/",
+      "access": "Official catalogue metadata indexed by search; direct retrieval returned HTTP 403. Full specification not retrieved or independently field-verified.",
+      "table_names": [
+        "cable_emergency_alert_table"
+      ],
+      "descriptor_names": [
+        "EAS_inband_details_channel_descriptor",
+        "EAS_inband_exception_channels_descriptor",
+        "EAS_audio_file_descriptor"
+      ],
+      "notes": "Pinned SDK identifies these descriptors as SCTE18 and specific to the cable emergency alert table; their tags overlap MPEG descriptors. Synthetic tests verify the SDK representation, not emergency receiver behavior or normative conformance. EAS_metadata_descriptor belongs to SCTE164 and is deliberately excluded.",
+      "scope": "standard-level",
+      "publisher": "SCTE",
+      "verification": "official-search-index-and-pinned-sdk-source",
+      "verified_at": "2026-10-19",
+      "sdk_headers": {
+        "cable_emergency_alert_table": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/tables/scte/tsCableEmergencyAlertTable.h",
+        "EAS_inband_details_channel_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/scte/tsEASInbandDetailsChannelDescriptor.h",
+        "EAS_inband_exception_channels_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/scte/tsEASInbandExceptionChannelsDescriptor.h",
+        "EAS_audio_file_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/scte/tsEASAudioFileDescriptor.h"
+      }
+    },
+    {
       "id": "scte35",
       "title": "ANSI/SCTE 35-1 — Digital Program Insertion Cueing Message, Part 1",
       "version": "2023r2",
@@ -609,19 +639,35 @@
       ],
       "url": "https://dvb.org/?standard=signalling-and-carriage-of-interactive-applications-and-services-in-hybrid-broadcast-broadband-environments",
       "access": "Official public catalogue with standard access/download links.",
-      "table_names": [],
+      "table_names": [
+        "AIT"
+      ],
       "descriptor_names": [
         "dsmcc_caching_priority_descriptor",
-        "dsmcc_content_type_descriptor"
+        "dsmcc_content_type_descriptor",
+        "application_descriptor",
+        "application_name_descriptor",
+        "application_signalling_descriptor",
+        "transport_protocol_descriptor",
+        "simple_application_location_descriptor"
       ],
-      "notes": "Published edition cited by the SDK; the catalogue also lists a later draft. Descriptor support does not imply execution of interactive applications.",
+      "notes": "Standard-level links for interactive signalling. Added AIT associations checked against published TS 102 809 V1.3.1 sections; some SDK headers cite predecessor TS 101 812. No HbbTV runtime, application execution, or edition-wide conformance claim.",
       "scope": "standard-level",
       "publisher": "ETSI / DVB",
-      "verification": "official-page-opened",
-      "verified_at": "2026-10-16",
+      "verification": "official-pdf-sections-reviewed",
+      "verified_at": "2026-10-19",
       "sdk_headers": {
         "dsmcc_caching_priority_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCCachingPriorityDescriptor.h",
         "dsmcc_content_type_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dvb/tsDSMCCContentTypeDescriptor.h"
+      },
+      "normative_basis": {
+        "url": "https://www.etsi.org/deliver/etsi_ts/102800_102899/102809/01.03.01_60/ts_102809v010301p.pdf",
+        "AIT": "5.3.4",
+        "application_descriptor": "5.3.5.3",
+        "application_name_descriptor": "5.3.5.6.1",
+        "application_signalling_descriptor": "5.3.5.1",
+        "transport_protocol_descriptor": "5.3.6",
+        "simple_application_location_descriptor": "5.3.7"
       }
     },
     {
@@ -770,6 +816,36 @@
       "sdk_headers": {
         "DTMB_DRM_descriptor": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/dtmb/tsDTMBDRMDescriptor.h"
       }
+    },
+    {
+      "id": "j94-system-b",
+      "title": "ITU-T J.94 — System B cable service information",
+      "version": "10/2016, Annex B",
+      "standards": [
+        "J94_SYSTEM_B"
+      ],
+      "url": "https://www.itu.int/rec/T-REC-J.94-201610-I/en",
+      "access": "Official public recommendation and full PDF, retrieved 2026-10-19.",
+      "table_names": [
+        "J94_SystemB_NIT",
+        "J94_SystemB_SVCT",
+        "J94_SystemB_NTT",
+        "J94_SystemB_STT"
+      ],
+      "descriptor_names": [],
+      "notes": "Edition-specific cable OOB section syntax, not ATSC satellite SVCT. Limited application decoder; no current SCTE65 equivalence, RF/POD reception or complete-map conformance claim.",
+      "scope": "standard-level",
+      "publisher": "ITU-T",
+      "verification": "official-full-pdf-retrieved",
+      "verified_at": "2026-10-19",
+      "normative_basis": {
+        "url": "https://www.itu.int/rec/dologin_pub.asp?id=T-REC-J.94-201610-I%21%21PDF-E&lang=e&type=items",
+        "J94_SystemB_NIT": "B.6.1",
+        "J94_SystemB_SVCT": "B.6.3",
+        "J94_SystemB_NTT": "B.6.2 and B.8.1 (MTS)",
+        "J94_SystemB_STT": "B.6.4"
+      },
+      "source_sha256": "5a89278f2801748a86a98c95d1e539255eaa43ddc903dfd8d66230ab26089be2"
     }
   ]
 }

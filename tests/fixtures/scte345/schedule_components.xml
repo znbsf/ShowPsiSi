@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <splice_information_table pts_adjustment="90">
+    <splice_schedule>
+      <splice_event splice_event_id="128" out_of_network="false" unique_program_id="59">
+        <component component_tag="5" utc_splice_time="2026-10-19 08:00:00" />
+        <component component_tag="6" utc_splice_time="2026-10-19 08:01:00" />
+      </splice_event>
+      <splice_event splice_event_id="129" splice_event_cancel="true" />
+    </splice_schedule>
+  </splice_information_table>
+</tsduck>

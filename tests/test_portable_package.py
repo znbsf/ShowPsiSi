@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import struct
+import shutil
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -15,6 +16,7 @@ portable = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(portable)
 sys.path.insert(0, str(ROOT / 'scripts/ci'))
 import portable_launcher_checks
+import static_dependencies
 
 
 class PortablePackageTests(unittest.TestCase):
@@ -32,7 +34,15 @@ class PortablePackageTests(unittest.TestCase):
             path = self.package / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture', encoding='utf-8')
-        (self.package / 'build-information.json').write_text('{"source_commit":"fixture","application_version":"0.1.0"}')
+        (self.package / 'build-information.json').write_text(json.dumps({
+            'source_commit': 'fixture', 'application_version': '0.1.0',
+            'static_dependencies': static_dependencies.DEPENDENCIES}))
+        bundle = ROOT / 'scripts/portable-licenses'
+        for name in ('THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'source-index.json',
+                     *static_dependencies.EXPAT['notice_files']):
+            path = self.package / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(bundle / name, path)
         (self.package / 'redistribution-review.json').write_text('{"review_complete":false}')
         self.artifacts = self.root / 'evidence'
         self.artifacts.mkdir()
@@ -264,7 +274,8 @@ class PortablePackageTests(unittest.TestCase):
         (self.package / 'THIRD_PARTY_NOTICES.txt').write_text('changed')
         portable.manifest(self.package)
         self.validation()
-        self.assertFalse(portable.archive(self.package, self.artifacts, self.zip))
+        with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
+            portable.archive(self.package, self.artifacts, self.zip)
 
     def test_stale_validation_blocks_archive(self):
         self.approve_fixture()
@@ -322,3 +333,129 @@ class PortablePackageTests(unittest.TestCase):
         self.approve_fixture()
         self.assertTrue(portable.archive(self.package, self.artifacts, self.zip))
         self.assertIn(portable.digest(self.zip), self.zip.with_suffix('.zip.sha256').read_text())
+
+    def test_static_dependency_omissions_cannot_be_reapproved_by_file_inventory(self):
+        for name in ('source-index.json', *static_dependencies.EXPAT['notice_files']):
+            with self.subTest(name=name):
+                path = self.package / name
+                original = path.read_bytes()
+                path.unlink()
+                self.approve_fixture()  # Deliberately regenerates exact manifest/review hashes.
+                with self.assertRaisesRegex(RuntimeError, 'Static dependency'):
+                    portable.archive(self.package, self.artifacts, self.zip)
+                self.assertFalse(self.zip.exists())
+                path.write_bytes(original)
+
+    def test_static_dependency_changed_notice_cannot_be_reapproved(self):
+        for name in static_dependencies.EXPAT['notice_files']:
+            with self.subTest(name=name):
+                path = self.package / name
+                original = path.read_bytes()
+                path.write_bytes(original + b'changed')
+                self.approve_fixture()
+                with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
+                    portable.archive(self.package, self.artifacts, self.zip)
+                path.write_bytes(original)
+
+    def test_static_dependency_build_and_source_index_are_mandatory(self):
+        for name in ('build-information.json', 'source-index.json'):
+            path = self.package / name
+            original = path.read_bytes()
+            for replacement in (None, [], [{'name': 'Expat', 'version': 'different'}]):
+                with self.subTest(name=name, replacement=replacement):
+                    value = json.loads(original)
+                    if replacement is None:
+                        del value['static_dependencies']
+                    else:
+                        value['static_dependencies'] = replacement
+                    path.write_text(json.dumps(value))
+                    self.approve_fixture()
+                    with self.assertRaisesRegex(RuntimeError, 'Static dependency identity'):
+                        portable.archive(self.package, self.artifacts, self.zip)
+            path.write_bytes(original)
+
+    def test_static_dependency_prominent_notice_and_source_text_are_mandatory(self):
+        for name in ('THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt'):
+            path = self.package / name
+            original = path.read_bytes()
+            path.write_text('All other notices remain; Expat omitted.')
+            self.approve_fixture()
+            with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
+                portable.archive(self.package, self.artifacts, self.zip)
+            path.write_bytes(original)
+
+    def test_static_dependency_control_json_rejects_duplicate_keys(self):
+        path = self.package / 'source-index.json'
+        path.write_text('{"static_dependencies":[],"static_dependencies":' +
+                        json.dumps(static_dependencies.DEPENDENCIES) + '}')
+        self.approve_fixture()
+        with self.assertRaisesRegex(RuntimeError, 'Duplicate static-dependency'):
+            portable.archive(self.package, self.artifacts, self.zip)
+
+    def test_manifest_cannot_supply_static_identity_missing_from_build_file(self):
+        self.approve_fixture()
+        path = self.package / 'build-information.json'
+        value = json.loads(path.read_text())
+        del value['static_dependencies']
+        path.write_text(json.dumps(value))
+        manifest = self.package / 'manifest.json'
+        saved = json.loads(manifest.read_text())
+        saved['files'] = portable.inventory(self.package)
+        manifest.write_text(json.dumps(saved))
+        self.validation()
+        with self.assertRaisesRegex(RuntimeError, 'build identity differs'):
+            portable.archive(self.package, self.artifacts, self.zip)
+
+    def test_actual_static_source_inventory_and_reviewed_notices_are_pinned(self):
+        self.assertEqual(static_dependencies.verify_source(ROOT), static_dependencies.DEPENDENCIES)
+        bundle = ROOT / 'scripts/portable-licenses'
+        review = json.loads((bundle / 'redistribution-review.json').read_text())
+        for name, expected in static_dependencies.EXPAT['notice_files'].items():
+            self.assertEqual(portable.digest(bundle / name), expected)
+            self.assertEqual(review['reviewed_files'][name], expected)
+        text = (bundle / 'licenses/expat/UPSTREAM-NOTICES.txt').read_text()
+        self.assertIn('lib/xmlparse.c', text)
+        self.assertIn('lib/siphash.h', text)
+        self.assertIn('SPDX-License-Identifier: CC0-1.0', text)
+
+    def test_changed_missing_or_added_static_source_is_rejected(self):
+        root = self.root / 'source'
+        target = root / 'third_party/expat'
+        shutil.copytree(ROOT / 'third_party/expat', target)
+        path = target / 'lib/xmlparse.c'
+        original = path.read_bytes()
+        for mode in ('change', 'missing', 'extra'):
+            with self.subTest(mode=mode):
+                if mode == 'change':
+                    path.write_bytes(original + b'changed')
+                elif mode == 'missing':
+                    path.unlink()
+                else:
+                    (target / 'unreviewed.c').write_text('extra source')
+                with self.assertRaisesRegex(RuntimeError, 'source inventory'):
+                    static_dependencies.verify_source(root)
+                path.write_bytes(original)
+
+    def test_static_source_provenance_cannot_be_rewritten_to_match_changes(self):
+        root = self.root / 'source'
+        target = root / 'third_party/expat'
+        shutil.copytree(ROOT / 'third_party/expat', target)
+        path = target / 'lib/xmlparse.c'
+        path.write_text('changed source')
+        metadata = target / 'SHOWPSISI_SOURCE.json'
+        value = json.loads(metadata.read_text())
+        value['files_sha256']['lib/xmlparse.c'] = portable.digest(path)
+        metadata.write_text(json.dumps(value))
+        with self.assertRaisesRegex(RuntimeError, 'source provenance'):
+            static_dependencies.verify_source(root)
+
+    def test_windows_build_and_staging_bind_static_dependency_record(self):
+        build = (ROOT / 'scripts/ci/windows.ps1').read_text()
+        self.assertLess(build.index("'scripts/ci/static_dependencies.py'"),
+                        build.index("'--build'"))
+        self.assertGreater(build.rindex("'scripts/ci/static_dependencies.py'"),
+                           build.index("'--build'"))
+        self.assertIn('$BuildRecord.static_dependencies', build)
+        stage = (ROOT / 'scripts/package-windows.ps1').read_text()
+        self.assertIn("'--record', (Join-Path $BuildBin 'showpsisi-build.json')", stage)
+        self.assertIn('static_dependencies = $Record.static_dependencies', stage)

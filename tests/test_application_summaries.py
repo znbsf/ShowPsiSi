@@ -82,6 +82,11 @@ class ApplicationSummaryTests(unittest.TestCase):
         old=self.detail(first,at_packet=0)['application_signalling'];self.assertEqual(self.objects(old,'application')[0]['attributes']['control_code'],1)
         now=self.detail(latest)['application_signalling'];self.assertEqual(self.objects(now,'application')[0]['attributes']['control_code'],2)
         stale=self.detail(first,at_packet=self.state['packets']-1)['application_signalling'];self.assertEqual(stale['status'],'incomplete_or_superseded');self.assertFalse(stale['objects']);self.assert_evidence(old);self.assert_evidence(now)
+    def test_object_carousel_declaration_does_not_claim_a_module_join(self):
+        carousel=descriptor(2,word(1)+b'\x02\x7f\x33')
+        self.scan([(0x150,ait([application(descriptors=properties()+carousel)]))]);s=self.detail()['application_signalling']
+        transport=self.objects(s,'application_transport')[0]['attributes']['object_carousel']
+        self.assertEqual(transport['component_tag'],0x33);self.assertEqual(transport['module_reconstruction'],'unsupported');self.assertIsNone(transport['original_network_id']);self.assert_evidence(s)
     def test_unknown_protocol_and_private_descriptor_stay_opaque(self):
         payload=properties()+descriptor(2,word(0x1234)+b'\x02\x01\x02\x03')+descriptor(0x80,b'\0\x03\x02')
         self.scan([(0x150,ait([application(descriptors=payload)]))]);s=self.detail()['application_signalling'];t=self.objects(s,'application_transport')[0]

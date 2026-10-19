@@ -8,8 +8,20 @@ from test_application_summaries import application, ait, packetize
 
 def protocol_ui_fixture():
     pat = section(0, 1, 0, word(101) + word(0xe100))
-    signalling = descriptor(0x6f, word(0x10) + bytes([0xe1]))
+    signalling = descriptor(0x6f, word(0x8010) + bytes([0xe1]))
     pmt = section(2, 101, 0, word(0xe201) + word(0xf000) +
                   b'\x05' + word(0xe150) + word(0xf000 | len(signalling)) + signalling)
     table = ait([application(identifier=n) for n in range(16)])
     return packetize([(0, pat), (0x100, pmt), (0x150, table)])
+
+
+def carriage_ui_parts():
+    """One valid PAT/PMT-advertised AIT with all three-table source anchors."""
+    from test_application_carriage import pat, pmt
+    return [(0, pat()), (0x100, pmt()), (0x150, ait())]
+
+
+def simulcast_ui_parts():
+    """Namespace-backed SDT declaration and its exact-triplet target."""
+    from test_nordig import NorDigSimulcastTests as wire
+    return [wire.sdt(((100, wire.pds() + wire.linkage()), (200, b'')))]

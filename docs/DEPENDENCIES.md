@@ -70,7 +70,7 @@ TSDuck license is BSD-2-Clause: [official license](https://tsduck.io/license). Q
 
 The official sample recordings are separately sourced data, not our own source code; they are excluded from source distribution. See `samples/real/provenance.json`.
 
-## Later protocol branch: Expat 2.9.0
+## Static Expat 2.9.0
 
 The local DVB-I importer uses the official [Expat 2.9.0 release](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0),
 statically linked into both production and test engines. No additional runtime
@@ -86,8 +86,8 @@ identifies its KDE BSD buildsystem license. Builds use the matching generated
 `expat_config.h`, namespace and entity-protection features, with no fallback to
 an arbitrary system Expat. See [DVB-I API](DVB_I_API.md) for hardening limits.
 
-This later protocol dependency has explicit pinned source, notice and metadata
+This dependency has explicit pinned source, notice and metadata
 gates in the [portable license review](PORTABLE_LICENSE_REVIEW.md#protocol-increment-static-expat-290-2026-10-19).
 MIT and per-file notices (including SipHash CC0) accompany the package; omission
 fails closed independently of regenerated file inventories. Fresh hosted Windows
-packaging/runtime acceptance remains pending. The first-release worktree is separate.
+packaging/runtime acceptance remains a separate exact-revision gate.

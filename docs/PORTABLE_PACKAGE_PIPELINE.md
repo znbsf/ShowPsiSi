@@ -1,5 +1,31 @@
 # Qt Windows portable candidate pipeline
 
+## Current app-local / paired-source candidate (2026-10-19)
+
+The current implementation stages the five exact Microsoft release x64 DLLs
+14.51.36247.0 beside the executables, checks all normal/delay imports and requires
+native evidence that Qt/core loaded their own required subsets from package bin.
+It does not install/elevate a shared runtime. The engineering distribution review for this exact inventory is complete on the
+[hosted-runner basis](PORTABLE_LICENSE_REVIEW.md#hosted-runner-distribution-basis).
+Native Windows/final payload gates remain mandatory; this is not a legal guarantee.
+
+Large Qt sources move to `ShowPsiSi-VERSION-corresponding-source.zip` on the same
+release, using LGPLv3/GPLv3 section6(d) network source access. Small licenses,
+notices, source-index, build features, replacement instructions and exact generated
+`SOURCE_DOWNLOAD.txt` remain in both binaries. Exact original source archives stay
+in the reviewed inventory and are rehashed inside the paired asset. Archive,
+installer and publisher gates reject absent/mismatched source delivery. Source
+upload/readback precedes public publication; old matching source must remain
+available with old binaries. The automatic GitHub app-source ZIP is not a substitute.
+
+Native Windows app-local build/install/launcher/load-path tests and clean-machine
+offline acceptance are not inferred from Linux helper tests. See
+[Windows acceptance](WINDOWS_APPLOCAL_ACCEPTANCE.md) and [installer pipeline](WINDOWS_INSTALLER.md).
+The records below describe the prior prerequisite/in-package-source checkpoint
+and remain historical evidence where that older layout is mentioned.
+
+## Historical prerequisite-mode checkpoint
+
 This implementation stages and tests a **Qt + production core** candidate. It
 never publishes a release or installer. Tauri/WebView2 and the Python MCP adapter
 are excluded. No owner computer is used. A staged directory or green compile

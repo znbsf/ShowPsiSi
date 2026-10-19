@@ -1,8 +1,9 @@
 # Local DVB-I metadata API
 
-Development increment, separate from the first release. Both frontends may use
-these C++ JSONL/MCP methods; no Qt/Web input chooser or XML inspector UI is
-implemented by this increment. Do not present it as a completed DVB-I receiver.
+The Qt/Web workspaces
+consume these C++ JSONL/MCP methods through an independent local-document input
+mode; see [DVB-I workbench](DVB_I_UI.md) for presentation and test boundaries.
+Do not present this bounded metadata inspector as a completed DVB-I receiver.
 
 ## Baseline and supported projection
 
@@ -127,28 +128,23 @@ core and MCP routes, namespace aliases/spoofs, hash/byte round trips, revisions,
 failed replacements, TS preview retention, alternatives/conflicts, hostile XML,
 limits, regular-file handling and a loopback no-fetch trap. Upstream source
 manifest hashes are checked. No external sample, live service retrieval, playback,
-Windows desktop interaction or Qt/Web DVB-I UI result is implied.
+or Windows desktop interaction is implied. UI validation is reported separately
+in [DVB-I workbench](DVB_I_UI.md).
 
 Run after building both real native targets:
 
 ```sh
-SHOWPSISI_CORE="$PWD/build/dvbi-import/bin/showpsisi-core" \
+SHOWPSISI_CORE="$PWD/build/bin/showpsisi-core" \
   python -m unittest discover -s tests -p test_dvbi.py -v
 ```
 
-The protocol branch now pins static-dependency source and notice identities in
-the [portable redistribution gate](PORTABLE_LICENSE_REVIEW.md#protocol-increment-static-expat-290-2026-10-19).
-Expat MIT/per-file notices and source provenance are mandatory in the package;
-fresh hosted Windows static-link/runtime/installer validation is still pending.
-The first release worktree and its sealed review are separate.
+Static-dependency source and notice identities are pinned in the
+[portable redistribution gate](PORTABLE_LICENSE_REVIEW.md#protocol-increment-static-expat-290-2026-10-19).
+Expat MIT/per-file notices and source provenance are mandatory in the package.
+Fresh exact-revision Windows packaging and runtime acceptance remain required.
 
-### Source-navigation API checkpoint
-
-The additive source/child navigation contract passes 52 real-core tests on Linux,
-including every small UTF-8 boundary around multi-byte characters, a BOM and XML
-declaration before the root, exact source markers, and bounded unknown-namespace
-child pagination. Logs remain in `artifacts` or the invoking test run directory.
-The platform-specific handle test is registered by OS: POSIX runs an owned FIFO
-with no writer; Windows runs directory/DOS-device/alternate-stream refusal and
-an owned named-pipe handle. Neither is reported as the other, and no broad skip
-exception was added. The Windows-specific method awaits actual Windows execution.
+Source-navigation tests cover UTF-8 byte boundaries, BOM/XML declarations,
+exact source markers and bounded unknown-namespace child pages. Native file
+handling has separate OS-specific tests: POSIX uses an owned FIFO with no writer;
+Windows checks directory/DOS-device/alternate-stream refusal and an owned named
+pipe. Results on one platform do not establish the other platform's behavior.

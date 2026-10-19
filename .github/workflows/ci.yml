@@ -26,10 +26,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Prepare PE metadata test dependency
+        run: python -m pip install pefile==2024.8.26
       - name: Installer packaging contract regressions
         run: python -m unittest discover -s tests -p test_installer_package.py -v
       - name: Verified release publisher security regressions
         run: python -m unittest discover -s tests -p test_release_publisher.py -v
+      - name: App-local runtime and corresponding-source contracts
+        run: |
+          python -m unittest discover -s tests -p test_vc_runtime.py -v
+          python -m unittest discover -s tests -p test_applocal_validation.py -v
+          python -m unittest discover -s tests -p test_corresponding_source.py -v
       - name: Prepare known-text artifact transport probe
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         run: python scripts/ci/release_transport_probe.py --prepare
@@ -185,7 +192,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/ci/windows_shortcuts.py --artifacts artifacts/installer-shortcut-probe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/ci/portable_launcher_checks.py --launcher "scripts/portable/Launch Qt.cmd" --artifacts artifacts/portable-launcher-probe
+      - name: Native Windows acceptance host collector contracts
+        run: python -m unittest discover -s tests -p test_windows_acceptance_host.py -v
       - name: Extract pinned TSDuck SDK and install Qt 6.7.3
         run: ./scripts/ci/windows.ps1 -Phase Dependencies
       - name: Build MSVC engine and deploy Qt runtime
@@ -204,32 +212,42 @@ jobs:
         run: ./scripts/ci/windows.ps1 -Phase QtTests
       - name: Prepare portable packaging checks
         run: python -m pip install pefile==2024.8.26 psutil==7.0.0
+      - name: Verify and extract pinned app-local Microsoft runtime as data
+        run: ./scripts/prepare-applocal-runtime.ps1 -Output "$PWD/.deps/app-local-runtime" -PrerequisiteDirectory "$PWD/.deps/installer-prerequisite" -Python (Get-Command python).Source
       - name: Stage production-only Qt portable candidate
         run: |
           $commit = (git rev-parse HEAD).Trim()
-          ./scripts/package-windows.ps1 -BuildBin "$PWD/build/windows/bin/Release" -Qt "$PWD/.deps/Qt/6.7.3/msvc2019_64" -Sdk "$PWD/.deps/TSDuck-3.45-4798" -Output "$PWD/artifacts/portable-stage" -LicenseBundle "$PWD/scripts/portable-licenses" -SourceCommit $commit -Python (Get-Command python).Source
+          ./scripts/package-windows.ps1 -BuildBin "$PWD/build/windows/bin/Release" -Qt "$PWD/.deps/Qt/6.7.3/msvc2019_64" -Sdk "$PWD/.deps/TSDuck-3.45-4798" -Output "$PWD/artifacts/portable-stage" -LicenseBundle "$PWD/scripts/portable-licenses" -SourceCommit $commit -Python (Get-Command python).Source -RuntimeDirectory "$PWD/.deps/app-local-runtime" -CorrespondingSourcesDirectory "$PWD/.deps/corresponding-sources"
+      - name: Check app-local launcher with missing, old and damaged local DLLs
+        run: python scripts/ci/portable_launcher_checks.py --launcher "artifacts/portable-stage/Launch Qt.cmd" --package artifacts/portable-stage --artifacts artifacts/portable-launcher-probe
       - name: Validate relocated portable candidate without SDK PATH
         run: python scripts/ci/portable_checks.py validate --package artifacts/portable-stage --artifacts artifacts/portable-validation --qt .deps/Qt/6.7.3/msvc2019_64
+      - name: Build and verify paired corresponding-source archive
+        id: corresponding_source
+        run: |
+          $version = (Get-Content artifacts/portable-stage/build-information.json -Raw | ConvertFrom-Json).application_version
+          $asset = "ShowPsiSi-$version-corresponding-source.zip"
+          New-Item -ItemType Directory artifacts/corresponding-source-candidate | Out-Null
+          python scripts/ci/corresponding_source.py archive --package artifacts/portable-stage --sources .deps/corresponding-sources --output "artifacts/corresponding-source-candidate/$asset"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "asset_name=$asset" >> $env:GITHUB_OUTPUT
       - name: Gate binary ZIP on exact runtime and redistribution review
         id: portable
         run: |
           $version = (Get-Content artifacts/portable-stage/build-information.json -Raw | ConvertFrom-Json).application_version
           if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Invalid portable application version.' }
           $asset = "ShowPsiSi-$version-windows-x64-portable.zip"
-          python scripts/ci/portable_checks.py archive --package artifacts/portable-stage --artifacts artifacts/portable-validation --output "artifacts/$asset"
+          python scripts/ci/portable_checks.py archive --package artifacts/portable-stage --artifacts artifacts/portable-validation --output "artifacts/$asset" --corresponding-source "artifacts/corresponding-source-candidate/${{ steps.corresponding_source.outputs.asset_name }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $ready = Test-Path "artifacts/$asset"
           "asset_name=$asset" >> $env:GITHUB_OUTPUT
           "ready=$($ready.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           if (-not $ready) { "Portable binary upload blocked by runtime or redistribution review. See portable-validation/distribution-gate.json." >> $env:GITHUB_STEP_SUMMARY }
-      - name: Verify official Microsoft runtime download without executing it
-        if: ${{ success() && steps.portable.outputs.ready == 'true' }}
-        run: ./scripts/prepare-windows-prerequisite.ps1 -Output "$PWD/.deps/installer-prerequisite"
       - name: Build per-user installer from exact reviewed payload
         id: installer
         if: ${{ success() && steps.portable.outputs.ready == 'true' }}
         run: |
-          ./scripts/package-installer.ps1 -Package "$PWD/artifacts/portable-stage" -Validation "$PWD/artifacts/portable-validation" -PrerequisiteDirectory "$PWD/.deps/installer-prerequisite" -Output "$PWD/artifacts/installer-candidate" -Work "$PWD/artifacts/installer-build" -Python (Get-Command python).Source -CreateUpgradeFixture
+          ./scripts/package-installer.ps1 -Package "$PWD/artifacts/portable-stage" -Validation "$PWD/artifacts/portable-validation" -PrerequisiteDirectory "$PWD/.deps/installer-prerequisite" -Output "$PWD/artifacts/installer-candidate" -Work "$PWD/artifacts/installer-build" -Python (Get-Command python).Source -CorrespondingSource "$PWD/artifacts/corresponding-source-candidate/${{ steps.corresponding_source.outputs.asset_name }}" -CreateUpgradeFixture
       - name: Install, upgrade, repair and uninstall in a Unicode path
         id: installer_smoke
         if: ${{ success() && steps.installer.outcome == 'success' }}
@@ -248,8 +266,25 @@ jobs:
           $zipHash = (Get-FileHash "artifacts/$portable" -Algorithm SHA256).Hash.ToLowerInvariant()
           $zipLine = "$zipHash  $portable"
           if ((Get-Content "artifacts/$portable.sha256" -Raw).Trim() -ne $zipLine) { throw 'Portable ZIP changed after archive gate.' }
-          @("$setupHash  $($record.asset_name)", $zipLine) | Set-Content artifacts/SHA256SUMS -Encoding ascii
+          $source = '${{ steps.corresponding_source.outputs.asset_name }}'
+          if ($source -ne "ShowPsiSi-$($record.version)-corresponding-source.zip") { throw 'Source asset version differs.' }
+          $sourceHash = (Get-FileHash "artifacts/corresponding-source-candidate/$source" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sourceLine = "$sourceHash  $source"
+          if ((Get-Content "artifacts/corresponding-source-candidate/$source.sha256" -Raw).Trim() -ne $sourceLine) { throw 'Corresponding source changed after paired gate.' }
+          @("$setupHash  $($record.asset_name)", $zipLine, $sourceLine) | Set-Content artifacts/SHA256SUMS -Encoding ascii
+          Copy-Item artifacts/SHA256SUMS artifacts/corresponding-source-candidate/SHA256SUMS
           Copy-Item artifacts/SHA256SUMS artifacts/installer-candidate/SHA256SUMS
+      - name: Keep verified corresponding-source artifact (never publish a release)
+        if: ${{ success() && steps.installer_smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowPsiSi-windows-corresponding-source
+          path: |
+            artifacts/corresponding-source-candidate/ShowPsiSi-*-corresponding-source.zip
+            artifacts/corresponding-source-candidate/ShowPsiSi-*-corresponding-source.zip.sha256
+            artifacts/corresponding-source-candidate/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
       - name: Keep verified Windows installer candidate (never publish a release)
         if: ${{ success() && steps.installer_smoke.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -266,11 +301,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer-validation
+          # Only the explicitly listed JSON evidence below; never the downloaded EXE.
+          include-hidden-files: true
           path: |
             artifacts/installer-validation
             artifacts/installer-shortcut-probe
             artifacts/installer-candidate/installer-build.json
             .deps/installer-prerequisite/vc-runtime.json
+            .deps/app-local-runtime-work/runtime-signatures.json
           if-no-files-found: warn
           retention-days: 14
       - name: Keep cleared portable CI artifact (never publish a release)

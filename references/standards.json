@@ -846,6 +846,37 @@
         "J94_SystemB_STT": "B.6.4"
       },
       "source_sha256": "5a89278f2801748a86a98c95d1e539255eaa43ddc903dfd8d66230ab26089be2"
+    },
+    {
+      "id": "nordig-unified",
+      "title": "NorDig Unified Requirements — DVB regional receiver profile",
+      "version": "3.2.2 (November 2025)",
+      "standards": [
+        "DVB"
+      ],
+      "url": "https://nordig.org/wp-content/uploads/2016/03/NorDig-Unified-Requirements-ver.-3.2.2.pdf",
+      "access": "Official public full specification.",
+      "table_names": [],
+      "descriptor_names": [
+        "nordig_logical_channel_descriptor_v1",
+        "nordig_logical_channel_descriptor_v2"
+      ],
+      "notes": "Exact native XML identities require the observed NorDig private namespace (PDS 0x00000029); tags or user display names alone do not match. LCD v1/v2 syntax is in sections 12.2.9.2/12.2.9.3. This link does not assert receiver selection policy or edition-wide conformance. Generic linkage_descriptor is not mapped to NorDig by name.",
+      "scope": "standard-level",
+      "publisher": "NorDig",
+      "verification": "official-pdf-sections-reviewed",
+      "verified_at": "2026-10-19",
+      "sdk_headers": {
+        "nordig_logical_channel_descriptor_v1": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/nordig/tsNorDigLogicalChannelDescriptorV1.h",
+        "nordig_logical_channel_descriptor_v2": "https://github.com/tsduck/tsduck/blob/v3.45-4798/src/libtsduck/dtv/descriptors/nordig/tsNorDigLogicalChannelDescriptorV2.h"
+      },
+      "normative_basis": {
+        "nordig_logical_channel_descriptor_v1": "12.2.9.2",
+        "nordig_logical_channel_descriptor_v2": "12.2.9.3",
+        "namespace_url": "https://nordig.org/wp-content/uploads/2016/03/NorDig-Rules-of-Operation-ver.-3.2.2.pdf",
+        "namespace_clause": "12.1.10.5: preceding NorDig PDS 0x00000029"
+      },
+      "required_pds": 41
     }
   ]
 }

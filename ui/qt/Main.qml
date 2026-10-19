@@ -11,7 +11,9 @@ ApplicationWindow {
     minimumWidth: 1000
     minimumHeight: 680
     visible: true
-    title: "ShowPsiSi · Transport stream inspector"
+    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : "ShowPsiSi · Transport stream inspector"
+    property string inputKind: "ts"
+    readonly property bool metadataMode: inputKind === "dvbi"
     property bool lightTheme: core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
     property color surface: lightTheme ? "#f5f6f8" : "#181a1f"
     property color panel: lightTheme ? "#ffffff" : "#20232a"
@@ -64,7 +66,7 @@ ApplicationWindow {
     property bool compactComparison: recordPane.width < 420 || recordPane.height < 520
     property bool compactInspector: inspectorPane.height < 520
     property var analysisState: core.state
-    property bool backendReady: core.available && !core.busy
+    property bool backendReady: core.available && !core.busy && !dvbiWorkspace.busy && !protocolRestoring
     property var detail: core.detail
     property string tab: "Services"
     property string previousTab: "Services"
@@ -102,7 +104,7 @@ ApplicationWindow {
     property var topologySources: topologyNode ? Shared.workbench.topologyEvidence(topologyNode, topologyData.edges || []) : []
     property var topologyRowModel: Shared.workbench.topologyRows ? Shared.workbench.topologyRows(topologyData, topologyFamily, topologySearch.text, topologyExpanded, topologyLimits) : ({rows:[]})
     property var topologyRows: (topologyRowModel.rows || []).map(function(r){return r.more ? r : Object.assign({},r,{node_id:r.node.node_id,branch:r.has_children,open:r.expanded});})
-    property bool topologySummary: tab === "Topology" && !topologyEvidenceRef
+    property bool topologySummary: tab === "Topology" && !topologyEvidenceRef && !protocolSourceRef
     property bool topologyStale: topologyFailed || !!topologyData.analysis_revision && (topologyData.analysis_revision !== analysisState.analysis_revision || topologyData.at_packet !== (topologyCutoff === null ? currentPacket() : topologyCutoff))
     property bool topologyCanReveal: !!topologyEvidenceRef && topologyEvidenceRef.at_packet === currentPacket() && topologyEvidenceRef.analysis_revision === analysisState.analysis_revision
     function topologyNodeById(id) { return (topologyData.nodes || []).concat(topologyData.context_nodes || []).find(function(n) { return n.node_id === id; }); }
@@ -184,6 +186,7 @@ ApplicationWindow {
         if(index>=0){topologyList.currentIndex=index;topologyFocus=id;topologyList.positionViewAtIndex(index,ListView.Contain);topologyList.forceActiveFocus();}
     }
     function selectTopologyNode(id, remember) {
+        clearProtocolSource();
         let node=topologyNodeById(id);if(!node)return;
         if(remember && topologySelection && topologySelection!==id)pushTopologyBack();
         topologySelection=id;topologyFocus=id;topologyEvidenceRef=null;topologyResolution={};topologySectionContext=null;topologyTablesReveal=false;if(!topologyFailed)topologyError="";
@@ -205,6 +208,7 @@ ApplicationWindow {
         let expanded=Object.assign({},topologyExpanded);expanded[row.node_id]=!row.open;topologyExpanded=expanded;
     }
     function openTopologyEvidence(ref, remember) {
+        clearProtocolSource();
         if(!backendReady || topologyStale || !ref)return;
         if(ref.analysis_revision!==analysisState.analysis_revision || ref.at_packet!==topologyData.at_packet){topologyError="This source belongs to an older observation. Reload Topology.";return;}
         if(remember!==false)pushTopologyBack();
@@ -240,8 +244,8 @@ ApplicationWindow {
         highlightTopologyHex();
     }
     function highlightTopologyHex() {
-        let range=topologyResolution.byte_range || topologyResolution.range;
-        if(!topologyEvidenceRef || !range || range.offset_scope!=="section_bytes")return;
+        let range=activeInspectionResolution.byte_range || activeInspectionResolution.range;
+        if(!activeInspectionRef || !range || range.offset_scope!=="section_bytes")return;
         let start=range.offset,end=start+range.length-1;
         if(range.length>0 && end<(detail.raw_hex || "").replace(/\s/g,"").length/2){
             let pos=function(offset){return Math.floor(offset/16)*54+6+(offset%16)*3;};
@@ -293,6 +297,39 @@ ApplicationWindow {
     property string protocolCardKey: [detail.id,detail.analysis_revision,detail.native_table_at_packet].join(":")
     onProtocolCardKeyChanged: protocolCardOffset=0
     property var protocolCardModel: Shared.workbench.protocolCards(detail,protocolCardOffset,20)
+    property var protocolSourceRef: null
+    property var protocolSourceOrigin: null
+    property var protocolSourceResolution: ({})
+    property var protocolRestorePending: null
+    property bool protocolRestoring: false
+    readonly property var activeInspectionRef: protocolSourceRef || topologyEvidenceRef
+    readonly property var activeInspectionResolution: protocolSourceRef ? protocolSourceResolution : topologyResolution
+    function clearProtocolSource() {protocolRestoreTimer.stop();protocolRestoring=false;protocolSourceRef=null;protocolSourceOrigin=null;protocolSourceResolution={};protocolRestorePending=null;}
+    function openProtocolSource(source, remember, cardIndex, sourceIndex) {
+        if(!source || !source.available || !backendReady || core.inspecting)return;
+        let ref=source.ref;
+        if(ref.analysis_revision!==analysisState.analysis_revision){notice="This metadata source belongs to an older analysis.";return;}
+        if(remember!==false)protocolSourceOrigin={id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,service:selectedService,tab:tab,view:inspectorView,scope:evidenceScope,offset:protocolCardOffset,scroll:metadataScroll.contentItem.contentY,search:treeSearch.text,collapsed:collapsed,card:cardIndex,source:sourceIndex};
+        protocolSourceRef=ref;protocolSourceResolution={};selected=ref.section_id;selectedService=-1;preview={};
+        treeSearch.clear();collapsed={};evidenceScope="Section";inspectorView="Structure";
+        core.send("inspect",{id:ref.section_id,analysis_revision:ref.analysis_revision,at_packet:ref.at_packet});
+    }
+    function protocolSourceBack() {
+        let origin=protocolSourceOrigin;
+        if(!origin || !backendReady || core.inspecting)return;
+        if(origin.revision!==analysisState.analysis_revision){clearProtocolSource();notice="The originating metadata belongs to an older analysis.";return;}
+        clearProtocolSource();protocolRestoring=true;protocolRestorePending=origin;selected=origin.id;selectedService=origin.service;
+        core.send("inspect",{id:origin.id,analysis_revision:origin.revision,at_packet:origin.cutoff});
+    }
+    function resolveProtocolInspection(result) {
+        protocolSourceResolution=result.message?{status:"error",message:result.message}:Shared.workbench.resolveTopologyEvidence(protocolSourceRef,result);
+        if(protocolSourceResolution.path){
+            let path=protocolSourceResolution.path.replace(/^section\//,"");let open={},parts=path.split("/");
+            for(let i=1;i<=parts.length;i++)open[parts.slice(0,i).join("/")]=false;
+            collapsed=open;treeSearch.clear();topologyRevealTimer.restart();
+        }
+        highlightTopologyHex();
+    }
     function metadataEntries() {
         let entries=[];
         (detail.satellite_associations || []).forEach(function(x) {
@@ -367,7 +404,7 @@ ApplicationWindow {
     property string notice: ""
     function agentState() {
         let diagnostics = core.diagnostics();
-        return JSON.stringify({settled: !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
+        return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
@@ -377,11 +414,14 @@ ApplicationWindow {
             focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
             tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
             topology: {data:topologyData,family:topologyFamily,selected_node:topologySelection,focused_node:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,rows:topologyRows,loading:topologyLoading,stale:topologyStale,error:topologyError,summary:topologySummary,sources:topologySources,active_evidence:topologyEvidenceRef,section_context:topologySectionContext,resolution:topologyResolution,back_depth:topologyBackStack.length,scope:topologyScopeLabel,can_reveal:topologyCanReveal},
+            protocol: {scroll:metadataScroll.contentItem.contentY,cards:protocolCardModel,sources:protocolCardModel.cards.map(function(c){return Shared.workbench.protocolCardSources(c);}),active_evidence:protocolSourceRef,resolution:protocolSourceResolution,can_back:!!protocolSourceOrigin},
             comparison_context: {data:comparison,selected:selectedChange,side:comparisonSide,origin:topologyOrigin},
             inspection: {id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,anchors:detail.evidence_anchors || [],hex_selection:hexEvidence.selectedText},
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(action.name==="input_kind" && ["ts","dvbi"].indexOf(action.value)>=0 && !dvbiWorkspace.busy && !core.busy){inputKind=action.value;return JSON.stringify({accepted:true});}
+        if(action.name.indexOf("dvbi_")===0){inputKind="dvbi";return JSON.stringify(dvbiWorkspace.action(action)?{accepted:true}:{error:"Unsupported DVB-I UI action"});}
         if (action.name === "select_tab" && ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;
         else if (action.name === "compare_snapshots" && Number.isInteger(action.from) && Number.isInteger(action.to) && action.from>=0 && action.to>=0 && action.from<analysisState.packets && action.to<analysisState.packets) {tab="Changes";fromPacket.text=String(action.from);toPacket.text=String(action.to);compareSnapshots(0);}
         else if (action.name === "comparison_source" && Number.isInteger(action.index) && (comparison.changes || [])[action.index] && ["before","after"].indexOf(action.side)>=0) inspectChange(comparison.changes[action.index],action.side);
@@ -393,6 +433,11 @@ ApplicationWindow {
         else if (action.name === "topology_focus" && topologyRows.some(function(r){return r.node_id===action.id;})) focusTopologyRow(action.id);
         else if (action.name === "topology_source" && Number.isInteger(action.index) && topologySources[action.index]) openTopologyEvidence(topologySources[action.index].ref);
         else if (action.name === "topology_sibling" && typeof action.id==="string" && siblingSections.some(function(r){return r.id===action.id;})) openTopologySibling(siblingSections.find(function(r){return r.id===action.id;}));
+        else if(action.name==="protocol_source" && protocolCardModel.cards[action.card])openProtocolSource(Shared.workbench.protocolCardSources(protocolCardModel.cards[action.card])[action.index],true,action.card,action.index);
+        else if(action.name==="protocol_scroll" && Number.isFinite(action.value) && inspectorView==="Metadata")metadataScroll.contentItem.contentY=Math.max(0,Math.min(action.value,metadataScroll.contentItem.contentHeight-metadataScroll.height));
+        else if(action.name==="protocol_page_control" && ["Next","Previous"].indexOf(action.value)>=0)core.click("protocol"+action.value);
+        else if(action.name==="protocol_back")protocolSourceBack();
+        else if(action.name==="protocol_page" && Number.isInteger(action.offset) && action.offset>=0 && action.offset<protocolCardModel.total)protocolCardOffset=action.offset;
         else if (action.name === "topology_back") topologyBack();
         else if (action.name === "topology_tables") showTopologyInTables();
         else if (action.name === "topology_more") loadTopology(true);
@@ -400,6 +445,7 @@ ApplicationWindow {
         else if (action.name === "topology_key" && ["Up","Down","Left","Right","Home","End","Return","Space","Tab","Ctrl+K","Escape","Alt+Left","F6"].indexOf(action.value)>=0) core.key(action.value);
         else if (action.name === "select_snapshot" && Number.isInteger(action.packet) && action.packet>=-1 && action.packet<Number(analysisState.packets || 0)) snapshot(action.packet);
         else if (action.name === "select_record" && typeof action.id === "string" && (analysisState.tables || []).some(function(r){return r.id===action.id;})) { tab="Tables";inspect(action.id); }
+        else if(action.name==="rescan" && !metadataMode)scan();
         else if (action.name === "set_bad_crc" && typeof action.value === "boolean") showInvalidSections=action.value;
         else if (action.name === "set_grouped" && typeof action.value === "boolean") groupedTables=action.value;
         else if (action.name === "search_records" && typeof action.value === "string" && action.value.length<=512) recordSearch.text=action.value;
@@ -850,6 +896,7 @@ ApplicationWindow {
         notice = "Inspecting " + (sideName === "before" ? "A" : "B") + " at packet " + num(side.at_packet) + ". The current workbench snapshot is unchanged.";
     }
     function inspect(id, sid, atPacket) {
+        clearProtocolSource();
         if (!backendReady || !analysisState.complete) return;
         if (!id) {
             notice = "Aggregate diagnostic: no individual section is indexed.";
@@ -904,6 +951,7 @@ ApplicationWindow {
         core.send("export", params);
     }
     function clearWorkspaceIntentions() {
+        clearProtocolSource();
         clearTopology();
         inspected = false;
         selected = "";
@@ -932,7 +980,7 @@ ApplicationWindow {
         notice = "Cancelling scan… Waiting for the worker to stop.";
     }
     function scan() {
-        if (!backendReady || !source.text.trim() || extraPidsValue === null)
+        if (metadataMode || !backendReady || !source.text.trim() || extraPidsValue === null)
             return;
         clearWorkspaceIntentions();
         filter = ""; pidFilter = -1; expandedTables = {};
@@ -953,6 +1001,7 @@ ApplicationWindow {
         snapshot(entry.at_packet,entry.id);
     }
     function snapshot(packet, id, sid) {
+        clearProtocolSource();
         if (!backendReady || !analysisState.complete) return;
         topologyEvidenceRef=null;topologyResolution={};topologyLoading=false;topologyOrigin=null;topologyBackStack=[];topologyCutoff=null;topologyScopeLabel="Current observation";
         selectedChange = null;
@@ -1005,12 +1054,12 @@ ApplicationWindow {
     function rowTitle(row) {
         if (tab === "Changes")
             return changeTitle(row);
-        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? (row.exact ? "Section " + row.section + " · " : "") + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? eventTitle(row) : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
+        return tab === "Services" ? (row.logical_channel_number === null ? "—" : row.logical_channel_number) + "  " + (row.name || "Unnamed service") : tab === "Tables" ? (row.exact ? Shared.workbench.wireSectionText(row) + " · " : "") + tableLabel(row.name) + " · PID " + hex(row.pid) + " · TID " + hex(row.table_id, 2) + (row.valid === false ? " · INVALID" : "") : tab === "EPG" ? eventTitle(row) : row.code + (row.aggregate ? " · aggregate" : " · PID " + hex(row.pid));
     }
     function rowSubtitle(row) {
         if (tab === "Changes")
             return (row.changed_fields || []).join(", ") || "Presence changed · select to inspect source evidence";
-        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? Shared.workbench.groupText(row.group) + " · " + arrivalText(row.group) + (row.hiddenEvidence ? " · Bad-CRC evidence hidden" : "") : tab === "Tables" ? "v" + row.version + " · section " + row.section + "/" + row.last_section + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
+        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? Shared.workbench.groupText(row.group) + " · " + arrivalText(row.group) + (row.hiddenEvidence ? " · Bad-CRC evidence hidden" : "") : tab === "Tables" ? Shared.workbench.wireVersionText(row) + " · " + Shared.workbench.wireSectionText(row) + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
@@ -1131,6 +1180,7 @@ ApplicationWindow {
         function onAvailabilityChanged() {
             if (core.availability === "disconnected") {
                 autoTimer.stop();
+                protocolRestoreTimer.stop();protocolRestoring=false;protocolRestorePending=null;
                 fileDialog.close();
                 topologyLoading=false;topologyError="Backend disconnected. Restart the application to continue.";
                 notice = "Backend disconnected. Restart the application to continue.";
@@ -1138,7 +1188,17 @@ ApplicationWindow {
         }
         function onResponse(method, result) {
             if (method === "query_topology") { acceptTopology(result); return; }
-            if (method === "inspect" && topologyEvidenceRef) resolveTopologyInspection(result);
+            if(method==="inspect"){
+                if(protocolSourceRef)resolveProtocolInspection(result);
+                else if(topologyEvidenceRef)resolveTopologyInspection(result);
+                if(protocolRestorePending){
+                    let origin=protocolRestorePending;protocolRestorePending=null;
+                    if(!result.message && result.id===origin.id && result.analysis_revision===origin.revision && result.native_table_at_packet===origin.cutoff){
+                        topologyTransition=true;tab=origin.tab;topologyTransition=false;inspectorView=origin.view;evidenceScope=origin.scope;collapsed=origin.collapsed;treeSearch.text=origin.search;
+                        protocolCardOffset=origin.offset;protocolRestoreTimer.origin=origin;protocolRestoreTimer.restart();
+                    }else {protocolRestoring=false;notice=result.message || "The originating metadata context could not be restored.";}
+                }
+            }
             if (method === "lookup_identifier") identifierResult=result;
             if (method === "lookup_satellite") satelliteResult=result;
             if (method === "query") comparisonTestTimer.completedQueries++;
@@ -1218,13 +1278,23 @@ ApplicationWindow {
         }
     }
     Timer {
+        id: protocolRestoreTimer
+        property var origin: ({})
+        interval:40
+        onTriggered:{
+            let saved=origin,card=protocolCardRepeater.itemAt(saved.card === undefined?-1:saved.card),button=card?card.sourceControls.itemAt(saved.source === undefined?-1:saved.source):null;
+            if(button)button.forceActiveFocus();
+            Qt.callLater(function(){metadataScroll.contentItem.contentY=saved.scroll;protocolRestoring=false;});
+        }
+    }
+    Timer {
         id: topologyRevealTimer
         interval: 30
         onTriggered: {
-            if(!topologyEvidenceRef || detail.id!==(topologySectionContext ? topologySectionContext.id : topologyEvidenceRef.section_id) || core.inspecting)return;
-            let path=(topologyResolution.path || "").replace(/^section\//,"");
+            if(!activeInspectionRef || detail.id!==(protocolSourceRef ? protocolSourceRef.section_id : topologySectionContext ? topologySectionContext.id : topologyEvidenceRef.section_id) || core.inspecting)return;
+            let path=(activeInspectionResolution.path || "").replace(/^section\//,"");
             let index=treeRows.findIndex(function(r){return r.path===path;});
-            if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Center);if(tab==="Topology")tree.forceActiveFocus();}
+            if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Center);if(tab==="Topology" || protocolSourceRef)tree.forceActiveFocus();}
         }
     }
     Timer {
@@ -2650,6 +2720,7 @@ ApplicationWindow {
             explorerParityTimer.start();
     }
     onClosing: function(close) {
+        if (dvbiWorkspace.busy) {close.accepted=false;notice="A bounded metadata operation is still finishing. Wait before closing.";return;}
         if (core.exportPending) {
             close.accepted = false;
             notice = "An export is still writing. Wait for its result before closing ShowPsiSi.";
@@ -2659,24 +2730,26 @@ ApplicationWindow {
     }
     UpdateDialog {
         id: updateDialog
-        workBusy: core.busy || core.inspecting || core.comparing || topologyLoading || core.exportPending || exporting || saveDialog.visible
+        workBusy: dvbiWorkspace.busy || core.busy || core.inspecting || core.comparing || topologyLoading || core.exportPending || exporting || saveDialog.visible
         lightTheme: win.lightTheme
     }
 
     Shortcut {
         sequence: "Ctrl+K"
         onActivated: {
+            if(metadataMode){dvbiWorkspace.focusSearch();return;}
             if(tab === "Topology"){topologySearch.forceActiveFocus();topologySearch.selectAll();}
             else {recordSearch.forceActiveFocus();recordSearch.selectAll();}
         }
     }
-    Shortcut { sequence: "Alt+Left"; onActivated: { if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack();else resizeInspector(24); } }
+    Shortcut { sequence: "Alt+Left"; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack();else resizeInspector(24); } }
     Shortcut { sequence: "Alt+Right"; onActivated: resizeInspector(-24) }
     Shortcut { sequence: "Alt+Up"; onActivated: resizeTimeline(24) }
     Shortcut { sequence: "Alt+Down"; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
         onActivated: {
+            if(metadataMode){dvbiWorkspace.focusNext();return;}
             if(tab === "Topology" && topologySummary){topologySourcesList.forceActiveFocus();return;}
             if (recordList.activeFocus || recordSearch.activeFocus || topologyList.activeFocus || topologySearch.activeFocus) {
                 inspectorView = "Structure";
@@ -2687,6 +2760,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Shift+K"
         onActivated: {
+            if(metadataMode){dvbiWorkspace.focusSearch();return;}
             inspectorView = "Structure";
             treeSearch.forceActiveFocus();
             treeSearch.selectAll();
@@ -2695,11 +2769,11 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+O"
         enabled: backendReady
-        onActivated: fileDialog.open()
+        onActivated: metadataMode ? dvbiWorkspace.openDialog() : fileDialog.open()
     }
     Shortcut {
         sequence: "Ctrl+Return"
-        onActivated: scan()
+        onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : scan()
     }
     Shortcut {
         sequence: "Ctrl+."
@@ -2771,9 +2845,18 @@ ApplicationWindow {
                 font.weight: Font.DemiBold
                 color: ink
             }
+            FieldChoice {
+                objectName: "inputKind"
+                Layout.preferredWidth: 175
+                model: [{label:"TS capture",value:"ts"},{label:"DVB-I XML",value:"dvbi"}]
+                textRole:"label"; valueRole:"value"; currentIndex:metadataMode?1:0
+                enabled:backendReady && !exporting && !saveDialog.visible
+                Accessible.name:"Input kind; TS capture and independent DVB-I XML document"
+                onActivated:inputKind=currentValue
+            }
             PlainLabel {
                 text: "PSI / SI INSPECTOR"
-                visible: win.width >= 1150
+                visible: win.width >= 1400 && !metadataMode
                 color: muted
                 font.pixelSize: 11
                 SafeTip {
@@ -2788,7 +2871,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
             }
             PlainLabel {
-                text: (core.availability === "disconnected" ? "DISCONNECTED" : core.cancelling ? "CANCELLING" : core.busy ? "SCANNING" : analysisState.analysis_status === "cancelled" ? "CANCELLED" : analysisState.detected_standards || "LOCAL") + " · Qt Quick"
+                text: (core.availability === "disconnected" ? "DISCONNECTED" : core.cancelling ? "CANCELLING" : core.busy ? "SCANNING" : analysisState.analysis_status === "cancelled" ? "CANCELLED" : (metadataMode ? (dvbiWorkspace.busy ? "LOADING XML" : "DVB-I DOCUMENT") : analysisState.detected_standards || "LOCAL")) + " · Qt Quick"
                 color: muted
                 font.pixelSize: 11
             }
@@ -2831,6 +2914,7 @@ ApplicationWindow {
         anchors.fill: parent
         spacing: 0
         RowLayout {
+            visible: !metadataMode
             Layout.fillWidth: true
             Layout.margins: 10
             spacing: 8
@@ -2879,7 +2963,8 @@ ApplicationWindow {
                     {
                         label: "DTMB",
                         value: "dtmb"
-                    }
+                    },
+                    {label:"J.94 System B",value:"j94-system-b"}
                 ]
                 Accessible.name: "Broadcast standard context for next scan"
                 SafeTip {
@@ -2944,7 +3029,7 @@ ApplicationWindow {
         }
         PlainLabel {
             Layout.leftMargin: 12
-            visible: extraPidsValue === null
+            visible: !metadataMode && extraPidsValue === null
             text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
             color: removedColor
             font.pixelSize: 11
@@ -2956,6 +3041,7 @@ ApplicationWindow {
             indeterminate: true
         }
         RowLayout {
+            visible: !metadataMode
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
@@ -2985,8 +3071,16 @@ ApplicationWindow {
                 font.pixelSize: 11
             }
         }
+        DvbiWorkspace {
+            id: dvbiWorkspace
+            host:win
+            visible:metadataMode
+            Layout.fillWidth:true
+            Layout.fillHeight:true
+        }
         SplitView {
             id: verticalWorkspace
+            visible: !metadataMode
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical
@@ -3764,7 +3858,7 @@ ApplicationWindow {
                     RowLayout {
                         Layout.fillWidth: true
                         TinyLabel {
-                            text: topologyEvidenceRef ? "SOURCE EVIDENCE" : "SECTION INSPECTOR"
+                            text: activeInspectionRef ? "SOURCE EVIDENCE" : "SECTION INSPECTOR"
                             Layout.fillWidth: true
                         }
                         Action { text:(arrivalOpen?"▾ ":"▸ ")+"Arrival"; objectName:"arrivalToggle"; visible:!!detail.id; implicitHeight:20; onClicked:arrivalOpen=!arrivalOpen }
@@ -3776,7 +3870,7 @@ ApplicationWindow {
                         }
                     }
                     ColumnLayout {
-                        visible: !!topologyEvidenceRef
+                        visible: !!topologyEvidenceRef && !protocolSourceRef
                         Layout.fillWidth:true
                         spacing:4
                         RowLayout {
@@ -3806,6 +3900,17 @@ ApplicationWindow {
                             font.pixelSize:11
                             text:core.inspecting ? "Loading exact section…" : topologyResolution.message || "Resolving the requested source locator…"
                         }
+                    }
+                    ColumnLayout {
+                        visible:!!protocolSourceRef
+                        Layout.fillWidth:true
+                        RowLayout {
+                            Action {objectName:"protocolSourceBack";text:"← Metadata";enabled:backendReady && !core.inspecting;onClicked:protocolSourceBack()}
+                            Action {objectName:"protocolSourceRetry";text:"Retry source";enabled:backendReady && !core.inspecting;onClicked:openProtocolSource({ref:protocolSourceRef,available:true},false)}
+                            Item {Layout.fillWidth:true}
+                        }
+                        PlainLabel {Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:11;color:muted;text:protocolSourceRef?"Metadata source · "+protocolSourceRef.section_id+" · revision "+protocolSourceRef.analysis_revision+" · cutoff #"+protocolSourceRef.at_packet:""}
+                        PlainLabel {objectName:"protocolSourcePrecision";Layout.fillWidth:true;wrapMode:Text.Wrap;font.pixelSize:11;color:protocolSourceResolution.status==="resolved"?blue:warningColor;text:core.inspecting?"Loading exact source…":protocolSourceResolution.message || "Resolving source precision…"}
                     }
                     ColumnLayout {
                         visible: !!selectedChange
@@ -3889,7 +3994,7 @@ ApplicationWindow {
                         font.weight: Font.DemiBold
                     }
                     PlainLabel {
-                        text: detail.pid !== undefined ? "PID " + hex(detail.pid) + " · TID " + hex(detail.table_id, 2) + " · v" + detail.version + " · section " + detail.section + "/" + detail.last_section + " · " + detail.bytes + " B" : "Select a row to view fields and source bytes"
+                        text: detail.pid !== undefined ? "PID " + hex(detail.pid) + " · TID " + hex(detail.table_id, 2) + " · " + Shared.workbench.wireHeaderText(detail) + " · " + detail.bytes + " B" : "Select a row to view fields and source bytes"
                         color: muted
                         font.pixelSize: 11
                         Layout.fillWidth: true
@@ -3944,7 +4049,7 @@ ApplicationWindow {
                             objectName: "sectionChoice"
                             Layout.fillWidth: true
                             implicitHeight: 28
-                            model: siblingSections.map(function(r) { return "Section " + r.section + "/" + r.last_section + " · " + crcText(r) + " · #" + r.first_packet; })
+                            model: siblingSections.map(function(r) { return Shared.workbench.wireSectionText(r) + " · " + crcText(r) + " · #" + r.first_packet; })
                             currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
                             onActivated: { let r=siblingSections[currentIndex]; if(r){if(topologyEvidenceRef)openTopologySibling(r);else inspect(r.id, -1, detail.native_table_at_packet);} }
                             Accessible.name: "Select original section evidence"
@@ -4112,7 +4217,7 @@ ApplicationWindow {
                             required property int index
                             property alias rowTooltip: treeTooltip
                             objectName: "tree:" + modelData.path
-                            highlighted: tree.currentIndex === index || !!topologyEvidenceRef && modelData.path === (topologyResolution.path || "").replace(/^section\//,"")
+                            highlighted: tree.currentIndex === index || !!activeInspectionRef && modelData.path === (activeInspectionResolution.path || "").replace(/^section\//,"")
                             keyboardCurrent: tree.currentIndex === index && tree.activeFocus
                             Accessible.role: Accessible.ListItem
                             Accessible.name: modelData.label + (modelData.value ? ": " + modelData.value : "")
@@ -4229,18 +4334,27 @@ ApplicationWindow {
                             RowLayout {
                                 visible: protocolCardModel.total > 0
                                 Layout.fillWidth: true
-                                Action { objectName: "protocolPrevious"; text: "Previous cards"; enabled: protocolCardModel.has_previous; onClicked: protocolCardOffset=Math.max(0,protocolCardModel.offset-20) }
+                                Action { objectName: "protocolPrevious"; text: "Previous cards"; enabled: protocolCardModel.has_previous; onClicked: {protocolCardOffset=Math.max(0,protocolCardModel.offset-20);forceActiveFocus();} }
                                 PlainLabel { objectName: "protocolCardCount"; text: (protocolCardModel.offset+1)+"–"+Math.min(protocolCardModel.offset+20,protocolCardModel.total)+" / "+protocolCardModel.total; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
-                                Action { objectName: "protocolNext"; text: "Next cards"; enabled: protocolCardModel.has_more; onClicked: protocolCardOffset=protocolCardModel.offset+20 }
+                                Action { objectName: "protocolNext"; text: "Next cards"; enabled: protocolCardModel.has_more; onClicked: {protocolCardOffset=protocolCardModel.offset+20;forceActiveFocus();} }
                             }
                             Repeater {
+                                id: protocolCardRepeater
                                 model: protocolCardModel.cards
                                 ColumnLayout {
+                                    id: protocolCard
+                                    required property int index
+                                    property alias sourceControls: protocolSourceRepeater
                                     required property var modelData
                                     Layout.fillWidth: true
                                     spacing: 4
                                     PlainLabel { text: modelData.title; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: blue }
                                     TextArea { text: modelData.text; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
+                                    Repeater {
+                                        id: protocolSourceRepeater
+                                        model:Shared.workbench.protocolCardSources(modelData)
+                                        Action {required property var modelData;required property int index;objectName:"protocolSource_"+protocolCard.index+"_"+index;Layout.fillWidth:true;text:"Open source · "+modelData.label;enabled:modelData.available && backendReady && !core.inspecting;Accessible.name:text;onClicked:openProtocolSource(modelData,true,protocolCard.index,index);SafeTip {visible:anchorHovered;text:modelData.available?"Exact source context. Locator precision: "+modelData.precision:"Source identity, revision or cutoff is unavailable."}}
+                                    }
                                     Action { id: protocolEvidenceToggle; text: checked ? "Hide original values and source" : "Original values and source"; checkable: true; Layout.fillWidth: true }
                                     TextArea { visible: protocolEvidenceToggle.checked; text: JSON.stringify(modelData.evidence,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
@@ -4571,7 +4685,7 @@ ApplicationWindow {
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 PlainLabel {
-                    text: core.error || (core.availability === "starting" ? "Starting backend…" : notice) || "Ready · all processing stays on this machine"
+                    text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : core.error || (core.availability === "starting" ? "Starting backend…" : notice) || "Ready · all processing stays on this machine"
                     color: core.error ? "#ffffff" : muted
                     font.pixelSize: 11
                     Layout.fillWidth: true
@@ -4586,7 +4700,7 @@ ApplicationWindow {
                     }
                 }
                 PlainLabel {
-                    text: num(analysisState.packets) + " packets · C++ / TSDuck"
+                    text: metadataMode ? "Independent document · C++ / Expat" : num(analysisState.packets) + " packets · C++ / TSDuck"
                     color: muted
                     font.pixelSize: 11
                 }

@@ -148,7 +148,8 @@ renamed or reused. ATSC numeric source identifiers are `atsc_source_id`.
   the existing catalog fingerprint/revision and each entry’s attributed source.
   Missing catalog, no match, malformed parameters and co-located candidates remain
   explicit; ISDB same tags do not activate these DVB interpretations.
-- BAT/LCN, actual physical transponder/satellite identification, S2X/T2 expansion,
+- BAT, receiver LCN/list selection and simulcast replacement actions, actual physical
+  transponder/satellite identification, S2X/T2 expansion,
   PSIP auxiliary/EPG and ISDB BIT/CDT/SDTT/logo/broadcaster relationships remain
   explicit unsupported scopes. Existing raw inspection and Metadata are retained.
 
@@ -218,3 +219,19 @@ real-capture smoke found this sentinel case; a dedicated fixture now verifies
 both the sentinel and zero without discarding other known parameters. Reports:
 `artifacts/topology-contract/real-dvb-delivery-report.json` and
 `artifacts/topology-contract/dvb-delivery.json`.
+
+## NorDig channel-list objects
+
+The DVB adapter also exposes source-linked LCD v2 `channel_list` roots and
+`channel_list_entry` children. ONID + list ID joins transport declarations without
+choosing a parent network, country/list preference or receiver ordering policy.
+Existing PDS-backed decoding and per-service alternatives remain unchanged.
+The exact object/evidence and tested boundary is [NORDIG_TOPOLOGY.md](NORDIG_TOPOLOGY.md).
+
+The subsequent DVB SDT projection adds `simulcast_replacement_reference` children
+under declaring services. Canonical SDT + earlier same-loop PDS 0x29 + linkage
+type 0x82 are mandatory; identity is origin plus exact target triplet. A
+`contains` edge retains the declaration, and `references` connects an observed
+exact target. Missing/competing/self/cyclic declarations remain explicit, with
+no automatic receiver action. Contextual node references and byte anchors are
+described in [NORDIG_TOPOLOGY.md](NORDIG_TOPOLOGY.md).

@@ -1,6 +1,8 @@
 # Cable out-of-band SI input design
 
-Status: researched design; no new decoder or UI acceptance is claimed here.
+The implemented subset covers edition-labelled section inspection and bounded
+revision/subtable queries. See [the API contract](CABLE_OOB_API.md) and
+[current coverage](PROTOCOL_COVERAGE.md#current-protocol-extension-support).
 
 ## Evidence and edition boundary
 
@@ -9,9 +11,9 @@ retrieved. The ANSI preview supplies a contents outline, not a bitfield basis.
 The separately published [ITU-T J.94 (10/2016)](https://www.itu.int/rec/T-REC-J.94-201610-I/en)
 provides a public normative System B SI definition in Annex B. Its official
 [full PDF](https://www.itu.int/rec/dologin_pub.asp?id=T-REC-J.94-201610-I%21%21PDF-E&lang=e&type=items)
-was retrieved on 2026-10-19: 4,233,533 bytes, SHA-256
+is pinned by source size 4,233,533 bytes and SHA-256
 `5a89278f2801748a86a98c95d1e539255eaa43ddc903dfd8d66230ab26089be2`.
-The research copy remains ignored and is not bundled with this repository.
+The source PDF is not bundled with this repository.
 
 This provides a reliable edition-specific implementation route. It does not
 prove equivalence to every revision of SCTE 65. Label initial coverage as
@@ -23,23 +25,22 @@ requires CRC even for the short-style section syntax. This differs from the
 SDK's ATSC satellite SVCT model and from Japanese table meanings at colliding
 IDs. A protocol context and input framing are essential.
 
-## Bounded implementation stages
+## Input and implementation boundaries
 
-1. Confirm the application's demux preserves this section envelope and CRC.
-   Add explicit family/context dispatch before introducing an adapter. Unknown
-   contexts must retain raw evidence, not borrow a different system's decoder.
-2. Support local section data with explicit provenance and explicitly framed TS
-   captures where available. Do not claim physical OOB/QPSK demodulation, POD
-   interaction, CableCARD support or RF reception.
-3. Implement NIT CDS/MMS and short-VCT maps independently from DVB NIT and ATSC
-   satellite VCT. Keep per-subtype identity and nonstandard version semantics.
-4. Add NTT names and STT times with their actual character/time definitions.
-   Preserve reserved, unsupported and malformed records as diagnostics/raw data.
-5. Join observed carrier/modulation/source/channel references only when all
-   needed records exist. Separate partial maps from complete channel lists;
-   do not fill missing pieces from future or incompatible generations.
-6. Integrate source-linked cable topology with the same inspector navigation.
-   Keep channel/source/physical-carrier concepts distinct.
+1. The explicit `j94-system-b` context admits TS-encapsulated SI sections at
+   SI_base PID 0x1FFC, preserving the short-style envelope and required CRC.
+   Unknown/colliding contexts do not borrow an ATSC or ISDB decoder.
+2. Captured sections retain their original framing and provenance. No physical
+   OOB/QPSK demodulation, POD interaction, CableCARD or RF reception is implemented.
+3. NIT CDS/MMS and short-VCT VCM/DCM/ICM remain independent of DVB NIT and ATSC
+   Satellite VCT. Their subtype identities and nonstandard version rules remain explicit.
+4. NTT names and STT times use the named edition's character/time definitions.
+   Reserved, unsupported and malformed values retain diagnostics and raw bytes.
+5. Descriptor-revised queries can assemble bounded subtable evidence. Cross-table
+   carrier/modulation/channel/name joins, synchronized lineups and receiver
+   activation remain unsupported; no future or incompatible generation fills a gap.
+6. The inspector exposes original sources and absent long-header fields. A
+   source-linked cable topology or general raw-BIN input adapter is not implied.
 
 ## Required negative and cross-family tests
 
@@ -57,5 +58,5 @@ IDs. A protocol context and input framing are essential.
   before claiming deployment interoperability.
 
 Do not add these tables to the existing ATSC satellite SVCT registry mapping.
-Keep unsupported operations explicit until each stage has real-engine tests and
-Qt/Web evidence, followed by combined regression and independent review.
+Keep unsupported operations explicit. Extend claims only with real-engine tests,
+Qt/Web evidence, combined regression and independent review.

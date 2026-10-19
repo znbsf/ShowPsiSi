@@ -33,6 +33,24 @@ class BridgeTests(unittest.TestCase):
         message=next(item['payload'] for item in batch['messages'] if item['payload'].get('id')==1)
         self.assertEqual(message['result']['name'],'ShowPsiSi')
         self.assertTrue(message['result']['tools'])
+    def test_independent_xml_methods_reach_native_engine(self):
+        from dvbi_fixture import fixture,PROFILE
+        path=Path(self.tmp.name)/'input.xml';path.write_bytes(fixture())
+        cursor=0
+        for ident,method,params in [(71,'import_dvbi',{'path':str(path),'profile':PROFILE}),
+                                    (72,'query_dvbi',{'document_revision':1,'limit':500}),
+                                    (73,'inspect_dvbi',{'document_revision':1,'element_id':'e0','source_limit':40})]:
+            self.invoke('request',{'message':{'id':ident,'method':method,'params':params}})
+            message=None
+            for _ in range(4):
+                with self.request('/__bridge/events?after='+str(cursor)) as response:batch=json.load(response)
+                for item in batch['messages']:
+                    cursor=item['seq']
+                    if item['payload'].get('id')==ident:message=item['payload']
+                if message:break
+            self.assertIsNotNone(message);self.assertNotIn('error',message)
+            self.assertEqual(message['result']['source']['kind'],'local_dvbi_xml')
+
     def test_snapshot_comparison_is_forwarded_to_native_engine(self):
         # The transport must not become a second, outdated API registry.
         # A pre-analysis request should reach the engine and receive its error,
@@ -80,7 +98,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(error.exception.code,400)
 
     def test_static_assets_and_environment(self):
-        for name in ('app.js','style.css'):
+        for name in ('app.js','dvbi.js','workbench.js','style.css'):
             with self.request('/'+name) as response:self.assertEqual(response.read(),(ROOT/'ui/tauri/web'/name).read_bytes())
         with self.request('/') as response:
             index=response.read().decode();self.assertIn('window.__TAURI__',index)

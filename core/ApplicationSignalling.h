@@ -1,5 +1,6 @@
 #pragma once
 #include "tsAIT.h"
+#include "DsmccModules.h"
 #include "tsApplicationDescriptor.h"
 #include "tsApplicationNameDescriptor.h"
 #include "tsSimpleApplicationLocationDescriptor.h"
@@ -28,6 +29,7 @@ class Builder {
     static constexpr size_t MaxObjects=4096,MaxRelations=8192;
     ts::DuckContext& duck;
     const std::vector<const Record*>& parts;
+    const std::vector<Record>* capture;
     size_t revision;uint64_t cutoff;std::string profile;
     std::map<std::string,J> objects;
     J relations=J::array(),diagnostics=J::array();
@@ -192,18 +194,78 @@ class Builder {
         // while common descriptors still apply only to their own section.
         if(!deviceCount)for(auto& [id,n]:objects)if(n["object_type"]=="update_notification")reason(n,"No device compatibility declaration observed in selected UNT sub-table");
     }
+    J dsmcc(J out,const Record& r,bool tableComplete){
+        // A generic original payload anchor remains navigable for malformed
+        // messages that can block reconstruction without yielding semantic cards.
+        J source; if(r.raw.size()>12)source=evidence(r,8,r.raw.size()-12,"DSM-CC message payload");
+        const auto message=dsmccsignalling::parse(duck,r);
+        if(!message.valid){out["status"]=message.status;out["diagnostics"].push_back(message.diagnostic);for(const auto& [id,a]:anchors[r.id])out["evidence_anchors"].push_back(a);return out;}
+        const std::string context="dsmcc:"+r.id;
+        J identity={{"pid",r.pid},{"download_id",message.downloadId},{"section_version",r.version},{"current",r.current}};
+        if(message.ddb)identity.update({{"module_id",message.moduleId},{"module_version",message.moduleVersion},{"block_number",message.blockNumber}});
+        else identity["transaction_id"]=message.transactionId;
+        auto& root=object(context,message.ddb?"download_data_block":"download_information",message.ddb?"DSM-CC data block":"DSM-CC download information",{},identity,source);
+        root["observation_status"]="observed";
+        root["attributes"]={{"message_decode_status","decoded exact original section"},{"section_number",r.number},{"last_section_number",r.last},{"native_table_complete",tableComplete},{"protocol_discriminator",17},{"dsmcc_type",3},{"message_id",message.ddb?0x1003:0x1002},{"module_reconstruction","bounded_same_pid_snapshot"},{"decompression_status","not_requested"},{"execution_status","not_executed"}};
+        auto field=[&](J& node,size_t p,size_t n,const std::string& label){node["evidence"].push_back(evidence(r,p,n,label,true));};
+        field(root,10,2,"DSM-CC message_id");field(root,message.ddb?12:20,4,"DSM-CC download_id");
+        if(message.ddb){
+            root["attributes"]["data_length_bytes"]=message.dataLength;root["attributes"]["assembled_sha256"]=nullptr;
+            field(root,20,2,"DDB module_id");field(root,22,1,"DDB module_version");field(root,24,2,"DDB block_number");
+            if(message.dataLength)root["evidence"].push_back(evidence(r,message.dataOffset,message.dataLength,"DDB original block data"));
+
+        }else{
+            root["attributes"].update({{"block_size_bytes",message.blockSize},{"declared_module_count",message.modules.size()},{"compatibility_hex",hex(Bytes(r.raw.begin()+message.compatibilityOffset,r.raw.begin()+message.compatibilityOffset+message.compatibilityLength))},{"device_match",nullptr}});
+            field(root,12,4,"DII transaction_id");field(root,24,2,"DII block_size");
+            std::map<unsigned,size_t> counts;for(const auto& m:message.modules)++counts[m.id];
+            for(const auto& m:message.modules){
+                const std::string id=context+":module:"+decimal(m.offset);auto e=evidence(r,m.offset,m.length,"DII module declaration");
+                auto& node=object(id,"download_module_announcement","DSM-CC module "+hexid(m.id),context,{{"pid",r.pid},{"download_id",message.downloadId},{"module_id",m.id},{"module_version",m.version}},e);
+                node["attributes"]={{"declared_size_bytes",m.size},{"block_size_bytes",message.blockSize},{"module_info_hex",hex(Bytes(r.raw.begin()+m.infoOffset,r.raw.begin()+m.infoOffset+m.infoLength))},{"module_info_interpretation","opaque; SDK structural validation only"},{"assembly_status","announcement_only"},{"assembled_sha256",nullptr},{"decompression_status","not_requested"},{"execution_status","not_executed"}};
+                field(node,m.offset,2,"DII module_id");field(node,m.offset+2,4,"DII module_size");field(node,m.offset+6,1,"DII module_version");
+                if(counts[m.id]>1)reason(node,"Duplicate module identifier in one DII; no declaration selected","conflict");
+                if(!message.blockSize)reason(node,"DII block size is zero; no default size substituted");
+                relation(context,id,"announces",J::array({source,e}),node["resolution_status"]);
+            }
+        }
+        if(capture&&r.current){
+            const auto snapshot=dsmccsignalling::reconstruct(duck,*capture,r.pid,message.downloadId,cutoff);
+            out["module_snapshot"]={{"status",snapshot.status},{"scope","Same PID/download, current announcements only; no withdrawal from partial DII"},{"orphan_block_observations",snapshot.orphanBlocks},{"invalid_message_observations",snapshot.invalidMessages},{"processed_observations",snapshot.observations},
+                {"limits",{{"module_bytes",dsmccsignalling::MaxModuleBytes},{"snapshot_bytes",dsmccsignalling::MaxSnapshotBytes},{"module_sources",dsmccsignalling::MaxModuleSources},{"snapshot_source_associations",dsmccsignalling::MaxSnapshotSources},{"module_count",dsmccsignalling::MaxModules},{"capture_records",dsmccsignalling::MaxRecordScan},{"message_variants",dsmccsignalling::MaxVariants},{"message_occurrences",dsmccsignalling::MaxObservations},{"declaration_occurrence_work",dsmccsignalling::MaxDeclarationVisits},{"unique_declarations",4096}}}};
+            for(const auto& diagnostic:snapshot.diagnostics)out["diagnostics"].push_back(diagnostic);
+            for(const auto& [moduleId,state]:snapshot.modules){
+                const std::string id="dsmcc-module:"+decimal(revision)+":"+decimal(r.pid)+":"+decimal(message.downloadId)+":"+decimal(moduleId)+":"+decimal(state.version)+":"+decimal(state.epochOrder);
+                J evidenceSet=J::array();for(const auto& [sid,occurrence]:state.sources){
+                    const auto& part=*occurrence.record;auto e=evidence(part,8,part.raw.size()-12,"DSM-CC message payload");
+                    e["occurrence"]={{"completion_packet",occurrence.packet},{"completion_order",occurrence.order}};e["role"]=part.tid==0x3c?"block_evidence":"announcement_evidence";evidenceSet.push_back(e);
+                }
+                if(evidenceSet.empty())continue;
+                auto& module=object(id,"download_module","Captured DSM-CC module "+hexid(moduleId),context,{{"analysis_revision",revision},{"pid",r.pid},{"download_id",message.downloadId},{"module_id",moduleId},{"module_version",state.version},{"announcement_epoch_order",state.epochOrder},{"announcement_epoch_packet",state.epochPacket}},evidenceSet.at(0));
+                const std::string status=snapshot.status=="resource_limit"?"resource_limit":state.status;
+                module["evidence"]=evidenceSet;module["observation_status"]=state.blocks.empty()?"announced_only":"observed";
+                module["attributes"]={{"assembly_status",status},{"declared_size_bytes",state.size},{"block_size_bytes",state.blockSize},{"expected_block_count",state.blockSize?J((uint64_t(state.size)+state.blockSize-1)/state.blockSize):J()},{"received_block_count",state.blocks.size()},{"block_count_scope","Accepted blocks within reconstruction limits; not total captured DDB count"},{"duplicate_block_observations",state.duplicateObservations},{"contributing_source_count",state.sources.size()},{"module_version_candidates",state.versionCandidates},{"assembled_sha256",status=="complete"?J(state.sha256):J()},{"module_info_hex",hex(state.info)},{"decompression_status","not_requested"},{"execution_status","not_executed"},{"verification_scope","Captured bytes from CRC-valid sections; announced size, exact block coverage and lengths; optional module checksums/signatures are not evaluated"}};
+                if(status!="complete"){for(const auto& why:state.reasons)reason(module,why,status=="conflict"?"conflict":"unresolved");if(state.reasons.empty()||snapshot.status=="resource_limit")reason(module,snapshot.status=="resource_limit"?"Snapshot resource limit prevents reconstruction":"Module is not completely verified");}
+                relation(context,id,state.sources.count(r.id)?"contributes_to":"snapshot_context",J::array({source,evidenceSet.at(0)}),module["resolution_status"]);
+            }
+            if(message.ddb){auto found=snapshot.modules.find(message.moduleId);if(found==snapshot.modules.end()||!found->second.sources.count(r.id))reason(root,"Block is not a contributing observation in the current announcement epoch");}
+            out=finish(out,r);if(snapshot.status=="resource_limit")out["status"]="resource_limit";return out;
+        }
+        if(!r.current){out["module_snapshot"]={{"status","unsupported_next"},{"scope","Current announcements only"}};reason(root,"Next-table source is retained but not used for current module reconstruction");}
+        return finish(out,r);
+    }
     J finish(J out,const Record& inspected){
         bool unresolved=false;for(const auto& [id,n]:objects){out["objects"].push_back(n);unresolved|=n["resolution_status"]!="resolved";}out["relations"]=relations;out["status"]=unresolved?"incomplete":"ok";
         for(const auto& [id,anchor]:anchors[inspected.id])out["evidence_anchors"].push_back(anchor);return out;
     }
 public:
-    Builder(ts::DuckContext& context,const std::vector<const Record*>& selected,size_t rev,uint64_t at,std::string standard):duck(context),parts(selected),revision(rev),cutoff(at),profile(std::move(standard)){}
+    Builder(ts::DuckContext& context,const std::vector<const Record*>& selected,size_t rev,uint64_t at,std::string standard,const std::vector<Record>* all=nullptr):duck(context),parts(selected),capture(all),revision(rev),cutoff(at),profile(std::move(standard)){}
     J build(const Record& inspected,bool complete,const std::string& decodeStatus){
         J out={{"schema_version",1},{"analysis_revision",revision},{"at_packet",cutoff},{"interpretation_profile",profile},{"status","unresolved"},
             {"objects",J::array()},{"relations",J::array()},{"diagnostics",J::array()},{"evidence_anchors",J::array()},
             {"scope","Read-only signalling declarations; no application download, URL fetch, browser execution or software installation"},
-            {"unsupported_relations",J::array({"PMT/service ownership and component-tag resolution","DSM-CC module/object reconstruction","HbbTV runtime conformance and application execution","Device eligibility/private selector evaluation and firmware installation"})}};
-        if(profile!="dvb"){out["status"]="unsupported_profile";out["diagnostics"].push_back("Explicit DVB interpretation required for AIT/UNT summary semantics");return out;}
+            {"unsupported_relations",J::array({"PMT/service ownership and component-tag resolution","Cross-PID DSM-CC association, object reconstruction, decompression and execution","HbbTV runtime conformance and application execution","Device eligibility/private selector evaluation and firmware installation"})}};
+        if(profile!="dvb"){out["status"]="unsupported_profile";out["diagnostics"].push_back("Explicit DVB interpretation required for application/update/carousel summary semantics");return out;}
+        if(inspected.tid==0x3b||inspected.tid==0x3c){try{return dsmcc(out,inspected,complete);}catch(const std::exception& error){out["status"]="unresolved";out["diagnostics"].push_back(error.what());return out;}}
         if(!inspected.valid||!complete||decodeStatus!="native TSDuck decoder"){out["status"]=!inspected.valid?"invalid":!complete?"incomplete_or_superseded":"malformed";out["diagnostics"].push_back("A valid, complete selected AIT/UNT generation is required; original inspection evidence retained");return out;}
         try{
             if(inspected.tid==0x4b){unt();return finish(out,inspected);}

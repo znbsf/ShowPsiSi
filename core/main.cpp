@@ -256,6 +256,7 @@ struct Record {
 #include "SatelliteMetadata.h"
 #include "ApplicationSignalling.h"
 #include "SignalTopology.h"
+#include "ApplicationCarriage.h"
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     dvbi::Store dvbiDocuments;
@@ -324,7 +325,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         J result=J::object(); uint32_t pds=0;bool pdsOnWire=false;
         ts::DuckContext descriptorDuck(&NULLREP);descriptorDuck.resetStandards(duck.standards());descriptorDuck.setDefaultCharsetIn(duck.charsetIn());descriptorDuck.setDefaultCharsetOut(duck.charsetOut());descriptorDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
         ts::REGIDVector registrations=inheritedRegistrations;
-        if(end>r.raw.size()-4) { issue(r,"descriptor_loop_overrun",begin,"Descriptor loop exceeds section payload"); return result; }
+        if(r.raw.size()<4||end>r.raw.size()-4) { issue(r,"descriptor_loop_overrun",begin,"Descriptor loop exceeds section payload"); return result; }
         for(size_t p=begin;p<end;) {
             if(p+2>end) { issue(r,"descriptor_header_truncated",p,"Missing descriptor length"); break; }
             size_t n=r.raw[p+1],next=p+2+n; int tag=r.raw[p];
@@ -345,8 +346,15 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             d["decode_status"]=namespaceConflict?"context_guarded":d.value("native_decoded",false)?"decoded":descriptorClass.factory?"parse_failure":"unknown_or_unsupported";
             d["decode_scope"]="SDK registry in observed descriptor context; unknown private syntax cannot be distinguished from unsupported specification without external evidence";
             if(tag==0x05&&n>=4)registrations.push_back((uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4));
-            if(tag==0x5f&&n==4) { pdsOnWire=true;pds=(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4); d["name"]="private_data_specifier_descriptor"; d["fields"]["private_data_specifier"]=pds; }
-            else if(tag==0x48) {
+            // ETSI TS 101 211 4.2.7.1: either namespace descriptor ends the
+            // previous PDS scope. Malformed replacements cannot inherit it.
+            if(tag==0x5f) {
+                pdsOnWire=n==4;pds=pdsOnWire?(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4):0;
+                if(pdsOnWire){d["name"]="private_data_specifier_descriptor";d["fields"]["private_data_specifier"]=pds;}
+            }
+            else if(tag==0x0f){pds=0;pdsOnWire=false;}
+            if(tag==0x0f||(tag==0x5f&&n!=4))d["native_decode_warning"]="Private namespace scope ends here; unanchored SDK section text may retain stale private meanings and is withheld. Original bytes and contextual descriptors remain available.";
+            if(tag==0x48) {
                 ts::ServiceDescriptor native(duck,bin); d["name"]="service_descriptor";
                 if(native.isValid()) { result["name"]=native.service_name.toUTF8(); result["provider"]=native.provider_name.toUTF8(); result["type"]=native.service_type; d["fields"]=result; }
                 else issue(r,"service_descriptor_invalid",p,"TSDuck rejected service descriptor");
@@ -395,6 +403,14 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     void decode(Record& r) {
         const auto& b=r.raw; size_t end=b.size()>=4?b.size()-4:0;
         if(!r.valid)return;
+        // All manually decoded long-table loops below use offsets after the
+        // eight-byte header. A short envelope must not invent those identities.
+        const size_t longMinimum=r.tid==0||r.tid==1?12:r.tid==2?16:
+            r.tid==0x42||r.tid==0x46?15:r.tid==0x40||r.tid==0x41||r.tid==0x4a?16:
+            r.tid>=0x4e&&r.tid<=0x6f?18:0;
+        if(longMinimum&&(b.size()<longMinimum||(b[1]&0x80)==0)){
+            issue(r,"long_section_required",1,"This table requires a complete MPEG long-section header and fixed payload; raw evidence retained");return;
+        }
         if(r.j94){r.fields["j94_system_b"]=cableoob::parse(b);return;}
         if((r.tid==0x42||r.tid==0x46)&&b.size()>=15) {
             r.fields["transport_stream_id"]=r.ext; r.fields["original_network_id"]=u16(b,8);
@@ -689,12 +705,12 @@ public:
     explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension; }
     void handleSection(ts::SectionDemux& demux,const ts::Section& s) override {
         // Discover dependent signalling PIDs before later packets in this block.
-        if(s.tableId()==0&&s.sourcePID()==0) { const auto* b=s.content(); for(size_t p=8;p+4<=s.size()-4;p+=4)demux.addPID(((b[p+2]&31)<<8)|b[p+3]); }
+        if(s.tableId()==0&&s.sourcePID()==0&&s.isLongSection()&&s.size()>=12) { const auto* b=s.content(); for(size_t p=8;p+4<=s.size()-4;p+=4)demux.addPID(((b[p+2]&31)<<8)|b[p+3]); }
         if(s.tableId()==0xc7&&(standardsContext=="auto"||standardsContext=="atsc")&&s.sectionNumber()==0&&s.lastSectionNumber()==0){
             ts::BinaryTable binary;binary.addNewSection(s.content(),s.size(),s.sourcePID(),ts::CRC32::CHECK);ts::MGT mgt(duck,binary);
             if(mgt.isValid())for(const auto& entry:mgt.tables)demux.addPID(entry.second.table_type_PID);
         }
-        if(s.tableId()==2&&s.size()>=16){
+        if(s.tableId()==2&&s.isLongSection()&&s.size()>=16){
             const auto* b=s.content();size_t end=s.size()-4,p=12+(((b[10]&15)<<8)|b[11]);
             while(p+5<=end){size_t len=((b[p+3]&15)<<8)|b[p+4];if(p+5+len>end)break;
                 if(b[p]==0x05||b[p]==0x0b||b[p]==0x0d||b[p]==0x13||b[p]==0x14||b[p]==0x86)demux.addPID(((b[p+1]&31)<<8)|b[p+2]);p+=5+len;
@@ -920,6 +936,22 @@ public:
             throw;
         }
     }
+    J queryCableOob(const J& args) {
+        if(!complete||packets==0)throw std::runtime_error("Complete a successful analysis before querying cable subtables");
+        if(standardsContext!="j94-system-b")throw std::runtime_error("Cable subtable query requires explicit j94-system-b context");
+        auto number=[&](const char* key,uint64_t fallback){
+            if(!args.contains(key))return fallback;
+            const auto& value=args.at(key);
+            if(!value.is_number_unsigned()&&!(value.is_number_integer()&&value.get<int64_t>()>=0))throw std::runtime_error(std::string(key)+" must be a nonnegative integer");
+            return value.get<uint64_t>();
+        };
+        if(number("analysis_revision",revision)!=revision)throw std::runtime_error("Stale cable analysis_revision");
+        const uint64_t at=number("at_packet",packets-1),offset=number("offset",0),limit=number("limit",20);
+        if(at>=packets)throw std::runtime_error("Cable at_packet must be within the completed analysis");
+        if(offset>cableoob::MaxGroups||limit<1||limit>100)throw std::runtime_error("Cable offset/limit outside bounded page range");
+        if(offset&&(!args.contains("analysis_revision")||!args.contains("at_packet")))throw std::runtime_error("Cable continuation page requires analysis_revision and at_packet");
+        return cableoob::snapshot(records,at,revision,size_t(offset),size_t(limit));
+    }
     J queryTopology(const J& args) {
         if(!complete||packets==0)throw std::runtime_error("Complete a successful analysis before querying topology");
         if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale topology analysis_revision");
@@ -1037,6 +1069,13 @@ public:
                         }
                     }
                 }
+                bool namespaceBarrier=false;
+                for(const auto& [number,part]:group)for(const auto& d:part->descriptors)
+                    namespaceBarrier=namespaceBarrier||d.value("tag",-1)==0x0f||(d.value("tag",-1)==0x5f&&d.value("length",0)!=4);
+                if(namespaceBarrier){
+                    if(!out.contains("native_decode_warnings"))out["native_decode_warnings"]=J::array();
+                    out["native_decode_warnings"].push_back("SDK merged XML is preserved as rendered. Private descriptor names are not validated namespace evidence across PDI or malformed PDS barriers; use the original contextual descriptor results and raw bytes.");
+                }
                 if(native){out["native_table"]=xmlTree(native);const auto name=native->name();out["native_decode_status"]=(name==u"generic_long_table"||name==u"generic_short_table")?"generic raw fallback":"native TSDuck decoder";}
                 out["tsduck_xml"]=document.toString().toUTF8();
             }else{ts::SectionFile file(duck);file.add(std::make_shared<ts::Section>(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK));out["tsduck_xml"]=file.toXML().toUTF8();out["native_decode_status"]=superseded?"inspected section superseded at selected packet; raw section retained":"incomplete table; raw section retained";}
@@ -1045,17 +1084,18 @@ public:
         out["table_decoder_registered"]=!r.j94&&nativeClass.factory!=nullptr;
         out["table_decode_category"]=!r.valid?"invalid_evidence":!out["native_table_complete"].get<bool>()?"incomplete_or_superseded":out["native_decode_status"]=="generic raw fallback"?(!r.j94&&nativeClass.factory?"registered_decoder_fallback":"unknown_or_unsupported"):"decoded";
         if(r.j94)out["assembly_limitation"]="J.94 network/channel maps are not assembled; native_table_complete means this exact CRC-valid section envelope only. No receiver activation, reference resolution or snapshot export.";
-        if(r.tid==0x3b||r.tid==0x3c)out["assembly_limitation"]="DSM-CC download transaction/module/block reassembly is not implemented; section identity and original bytes are retained";
+        if(r.tid==0x3b||r.tid==0x3c)out["assembly_limitation"]="Native-table assembly is distinct from the bounded same-PID module snapshot in application_signalling; original sections are unchanged";
         J sourceIds=J::array();for(const auto& part:out["native_table_sources"])sourceIds.push_back(part["id"]);
         out["merged"]={{"complete",out["native_table_complete"]},{"source_ids",sourceIds},{"native_table",out["native_table_complete"].get<bool>()?out.value("native_table",J()):J()},{"tsduck_xml",out["native_table_complete"].get<bool>()?out.value("tsduck_xml",J()):J()},{"scope","selected observed table generation; raw_hex, fields and descriptors above belong only to the inspected section"}};
-        if(r.j94){out["merged"]["complete"]=false;out["merged"]["scope"]="J.94 map merging is unsupported; native_table is exact section evidence only";}
-        if(r.tid==0x74||r.tid==0x4b){
-            std::vector<const Record*> applicationSources;
-            for(const auto& [key,part]:latest(cutoff,r.current))if(tableGroup(*part)==tableGroup(r))applicationSources.push_back(part);
+        if(r.j94){out["merged"]["complete"]=false;out["merged"]["scope"]="J.94 native_table is exact section evidence only; use query_cable_oob for bounded descriptor-revised subtables";}
+        if(r.tid==0x74||r.tid==0x4b||r.tid==0x3b||r.tid==0x3c){
+            std::vector<const Record*> applicationSources,applicationSnapshot;
+            for(const auto& [key,part]:latest(cutoff,r.current)){if(r.tid==0x74&&applicationSnapshot.size()<=applicationcarriage::MaxSelected)applicationSnapshot.push_back(part);if(tableGroup(*part)==tableGroup(r))applicationSources.push_back(part);}
             std::sort(applicationSources.begin(),applicationSources.end(),[](auto* a,auto* b){return a->number<b->number;});
             ts::DuckContext applicationDuck(&NULLREP);applicationDuck.resetStandards(duck.standards());applicationDuck.setDefaultCharsetIn(duck.charsetIn());
-            applicationsignalling::Builder builder(applicationDuck,applicationSources,revision,cutoff,standardsContext);
+            applicationsignalling::Builder builder(applicationDuck,applicationSources,revision,cutoff,standardsContext,&records);
             out["application_signalling"]=builder.build(r,out["native_table_complete"],out["native_decode_status"]);
+            if(r.tid==0x74)out["application_signalling"]=applicationcarriage::enrich(std::move(out["application_signalling"]),applicationDuck,r,applicationSnapshot,revision,cutoff,standardsContext);
             if(!out.contains("evidence_anchors"))out["evidence_anchors"]=J::array();
             for(const auto& anchor:out["application_signalling"]["evidence_anchors"])out["evidence_anchors"].push_back(anchor);
         }
@@ -1074,6 +1114,7 @@ public:
                         if(valid)for(const auto& value:reference[key])valid=valid&&value.is_string();
                     }
                     if(valid)valid=reference["url"].get<std::string>().rfind("https://",0)==0;
+                    if(valid&&reference.contains("required_pds"))valid=reference["required_pds"].is_number_unsigned()&&reference["required_pds"].get<uint64_t>()<=UINT32_MAX;
                     if(valid)sources.push_back(reference);else out["reference_warnings"].push_back("Ignored malformed or non-HTTPS standard reference");
                 }
             }else out["reference_warnings"].push_back("Optional standards reference index is not installed");
@@ -1090,17 +1131,22 @@ public:
         else if(standardsContext=="dvb")families.insert("DVB");else if(standardsContext=="atsc")families.insert("ATSC");else if(standardsContext=="scte")families.insert("SCTE");else if(standardsContext=="dtmb")families.insert("DTMB");
         if(standardsContext=="j94-system-b")families.insert("J94_SYSTEM_B");
         if(standardsContext=="isdb-japan")families.insert("JAPAN");if(standardsContext=="isdb-brazil")families.insert("ABNT");
-        auto references=[&](const std::string& name,const char* kind){
+        bool privateReferenceWithheld=false;
+        auto references=[&](const std::string& name,const char* kind,const J* wireDescriptor){
             J found=J::array();for(const auto& reference:sources){bool context=false;for(const auto& family:reference["standards"])context=context||families.count(family.get<std::string>());const auto& names=reference[kind];if(context&&std::find(names.begin(),names.end(),J(name))!=names.end()){
+                // Merged SDK XML may carry a private class name without the
+                // original ordered loop context. Never infer that namespace.
+                if(reference.contains("required_pds")&&(!wireDescriptor||wireDescriptor->value("pds",J())!=reference["required_pds"]||wireDescriptor->value("decode_status",std::string())!="decoded")){privateReferenceWithheld=true;continue;}
                 J compact=J::object();for(const auto* field:{"id","title","url","version","scope","access","notes","standards"})if(reference.contains(field))compact[field]=reference[field];found.push_back(compact);
             }}return found;
         };
-        std::function<void(J&,bool)> annotate=[&](J& node,bool table){
-            if(!node.is_object())return;node["references"]=references(node.value("name",std::string()),table?"table_names":"descriptor_names");
-            for(auto& child:node["children"])annotate(child,false);
+        std::function<void(J&,bool,const J*)> annotate=[&](J& node,bool table,const J* wireDescriptor){
+            if(!node.is_object())return;node["references"]=references(node.value("name",std::string()),table?"table_names":"descriptor_names",wireDescriptor);
+            for(auto& child:node["children"])annotate(child,false,wireDescriptor);
         };
-        if(out.contains("native_table")){annotate(out["native_table"],true);out["references"]=out["native_table"]["references"];}
-        for(auto& descriptor:out["descriptors"]){descriptor["references"]=J::array();if(descriptor.contains("native")){annotate(descriptor["native"],false);descriptor["references"]=descriptor["native"]["references"];}}
+        if(out.contains("native_table")){annotate(out["native_table"],true,nullptr);out["references"]=out["native_table"]["references"];}
+        for(auto& descriptor:out["descriptors"]){descriptor["references"]=J::array();if(descriptor.contains("native")){annotate(descriptor["native"],false,&descriptor);descriptor["references"]=descriptor["native"]["references"];}}
+        if(privateReferenceWithheld)out["reference_warnings"].push_back("Private-namespace standard links require original descriptor-loop evidence; merged SDK XML names alone are not sufficient. See the original descriptor sources.");
         return out;
     }
     J preview(const J& args) {
@@ -1208,6 +1254,7 @@ public:
         if(method=="inspect_dvbi")return dvbiDocuments.inspect(args);
         if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return state(args.value("at_packet",UINT64_MAX));
+        if(method=="query_cable_oob")return queryCableOob(args);
         if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
         if(method=="inspect")return inspect(args);

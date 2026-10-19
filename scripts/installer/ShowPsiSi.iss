@@ -1,5 +1,5 @@
 ; Compiled only through package-installer.ps1 after exact payload review/validation.
-; No Microsoft runtime binary is embedded or redistributed by this installer.
+; AppLocal embeds only exact reviewed release DLLs; it never installs a shared runtime.
 #include "generated.iss"
 
 [Setup]
@@ -13,7 +13,7 @@ AppUpdatesURL=https://github.com/znbsf/ShowPsiSi/releases
 DefaultDirName={localappdata}\Programs\ShowPsiSi
 DefaultGroupName=ShowPsiSi
 PrivilegesRequired=lowest
-; System32 runtime checks are validated for native x64 Windows only.
+; The payload and runtime load-path contract target native x64 Windows only.
 ; ARM64 emulation needs its own runtime/load-path acceptance before enabling it.
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
@@ -30,6 +30,10 @@ OutputBaseFilename={#InstallerBaseName}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+#if CrtMode == "AppLocal"
+; Informational vendor terms page, scoped only to the Microsoft components.
+InfoBeforeFile={#PackageRoot}\licenses\microsoft\NOTICE.txt
+#endif
 AppMutex=Local\ShowPsiSi.ApplicationLifetime
 CloseApplications=no
 RestartApplications=no
@@ -53,8 +57,10 @@ Filename: "{app}\bin\showpsisi-qt.exe"; WorkingDir: "{app}"; Description: "Open 
 [Code]
 const
   UninstallKey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{13C6E0A2-B226-4BAA-A218-8DD167D78D4C}_is1';
+#if CrtMode == "Prerequisite"
 var
   DownloadPage: TDownloadWizardPage;
+#endif
 
 function VersionAtLeast(const Actual, Required: String): Boolean;
 var
@@ -65,6 +71,7 @@ begin
     Result := ComparePackedVersion(ActualVersion, RequiredVersion) >= 0;
 end;
 
+#if CrtMode == "Prerequisite"
 function RuntimeFileReady(const Name: String): Boolean;
 var
   Version: String;
@@ -78,8 +85,9 @@ function RuntimeReady: Boolean;
 begin
   Result := RuntimeFileReady('vcruntime140.dll') and
     RuntimeFileReady('vcruntime140_1.dll') and RuntimeFileReady('msvcp140.dll') and
-    RuntimeFileReady('msvcp140_1.dll');
+    RuntimeFileReady('msvcp140_1.dll') and RuntimeFileReady('msvcp140_2.dll');
 end;
+#endif
 
 function IsUpdate: Boolean;
 var
@@ -106,11 +114,13 @@ begin
   end;
 end;
 
+#if CrtMode == "Prerequisite"
 procedure InitializeWizard;
 begin
   DownloadPage := CreateDownloadPage('Microsoft Visual C++ runtime',
     'Downloading the verified prerequisite directly from Microsoft.', nil);
 end;
+#endif
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
@@ -139,6 +149,11 @@ begin
         exit;
       end;
   end;
+#if CrtMode == "AppLocal"
+  // All five DLLs are authenticated/hash-pinned at build time and part of the
+  // exact installer payload. No system-runtime probe, download or UAC request.
+  exit;
+#else
   if RuntimeReady then exit;
   // Never download, elevate or accept Microsoft terms during a silent install.
   if WizardSilent then begin
@@ -182,4 +197,5 @@ begin
   end;
   if (ResultCode <> 0) or not RuntimeReady then
     Result := 'Microsoft runtime installation was cancelled, failed, or did not satisfy the minimum version. No ShowPsiSi application files or registration have been changed. Setup code: ' + IntToStr(ResultCode);
+#endif
 end;

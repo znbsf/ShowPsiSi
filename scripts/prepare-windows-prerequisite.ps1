@@ -3,7 +3,8 @@
 param(
     [Parameter(Mandatory)][string]$Output,
     [string]$MinimumVersion = '14.51.36231.0',
-    [string]$Metadata
+    [string]$Metadata,
+    [ValidateSet('Prerequisite', 'AppLocal')][string]$Purpose = 'Prerequisite'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -51,7 +52,7 @@ $Record = [ordered]@{
     signer_subject = $Signature.SignerCertificate.Subject
     signer_thumbprint = $Signature.SignerCertificate.Thumbprint
     retrieved_at_utc = [DateTime]::UtcNow.ToString('o')
-    redistribution = 'Not embedded or redistributed. Target downloads these exact Microsoft bytes only after explicit consent.'
+    redistribution = if ($Purpose -eq 'AppLocal') { 'Original EXE is a build-time verified source and is not shipped. The five exact derived release DLLs are packaged app-locally subject to their separate reviewed distribution terms.' } else { 'Not embedded or redistributed. Target downloads these exact Microsoft bytes only after explicit consent.' }
 }
 $Record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $Output 'vc-runtime.json') -Encoding utf8NoBOM
 Write-Host "Verified Microsoft prerequisite $Version; SHA-256 $Hash. No installer executed."

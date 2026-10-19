@@ -1,6 +1,6 @@
 # Application signalling source-card contract
 
-Independent protocol feature, 2026-10-19. `inspect` adds an
+`inspect` adds an
 `application_signalling` envelope for AIT/UNT table identities. This is a read-only
 summary for the existing Metadata/Topology interaction, not a new tab or a
 receiver runtime. AIT and the bounded UNT notification adapter require explicit
@@ -61,8 +61,10 @@ inspection result.
   code and source. The SDK map is not used to silently discard duplicates.
 - HTTP bases, extension strings and initial paths stay separate. No resolved URL
   is fabricated and no URI is fetched. Object-carousel component tags and remote
-  triplets are references only; reconstruction and PMT/service joins are outside
-  this increment. Other protocol selectors remain raw hex.
+  triplets are references only. The separate [PAT/PMT carriage view](APPLICATION_CARRIAGE.md)
+  adds numeric, nonexclusive program-to-AIT declarations. Component-carousel and
+  exclusive application-ownership joins remain unsupported. Other protocol selectors
+  remain raw hex.
 - Control-code semantics depend on application type. The summary records the
   code without performing or claiming any lifecycle transition or HbbTV runtime
   conformance. Fetch/execution fields state `not_requested`/`not_executed`.
@@ -107,7 +109,10 @@ not flattened or applied. URI fetching, device eligibility, carousel joins and
 firmware installation remain unsupported.
 
 Basis: [ETSI TS 102 006 V1.4.1](https://www.etsi.org/deliver/etsi_ts/102000_102099/102006/01.04.01_60/ts_102006v010401p.pdf),
-§9 and Annex C, plus pinned SDK typed validation. No full SSU conformance claim.
+§9 and Annex C, plus pinned SDK typed validation. Compatibility presence is
+checked at sub-table scope, so a valid empty section does not create a false
+missing-compatibility diagnostic. Explicit wire-count guards reject missing or
+unclaimed selector bytes. No full SSU conformance claim.
 
 ## Reproduction
 
@@ -116,40 +121,13 @@ fixtures verify scoped labels, multi-section common declarations, duplicate IDs,
 version/current-next cutoffs, malformed data, private/unknown protocols, original
 byte anchors, resource bounds, and no source mutation. The earlier
 `test_application_signalling.py` retains its pinned compiler fixtures and all
-payload-prefix truncations. Use an isolated explicit `SHOWPSISI_CORE`; the
-application build path used here is `build/application-signalling/bin`.
+payload-prefix truncations. Use `SHOWPSISI_CORE` to select the production binary
+from the same source revision as the tests and API files. See
+[test commands](../tests/README.md).
 
-### Local evidence checkpoint
+## DSM-CC source cards
 
-Isolated Linux production and cancellation-test builds passed 24 targeted checks:
-12 new AIT summary tests, seven earlier AIT/UNT inspection tests and five icon
-checks. Logs: `/tmp/application-build5.log`, `/tmp/application-tests5.log`.
-The public French UHF22 recording yields one AIT with six objects and six
-relations, status `ok`; source SHA-256 before/after remains
-`24143de80d28461d084dfb75279da520f335de36b7c35f6398ed6d510daa5937`.
-Ignored evidence: `artifacts/application-signalling/real-ait-summary.json`,
-`real-ait-summary-report.json`, and `summary-ait.json` in that directory.
-This is targeted engine evidence, not combined protocol/UI/Windows acceptance.
-
-The initial compile caught a missing local hex-label formatter and was fixed.
-A later concurrent-source build exposed the DVB-I Expat configuration include
-issue; the owner fixed that and the fresh configured build passed. Failed logs
-remain available; no declaration or test was disabled to make this gate pass.
-
-### Reviewed UNT correction
-
-Independent review verified 54 descriptor-byte and 59 exact-field comparisons
-across 21 sections, plus malformed target-selector probes. Its confirmed finding
-was a false missing-compatibility diagnostic on a valid empty section in a
-multi-section UNT; presence is now checked at sub-table scope. A separate
-adversarial actual-core probe found that the SDK tolerates mismatched compatibility
-descriptor/sub-descriptor counts at an exhausted buffer. The explicit wire-count
-guard now rejects both missing and unclaimed selector bytes.
-
-A private frozen build input from integrated commit `84cc7d0` plus this owned
-patch passed all 38 targeted checks (26 source-card, seven baseline signalling,
-five icon tests). Tests, API, reference data and the core `--root` all used the
-same snapshot. The source manifest and authoritative logs are under ignored
-`artifacts/application-signalling/unt-count-review/`. This isolated result does
-not validate other workers' concurrent J.94 or DVB-I additions. The earlier
-mutable-root preliminary run is excluded from this checkpoint.
+Supported exact-section DII/DDB cards now share this envelope. Individual DDB
+message decoding is independent of complete native-table assembly; both statuses
+remain visible. See [DSMCC_RECONSTRUCTION.md](DSMCC_RECONSTRUCTION.md) for the
+bounded decoder contract, tested scope, and separately staged reconstruction.

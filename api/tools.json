@@ -11,7 +11,7 @@
     "export": "signalling snapshot, not live remultiplexing",
     "native_json": "XML element names and values preserved; attribute keys use ASCII lowercase for API compatibility. Rare case collisions preserve all original attributes in xml_attributes and identify collisions. tsduck_xml retains SDK XML spelling.",
     "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, DTMB context includes registered DTMB signalling descriptors only; no RF demodulation or blanket standards-conformance claim.",
-    "j94_system_b": "Explicit ITU-T J.94 (10/2016) System B TS-section inspection on PID 0x1FFC; NIT CDS/MMS, short-VCT records, NTT SNS/MTS and STT section-local time arithmetic. No current SCTE65 equivalence, map assembly, OOB hardware, receiver actions, or snapshot export.",
+    "j94_system_b": "Explicit ITU-T J.94 (10/2016) System B section inspection; descriptor-revised NIT/NTT/short-VCT subtables via bounded query_cable_oob, plus STT arithmetic. Raw short headers stay unversioned. No current SCTE65 equivalence, synchronized network lineup, receiver actions, OOB hardware or snapshot export.",
     "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness.",
     "ordinary_request_queue": 64,
     "cancellation": "Cooperative targeted cancellation of queued or running analyses. Integer/string request IDs are distinct. Accepted cancellation wins over completion until the terminal commit. Blocking file reads, SDK work and stdout may delay cancellation."
@@ -467,6 +467,37 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false
+      }
+    },
+    {
+      "name": "query_cable_oob",
+      "description": "Read edition-pinned J.94 descriptor-revised subtables at an exact analysis revision and packet cutoff. Absent/ambiguous revision metadata is not assembled; conflicts and missing ranges remain evidence. No complete network lineup or receiver activation. Continuation pages require explicit analysis_revision and at_packet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
       }
     }
   ]

@@ -133,7 +133,7 @@
     "Permissive dependencies listed here need notices; do not invent a corresponding-source obligation for MIT/BSD/Apache merely because exact binary reproduction is unverified.",
     "Upstream TSDuck OTHERS retains historical Haivision/MPL entry; this Windows binary actually links Robotweax MIT SRT BCrypt.",
     "Mbed TLS Apache route selected; no GPL alternative selected.",
-    "VC runtime prerequisite, not redistribution: latest Microsoft x64 v14 runtime >=14.51.36231; observed official download14.51.36247.0 on2026-10-17."
+    "Microsoft app-local runtime: the five exact release x64 DLLs listed below are derived from the pinned official 14.51.36247.0 redistributable; the source EXE is not shipped. See licenses/microsoft/REDISTRIBUTION-REVIEW.json for the applicable distribution-basis review and scoped vendor terms."
   ],
   "qt_source_archives": [
     {
@@ -176,5 +176,65 @@
         "licenses/expat/SOURCE-PROVENANCE.json": "4b0f73db285c97bcfd0d6c4dab25c76ca465fa27da5d8c88ec8d2d4637275cf0"
       }
     }
-  ]
+  ],
+  "microsoft_app_local_runtime": {
+    "schema_version": 1,
+    "mode": "AppLocal",
+    "version": "14.51.36247.0",
+    "minimum_version": "14.51.36231.0",
+    "source": {
+      "official_source": "https://aka.ms/vc14/vc_redist.x64.exe",
+      "url": "https://download.visualstudio.microsoft.com/download/pr/ebdab8e5-1d7b-4d9f-a11b-cbb1720c3b12/843068991DAAA1F73AD9F6239BCE4D0F6A07A51F18C37EA2A867E9BECA71295C/VC_redist.x64.exe",
+      "sha256": "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
+      "bytes": 18731856,
+      "version": "14.51.36247.0"
+    },
+    "files": {
+      "msvcp140.dll": {
+        "bytes": 643512,
+        "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+        "version": "14.51.36247.0",
+        "machine": "AMD64"
+      },
+      "msvcp140_1.dll": {
+        "bytes": 35768,
+        "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982",
+        "version": "14.51.36247.0",
+        "machine": "AMD64"
+      },
+      "msvcp140_2.dll": {
+        "bytes": 274872,
+        "sha256": "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838",
+        "version": "14.51.36247.0",
+        "machine": "AMD64"
+      },
+      "vcruntime140.dll": {
+        "bytes": 178616,
+        "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+        "version": "14.51.36247.0",
+        "machine": "AMD64"
+      },
+      "vcruntime140_1.dll": {
+        "bytes": 50112,
+        "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+        "version": "14.51.36247.0",
+        "machine": "AMD64"
+      }
+    }
+  },
+  "microsoft_runtime_terms": {
+    "official_page": "https://visualstudio.microsoft.com/license-terms/vs2026-ga-visualcpp-v14-redist-runtime/",
+    "files": {
+      "licenses/microsoft/Visual-C-V14-Runtime-Terms.docx": "08651651a7602fc7c0e2763de0fde1ff9f868df2780597cd1775ee9d6441c783",
+      "licenses/microsoft/Visual-C-V14-Runtime-Terms.txt": "3dfd057b91025067c08bd73c3cb0e6f712f76b6198b54413e14365d529f17ea6",
+      "licenses/microsoft/NOTICE.txt": "12218058e5af21ad5360363882b1f5531f7b50a2b59a8fa6bf64d3191bf9f811"
+    },
+    "text_note": "TXT is paragraph text extracted from the retained original official DOCX; NOTICE scopes the vendor terms to Microsoft files only."
+  },
+  "corresponding_source": {
+    "schema_version": 1,
+    "delivery": "same-release-asset",
+    "filename_pattern": "ShowPsiSi-{version}-corresponding-source.zip",
+    "download_information": "SOURCE_DOWNLOAD.txt"
+  }
 }

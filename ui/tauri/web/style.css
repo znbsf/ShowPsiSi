@@ -1548,3 +1548,41 @@ mark.source-byte { color: var(--text); background: var(--selected); outline: 1px
 .topology-source-context p { margin: 3px 0; }
 .topology-coverage { padding: 5px 14px; font-size: 12px; max-height: 160px; overflow: auto; border-bottom: 1px solid var(--border); }
 .topology-coverage summary { cursor: pointer; min-height: 22px; color: var(--muted); }
+/* Separate XML session, retaining the transport workspace and its state. */
+#app[data-input-kind="dvbi"] > .sourcebar,
+#app[data-input-kind="dvbi"] > #source-feedback,
+#app[data-input-kind="dvbi"] > #scan-progress,
+#app[data-input-kind="dvbi"] > #stats,
+#app[data-input-kind="dvbi"] > #panes,
+#app[data-input-kind="dvbi"] > #timeline,
+#app[data-input-kind="dvbi"] > footer,
+#app[data-input-kind="dvbi"] #reset-layout { display: none; }
+#dvbi-workspace { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#dvbi-workspace[hidden] { display: none; }
+.dvbi-panes { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(170px, 230px) minmax(240px, 1fr) minmax(330px, 520px); overflow: hidden; }
+.dvbi-panes > * { min-width: 0; border-right: 1px solid var(--border); }
+.dvbi-profile, #dvbi-message { padding: 8px 16px; margin: 0; border-bottom: 1px solid var(--border); color: var(--muted); }
+#dvbi-message:empty { display: none; }
+#dvbi-message:not(:empty) { color: var(--warn-text); }
+.dvbi-document-summary, .dvbi-element, .dvbi-object, .dvbi-heading { margin: 12px; }
+.dvbi-document-summary { overflow-wrap: anywhere; }
+#dvbi-workspace pre { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+#dvbi-workspace .topology-row { grid-template-columns: 18px minmax(100px, 1fr) minmax(60px, 100px); }
+#dvbi-workspace [data-dvbi-highlight="attribute"] { background: var(--selected); outline: 1px solid var(--accent); }
+#dvbi-loaded-note { padding: 0 12px; }
+#dvbi-workspace h3 { font-size: 12px; }
+#dvbi-workspace .evidence { min-height: 80px; }
+.protocol-sources { margin: 8px 0 16px; }
+@media (max-width: 1050px) {
+  .dvbi-panes { grid-template-columns: 170px minmax(200px,1fr) minmax(280px,1fr); }
+  .titlebar .workspace-name { display: none; }
+}
+@media (max-width: 760px) {
+  .dvbi-panes { grid-template-columns: minmax(200px, 1fr) minmax(280px, 1.2fr); }
+  #dvbi-document { grid-column: 1 / -1; max-height: 180px; }
+}
+
+#dvbi-inspector .dvbi-heading { margin: 12px; }
+#dvbi-inspector p, #dvbi-inspector dd { overflow-wrap: anywhere; }
+#dvbi-workspace .topology-source { width: 100%; margin: 3px 0; }
+#dvbi-workspace .topology-object small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }

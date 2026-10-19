@@ -46,6 +46,10 @@ def stt(time=0, offset=0, tail=b''):
     return section(0xc5, bytes(2) + time.to_bytes(4, 'big') + bytes([offset]) + tail)
 
 
+def revision_descriptor(version=0, number=0, last=0, extra=b'', reserved=0xe0):
+    return descriptor(0x93,bytes([reserved|version,number,last])+extra)
+
+
 class CableOobTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='showpsisi-j94-')
@@ -409,6 +413,255 @@ class CableOobTests(unittest.TestCase):
                 self.assertEqual(f['signalled_time_basis'].split()[0],'GPS' if offset else 'UTC')
                 self.assertIn('no clock setting',f['time_scope'])
                 self.assertEqual(f['descriptors'][0]['raw_hex'],'990178')
+
+    def cable(self, **args):
+        return self.core.call('query_cable_oob',args)
+
+    def test_revision_descriptor_is_scoped_and_preserves_future_trailing_bytes(self):
+        raw = nit(tail=revision_descriptor(31,0,0,b'future',reserved=0))
+        d = self.decoded(raw)
+        rev = d['fields']['j94_system_b']['revision_detection']
+        self.assertEqual(rev['status'],'valid')
+        self.assertEqual((rev['selected']['table_version_number'],rev['selected']['section_number'],rev['selected']['last_section_number']),(31,0,0))
+        self.assertEqual(rev['selected']['extension_hex'],b'future'.hex().upper())
+        self.assertIsNone(d['version'])
+        self.assertIsNone(d['section'])
+        self.assertFalse(d['versioning_supported'])
+        group = self.cable()['groups'][0]
+        self.assertEqual(group['status'],'complete_subtable')
+        self.assertFalse(group['network_lineup_complete'])
+
+    def test_revision_tag_in_record_or_stt_loop_never_versions_the_table(self):
+        nested = revision_descriptor()
+        cds = b'\x01'+word(1)+word(1)+b'\x01'+nested
+        vcm = svct(0,b'\x20\0'+bytes(4)+b'\x01'+word(1)+b'\0'+word(2)+b'\x01'+word(3)+b'\x01\x01'+nested)
+        for raw in (nit(records=[cds]),ntt([sns_record(descriptors=[nested])]),vcm):
+            d = self.decoded(raw)
+            self.assertEqual(d['fields']['j94_system_b']['revision_detection']['status'],'absent')
+            self.assertEqual(self.cable()['groups'][0]['status'],'unversioned')
+        d = self.decoded(stt(tail=nested))
+        self.assertNotIn('revision_detection',d['fields']['j94_system_b'])
+        self.assertEqual(self.cable()['groups'],[])
+
+    def test_competing_duplicate_and_malformed_revision_descriptors_block_assembly(self):
+        for tail,status in ((revision_descriptor()*2,'duplicate'),
+                            (revision_descriptor()+revision_descriptor(1),'conflicting'),
+                            (descriptor(0x93,b''),'malformed'),(descriptor(0x93,b'\0'),'malformed'),
+                            (descriptor(0x93,b'\0\0'),'malformed'),(revision_descriptor(0,2,1),'malformed')):
+            with self.subTest(status=status,tail=tail.hex()):
+                raw = nit(tail=tail);d = self.decoded(raw)
+                self.assertEqual(d['fields']['j94_system_b']['revision_detection']['status'],status)
+                group = self.cable()['groups'][0]
+                self.assertEqual(group['status'],'revision_ambiguous')
+                self.assertEqual(group['records'],[])
+                self.assertFalse(group['subtable_complete'])
+                self.assertEqual(d['raw_hex'],raw.hex().upper())
+
+    def test_profile_one_observations_never_become_an_implicitly_selected_map(self):
+        self.scan([nit(),nit(first=3)])
+        group = self.cable()['groups'][0]
+        self.assertEqual(group['status'],'unversioned')
+        self.assertEqual(len(group['observations']),2)
+        self.assertEqual(group['records'],[])
+        self.assertIsNone(group['revision_detection'])
+
+    def test_out_of_order_revised_subtable_assembly_preserves_record_provenance(self):
+        raw1 = nit(first=3,tail=revision_descriptor(7,1,1))
+        raw0 = nit(tail=revision_descriptor(7,0,1))
+        state,details = self.scan([raw1,raw0])
+        out = self.cable(analysis_revision=state['revision'],at_packet=1)
+        self.assertEqual(out['at_packet'],1)
+        group = out['groups'][0]
+        self.assertTrue(group['sections_complete'])
+        self.assertTrue(group['subtable_complete'])
+        self.assertEqual([r['first_carrier_index'] for r in group['records']],[1,3])
+        raw_by_id = {d['id']:bytes.fromhex(d['raw_hex']) for d in details}
+        for record in group['records']:
+            src = record['source'];raw=raw_by_id[src['section_id']]
+            self.assertEqual(src['analysis_revision'],state['revision'])
+            self.assertEqual(src['at_packet'],1)
+            self.assertEqual(raw[src['record_offset']],record['number_of_carriers'])
+            self.assertEqual(raw[src['revision_descriptor_offset']],0x93)
+        self.assertEqual(group['missing_section_numbers'],[])
+
+    def test_revised_missing_sections_and_cutoffs_do_not_borrow_future_evidence(self):
+        state,_ = self.scan([nit(first=3,tail=revision_descriptor(0,1,2)),nit(tail=revision_descriptor(0,0,2))])
+        first = self.cable(at_packet=0)['groups'][0]
+        self.assertEqual(first['missing_section_numbers'],[0,2])
+        self.assertEqual([r['first_carrier_index'] for r in first['records']],[3])
+        final = self.cable()['groups'][0]
+        self.assertEqual(final['missing_section_numbers'],[2])
+        self.assertEqual(final['status'],'incomplete')
+        self.assertFalse(final['sections_complete'])
+
+    def test_old_complete_to_new_incomplete_revision_has_no_complete_fallback(self):
+        self.scan([nit(tail=revision_descriptor(31,0,1)),nit(first=3,tail=revision_descriptor(31,1,1)),
+                   nit(first=5,tail=revision_descriptor(0,0,1))])
+        self.assertTrue(self.cable(at_packet=1)['groups'][0]['subtable_complete'])
+        group = self.cable()['groups'][0]
+        self.assertEqual(group['revision_detection']['table_version_number'],0)
+        self.assertEqual(group['missing_section_numbers'],[1])
+        self.assertEqual([r['first_carrier_index'] for r in group['records']],[5])
+
+    def test_reused_revision_cannot_resurrect_siblings_from_an_earlier_cycle(self):
+        zero = nit(tail=revision_descriptor(0,0,1))
+        self.scan([zero,nit(first=3,tail=revision_descriptor(0,1,1)),nit(first=5,tail=revision_descriptor(1,0,1)),zero])
+        group = self.cable()['groups'][0]
+        self.assertEqual(group['missing_section_numbers'],[1])
+        self.assertEqual(len(group['records']),1)
+        self.assertEqual(group['sources'][0]['last_observed_packet'],3)
+        self.assertEqual(group['generation_barrier_receive_order'],3)
+
+    def test_same_packet_receive_order_keeps_reused_revision_barrier(self):
+        zero = nit(tail=revision_descriptor(0,0,1))
+        raws = [zero,nit(first=3,tail=revision_descriptor(0,1,1)),nit(first=5,tail=revision_descriptor(1,0,1)),zero]
+        payload=b'\0'+b''.join(raws)
+        self.assertLessEqual(len(payload),184)
+        packet=bytes([0x47,0x40|0x1f,0xfc,0x10])+payload+b'\xff'*(184-len(payload))
+        path=Path(self.temp.name)/'same-packet.ts';path.write_bytes(packet)
+        self.core.call('analyze',{'path':str(path),'standards':'j94-system-b'})
+        group=self.cable(at_packet=0)['groups'][0]
+        self.assertEqual(group['missing_section_numbers'],[1])
+        self.assertEqual(group['sources'][0]['receive_order'],4)
+        self.assertEqual(group['generation_barrier_receive_order'],3)
+
+    def test_same_revision_slot_with_different_raw_bytes_stays_conflicted(self):
+        self.scan([nit(tail=revision_descriptor()),nit(first=3,tail=revision_descriptor())])
+        group=self.cable()['groups'][0]
+        self.assertEqual(group['status'],'conflict')
+        self.assertFalse(group['sections_complete'])
+        self.assertEqual(len(group['sources']),2)
+        self.assertEqual(group['records'],[])
+        self.assertEqual(group['diagnostics'][0]['code'],'conflicting_section_slot')
+
+    def test_ambiguous_or_missing_newest_revision_blocks_older_complete_generation(self):
+        for tail in (b'',revision_descriptor()*2):
+            zero=nit(tail=revision_descriptor(0,0,1))
+            self.scan([zero,nit(first=3,tail=revision_descriptor(0,1,1)),nit(first=5,tail=tail),zero])
+            self.assertEqual(self.cable(at_packet=2)['groups'][0]['records'],[])
+            final=self.cable()['groups'][0]
+            self.assertEqual(final['missing_section_numbers'],[1])
+            self.assertEqual(final['generation_barrier_receive_order'],3)
+
+    def test_crc_invalid_revision_does_not_select_or_complete_a_generation(self):
+        bad=bytearray(nit(first=3,tail=revision_descriptor(1,1,1)));bad[-1]^=1
+        state,details=self.scan([nit(tail=revision_descriptor()),bytes(bad)])
+        result=self.cable();group=result['groups'][0]
+        self.assertTrue(group['subtable_complete'])
+        self.assertEqual(group['revision_detection']['table_version_number'],0)
+        self.assertEqual(len(result['excluded_evidence']),1)
+        self.assertEqual(result['excluded_evidence'][0]['reason'],'invalid_integrity')
+        self.assertIn(bytes(bad).hex().upper(),[d['raw_hex'] for d in details])
+
+    def test_carrier_modulation_and_dcm_overlaps_are_conflicts_not_overwrites(self):
+        mms=lambda first,number:nit(2,first,[b'\x2f\x10'+(1).to_bytes(4,'big')+b'\0'],tail=revision_descriptor(0,number,1))
+        cases=[(nit(tail=revision_descriptor(0,0,1)),nit(first=2,tail=revision_descriptor(0,1,1))),
+               (mms(255,0),mms(255,1)),
+               (svct(1,word(0)+b'\x01\x82',tail=revision_descriptor(0,0,1)),svct(1,word(1)+b'\x01\x82',tail=revision_descriptor(0,1,1)))]
+        for raws in cases:
+            self.scan(raws);group=self.cable()['groups'][0]
+            self.assertTrue(group['sections_complete'])
+            self.assertFalse(group['subtable_complete'])
+            self.assertEqual(group['status'],'conflict')
+            self.assertTrue(any(x['code']=='overlapping_index_range' for x in group['diagnostics']))
+            self.assertEqual(len(group['records']),2)
+
+    def test_index_gaps_are_observed_coverage_not_missing_section_guesses(self):
+        self.scan([nit(tail=revision_descriptor(0,0,1)),nit(first=5,tail=revision_descriptor(0,1,1))])
+        group=self.cable()['groups'][0]
+        self.assertTrue(group['subtable_complete'])
+        self.assertEqual(group['range_coverage']['gaps_between_observed_ranges'],[{'first':3,'last':4}])
+        self.assertFalse(group['range_coverage']['gaps_are_proof_of_missing_transmission'])
+        self.assertEqual(group['range_coverage']['outside_observed_bounds'],'unknown')
+
+    def test_nit_first_index_plus_record_count_overflow_is_excluded_raw_evidence(self):
+        record=b'\x2f\x10'+(1).to_bytes(4,'big')+b'\0'
+        for raw in (nit(first=255,tail=revision_descriptor()),nit(2,255,[record,record],tail=revision_descriptor())):
+            self.scan([raw]);out=self.cable()
+            self.assertEqual(out['groups'],[])
+            self.assertEqual(out['excluded_evidence'][0]['reason'],'unsupported_or_malformed_payload')
+        self.scan([nit(2,254,[record,record],tail=revision_descriptor())])
+        self.assertEqual([r['modulation_index'] for r in self.cable()['groups'][0]['records']],[254,255])
+
+    def test_name_keys_and_inverse_map_indexes_remain_conflicted(self):
+        self.scan([ntt([sns_record(100,b'\0\x01A'),sns_record(100,b'\0\x01B')],tail=revision_descriptor())])
+        group=self.cable()['groups'][0]
+        self.assertEqual(group['status'],'conflict')
+        self.assertEqual([r['source_name']['text'] for r in group['records']],['A','B'])
+        self.scan([svct(2,word(1)+b'\x01'+word(100)+word(7),tail=revision_descriptor(0,0,1)),
+                   svct(2,word(1)+b'\x01'+word(101)+word(8),tail=revision_descriptor(0,1,1))])
+        self.assertEqual(self.cable()['groups'][0]['status'],'conflict')
+
+    def test_vcm_activation_times_are_preserved_not_executed_or_flattened(self):
+        def vcm(time,number):
+            return svct(0,b'\0\0'+time.to_bytes(4,'big')+b'\x01'+word(7)+b'\0'+word(100)+b'\x01'+word(200)+b'\x01',tail=revision_descriptor(0,number,1))
+        self.scan([vcm(100,0),vcm(200,1)])
+        group=self.cable()['groups'][0]
+        self.assertTrue(group['subtable_complete'])
+        self.assertEqual([r['activation_time'] for r in group['records']],[100,200])
+        self.assertFalse(group['network_lineup_complete'])
+        self.scan([vcm(100,0),vcm(100,1)])
+        self.assertEqual(self.cable()['groups'][0]['status'],'conflict')
+
+    def test_repetitions_of_same_section_do_not_become_conflicting_slots(self):
+        raw=nit(tail=revision_descriptor());self.scan([raw,raw])
+        group=self.cable()['groups'][0]
+        self.assertTrue(group['subtable_complete'])
+        self.assertEqual(len(group['records']),1)
+        self.assertEqual(group['sources'][0]['occurrences'],2)
+
+    def test_group_identity_and_pagination_bind_language_vct_revision_and_cutoff(self):
+        state,_=self.scan([ntt(language=b'eng',tail=revision_descriptor()),ntt(language=b'fra',tail=revision_descriptor()),
+                          svct(1,word(1)+b'\x01\x81',vct=42,tail=revision_descriptor()),
+                          svct(1,word(1)+b'\x01\x81',vct=43,tail=revision_descriptor())])
+        first=self.cable(limit=2)
+        self.assertEqual(first['total_groups'],4)
+        self.assertEqual(first['next_offset'],2)
+        with self.assertRaises(RuntimeError):self.cable(offset=2,limit=2)
+        second=self.cable(offset=2,limit=2,analysis_revision=first['analysis_revision'],at_packet=first['at_packet'])
+        self.assertIsNone(second['next_offset'])
+        groups=first['groups']+second['groups'];self.assertEqual(len({g['id'] for g in groups}),4)
+        for g in groups:self.assertEqual((g['analysis_revision'],g['at_packet']),(state['revision'],3))
+
+    def test_query_lifecycle_stale_pages_and_invalid_arguments_fail_closed(self):
+        with self.assertRaises(RuntimeError):self.cable()
+        state,_=self.scan([nit(tail=revision_descriptor())])
+        for args in ({'limit':0},{'limit':101},{'offset':513},{'offset':-1},{'limit':True},
+                     {'at_packet':-1},{'at_packet':1},{'at_packet':0.5},{'analysis_revision':True}):
+            with self.subTest(args=args),self.assertRaises(RuntimeError):self.cable(**args)
+        self.scan([nit(tail=revision_descriptor(1))])
+        with self.assertRaises(RuntimeError):self.cable(analysis_revision=state['revision'])
+        self.scan([nit()],standard='dvb')
+        with self.assertRaises(RuntimeError):self.cable()
+
+    def test_same_table_identity_on_distinct_pids_never_joins_sections(self):
+        packets=[]
+        for pid,raw in ((0x1ffc,nit(tail=revision_descriptor(0,0,1))),
+                        (0x155,nit(first=3,tail=revision_descriptor(0,1,1)))):
+            packets.extend(protocols.ProtocolCoverageTests.packetize(pid,raw))
+        path=Path(self.temp.name)/'two-pids.ts';path.write_bytes(b''.join(packets))
+        self.core.call('analyze',{'path':str(path),'standards':'j94-system-b','extra_pids':[0x155]})
+        out=self.cable();self.assertEqual(out['total_groups'],2)
+        self.assertEqual({g['identity']['pid'] for g in out['groups']},{0x1ffc,0x155})
+        self.assertFalse(any(g['subtable_complete'] for g in out['groups']))
+        self.assertEqual(sorted(g['missing_section_numbers'] for g in out['groups']),[[0],[1]])
+
+    def test_conflicting_last_numbers_do_not_combine_or_reuse_old_sections(self):
+        self.scan([nit(tail=revision_descriptor(0,0,1)),nit(first=3,tail=revision_descriptor(0,1,1)),
+                   nit(first=5,tail=revision_descriptor(0,0,2))])
+        group=self.cable()['groups'][0]
+        self.assertEqual(group['revision_detection']['last_section_number'],2)
+        self.assertEqual(group['missing_section_numbers'],[1,2])
+        self.assertEqual([r['first_carrier_index'] for r in group['records']],[5])
+
+    def test_group_and_record_resource_limits_keep_raw_inspection_available(self):
+        raws=[ntt(language=bytes([65+i//676,65+(i//26)%26,65+i%26]),tail=revision_descriptor()) for i in range(513)]
+        state,_=self.scan(raws)
+        with self.assertRaisesRegex(RuntimeError,'group limit'):self.cable()
+        self.assertEqual(self.core.call('inspect',{'id':state['tables'][0]['id']})['raw_hex'],raws[0].hex().upper())
+        raws=[ntt([sns_record(i*160+j,b'\x80') for j in range(160)],tail=revision_descriptor(0,i,51)) for i in range(52)]
+        self.scan(raws)
+        with self.assertRaisesRegex(RuntimeError,'assembled-record limit'):self.cable()
 
     def test_1024_byte_limit_and_oversized_descriptor_work_are_bounded(self):
         base = b'\0\1\0\1' # NIT no records, descriptors consume remaining section.

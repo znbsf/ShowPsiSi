@@ -26,15 +26,26 @@ var workbench = {
     return sections.find(function(r) {return group.section_ids.indexOf(r.id)>=0 && (group.selected_section_ids || []).indexOf(r.id)>=0;}) || sections.find(function(r) { return group.section_ids.indexOf(r.id)>=0; });
   },
   groupText: function(g) {
+    if(g.versioning_supported===false) return workbench.wireHeaderText(g)+' · '+g.validity+' · '+(g.section_ids || []).length+' exact section observations · map assembly unsupported';
     return 'Ext '+workbench.hex(g.extension)+' · v'+g.version+' · '+(g.current?'current':'next')+' · '+g.validity+' · observed '+(g.observed_section_numbers || []).length+'/'+(Number(g.last_section)+1)+' · missing '+((g.missing_section_numbers || []).join(', ') || 'none')+' · selected '+(g.selected_complete?'complete':'incomplete');
   },
   history: function(state, detail, all) {
     return (state.table_history || []).filter(function(h) { return all || (detail && h.pid===detail.pid && h.table_id===detail.table_id && h.extension===detail.extension); });
   },
   historyText: function(h) {
+    if(h.versioning_supported===false || h.extension===null || h.section===null) return h.name+' · PID '+workbench.hex(h.pid)+' · TID '+workbench.hex(h.table_id,2)+' · '+workbench.wireHeaderText(h)+(h.valid?'':' · INVALID')+' @ '+h.at_packet;
     return h.name+' · PID '+workbench.hex(h.pid)+' · TID '+workbench.hex(h.table_id,2)+' · Ext '+workbench.hex(h.extension)+(h.version == null?' · unversioned':' · v'+h.version)+' · §'+h.section+' · '+(h.current?'current':'next')+(h.valid?'':' · INVALID')+' @ '+h.at_packet;
   }
 };
+
+workbench.wireVersionText = function(row) { return row.versioning_supported===false || row.version===null?'version not carried':row.version===undefined?'version unavailable':'v'+row.version; };
+workbench.wireExtensionText = function(row) { return row.versioning_supported===false || row.extension===null?'extension not carried':row.extension===undefined?'extension unavailable':'Ext '+workbench.hex(row.extension); };
+workbench.wireCurrentText = function(row) { return row.versioning_supported===false || row.current===null?'current/next not carried':row.current===undefined?'current/next unavailable':row.current?'current':'next'; };
+workbench.wireSectionText = function(row) {
+  var section=row.section!==undefined?row.section:row.section_number;
+  return row.versioning_supported===false || section===null?'section number not carried':section===undefined?'section number unavailable':'§'+section+(row.last_section!=null?'/'+row.last_section:'');
+};
+workbench.wireHeaderText = function(row) { return [workbench.wireExtensionText(row),workbench.wireVersionText(row),workbench.wireSectionText(row),workbench.wireCurrentText(row)].join(' · '); };
 
 
 workbench.value = function(key, value) {
@@ -75,10 +86,10 @@ workbench.descriptorNode = function(d) {
 };
 workbench.structure = function(detail, scope, sid) {
   var header={};
-  ['pid','table_id','extension','version','current','section','last_section','bytes','valid','crc','detected_standards'].forEach(function(k) {if(detail[k]!==undefined) header[k]=detail[k];});
+  ['pid','table_id','extension','version','current','section','last_section','versioning_supported','header_semantics','bytes','valid','crc','detected_standards'].forEach(function(k) {if(detail[k]!==undefined) header[k]=detail[k];});
   var children=[workbench.objectNode('header','Section header',header)];
   var sdk=scope==='section'?detail.section_native_table:(detail.merged || {}).native_table;
-  children.push({id:'native',label:'TSDuck decoded structure · '+(scope==='section'?'selected section':'merged table'),value:sdk?'SDK evidence':scope==='section'?'No standalone SDK structure; section-local display in Decoded':'No complete selected generation; no merged decode',children:sdk?[workbench.sdkNode(sdk,sid)]:[]});
+  children.push({id:'native',label:(detail.application_decoder?'Application decoded structure':'TSDuck decoded structure')+' · '+(scope==='section'?'selected section':'merged table'),value:sdk?(detail.application_decoder?'Application evidence':'SDK evidence'):scope==='section'?'No standalone SDK structure; section-local display in Decoded':'No complete selected generation; no merged decode',children:sdk?[workbench.sdkNode(sdk,sid)]:[]});
   if(scope==='merged' && (detail.native_table_sources || []).length) children.push(workbench.objectNode('assembly',detail.merged && detail.merged.complete?'Merged table source sections':'Candidate sections · no completed merge',detail.native_table_sources));
   children.push(workbench.objectNode('fields','Application decoded fields',detail.fields || {}));
   var services=(detail.services || []).filter(function(s){return sid<0 || s.id===sid;});
@@ -96,7 +107,7 @@ workbench.structure = function(detail, scope, sid) {
   if((detail.issues || []).length) children.push(workbench.objectNode('issues','Validation issues',detail.issues));
   children.push(workbench.objectNode('evidence','Source evidence',{first_packet:detail.first_packet,last_packet:detail.last_packet,first_file_offset:detail.first_file_offset,offset_note:detail.offset_note,native_table_at_packet:detail.native_table_at_packet,inspection_scope:detail.inspection_scope,identity:detail.identity,occurrences:(detail.occurrences || []).slice(0,500),display_note:(detail.occurrences || []).length>500?'First 500 occurrences; full list available through Agent API':'All indexed occurrences'}));
   if((detail.evidence_anchors || []).length) children.splice(1,0,{id:'anchors',label:'Source evidence anchors · exact section',children:detail.evidence_anchors.map(function(anchor,i){return {id:String(i),label:anchor.label || anchor.display_path || anchor.field_id || anchor.container_id || 'Source anchor',value:anchor.value==null?(anchor.byte_range?'Section bytes '+anchor.byte_range.offset+'–'+(anchor.byte_range.offset+anchor.byte_range.length-1):'No byte range supplied'):workbench.value(anchor.label || '',anchor.value),children:[workbench.objectNode('locator','Engine source locator',anchor)]};})});
-  return {id:'section',label:detail.name+' section',value:'v'+detail.version+' · '+(detail.valid?'valid':'invalid'),children:children};
+  return {id:'section',label:detail.name+' section',value:workbench.wireVersionText(detail)+' · '+(detail.valid?'valid':'invalid'),children:children};
 };
 workbench.defaultOpen = function(path) {
   return path==='section' || /^section\/(native|fields|services|descriptors)(?:$|\/)/.test(path) && !/\/(meta|attributes)$/.test(path);
@@ -145,6 +156,27 @@ workbench.protocolCards = function(detail, offset, limit) {
     has_previous:offset>0,has_more:offset+limit<items.length};
 };
 
+// Source actions use exact engine references. NorDig cards currently carry only
+// section provenance; descriptor offsets do not establish a field locator.
+workbench.protocolCardSources = function(card) {
+  var evidence=card.evidence || {},rows=[],seen=Object.create(null);
+  function add(ref,relation) {
+    if(!ref || typeof ref!=='object')return;
+    var key=JSON.stringify(ref);
+    if(seen[key])return;seen[key]=true;
+    var available=typeof ref.section_id==='string' && !!ref.section_id && Number.isSafeInteger(ref.analysis_revision) && ref.analysis_revision>0 && Number.isSafeInteger(ref.at_packet) && ref.at_packet>=0;
+    rows.push({ref:ref,label:(ref.assertion_key || 'Source section')+(relation?' · '+relation:''),precision:ref.locator && ref.locator.precision || 'section',available:available});
+  }
+  if(evidence.object) {
+    (evidence.object.evidence || []).forEach(function(ref){add(ref,'');});
+    (evidence.relations || []).forEach(function(r){(r.evidence || []).forEach(function(ref){add(ref,r.relation);});});
+  } else if(evidence.section_id) {
+    add({section_id:evidence.section_id,analysis_revision:evidence.analysis_revision,at_packet:evidence.at_packet,table_identity:evidence.table_identity,
+      assertion_key:'NorDig channel-list source',role:'section evidence',locator:{precision:'section',field_id:null,container_id:null,byte_range:null,display_path:'Selected section; field locator unavailable',resolution_status:'unresolved'}},'');
+  }
+  return rows;
+};
+
 // Topology is an engine-owned semantic projection. These helpers only format
 // returned objects and compare opaque evidence identities; they never join
 // protocol fields, parse XML or infer standards from names/table identifiers.
@@ -173,9 +205,10 @@ workbench.topologyFieldLabel = function(key) {
 workbench.topologyIdentityDetails = function(node) {
   return Object.keys(node.identity || {}).map(function(key){var value=node.identity[key];return workbench.topologyFieldLabel(key)+': '+(value && typeof value==='object'?JSON.stringify(value):workbench.value(key,value));}).join('\n');
 };
-workbench.topologySearch = function(node, query) {
+workbench.topologySearch = function(node, query, excludeXmlRefs) {
   var values=[];
   function visit(value,key) {
+    if(excludeXmlRefs && value && typeof value==='object' && value.source_sha256 && value.element_id)return;
     if(value && typeof value==='object') Object.keys(value).forEach(function(k){visit(value[k],k);});
     else if(value!=null) values.push(String(value),typeof value==='number'?workbench.hex(value):'',typeof value==='number'?workbench.hex(value,2):'');
   }
@@ -206,14 +239,14 @@ workbench.mergeTopology = function(current,page) {
   result.edges=Object.keys(edges).map(function(id){return edges[id];});
   return result;
 };
-workbench.topologyRows = function(snapshot,family,query,expanded,limits) {
+workbench.topologyRows = function(snapshot,family,query,expanded,limits,excludeXmlRefs) {
   var nodes=workbench.topologyNodes(snapshot || {}),byId={},children={},matches={},include={},rows=[],hidden=0;
   nodes=nodes.filter(function(n){return !family || family==='all' || n.family===family;});
   nodes.forEach(function(n){byId[n.node_id]=n;children[n.node_id]=[];});
   var roots=[];
   nodes.forEach(function(n){if(n.parent_id && byId[n.parent_id]) children[n.parent_id].push(n.node_id);else roots.push(n.node_id);});
   var searching=!!String(query || '').trim();
-  nodes.forEach(function(n){matches[n.node_id]=!searching || workbench.topologySearch(n,query);if(matches[n.node_id]) {var id=n.node_id,visited={};while(id && byId[id] && !visited[id]) {visited[id]=true;include[id]=true;id=byId[id].parent_id;}}});
+  nodes.forEach(function(n){matches[n.node_id]=!searching || workbench.topologySearch(n,query,excludeXmlRefs);if(matches[n.node_id]) {var id=n.node_id,visited={};while(id && byId[id] && !visited[id]) {visited[id]=true;include[id]=true;id=byId[id].parent_id;}}});
   var seen={};
   function visit(ids,depth,parent,ancestorMatch) {
     var available=ids.filter(function(id){return !searching || include[id] || ancestorMatch;});
@@ -282,7 +315,22 @@ workbench.mergeDvbi = function(current,page) {
   result.nodes=ids.map(function(id){return nodes[id];});return result;
 };
 workbench.dvbiRows = function(snapshot,query,expanded,limits) {
-  return workbench.topologyRows(snapshot || {},'all',query,expanded,limits);
+  return workbench.topologyRows(snapshot || {},'all',query,expanded,limits,true);
+};
+workbench.dvbiIdentity = function(node) {
+  node=node || {};var identity=node.identity || {},attributes=node.attributes || {},parts=[];
+  var declared=identity.service_id || identity.instance_id || identity.service_ref || identity.list_id;
+  if(declared)parts.push(String(declared));
+  if(node.object_type==='lcn_table') {
+    var regions=(attributes.target_regions || []).map(function(r){return r.region_ref;}).filter(function(r){return r!==null && r!==undefined && r!=='';});
+    if(regions.length)parts.push((regions.length===1?'Region ref ':'Region refs ')+regions.slice(0,3).join(', ')+(regions.length>3?' +'+(regions.length-3):''));
+    else parts.push('Region not declared');
+  }
+  if(!declared) {
+    var source=(node.evidence || [])[0];
+    if(source && source.element_id)parts.push('XML '+source.element_id);
+  }
+  return parts.join(' · ') || (node.object_type || 'Object').replace(/_/g,' ');
 };
 workbench.dvbiEvidence = function(node) {
   var refs=[],seen=Object.create(null);

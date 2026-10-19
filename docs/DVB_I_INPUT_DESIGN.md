@@ -1,8 +1,8 @@
 # DVB-I input and evidence design
 
-Status: bounded local C++ importer/API implemented in the later protocol branch;
-Qt/Web input and inspection UI remains planned. User authorized protocol
-completion on 2026-10-19. Keep this out of the first release candidate.
+The bounded local C++ importer/API and independent Qt/Web document workspaces
+are implemented. See [DVB-I workbench](DVB_I_UI.md) for interaction scope.
+Network retrieval, playback and full-schema/receiver behavior remain unsupported.
 Current contract, security limits and verification boundary: [DVB-I API](DVB_I_API.md).
 
 ## Normative baseline
@@ -18,7 +18,7 @@ parameters and regional LCN tables. This input is XML metadata, not TS packets.
 The official page also links schemas/examples and the reference client. Their
 redistribution terms must be checked before bundling anything.
 
-## Proposed implementation sequence
+## Implementation sequence and remaining boundary
 
 1. Local XML import into the shared C++ engine. No network dependency, no media
    fetching, no application execution. Preserve input bytes and their SHA-256.

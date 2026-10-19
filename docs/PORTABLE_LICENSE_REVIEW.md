@@ -1,5 +1,46 @@
 # Windows Qt/core portable license and source review
 
+## Current app-local / paired-source candidate (2026-10-19)
+
+The current implementation stages the five exact Microsoft release x64 DLLs
+14.51.36247.0 beside the executables, checks all normal/delay imports and requires
+native evidence that Qt/core loaded their own required subsets from package bin.
+It does not install/elevate a shared runtime. The engineering distribution review for this exact inventory is complete on the
+[hosted-runner basis](PORTABLE_LICENSE_REVIEW.md#hosted-runner-distribution-basis).
+Native Windows/final payload gates remain mandatory; this is not a legal guarantee.
+
+Large Qt sources move to `ShowPsiSi-VERSION-corresponding-source.zip` on the same
+release, using LGPLv3/GPLv3 section6(d) network source access. Small licenses,
+notices, source-index, build features, replacement instructions and exact generated
+`SOURCE_DOWNLOAD.txt` remain in both binaries. Exact original source archives stay
+in the reviewed inventory and are rehashed inside the paired asset. Archive,
+installer and publisher gates reject absent/mismatched source delivery. Source
+upload/readback precedes public publication; old matching source must remain
+available with old binaries. The automatic GitHub app-source ZIP is not a substitute.
+
+Native Windows app-local build/install/launcher/load-path tests and clean-machine
+offline acceptance are not inferred from Linux helper tests. See
+[Windows acceptance](WINDOWS_APPLOCAL_ACCEPTANCE.md) and [installer pipeline](WINDOWS_INSTALLER.md).
+The records below describe the prior prerequisite/in-package-source checkpoint
+and remain historical evidence where that older layout is mentioned.
+
+## Hosted-runner distribution basis
+
+The [runner team's confirmation](https://github.com/actions/runner-images/issues/12945#issuecomment-3348002951)
+states that GitHub-hosted Windows builds use licensed Visual Studio Enterprise
+without requiring each user to maintain a personal license.
+[Microsoft's VS2022 REDIST list](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)
+permits the listed unmodified runtime files subject to Visual Studio license terms.
+
+Applying those ordinary redistribution terms to this hosted build is an explicit
+engineering inference. The private Microsoft/GitHub agreement is not quoted or
+independently verified. This review covers the exact pinned release DLLs and
+notices only; it is not a legal guarantee, acceptance of new terms, or Release
+publication approval. Final native Windows and payload identity checks remain
+required. App-local security servicing requires a reviewed application update.
+
+## Historical prerequisite-mode checkpoint
+
 Audit date: 2026-10-17 UTC. Scope: first Windows x64 **Qt + shared core**
 portable CI candidate, Qt 6.7.3 `msvc2019_64`, TSDuck/TSCore 3.45-4798,
 Microsoft v14 runtime prerequisite (app-local redistribution is optional). Tauri, Rust, WebView2, installer, signing and public
@@ -368,8 +409,8 @@ and match them before a binary ZIP is uploaded.
 
 ## Protocol increment: static Expat 2.9.0 (2026-10-19)
 
-The later protocol worktree adds Expat to the shared core for local DVB-I XML
-inspection. This does not alter the sealed first-release source. The official
+Expat is statically linked into the shared core for local DVB-I XML inspection.
+The official
 [Expat 2.9.0 release](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0)
 archive is 534,052 bytes, SHA-256
 `1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051`.
@@ -399,7 +440,6 @@ cannot be discovered by looking only for imported DLLs.
 
 The exact redistribution review adds these three notice/provenance files and
 updates only the three affected top-level notice/index hashes; existing runtime
-and Qt source pins are unchanged. This source/notice review is locally tested.
-Fresh hosted Windows static-link, staged payload, runtime and installer evidence
-are still required for this protocol increment; no clean-machine or native GUI
-acceptance is implied.
+and Qt source pins are unchanged. Fresh exact-revision Windows static-link,
+staged payload, runtime and installer evidence remain separate gates; no
+clean-machine or native GUI acceptance is implied.

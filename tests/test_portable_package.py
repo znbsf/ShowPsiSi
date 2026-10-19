@@ -63,7 +63,7 @@ class PortablePackageTests(unittest.TestCase):
         launcher = ROOT / 'scripts/portable/Launch Qt.cmd'
         text = launcher.read_text()
         command = portable_launcher_checks.command(launcher)
-        for name in ('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll'):
+        for name in ('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll'):
             self.assertIn(name, command)
         self.assertIn('14.51.36231.0', command)
         self.assertIn('10.0.17763.0', command)
@@ -73,6 +73,7 @@ class PortablePackageTests(unittest.TestCase):
         self.assertLess(text.index('if errorlevel 1 goto runtime_not_ready'), text.index('start "" /wait'))
         self.assertIn('https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist', text)
         self.assertIn('exit /b 1', text)
+        self.assertLess(text.index('if not errorlevel 0 goto runtime_not_ready'), text.index('start "" /wait'))
 
     def test_launcher_probe_requires_exact_single_production_command(self):
         launcher = self.root / 'launcher.cmd'
@@ -83,9 +84,9 @@ class PortablePackageTests(unittest.TestCase):
     def test_preflight_fixture_changes_only_checker_root_not_powershell_environment(self):
         production = portable_launcher_checks.command(ROOT / 'scripts/portable/Launch Qt.cmd')
         fixture = portable_launcher_checks.fixture_command(production)
-        self.assertEqual(fixture.replace('$env:SHOWPSISI_PREFLIGHT_FIXTURE_ROOT', '$env:SystemRoot'), production)
+        self.assertEqual(fixture.replace('$env:SHOWPSISI_PREFLIGHT_FIXTURE_ROOT', '$env:SHOWPSISI_PACKAGE_ROOT'), production)
         self.assertNotIn('$env:SystemRoot', fixture)
-        for bad in ('no root', '$env:SystemRoot; $env:SystemRoot'):
+        for bad in ('no root', '$env:SHOWPSISI_PACKAGE_ROOT; $env:SHOWPSISI_PACKAGE_ROOT'):
             with self.assertRaisesRegex(RuntimeError, 'one DLL root'):
                 portable_launcher_checks.fixture_command(bad)
 

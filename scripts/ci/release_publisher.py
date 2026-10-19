@@ -20,8 +20,11 @@ import urllib.parse
 import urllib.request
 import zipfile
 
+import corresponding_source
 import installer_checks as installer
 import portable_checks as portable
+import portable_launcher_checks
+import vc_runtime
 
 REPOSITORY = 'znbsf/ShowPsiSi'
 REPOSITORY_ID = 1422615049
@@ -44,6 +47,8 @@ PREFIX = '/repos/' + REPOSITORY
 REQUEST_PATH = '.github/release-request.json'
 SETUP = f'ShowPsiSi-{VERSION}-windows-x64-setup.exe'
 PORTABLE = f'ShowPsiSi-{VERSION}-windows-x64-portable.zip'
+CORRESPONDING_SOURCE = f'ShowPsiSi-{VERSION}-corresponding-source.zip'
+SOURCE_ARTIFACT = 'ShowPsiSi-windows-corresponding-source'
 ARTIFACTS = ('ShowPsiSi-windows-x64-installer', 'ShowPsiSi-windows-x64-portable',
              'windows-installer-validation', 'windows-portable-validation')
 JOBS = {'engine-web', 'qt-native', 'tauri-native-build', 'Windows MSVC engine and Qt',
@@ -55,7 +60,10 @@ WINDOWS_STEPS = {
     'Native Qt offscreen interaction regressions',
     'Validate relocated portable candidate without SDK PATH',
     'Gate binary ZIP on exact runtime and redistribution review',
-    'Verify official Microsoft runtime download without executing it',
+    'Verify and extract pinned app-local Microsoft runtime as data',
+    'Check app-local launcher with missing, old and damaged local DLLs',
+    'Build and verify paired corresponding-source archive',
+    'Keep verified corresponding-source artifact (never publish a release)',
     'Build per-user installer from exact reviewed payload',
     'Install, upgrade, repair and uninstall in a Unicode path',
     'Bind setup and no-install ZIP to common release checksums',
@@ -366,7 +374,11 @@ def fetch_artifacts(api, request, work):
     entries = result.get('artifacts', [])
     require(result.get('total_count') == len(entries) <= 100, 'Artifact listing is incomplete or excessive')
     selected = []
-    for name in ARTIFACTS:
+    # Legacy bundled-source runs have four artifacts. A separately declared
+    # source delivery is mandatory at payload validation and cannot fall back to
+    # those runs. Any supplied sidecar receives the same run/source checks here.
+    names = (*ARTIFACTS, SOURCE_ARTIFACT) if any(a.get('name') == SOURCE_ARTIFACT for a in entries) else ARTIFACTS
+    for name in names:
         matches = [a for a in entries if a.get('name') == name]
         require(len(matches) == 1, 'Required artifact missing or duplicated: ' + name)
         item = matches[0]
@@ -432,19 +444,126 @@ def canonical_prerequisite(value):
     return result
 
 
+def exact_json(value, expected):
+    # Python equality treats True/1 and 1.0/1 as equal; control metadata does not.
+    return json.dumps(value, sort_keys=True, allow_nan=False) == json.dumps(expected, sort_keys=True, allow_nan=False)
+
+
+def check_installer_runtime(package, build, record, prerequisite):
+    """Bind the installer route to the exact packaged runtime and source EXE.
+
+    Historical prerequisite artifacts predate an explicit installer crt_mode.
+    App-local inputs must carry the complete canonical provenance instead of
+    using that compatibility default or dropping the original signature proof.
+    This is data-only verification; no runtime or installer executable is run.
+    """
+    mode = build.get('crt_mode')
+    require(mode in ('Prerequisite', 'AppLocal'), 'Unreviewed installer runtime mode')
+    require(build.get('crt_minimum_version') == installer.MINIMUM_RUNTIME,
+            'Installer runtime minimum differs from the reviewed requirement')
+    if mode == 'Prerequisite':
+        require(record.get('crt_mode', 'Prerequisite') == mode
+                and record.get('crt_provenance') is None and build.get('crt_provenance') is None,
+                'Prerequisite installer runtime mode/provenance mismatch')
+        return
+    metadata = read_json(package / 'bin/showpsisi-vc-runtime.json')
+    require(record.get('crt_mode') == mode and exact_json(record.get('crt_provenance'), metadata)
+            and exact_json(build.get('crt_provenance'), metadata),
+            'App-local installer runtime provenance differs from the package')
+    vc_runtime.verify_package(package, build)
+    source = metadata['source']
+    require(exact_json({key: prerequisite.get(key) for key in source}, source),
+            'App-local runtime source differs from verified Microsoft prerequisite provenance')
+
+
+def check_applocal_signatures(package, path):
+    """Bind native Authenticode evidence to every pinned, packaged DLL.
+
+    This consumes the exact native preparation report; it neither runs artifact
+    code nor substitutes a hash match for Windows signature verification.
+    """
+    require(path.is_file() and not path.is_symlink(), 'App-local runtime signature evidence is missing')
+    records = read_json(path)
+    expected = vc_runtime.pin()['package_metadata']['files']
+    fields = {'name', 'sha256', 'signature_status', 'signer_subject', 'signer_thumbprint'}
+    require(isinstance(records, list) and len(records) == len(expected) == 5
+            and all(isinstance(record, dict) and set(record) == fields
+                    and all(isinstance(value, str) for value in record.values()) for record in records),
+            'App-local runtime signature records are incomplete or malformed')
+    names = [record['name'] for record in records]
+    require(len(set(names)) == len(names) and set(names) == set(expected),
+            'App-local runtime signature records must identify exactly five unique pinned DLLs')
+    for record in records:
+        name = record['name']
+        require(record['sha256'] == expected[name]['sha256'] == sha256(package / 'bin' / name),
+                'App-local runtime signature hash differs from pinned package bytes')
+        subject = record['signer_subject']
+        # Only the ordinary unescaped DN form emitted for these Microsoft
+        # certificates is accepted. Quoted/escaped commas must not turn a CN
+        # value into an apparent Microsoft organization attribute.
+        require(record['signature_status'] == 'Valid'
+                and re.fullmatch(r'[A-Za-z][A-Za-z0-9.]*=[^,"\\\r\n]+(?:, *[A-Za-z][A-Za-z0-9.]*=[^,"\\\r\n]+)*', subject)
+                and re.findall(r'(?:^|, *)O=([^,]*)', subject) == ['Microsoft Corporation']
+                and re.fullmatch(r'[a-fA-F0-9]{40}', record['signer_thumbprint']),
+                'App-local runtime signature is not valid Microsoft evidence')
+
+
+def check_preflight(package, build, preflight):
+    mode = build.get('crt_mode')
+    require(mode in ('Prerequisite', 'AppLocal'), 'Unreviewed portable launcher runtime mode')
+    expected = ({name: values[0] for name, values in portable_launcher_checks.REQUIRED_CASES.items()}
+                if mode == 'AppLocal' else
+                {'host-runtime-ready': 0, 'missing-runtime-blocked': 1, 'old-runtime-blocked': 1})
+    cases = preflight.get('cases')
+    require(preflight.get('passed') is True and 'error' not in preflight
+            and preflight.get('launcher_sha256') == sha256(package / 'Launch Qt.cmd')
+            and isinstance(cases, list) and len(cases) == len(expected)
+            and all(isinstance(case, dict) and type(case.get('exit_code')) is int for case in cases)
+            and {case.get('name'): case['exit_code'] for case in cases} == expected,
+            'Portable launcher runtime acceptance is incomplete')
+    if mode == 'AppLocal':
+        require(type(preflight.get('schema_version')) is int and preflight['schema_version'] == 1
+                and preflight.get('mode') == mode and preflight.get('clean_machine_verified') is False
+                and preflight.get('package_manifest_sha256') == sha256(package / 'manifest.json'),
+                'App-local launcher preflight identity/boundary mismatch')
+        for case in cases:
+            _, diagnostic, fixture = portable_launcher_checks.REQUIRED_CASES[case['name']]
+            require(case.get('fixture_root_binding') is fixture,
+                    'App-local launcher fixture root binding is incomplete')
+            for stream in ('stdout', 'stderr'):
+                raw = case.get(stream + '_hex')
+                require(isinstance(raw, str) and re.fullmatch(r'(?:[a-f0-9]{2})*', raw) is not None,
+                        'App-local launcher raw subprocess evidence is missing')
+                require(bytes.fromhex(raw).decode('utf-8', errors='backslashreplace') == case.get(stream),
+                        'App-local launcher subprocess evidence disagrees')
+            require(diagnostic in case['stderr'], 'App-local launcher negative-case diagnostic is missing')
+
+
 def validate_payload(work, request):
     setup_dir, zip_dir, installer_evidence, portable_evidence = [work / name for name in ARTIFACTS]
+    source_dir = work / SOURCE_ARTIFACT
+    source_zip = source_dir / CORRESPONDING_SOURCE if source_dir.exists() else None
     require({p.name for p in setup_dir.iterdir()} == {SETUP, 'SHA256SUMS', 'installer-build.json'},
             'Unexpected files in setup artifact')
     require({p.name for p in zip_dir.iterdir()} == {PORTABLE, PORTABLE + '.sha256', 'SHA256SUMS'},
             'Unexpected files in portable artifact')
+    if source_zip is not None:
+        require({p.name for p in source_dir.iterdir()} == {CORRESPONDING_SOURCE, CORRESPONDING_SOURCE + '.sha256', 'SHA256SUMS'},
+                'Unexpected files in corresponding-source artifact')
     setup, zipped = setup_dir / SETUP, zip_dir / PORTABLE
     with setup.open('rb') as stream:
         require(stream.read(2) == b'MZ', 'Setup is not a Windows executable')
     hashes = {SETUP: sha256(setup), PORTABLE: sha256(zipped)}
+    if source_zip is not None:
+        hashes[CORRESPONDING_SOURCE] = sha256(source_zip)
     exact_checksums((setup_dir / 'SHA256SUMS').read_bytes(), hashes)
     require((setup_dir / 'SHA256SUMS').read_bytes() == (zip_dir / 'SHA256SUMS').read_bytes(), 'Artifact checksum files disagree')
     exact_checksums((zip_dir / (PORTABLE + '.sha256')).read_bytes(), {PORTABLE: hashes[PORTABLE]})
+    if source_zip is not None:
+        require((setup_dir / 'SHA256SUMS').read_bytes() == (source_dir / 'SHA256SUMS').read_bytes(),
+                'Corresponding-source checksum file disagrees')
+        exact_checksums((source_dir / (CORRESPONDING_SOURCE + '.sha256')).read_bytes(),
+                        {CORRESPONDING_SOURCE: hashes[CORRESPONDING_SOURCE]})
     safe_extract(zipped, work / 'payload')
     require({p.name for p in (work / 'payload').iterdir()} == {'ShowPsiSi-windows-x64'}, 'Unexpected portable ZIP root')
     package = work / 'payload/ShowPsiSi-windows-x64'
@@ -458,6 +577,12 @@ def validate_payload(work, request):
     build = read_json(package / 'build-information.json')
     require(manifest.get('build') == build and build.get('source_commit') == request['source_sha']
             and build.get('application_version') == VERSION, 'Package build/version/source mismatch')
+    if 'corresponding_source' in build:
+        require(source_zip is not None, 'Declared corresponding-source artifact is missing')
+        corresponding_source.verify_archive(source_zip, package, expected_source=request['source_sha'], expected_version=VERSION)
+    else:
+        require(source_zip is None, 'Undeclared corresponding-source artifact is forbidden')
+        corresponding_source.verify_bundled_sources(package)
     marker = read_json(package / 'bin/showpsisi-portable.json')
     require(marker.get('schema_version') == 1 and marker.get('resource_root') == '..' and marker.get('scope') == 'qt-core',
             'Portable package marker is invalid')
@@ -472,13 +597,10 @@ def validate_payload(work, request):
     require(not list(portable_evidence.rglob('distribution-gate.json')), 'A blocked distribution gate is present')
     # These helpers only hash/read files and validate exact dependency inventories.
     installer.gate(package, validation_dir, request['source_sha'], VERSION)
+    if build.get('crt_mode') == 'AppLocal':
+        portable.verify_applocal_validation(package, validation)
     preflight = read_json(portable_evidence / 'portable-launcher-probe/preflight.json')
-    expected_cases = {'host-runtime-ready': 0, 'missing-runtime-blocked': 1, 'old-runtime-blocked': 1}
-    cases = preflight.get('cases', [])
-    require(preflight.get('passed') is True and 'error' not in preflight
-            and preflight.get('launcher_sha256') == sha256(package / 'Launch Qt.cmd')
-            and len(cases) == len(expected_cases) and {c.get('name'): c.get('exit_code') for c in cases} == expected_cases,
-            'Portable launcher prerequisite acceptance is incomplete')
+    check_preflight(package, build, preflight)
     record = read_json(setup_dir / 'installer-build.json')
     require(record == read_json(installer_evidence / 'artifacts/installer-candidate/installer-build.json'),
             'Installer build evidence differs between artifacts')
@@ -487,11 +609,23 @@ def validate_payload(work, request):
             and record.get('installer_sha256') == hashes[SETUP] and record.get('installer_bytes') == setup.stat().st_size
             and record.get('package_manifest_sha256') == manifest_hash and record.get('signing') == 'unsigned candidate',
             'Installer identity is not bound to the exact approved payload')
+    if source_zip is not None:
+        expected_source = {'asset_name': CORRESPONDING_SOURCE, 'bytes': source_zip.stat().st_size,
+                           'sha256': hashes[CORRESPONDING_SOURCE], 'source_commit': request['source_sha'],
+                           'application_version': VERSION}
+        require(exact_json(record.get('corresponding_source'), expected_source)
+                and exact_json(read_json(validation_dir / 'corresponding-source-validation.json'), expected_source),
+                'Installer/portable corresponding-source evidence differs from the paired asset')
+    else:
+        require('corresponding_source' not in record, 'Legacy installer declares an unpaired corresponding-source asset')
     runtime = record.get('prerequisite', {})
     require(canonical_prerequisite(runtime) == canonical_prerequisite(
         read_json(installer_evidence / '.deps/installer-prerequisite/vc-runtime.json')),
         'Microsoft runtime provenance differs')
     installer.verify_prerequisite(runtime)
+    check_installer_runtime(package, build, record, runtime)
+    if build.get('crt_mode') == 'AppLocal':
+        check_applocal_signatures(package, installer_evidence / '.deps/app-local-runtime-work/runtime-signatures.json')
     smoke = read_json(installer_evidence / 'artifacts/installer-validation/installer-smoke.json')
     require(all(smoke.get(key) is True for key in ('passed', 'settings_preserved', 'shortcuts_verified', 'all_manifested_payload_removed'))
             and 'error' not in smoke and 'cleanup_error' not in smoke
@@ -499,10 +633,15 @@ def validate_payload(work, request):
             and smoke.get('production_core_mutex') == {'held_while_running': True, 'released_after_exit': True},
             'Installer acceptance failed, incomplete or bound to different bytes')
     check_steps(smoke)
+    if build.get('crt_mode') == 'AppLocal':
+        portable.verify_applocal_installer_validation(package, smoke)
     # These limitations are deliberate release disclosures, never converted to pass.
     require(all(smoke.get(key) is False for key in ('clean_machine_verified', 'native_dialogs_verified', 'runtime_bootstrap_exercised'))
             and validation.get('native_windows_desktop_verified') is False, 'Acceptance boundary changed; review release disclosures')
-    return {SETUP: setup, PORTABLE: zipped, 'SHA256SUMS': setup_dir / 'SHA256SUMS'}, manifest_hash, runtime['sha256']
+    files = {SETUP: setup, PORTABLE: zipped, 'SHA256SUMS': setup_dir / 'SHA256SUMS'}
+    if source_zip is not None:
+        files[CORRESPONDING_SOURCE] = source_zip
+    return files, manifest_hash, runtime['sha256']
 
 
 def release_body(root, request):
@@ -592,8 +731,12 @@ def publish(api, request, files, body, work):
                           'name': 'ShowPsiSi ' + TAG, 'body': body, 'draft': True, 'prerelease': False})
         validate_release(release, source, body)
         require(release['draft'], 'New release unexpectedly public')
-    for name in sorted(missing):
+    # Source bytes arrive before either binary; publication still waits for
+    # every asset's independent download/readback and final public verification.
+    for name in sorted(missing, key=lambda value: (value != CORRESPONDING_SOURCE, value)):
         api.upload(release['id'], files[name])
+        if name == CORRESPONDING_SOURCE:
+            verify_assets(api, release['id'], files, work, allow_missing=True)
     verify_assets(api, release['id'], files, work, allow_missing=False)
     validate_ci(api, request)
     require(tag_target(api) == source, 'Tag moved before publication')
@@ -630,6 +773,12 @@ def main():
                       'installer_signing': 'unsigned', 'clean_machine_verified': False, 'native_dialogs_verified': False,
                       'missing_runtime_bootstrap_verified': False, 'live_future_version_update_verified': False,
                       'portable_update': 'Browser ZIP download; manual checksum verification and new-folder replacement'}
+        build = read_json(work / 'payload/ShowPsiSi-windows-x64/build-information.json')
+        provenance['crt_mode'] = build['crt_mode']
+        if build['crt_mode'] == 'AppLocal':
+            provenance['crt_provenance'] = build['crt_provenance']
+        if 'corresponding_source' in build:
+            provenance['corresponding_source'] = build['corresponding_source']
         provenance_path = work / 'release-provenance.json'
         provenance_path.write_text(json.dumps(provenance, indent=2, sort_keys=True) + '\n', encoding='utf-8')
         files[provenance_path.name] = provenance_path

@@ -4,12 +4,16 @@
 
 本轮在独立 Linux 云环境开发。既有 Qt、Linux Tauri 和 Chromium 工作台基线已连接真实引擎验证，包含 Linux 原生打开／保存对话框、编辑导出和回读；TSDuck 3.45 升级后的逐项验证范围见 [协议覆盖记录](docs/PROTOCOL_COVERAGE.md)。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
 
-## Windows 安装与更新（发布准备中）
+## Windows 安装与更新（v0.2.0 已发布）
 
-首个安装版本面向 Windows 10/11 x64，使用 Qt 工作台。正式下载以
-[本仓库 Releases](https://github.com/znbsf/ShowPsiSi/releases) 为准；当前分支的安装候选和验证结果见
-[发布准备记录](docs/RELEASE_READINESS.md)。不要把尚未发布的候选称为稳定发行版。
+当前安装版本面向 **Windows 10 1809 及以上／Windows 11 x64**，使用 Qt 工作台。
+从 [v0.2.0 Release](https://github.com/znbsf/ShowPsiSi/releases/tag/v0.2.0) 下载
+[安装包](https://github.com/znbsf/ShowPsiSi/releases/download/v0.2.0/ShowPsiSi-0.2.0-windows-x64-setup.exe) 或
+[免安装 ZIP](https://github.com/znbsf/ShowPsiSi/releases/download/v0.2.0/ShowPsiSi-0.2.0-windows-x64-portable.zip)，
+并核对同页的 SHA256SUMS。安装包目前**未做代码签名**；校验和不代表已有 SmartScreen 信誉。
+源提交、完整验证记录及尚未覆盖的范围见 [v0.2.0 验证记录](docs/releases/v0.2.0-validation.md)。
 
+- 新增可追溯原始信令的 Topology 关联工作区；关系来源、历史截面、主题和键盘导航沿用工作台逻辑。
 - 安装到当前用户目录，保留现有用户设置；程序中 About / Updates 显示版本和本 GitHub 仓库。
 - 手动检查稳定新版本，查看说明，再选择下载。校验 SHA-256 后，由用户明确选择安装并退出。
 - 缺少所需微软 VC++ 运行库时，安装器会询问是否下载并打开微软官方安装程序；首次安装可能需要联网和管理员确认。
@@ -17,6 +21,10 @@
 - 独立 ZIP、源码构建及 Tauri 使用官方 Release 页面；不声称具备 Qt 安装版的自动安装流程。
 
 完整边界见 [安装器](docs/WINDOWS_INSTALLER.md) 和 [更新器](docs/UPDATES.md)。
+
+开发中的 v0.3.0 候选新增有界协议检查、独立 DVB-I XML 工作区和 app-local 运行库打包，尚未发布。
+当前功能与限制见 [协议支持范围](docs/PROTOCOL_COVERAGE.md#current-protocol-extension-support)，
+构建验收入口见 [测试契约](docs/PROTOCOL_TEST_PLAN.md)；[候选发布说明](docs/releases/v0.3.0.md)保留 Windows 验证边界。
 
 ## 编辑器式工作台
 
@@ -93,7 +101,7 @@ Chromium + 真实 3.45 引擎，合成 DSM-CC 样流。长表名使用紧凑缩�
 
 Qt 改名预览后可选择 TS 或 BIN，再用 Save 选择可写的新输出路径；默认从用户文档／主目录开始，不写入安装目录的 `artifacts/`。取消保存会保留预览，已有输出文件或同名 manifest 会被拒绝。两种格式都只包含信令；BIN 需要保留相邻 manifest 才能追溯 PID，TS 不包含音视频／PCR，也不保留原始时序。
 
-SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-tauri/target/`，不包含在 Git 仓库中。此原型需要本机安装 TSDuck 开发包；尚未制作面向其他电脑的安装包。
+SDK 和构建产物位于工作区的 `.deps/`、`build/` 和 `ui/tauri/src-tauri/target/`，不包含在 Git 仓库中。源码构建需要本机准备 TSDuck 开发包；Windows 用户可使用上方已发布的 Qt 安装包或免安装 ZIP。
 
 ## 已实现
 

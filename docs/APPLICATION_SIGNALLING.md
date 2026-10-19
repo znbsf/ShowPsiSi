@@ -1,9 +1,9 @@
 # Application and update signalling inspection
 
-Checkpoint: 2026-10-19. This is inspector coverage, not a HbbTV browser or a
+This is bounded inspector coverage, not a HbbTV browser or a
 receiver/firmware-update implementation.
 
-## First increment and evidence
+## Inspection coverage
 
 `tests/test_application_signalling.py` sends synthetic TS packets through the
 real JSONL core. Seven test methods cover:
@@ -60,69 +60,22 @@ and original-section anchors for existing Metadata/Topology presentation. The
 adapters do not execute applications or fetch signalled URIs. The bounded UNT
 source cards add compatibility/target/operational declarations and preserve
 unknown eligibility, location ambiguity and full-OUI collisions. Cross-table
-carousel resolution and DSM-CC assembly remain subsequent increments.
+carousel resolution remains a subsequent increment. Exact-section DSM-CC cards
+and bounded same-PID captured-module reconstruction are now documented in
+[DSMCC_RECONSTRUCTION.md](DSMCC_RECONSTRUCTION.md). Their hashes cover only
+complete captured byte sequences with exact source/epoch evidence, not a complete
+application, software image, signature check or receiver runtime.
 
-## Next loops
+## Carriage, tests and limits
 
-1. Build source-linked application summaries: common versus application-local
-   transport labels, missing/ambiguous references, multiple applications,
-   control-code transitions and versions. Do not silently pick one transport.
-2. Add SSU notification/device-target/compatibility and transport relations.
-   Keep unknown private selectors opaque and show why a target cannot resolve.
-3. Extend DSM-CC tests from DII/DDB fields to bounded module assembly. Test
-   reordered/duplicate/conflicting/missing blocks, version/download-ID reuse,
-   cancellation, limits, and incomplete capture. Object-carousel reconstruction
-   is a separate stage after module evidence is reliable.
-4. Add safe object export only after traversal, symlink, size, decompression and
-   filename tests. Extracted data must never execute or install automatically.
-5. Add Qt/Web summaries using the shared source-navigation model; verify both
-   themes, keyboard access, large datasets, cutoff/snapshot state and raw jumps.
+[Application carriage](APPLICATION_CARRIAGE.md) adds bounded, nonexclusive
+PAT/PMT-to-AIT source relationships. `tests/test_application_summaries.py`,
+`tests/test_application_carriage.py`, `tests/test_dsmcc_summaries.py` and
+`tests/test_dsmcc_reconstruction.py` exercise original-byte anchors, conflicting
+and missing identities, generation/cutoff isolation, malformed input and resource
+bounds through the production core. See [test commands](../tests/README.md).
 
-All steps need regression evidence and explicit remaining boundaries before
-being promoted from planned to verified. Synthetic tests do not replace a
-captured-stream acceptance case.
-
-## Real-capture read-only check
-
-On 2026-10-19 the first protocol increment was also checked against the existing
-public [TSDuck France UHF22 recording](https://tsduck.io/streams/?stream=france-dttv).
-The default DVB scan retained 1,855 records. Inspection of the 1,482 AIT, UNT and
-DSM-CC table-ID records yielded these merged native-tree counts: AIT 1, UNT 4,
-DSM-CC user-to-network message 42, download-data message 17, generic raw fallback
-6, and no merged native tree 1,412. These count retained variants, not unique
-applications, downloads or complete modules.
-
-A representative missing merged tree is a valid-CRC 4,094-byte DDB section with
-section number 226; its status is `incomplete table; raw section retained`.
-This matters for the next carousel increment: incomplete table/module assembly
-must not be confused with missing captured bytes or a fully undecodable block.
-Per-section evidence remains authoritative.
-
-The complete scan/inspection took 17.28 seconds on the cloud host. Source SHA-256
-before and after was identical:
-`24143de80d28461d084dfb75279da520f335de36b7c35f6398ed6d510daa5937`.
-The ignored `artifacts/application-signalling/real-capture.json` retains the
-binary identity, source provenance, representative native trees and boundaries.
-No application, URL or firmware was fetched/executed. This check does not prove
-complete carousel assembly, receiver behaviour or all HbbTV/SSU variants.
-
-## Bounded AIT/UNT summary validation checkpoint
-
-On 2026-10-19 the source-hash-verified combined engine gate passed 361 tests
-with no skips, including 23 real-core AIT/UNT summary cases. The focused summary,
-application-signalling and icon suites also passed all 35 checks. Tests cover
-full-OUI hash collisions, malformed and private selectors, section-scoped common
-UNT descriptors, operational location precedence, location conflicts, exact
-source anchors and captured-generation cutoffs. They do not establish device
-eligibility or complete SSU receiver conformance.
-
-The same unmodified public France UHF22 recording produced one AIT summary with
-six objects and six relations, and four UNT summaries with 27 objects and 28
-relations in total. The UNT PIDs were 1027 and 1037 (OUI 6530), and 1074 and 1071
-(OUI 279). Their retained compatibility groups and full-width transport
-association tags remain source declarations: private selectors and unresolved
-carousel associations keep the summaries explicitly incomplete. Input SHA-256
-again matched the value above. Ignored evidence is retained in
-`artifacts/application-signalling/real-ait-summary-report.json` and
-`real-unt-summary-report.json`; the combined gate is under
-`artifacts/dvbi-frozen-final/`. No application or firmware was fetched or run.
+Signalled URLs and firmware locations remain inert. Device eligibility,
+cross-PID carousel association, BIOP reconstruction, object export, decompression,
+application execution and receiver conformance remain unsupported. Synthetic
+fixtures and bounded public-capture checks do not certify complete HbbTV or SSU.

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "review_complete": true,
+  "license_basis": {
+    "applicable_terms_url": "https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files",
+    "hosted_license_confirmation": "https://github.com/actions/runner-images/issues/12945#issuecomment-3348002951",
+    "distribution_basis": "GitHub-hosted Windows runner Visual Studio Enterprise use is licensed through the hosted service. The published Visual Studio 2022 REDIST list permits licensed users to distribute its listed unmodified runtime files, including files from the official latest-runtime download channel. This project applies that ordinary REDIST permission to its hosted build.",
+    "downstream_hosted_redist_is_inference": true,
+    "inference_boundary": "The runner team confirms hosted Enterprise licensing and no separate personal copy requirement. Its public statement does not reproduce the private Microsoft/GitHub agreement or expressly quote downstream REDIST terms. The downstream application of the normal published REDIST grant is an engineering interpretation, not a legal guarantee.",
+    "personal_license_evidence_required": false,
+    "new_agreement_accepted": false
+  },
+  "reason": "Engineering redistribution review complete for the exact five unmodified release x64 runtime DLLs and retained Microsoft-only terms, on the documented hosted-license interpretation below. Technical build/signature/load-path and final exact-payload gates remain required; this review does not authorize Release publication.",
+  "redist_list": "https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution",
+  "source_sha256": "843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c",
+  "runtime_version": "14.51.36247.0",
+  "files": {
+    "msvcp140.dll": {
+      "bytes": 643512,
+      "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+      "version": "14.51.36247.0",
+      "machine": "AMD64"
+    },
+    "msvcp140_1.dll": {
+      "bytes": 35768,
+      "sha256": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982",
+      "version": "14.51.36247.0",
+      "machine": "AMD64"
+    },
+    "msvcp140_2.dll": {
+      "bytes": 274872,
+      "sha256": "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838",
+      "version": "14.51.36247.0",
+      "machine": "AMD64"
+    },
+    "vcruntime140.dll": {
+      "bytes": 178616,
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+      "version": "14.51.36247.0",
+      "machine": "AMD64"
+    },
+    "vcruntime140_1.dll": {
+      "bytes": 50112,
+      "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+      "version": "14.51.36247.0",
+      "machine": "AMD64"
+    }
+  },
+  "review_date_utc": "2026-10-19"
+}

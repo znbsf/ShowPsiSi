@@ -4,17 +4,18 @@ Requires Windows 10 version 1809 (build 17763) or newer, or Windows 11, native x
 with its system D3Dcompiler_47.dll. ARM64 emulation is not validated.
 Extract the whole archive into a writable folder. Open Launch Qt.cmd.
 No Python, PowerShell 7, Qt/TSDuck SDK or compiler is needed to use this GUI.
-Launch Qt.cmd uses inbox 64-bit Windows PowerShell for a read-only prerequisite
-check. It does not change ExecutionPolicy or any system settings. Missing/old
-runtime or a check failure is explained before Qt starts. Directly opening
-bin\showpsisi-qt.exe bypasses that preflight and may show a Windows DLL error.
-Default prerequisite mode requires the Microsoft Visual C++ 2015-2022 x64
-Redistributable v14 runtime >=14.51.36231.0 to be installed already. If needed,
-review and install the official x64 runtime yourself from Microsoft:
-https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
-This package never downloads or installs that runtime automatically.
-See build-information.json crt_mode: Prerequisite excludes VC DLLs; AppLocal
-includes separately reviewed release VC DLLs. Neither mode installs an SDK.
+Launch Qt.cmd uses inbox 64-bit Windows PowerShell for a read-only check of the
+five matching bundled Microsoft runtime DLLs. Its native-x64 check uses local
+Windows WMI (a bounded read-only query); an unavailable checker fails clearly. It checks their version, x64
+architecture and exact package identities before Qt starts. It does not change
+ExecutionPolicy or system settings, download, install, or request elevation.
+If a bundled file is missing or damaged, extract a fresh verified package rather
+than copying a DLL from another program or from System32. Directly opening
+bin\showpsisi-qt.exe bypasses this friendly preflight and may show a Windows DLL
+error for a damaged package. An intact AppLocal package needs no separately
+installed Visual C++ runtime. Windows still supplies its own UCRT/D3D components.
+The five release DLLs are 14.51.36247.0 (minimum 14.51.36231.0); exact identities
+and Microsoft source provenance are in bin/showpsisi-vc-runtime.json.
 Keep bin, api, extensions and references together. The bundled synthetic lab.ts
 contains six services and intentional malformed signalling; it has no media.
 Use Browse to open your own transport stream. Exports go to the location you
@@ -30,6 +31,10 @@ launch also clears SHOWPSISI_* settings. Developers must explicitly launch with
 
 Included: Qt Quick frontend, production C++ engine, runtime DLLs/data, synthetic
 sample, component notices/source information and SHA-256 inventory.
+The large Qt sources are a free matching asset of the same release. See
+SOURCE_DOWNLOAD.txt for its exact URL and filename. Downloading the source ZIP
+is optional for running the application; licenses and replacement instructions
+remain inside this package.
 Excluded: Tauri/WebView2, Python MCP adapter, SDKs, compilers and test helper.
 Tauri requires a separate WebView2 runtime decision and is not in this package.
 

@@ -311,6 +311,44 @@ class InstallerPackageTests(unittest.TestCase):
         self.assertIn('CloseApplications=no', code)
         self.assertIn('AppMutex=Local\\ShowPsiSi.ApplicationLifetime', code)
 
+    def test_applocal_conditional_has_no_shared_runtime_install_path(self):
+        # Static branch contract only. Actual ISCC compilation and Windows smoke
+        # remain native CI gates; this does not emulate the Inno compiler.
+        code = (ROOT / 'scripts/installer/ShowPsiSi.iss').read_text()
+        for mode in ('AppLocal', 'Prerequisite'):
+            enabled, stack, selected = True, [], []
+            for line in code.splitlines():
+                if line.startswith('#if '):
+                    self.assertIn(line, ('#if CrtMode == "AppLocal"', '#if CrtMode == "Prerequisite"'))
+                    stack.append((enabled, line == f'#if CrtMode == "{mode}"'))
+                    enabled = all(stack[-1])
+                elif line == '#else':
+                    parent, condition = stack[-1]
+                    enabled = parent and not condition
+                elif line == '#endif':
+                    enabled = stack.pop()[0]
+                elif enabled:
+                    selected.append(line)
+            self.assertFalse(stack)
+            selected = '\n'.join(selected)
+            for guard in ('if IsUpdate', 'DirectoryHasFiles', 'Downgrades are blocked',
+                          'PrivilegesRequired=lowest', 'AppMutex=Local\\ShowPsiSi.ApplicationLifetime'):
+                self.assertIn(guard, selected)
+            if mode == 'AppLocal':
+                for forbidden in ('ShellExec(', 'DownloadPage', 'RuntimeReady', "ExpandConstant('{sys}\\')"):
+                    self.assertNotIn(forbidden, selected)
+                self.assertIn('licenses\\microsoft\\NOTICE.txt', selected)
+            else:
+                self.assertIn("ShellExec('runas'", selected)
+                self.assertIn("RuntimeFileReady('msvcp140_2.dll')", selected)
+
+    def test_declared_source_sidecar_is_required_before_installer_preparation(self):
+        build = json.loads((self.package / 'build-information.json').read_text())
+        build['corresponding_source'] = {'delivery': 'same-release-asset'}
+        (self.package / 'build-information.json').write_text(json.dumps(build))
+        with self.assertRaisesRegex(RuntimeError, 'paired corresponding-source archive is required'):
+            portable.verify_corresponding_source(self.package, None)
+
     def test_work_and_output_cannot_modify_reviewed_payload(self):
         for generated, output in ((self.package / 'generated', self.root / 'out'),
                                   (self.root / 'generated', self.package / 'out')):

@@ -8,6 +8,7 @@ param(
     [Parameter(Mandatory)][string]$Work,
     [Parameter(Mandatory)][string]$Python,
     [string]$InnoCompiler,
+    [string]$CorrespondingSource,
     [switch]$CreateUpgradeFixture
 )
 $ErrorActionPreference = 'Stop'
@@ -54,7 +55,7 @@ function Checked([string]$Program, [string[]]$Arguments) {
 }
 $Checker = Join-Path $PSScriptRoot 'ci/installer_checks.py'
 $Generated = Join-Path $Work 'release'
-Checked $Python @($Checker, 'prepare', '--package', $Package, '--artifacts', $Validation, '--prerequisite', $RuntimeMetadata, '--version', $Version, '--source-commit', $SourceCommit, '--generated', $Generated, '--output', $Output)
+Checked $Python @($Checker, 'prepare', '--package', $Package, '--artifacts', $Validation, '--prerequisite', $RuntimeMetadata, '--version', $Version, '--source-commit', $SourceCommit, '--generated', $Generated, '--output', $Output, '--corresponding-source', $CorrespondingSource)
 Checked $InnoCompiler @('/Qp', (Join-Path $Generated 'ShowPsiSi.iss'))
 $Installer = Join-Path $Output "ShowPsiSi-$Version-windows-x64-setup.exe"
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) { throw 'Inno did not produce the exact required installer asset.' }
@@ -72,7 +73,7 @@ if ($CreateUpgradeFixture) {
     $FixtureGenerated = Join-Path $Work 'previous'
     $FixtureOutput = Join-Path $Work 'test-only'
     New-Item -ItemType Directory -Path $FixtureOutput | Out-Null
-    Checked $Python @($Checker, 'prepare', '--package', $Package, '--artifacts', $Validation, '--prerequisite', $RuntimeMetadata, '--version', $Version, '--source-commit', $SourceCommit, '--generated', $FixtureGenerated, '--output', $FixtureOutput, '--upgrade-fixture')
+    Checked $Python @($Checker, 'prepare', '--package', $Package, '--artifacts', $Validation, '--prerequisite', $RuntimeMetadata, '--version', $Version, '--source-commit', $SourceCommit, '--generated', $FixtureGenerated, '--output', $FixtureOutput, '--upgrade-fixture', '--corresponding-source', $CorrespondingSource)
     Checked $InnoCompiler @('/Qp', (Join-Path $FixtureGenerated 'ShowPsiSi.iss'))
 }
 Write-Host "Built unsigned installer candidate: $Installer. Install/upgrade/uninstall smoke is still required."

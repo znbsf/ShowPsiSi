@@ -12,6 +12,9 @@ python -m unittest discover -s tests -p test_section_evidence.py -v
 python -m unittest discover -s tests -p test_protocol_coverage.py -v
 python -m unittest discover -s tests -p test_application_signalling.py -v
 python -m unittest discover -s tests -p test_application_summaries.py -v
+python -m unittest discover -s tests -p test_application_carriage.py -v
+python -m unittest discover -s tests -p test_dsmcc_summaries.py -v
+python -m unittest discover -s tests -p test_dsmcc_reconstruction.py -v
 python -m unittest discover -s tests -p test_nordig.py -v
 python -m unittest discover -s tests -p test_scte_extensions.py -v
 python -m unittest discover -s tests -p test_cable_oob.py -v
@@ -26,6 +29,7 @@ python -m unittest discover -s tests -p test_protocol_presentation.py -v
 python -m unittest discover -s tests -p test_qt_protocol_cards.py -v
 
 python -m unittest discover -s tests -p test_qt_topology.py -v
+python -m unittest discover -s tests -p test_qt_dvbi.py -v
 if [[ "${SHOWPSISI_BROWSER_TESTS:-0}" == 1 ]]; then
   python -m unittest discover -s tests -p test_web_ui.py -v
 fi

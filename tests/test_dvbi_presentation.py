@@ -47,12 +47,25 @@ class DvbiPresentationTests(unittest.TestCase):
         for row in rows:
             if row['parent_id']:self.assertIn(row['parent_id'],ids)
 
+    def test_lcn_alternatives_use_declared_regions_and_source_fallback(self):
+        snapshot=self.imported();nodes=[n for n in snapshot['nodes'] if n['object_type']=='lcn_table']
+        labels=self.js('(nodes,w)=>nodes.map(n=>w.dvbiIdentity(n))',nodes)
+        self.assertEqual(len(set(labels)),2)
+        self.assertIn('Region ref north',labels[0]);self.assertIn('Region ref south',labels[1])
+        for node,label in zip(nodes,labels):self.assertIn('XML '+node['evidence'][0]['element_id'],label)
+        nodes[0]['attributes']['target_regions']=[]
+        fallback=self.js('(n,w)=>w.dvbiIdentity(n)',nodes[0])
+        self.assertIn('Region not declared',fallback);self.assertIn('XML ',fallback)
+        self.assertNotIn(snapshot['source']['sha256'],fallback)
+
     def test_paged_merge_rejects_changed_document(self):
         snapshot=self.imported(many_services(510))
         page=self.core.call('query_dvbi',{'offset':500,'limit':500,'document_revision':snapshot['document_revision']})
         merged=self.js('(v,w)=>w.mergeDvbi(v.first,v.next)',{'first':snapshot,'next':page})
         self.assertEqual(len(merged['nodes']),merged['counts']['nodes'])
         self.assertEqual(len({n['node_id'] for n in merged['nodes']}),len(merged['nodes']))
+        self.assertEqual(self.js('(s,w)=>w.dvbiRows(s,"Programme 509",{},{}).matched',snapshot),0)
+        self.assertEqual(self.js('(s,w)=>w.dvbiRows(s,"Programme 509",{},{}).matched',merged),1)
         page['source']['sha256']='different'
         self.assertIn('hash',self.js('(v,w)=>{try{w.mergeDvbi(v.first,v.next);return "accepted";}catch(e){return e.message;}}',{'first':snapshot,'next':page}))
 

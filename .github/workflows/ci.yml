@@ -160,6 +160,8 @@ jobs:
           python -m unittest discover -s tests -p test_installer_package.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/ci/windows_shortcuts.py --artifacts artifacts/installer-shortcut-probe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/ci/portable_launcher_checks.py --launcher "scripts/portable/Launch Qt.cmd" --artifacts artifacts/portable-launcher-probe
       - name: Extract pinned TSDuck SDK and install Qt 6.7.3
         run: ./scripts/ci/windows.ps1 -Phase Dependencies
       - name: Build MSVC engine and deploy Qt runtime
@@ -187,9 +189,13 @@ jobs:
       - name: Gate binary ZIP on exact runtime and redistribution review
         id: portable
         run: |
-          python scripts/ci/portable_checks.py archive --package artifacts/portable-stage --artifacts artifacts/portable-validation --output artifacts/ShowPsiSi-windows-x64-qt.zip
+          $version = (Get-Content artifacts/portable-stage/build-information.json -Raw | ConvertFrom-Json).application_version
+          if ($version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') { throw 'Invalid portable application version.' }
+          $asset = "ShowPsiSi-$version-windows-x64-portable.zip"
+          python scripts/ci/portable_checks.py archive --package artifacts/portable-stage --artifacts artifacts/portable-validation --output "artifacts/$asset"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $ready = Test-Path artifacts/ShowPsiSi-windows-x64-qt.zip
+          $ready = Test-Path "artifacts/$asset"
+          "asset_name=$asset" >> $env:GITHUB_OUTPUT
           "ready=$($ready.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           if (-not $ready) { "Portable binary upload blocked by runtime or redistribution review. See portable-validation/distribution-gate.json." >> $env:GITHUB_STEP_SUMMARY }
       - name: Verify official Microsoft runtime download without executing it
@@ -206,6 +212,20 @@ jobs:
         run: |
           $record = Get-Content artifacts/installer-candidate/installer-build.json -Raw | ConvertFrom-Json
           python scripts/ci/installer_checks.py smoke --package artifacts/portable-stage --artifacts artifacts/installer-validation --version $record.version --installer "artifacts/installer-candidate/$($record.asset_name)" --previous artifacts/installer-build/test-only/TEST-ONLY-previous-version.exe
+      - name: Bind setup and no-install ZIP to common release checksums
+        if: ${{ success() && steps.installer_smoke.outcome == 'success' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $record = Get-Content artifacts/installer-candidate/installer-build.json -Raw | ConvertFrom-Json
+          $portable = '${{ steps.portable.outputs.asset_name }}'
+          if ($portable -ne "ShowPsiSi-$($record.version)-windows-x64-portable.zip") { throw 'Release asset versions differ.' }
+          $setupHash = (Get-FileHash "artifacts/installer-candidate/$($record.asset_name)" -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($setupHash -ne $record.installer_sha256) { throw 'Installer changed after smoke.' }
+          $zipHash = (Get-FileHash "artifacts/$portable" -Algorithm SHA256).Hash.ToLowerInvariant()
+          $zipLine = "$zipHash  $portable"
+          if ((Get-Content "artifacts/$portable.sha256" -Raw).Trim() -ne $zipLine) { throw 'Portable ZIP changed after archive gate.' }
+          @("$setupHash  $($record.asset_name)", $zipLine) | Set-Content artifacts/SHA256SUMS -Encoding ascii
+          Copy-Item artifacts/SHA256SUMS artifacts/installer-candidate/SHA256SUMS
       - name: Keep verified Windows installer candidate (never publish a release)
         if: ${{ success() && steps.installer_smoke.outcome == 'success' }}
         uses: actions/upload-artifact@v4
@@ -233,10 +253,11 @@ jobs:
         if: ${{ success() && steps.portable.outputs.ready == 'true' }}
         uses: actions/upload-artifact@v4
         with:
-          name: ShowPsiSi-windows-x64-qt
+          name: ShowPsiSi-windows-x64-portable
           path: |
-            artifacts/ShowPsiSi-windows-x64-qt.zip
-            artifacts/ShowPsiSi-windows-x64-qt.zip.sha256
+            artifacts/ShowPsiSi-*-windows-x64-portable.zip
+            artifacts/ShowPsiSi-*-windows-x64-portable.zip.sha256
+            artifacts/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
       - name: Keep portable validation evidence (no runtime binaries)
@@ -246,6 +267,7 @@ jobs:
           name: windows-portable-validation
           path: |
             artifacts/portable-validation
+            artifacts/portable-launcher-probe
             artifacts/portable-stage/manifest.json
             artifacts/portable-stage/build-information.json
           if-no-files-found: warn

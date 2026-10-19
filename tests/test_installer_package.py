@@ -266,6 +266,23 @@ class InstallerPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Installed payload differs'):
             installer.verify_installed(self.package, installed)
 
+    def test_uninstall_requires_every_owned_file_and_marker_removed(self):
+        installed = self.root / 'installed'
+        installed.mkdir()
+        (installed / 'manifest.json').write_text('remaining metadata')
+        (installed / 'showpsisi-installation.json').write_text('remaining installation marker')
+        (installed / 'bin').mkdir()
+        (installed / 'bin/Qt6Core.dll').write_text('remaining runtime')
+        manifest = {'files': {'bin/Qt6Core.dll': {}}}
+        self.assertEqual(set(installer.remaining_payload(installed, manifest)),
+                         {'manifest.json', 'showpsisi-installation.json', 'bin/Qt6Core.dll'})
+        for name in installer.remaining_payload(installed, manifest):
+            (installed / name).unlink()
+        # Self-deleting Inno helper and user exports are not manifested payload.
+        (installed / 'unins000.exe').write_text('deferred self deletion')
+        (installed / 'my-export.ts').write_text('user file')
+        self.assertEqual(installer.remaining_payload(installed, manifest), [])
+
     def test_silent_install_does_not_download_or_elevate(self):
         code = (ROOT / 'scripts/installer/ShowPsiSi.iss').read_text()
         silent = code.index('if WizardSilent then begin')
@@ -281,6 +298,7 @@ class InstallerPackageTests(unittest.TestCase):
         self.assertNotIn('[UninstallDelete]', code)
         self.assertIn('PrivilegesRequired=lowest', code)
         self.assertIn('ArchitecturesAllowed=x64os', code)
+        self.assertIn('MinVersion=10.0.17763', code)
         self.assertIn('ArchitecturesInstallIn64BitMode=x64os', code)
         self.assertNotIn('x64compatible', code)
         self.assertIn('CloseApplications=no', code)

@@ -1,11 +1,18 @@
 # Windows Qt installer and update asset contract
 
-Implementation date: 2026-10-19. Primary target: Windows 10/11 x64, Qt + the
+Implementation date: 2026-10-19. Primary target: Windows 10 1809+/11 x64, Qt + the
 production shared engine. Setup permits native x64 Windows only; ARM64 emulation
 is not enabled because its system-runtime/load-path behavior is not validated.
 Tauri/WebView2 remains experimental and is not an
 installer payload. This pipeline prepares unsigned CI candidates; it does not
 publish a GitHub release or create a release tag.
+
+Setup requires build 17763 or newer, matching the pinned [Qt 6.7.3 Windows support floor](https://github.com/qt/qtdoc/blob/v6.7.3/doc/src/platforms/supported-platforms.qdocinc#L51-L67).
+This is a documented support boundary, not a reproduced old-Windows crash.
+The companion no-install deliverable is `ShowPsiSi-0.1.0-windows-x64-portable.zip`;
+both assets share the same version and release `SHA256SUMS`. The ZIP launcher
+checks the system prerequisite without downloading/installing anything; its
+direct EXE bypasses that user-friendly check. See the included README-portable.txt.
 
 ## User experience
 
@@ -137,7 +144,7 @@ fixture tests installer version transitions, not a historical app-schema migrati
 A VS-equipped Windows runner already has a runtime. Its smoke **does not** prove
 clean-machine installation, missing-runtime download/UAC/Microsoft-license-dialog
 handling, native app file dialogs or GPU behavior. Those remain explicit release
-acceptance checks on a suitable clean Windows 10/11 environment. In particular,
+acceptance checks on a suitable clean Windows 10 1809+/11 environment. In particular,
 exercise offline first install, cancellation, UAC decline, restart-required
 outcome, and a successful missing-runtime flow without weakening security settings.
 Retain the exact installer/hash and actual results. No clean-machine claim is

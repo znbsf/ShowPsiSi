@@ -27,7 +27,12 @@ ReleaseUpdater::ReleaseUpdater(QObject* parent) : QObject(parent), m_network(new
         fail(QStringLiteral("Update request timed out. Check your connection and retry."));
     });
 #if defined(Q_OS_WIN) && defined(Q_PROCESSOR_X86_64)
-    const QDir bin(QCoreApplication::applicationDirPath());
+    inspectWindowsPackage(QCoreApplication::applicationDirPath());
+#endif
+}
+void ReleaseUpdater::inspectWindowsPackage(const QString& binPath) {
+    m_installRoot.clear(); m_isPortable = false;
+    const QDir bin(binPath);
     QFile marker(bin.filePath("showpsisi-portable.json"));
     if (marker.open(QIODevice::ReadOnly) && marker.size() <= 4096) {
         const auto object = QJsonDocument::fromJson(marker.readAll()).object();
@@ -36,6 +41,9 @@ ReleaseUpdater::ReleaseUpdater(QObject* parent) : QObject(parent), m_network(new
         {
             const QString root = QDir::cleanPath(bin.absoluteFilePath(".."));
             QFile installation(root + "/showpsisi-installation.json");
+            // The same payload backs both distributions. An absent installer
+            // marker means portable; a malformed existing marker fails closed.
+            m_isPortable = !QFileInfo::exists(installation.fileName());
             if (installation.open(QIODevice::ReadOnly) && installation.size() <= 16384) {
                 const auto installed = QJsonDocument::fromJson(installation.readAll()).object();
                 if (installed.value("schema_version").toInt() == 1 &&
@@ -46,17 +54,30 @@ ReleaseUpdater::ReleaseUpdater(QObject* parent) : QObject(parent), m_network(new
             }
         }
     }
-#endif
 }
 ReleaseUpdater::~ReleaseUpdater() { stopRequest(); discardDownload(); }
 QString ReleaseUpdater::currentVersion() const { return QStringLiteral(SHOWPSISI_VERSION); }
 QString ReleaseUpdater::repositoryUrl() const { return ShowPsiSiUpdates::repositoryUrl(); }
+QString ReleaseUpdater::edition() const { return installerSupported() ? "installed" : m_isPortable ? "portable" : "source"; }
+QString ReleaseUpdater::editionLabel() const {
+    if (installerSupported()) return "Windows x64 Qt · installed edition";
+    if (m_isPortable) return "Windows x64 Qt · portable edition (no installation)";
+#if defined(Q_OS_WIN) && defined(Q_PROCESSOR_X86_64)
+    return "Qt source build or unrecognized package";
+#else
+    return "Qt non-Windows or unsupported-platform build";
+#endif
+}
 bool ReleaseUpdater::busy() const { return m_state == "checking" || m_state == "downloading"; }
 bool ReleaseUpdater::canDownload() const {
-    return installerSupported() && !busy() && m_state != "ready" && m_state != "launching" &&
+    return installerSupported() && m_release.kind == PackageKind::Installer && !busy() && m_state != "ready" && m_state != "launching" &&
            m_release.sha256.size() == 32 && isNewerVersion(m_release.version, currentVersion());
 }
-bool ReleaseUpdater::canInstall() const { return installerSupported() && m_state == "ready" && !m_installerPath.isEmpty(); }
+bool ReleaseUpdater::canInstall() const { return installerSupported() && m_release.kind == PackageKind::Installer && m_state == "ready" && !m_installerPath.isEmpty(); }
+bool ReleaseUpdater::canOpenPortable() const {
+    return edition() == "portable" && m_state == "available" && m_release.kind == PackageKind::Portable &&
+           m_release.sha256.size() == 32 && !m_release.assetUrl.isEmpty() && isNewerVersion(m_release.version, currentVersion());
+}
 double ReleaseUpdater::progress() const { return m_release.size > 0 ? double(m_received) / double(m_release.size) : 0; }
 void ReleaseUpdater::updateState(const QString& state, const QString& message) { m_state = state; m_status = message; emit changed(); }
 void ReleaseUpdater::stopRequest() {
@@ -146,16 +167,16 @@ void ReleaseUpdater::finished(QNetworkReply* reply) {
         fail(QString("Update request failed (HTTP %1, network error %2). Check your connection and retry.").arg(status).arg(int(error))); return;
     }
     if (m_kind == RequestKind::Metadata) {
-        const auto parsed = parseRelease(m_body, currentVersion());
+        const auto parsed = parseRelease(m_body, currentVersion(), m_isPortable ? PackageKind::Portable : PackageKind::Installer);
         m_body.clear(); m_received = 0;
         if (parsed.status == MetadataStatus::Rejected) { fail(parsed.error); return; }
         m_release = parsed.release;
         if (parsed.status == MetadataStatus::UpToDate) {
-            m_deadline.stop(); updateState("up-to-date", "No newer stable version is available. Installed version: " + currentVersion() + "."); return;
+            m_deadline.stop(); updateState("up-to-date", "No newer stable version is available. Current version: " + currentVersion() + "."); return;
         }
         if (m_release.sha256.isEmpty()) {
             m_kind = RequestKind::Checksums; m_redirects = 0;
-            updateState("checking", "Checking the official release's installer checksum…");
+            updateState("checking", "Checking the official release's package checksum…");
             request(m_release.checksumsUrl); return;
         }
         makeAvailable(); return;
@@ -230,3 +251,10 @@ void ReleaseUpdater::openUrl(const QUrl& url) {
 }
 void ReleaseUpdater::openRepository() { openUrl(QUrl(repositoryUrl())); }
 void ReleaseUpdater::openReleases() { openUrl(QUrl(releasesUrl())); }
+
+void ReleaseUpdater::openPortableDownload() {
+    if (!canOpenPortable()) return;
+    // The browser owns this download. Do not claim verification of its bytes,
+    // touch the current application directory, or offer installer migration.
+    openUrl(m_release.assetUrl);
+}

@@ -17,7 +17,7 @@ PrivilegesRequired=lowest
 ; ARM64 emulation needs its own runtime/load-path acceptance before enabling it.
 ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
-MinVersion=10.0
+MinVersion=10.0.17763
 UsePreviousAppDir=yes
 UsePreviousTasks=yes
 DisableProgramGroupPage=yes

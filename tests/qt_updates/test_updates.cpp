@@ -1,6 +1,8 @@
 #include "ReleaseMetadata.h"
 #include "ReleaseUpdater.h"
 #include <QCoreApplication>
+#include <QDesktopServices>
+#include <QScopeGuard>
 #include <QCryptographicHash>
 #include <QFile>
 #include <QJsonArray>
@@ -29,6 +31,16 @@ QJsonObject releaseObject(const QString& version = "0.2.0", bool withDigest = tr
             {"assets", QJsonArray{installer, QJsonObject{{"name", "SHA256SUMS"}, {"state", "uploaded"}, {"size", 120}, {"browser_download_url", base + "SHA256SUMS"}}}}};
 }
 QByteArray releaseJson(const QString& version = "0.2.0", bool digest = true) { return QJsonDocument(releaseObject(version, digest)).toJson(); }
+QJsonObject portableReleaseObject(bool withDigest = true) {
+    auto object = releaseObject();
+    const QString name = "ShowPsiSi-0.2.0-windows-x64-portable.zip";
+    QJsonObject portable{{"name", name}, {"state", "uploaded"}, {"size", installerBytes.size()},
+        {"browser_download_url", repositoryUrl() + "/releases/download/v0.2.0/" + name}};
+    if (withDigest) portable["digest"] = "sha256:" + QString::fromLatin1(QCryptographicHash::hash(installerBytes, QCryptographicHash::Sha256).toHex());
+    auto assets = object["assets"].toArray(); assets.append(portable); object["assets"] = assets;
+    return object;
+}
+
 struct FixtureResponse { QByteArray body; int status = 200; QUrl redirect; bool held = false; QNetworkReply::NetworkError error = QNetworkReply::NoError; };
 class FixtureReply final : public QNetworkReply {
 public:
@@ -77,6 +89,13 @@ protected:
     }
 };
 }
+class UrlRecorder final : public QObject {
+    Q_OBJECT
+public:
+    QList<QUrl> urls;
+public slots:
+    void capture(const QUrl& url) { urls.append(url); }
+};
 class ReleaseUpdaterTests final : public QObject {
     Q_OBJECT
     FixtureNetwork* attach(ReleaseUpdater& updater) {
@@ -272,6 +291,84 @@ private slots:
         network->responses.enqueue({releaseJson()}); updater.checkForUpdates(); QTRY_COMPARE(updater.state(), QString("available"));
         for (int i = 0; i < 4; ++i) network->responses.enqueue({{}, 302, QUrl("https://release-assets.githubusercontent.com/loop")});
         updater.downloadUpdate(); QTRY_COMPARE(updater.state(), QString("error")); QCOMPARE(network->requests.size(), 8);
+    }
+    void packageMarkersDistinguishInstalledPortableAndSource() {
+        QTemporaryDir package; QVERIFY(package.isValid());
+        const QString bin = package.path() + "/bin";
+        QVERIFY(QDir().mkpath(bin)); QVERIFY(QDir().mkpath(package.path() + "/api"));
+        auto write = [](const QString& path, const QByteArray& bytes) {
+            QFile file(path); return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size();
+        };
+        ReleaseUpdater updater;
+        updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(), QString("source"));
+        QVERIFY(write(package.path() + "/api/tools.json", "{}"));
+        QVERIFY(write(bin + "/showpsisi-portable.json", R"({"schema_version":1,"resource_root":"..","scope":"qt-core"})"));
+        updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(), QString("portable")); QVERIFY(!updater.installerSupported());
+        QJsonObject installed{{"schema_version",1},{"app_id","{13C6E0A2-B226-4BAA-A218-8DD167D78D4C}"},
+            {"installer","inno"},{"frontend","qt"},{"channel","stable"},{"version",updater.currentVersion()}};
+        const QString marker = package.path() + "/showpsisi-installation.json";
+        QVERIFY(write(marker,QJsonDocument(installed).toJson()));
+        updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(), QString("installed")); QVERIFY(updater.installerSupported());
+        installed["version"] = "9.9.9"; QVERIFY(write(marker,QJsonDocument(installed).toJson()));
+        updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(), QString("source")); QVERIFY(!updater.installerSupported());
+        QVERIFY(write(marker,"malformed")); updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(),QString("source"));
+        QVERIFY(QFile::remove(marker)); updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(),QString("portable"));
+        QVERIFY(write(bin + "/showpsisi-portable.json", R"({"schema_version":1,"resource_root":"../elsewhere","scope":"qt-core"})"));
+        updater.inspectWindowsPackage(bin); QCOMPARE(updater.edition(),QString("source"));
+    }
+    void portableSelectsExactZipAndRejectsWrongOrigin() {
+        auto object = portableReleaseObject();
+        auto parsed = parseRelease(QJsonDocument(object).toJson(),"0.1.0",PackageKind::Portable);
+        QCOMPARE(parsed.status,MetadataStatus::UpdateAvailable); QCOMPARE(parsed.release.kind,PackageKind::Portable);
+        QCOMPARE(parsed.release.assetName,QString("ShowPsiSi-0.2.0-windows-x64-portable.zip"));
+        QVERIFY(parseRelease(QJsonDocument(object).toJson(),"0.1.0").release.assetName.endsWith("-setup.exe"));
+        QCOMPARE(parseRelease(releaseJson(),"0.1.0",PackageKind::Portable).status,MetadataStatus::Rejected);
+        for(const auto& bad : {"https://evil.example/archive.zip", "http://github.com/znbsf/ShowPsiSi/releases/download/v0.2.0/ShowPsiSi-0.2.0-windows-x64-portable.zip", "https://github.com/znbsf/ShowPsiSi/releases/download/v0.1.0/ShowPsiSi-0.2.0-windows-x64-portable.zip"}) {
+            auto changed = object; auto assets=changed["assets"].toArray(); auto zip=assets.last().toObject(); zip["browser_download_url"]=bad; assets[assets.size()-1]=zip; changed["assets"]=assets;
+            QCOMPARE(parseRelease(QJsonDocument(changed).toJson(),"0.1.0",PackageKind::Portable).status,MetadataStatus::Rejected);
+        }
+        auto zipOnly=object; auto onlyAssets=zipOnly["assets"].toArray(); onlyAssets.removeFirst(); zipOnly["assets"]=onlyAssets;
+        QCOMPARE(parseRelease(QJsonDocument(zipOnly).toJson(),"0.1.0",PackageKind::Portable).status,MetadataStatus::UpdateAvailable);
+        for(const auto& wrongName : {"ShowPsiSi-0.2.0-windows-arm64-portable.zip", "ShowPsiSi-0.2.0-windows-x64-portable.zip.exe"}) {
+            auto changed=object; auto wrongAssets=changed["assets"].toArray(); auto zip=wrongAssets.last().toObject(); zip["name"]=wrongName; wrongAssets[wrongAssets.size()-1]=zip; changed["assets"]=wrongAssets;
+            QCOMPARE(parseRelease(QJsonDocument(changed).toJson(),"0.1.0",PackageKind::Portable).status,MetadataStatus::Rejected);
+        }
+        auto assets=object["assets"].toArray(); assets.append(assets.last()); object["assets"]=assets;
+        QCOMPARE(parseRelease(QJsonDocument(object).toJson(),"0.1.0",PackageKind::Portable).status,MetadataStatus::Rejected);
+    }
+    void portableBrowserHandoffCannotInstallOrSelfReplace() {
+        ReleaseUpdater updater; auto network=attach(updater); updater.m_installRoot.clear(); updater.m_isPortable=true;
+        network->responses.enqueue({QJsonDocument(portableReleaseObject()).toJson()});
+        updater.checkForUpdates(); QTRY_COMPARE(updater.state(),QString("available"));
+        QCOMPARE(updater.edition(),QString("portable")); QVERIFY(updater.canOpenPortable());
+        QVERIFY(!updater.canDownload()); QVERIFY(!updater.canInstall());
+        QSignalSpy launch(&updater,&ReleaseUpdater::installerStarted);
+        updater.downloadUpdate(); updater.installUpdate(true);
+        QCOMPARE(network->requests.size(),1); QCOMPARE(launch.count(),0); QVERIFY(updater.m_installerPath.isEmpty());
+        UrlRecorder recorder; QDesktopServices::setUrlHandler("https",&recorder,"capture");
+        const auto reset=qScopeGuard([] { QDesktopServices::unsetUrlHandler("https"); });
+        updater.openPortableDownload();
+        QCOMPARE(recorder.urls,QList<QUrl>{QUrl("https://github.com/znbsf/ShowPsiSi/releases/download/v0.2.0/ShowPsiSi-0.2.0-windows-x64-portable.zip")});
+        updater.m_isPortable=false; updater.openPortableDownload(); QCOMPARE(recorder.urls.size(),1);
+        updater.m_isPortable=true; updater.m_state="error"; updater.openPortableDownload(); QCOMPARE(recorder.urls.size(),1);
+    }
+    void portableChecksumFallbackRequiresExactZip() {
+        ReleaseUpdater updater; auto network=attach(updater); updater.m_installRoot.clear(); updater.m_isPortable=true;
+        const QByteArray hash=QCryptographicHash::hash(installerBytes,QCryptographicHash::Sha256).toHex();
+        network->responses.enqueue({QJsonDocument(portableReleaseObject(false)).toJson()});
+        network->responses.enqueue({hash+"  ShowPsiSi-0.2.0-windows-x64-setup.exe\n"+hash+"  ShowPsiSi-0.2.0-windows-x64-portable.zip\n"});
+        updater.checkForUpdates(); QTRY_COMPARE(updater.state(),QString("available")); QVERIFY(updater.canOpenPortable()); QCOMPARE(network->requests.size(),2);
+        network->responses.enqueue({QJsonDocument(portableReleaseObject(false)).toJson()});
+        network->responses.enqueue({hash+"  ShowPsiSi-0.2.0-windows-x64-setup.exe\n"});
+        updater.checkForUpdates(); QTRY_COMPARE(updater.state(),QString("error")); QVERIFY(!updater.canOpenPortable());
+    }
+    void portableDoesNotOfferSameVersionOrDowngrade() {
+        const auto json=QJsonDocument(portableReleaseObject()).toJson();
+        QCOMPARE(parseRelease(json,"0.2.0",PackageKind::Portable).status,MetadataStatus::UpToDate);
+        QCOMPARE(parseRelease(json,"0.3.0",PackageKind::Portable).status,MetadataStatus::UpToDate);
+        ReleaseUpdater updater; auto network=attach(updater); updater.m_installRoot.clear(); updater.m_isPortable=true;
+        network->responses.enqueue({releaseJson("0.1.0")}); updater.checkForUpdates();
+        QTRY_COMPARE(updater.state(),QString("up-to-date")); QVERIFY(!updater.canOpenPortable());
     }
     void excessiveMetadataIsRejected() {
         ReleaseUpdater updater; auto network = attach(updater); network->responses.enqueue({QByteArray(MaxMetadataBytes + 1, 'x')});

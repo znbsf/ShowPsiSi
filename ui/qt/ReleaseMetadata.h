@@ -15,7 +15,9 @@ bool isStableVersion(const QString& version);
 bool isNewerVersion(const QString& candidate, const QString& current);
 bool isAllowedAssetRedirect(const QUrl& url);
 
+enum class PackageKind { Installer, Portable };
 struct Release {
+    PackageKind kind = PackageKind::Installer;
     QString version;
     QString tag;
     QString notes;
@@ -32,7 +34,7 @@ struct MetadataResult {
     Release release;
     QString error;
 };
-MetadataResult parseRelease(const QByteArray& json, const QString& currentVersion);
+MetadataResult parseRelease(const QByteArray& json, const QString& currentVersion, PackageKind kind = PackageKind::Installer);
 // A checksum file is only trusted when fetched through this release's validated
 // official asset URL. It is integrity evidence, not independent publisher signing.
 QByteArray parseChecksum(const QByteArray& text, const QString& assetName, QString* error);

@@ -76,8 +76,9 @@ bool isAllowedAssetRedirect(const QUrl& url) {
     return url.host() == QStringLiteral("release-assets.githubusercontent.com") ||
            url.host() == QStringLiteral("objects.githubusercontent.com");
 }
-MetadataResult parseRelease(const QByteArray& json, const QString& currentVersion) {
+MetadataResult parseRelease(const QByteArray& json, const QString& currentVersion, PackageKind kind) {
     MetadataResult out;
+    out.release.kind = kind;
     auto reject = [&](const QString& error) { out.error = error; return out; };
     if (!parseVersion(currentVersion)) return reject(QStringLiteral("The installed version is invalid; use the official release page."));
     if (json.isEmpty() || json.size() > MaxMetadataBytes) return reject(QStringLiteral("Release metadata is empty or too large."));
@@ -106,9 +107,9 @@ MetadataResult parseRelease(const QByteArray& json, const QString& currentVersio
         return out;
     }
     if (!object.value("assets").isArray()) return reject(QStringLiteral("Release assets are missing."));
-    out.release.assetName = "ShowPsiSi-" + out.release.version + "-windows-x64-setup.exe";
+    out.release.assetName = "ShowPsiSi-" + out.release.version + (kind == PackageKind::Portable ? "-windows-x64-portable.zip" : "-windows-x64-setup.exe");
     const QString assetBase = repositoryUrl() + "/releases/download/" + tag + "/";
-    int installers = 0, checksumFiles = 0;
+    int packages = 0, checksumFiles = 0;
     for (const auto& value : object.value("assets").toArray()) {
         if (!value.isObject()) return reject(QStringLiteral("Malformed release asset entry."));
         const auto asset = value.toObject();
@@ -127,18 +128,18 @@ MetadataResult parseRelease(const QByteArray& json, const QString& currentVersio
             ++checksumFiles;
             out.release.checksumsUrl = QUrl(assetBase + name);
         } else {
-            ++installers;
+            ++packages;
             out.release.assetUrl = QUrl(assetBase + name);
             out.release.size = qint64(size);
             bool malformed = false;
             out.release.sha256 = digest(asset.value("digest"), &malformed);
-            if (malformed) return reject(QStringLiteral("Release installer SHA-256 digest is malformed."));
+            if (malformed) return reject(QStringLiteral("Release package SHA-256 digest is malformed."));
         }
     }
-    if (installers != 1 || checksumFiles > 1)
-        return reject(QStringLiteral("Release must contain exactly one matching Windows x64 installer and no duplicate checksum files."));
+    if (packages != 1 || checksumFiles > 1)
+        return reject(QStringLiteral("Release must contain exactly one matching Windows x64 package and no duplicate checksum files."));
     if (out.release.sha256.isEmpty() && out.release.checksumsUrl.isEmpty())
-        return reject(QStringLiteral("Release provides no trusted SHA-256 checksum. Installation is blocked."));
+        return reject(QStringLiteral("Release provides no trusted SHA-256 checksum. The package action is blocked."));
     out.status = MetadataStatus::UpdateAvailable;
     return out;
 }
@@ -155,11 +156,11 @@ QByteArray parseChecksum(const QByteArray& text, const QString& assetName, QStri
         const auto match = linePattern.match(line);
         if (!match.hasMatch()) return reject(QStringLiteral("Release checksum file has a malformed line."));
         if (match.captured(2) == assetName) {
-            if (!result.isEmpty()) return reject(QStringLiteral("Release checksum file contains a duplicate installer entry."));
+            if (!result.isEmpty()) return reject(QStringLiteral("Release checksum file contains a duplicate package entry."));
             result = QByteArray::fromHex(match.captured(1).toLatin1());
         }
     }
-    if (result.isEmpty()) return reject(QStringLiteral("Release checksum file does not identify the exact installer."));
+    if (result.isEmpty()) return reject(QStringLiteral("Release checksum file does not identify the exact package."));
     return result;
 }
 }

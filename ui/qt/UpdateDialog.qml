@@ -27,6 +27,7 @@ Dialog {
         appUpdater.cancel();
         downloadConfirm.close();
         installConfirm.close();
+        portableConfirm.close();
     }
     contentItem: ColumnLayout {
         spacing: 10
@@ -34,6 +35,12 @@ Dialog {
             text: "ShowPsiSi " + appUpdater.currentVersion + " · Qt edition"
             color: dialog.ink; font.bold: true; font.pixelSize: 16
             textFormat: Text.PlainText
+        }
+        Label {
+            objectName: "updateEditionLabel"
+            Layout.fillWidth: true
+            text: appUpdater.editionLabel
+            textFormat: Text.PlainText; wrapMode: Text.Wrap; color: dialog.muted
         }
         TextField {
             objectName: "officialRepositoryUrl"
@@ -57,7 +64,9 @@ Dialog {
         Label {
             Layout.fillWidth: true
             visible: !appUpdater.installerSupported
-            text: "In-app installation requires the installed Windows x64 Qt edition. This build can check releases; use the official release page to download for your system."
+            text: appUpdater.edition === "portable"
+                ? "Portable updates use a ZIP archive. Download in your browser, verify its SHA-256 yourself, then close ShowPsiSi and extract into a new folder. Your current files are never replaced by this app."
+                : "This source or unsupported-platform build can check releases. Use the official release page to choose a package for your system; in-app installation is unavailable."
             textFormat: Text.PlainText; wrapMode: Text.Wrap; color: dialog.muted
         }
         ProgressBar {
@@ -76,7 +85,7 @@ Dialog {
             clip: true
             TextArea {
                 objectName: "updateReleaseNotes"
-                text: appUpdater.releaseNotes || "Check for updates to see the latest release notes."
+                text: appUpdater.releaseNotes || (appUpdater.latestVersion ? "No release notes were supplied for this release." : "Check for updates to see the latest release notes.")
                 textFormat: TextEdit.PlainText
                 readOnly: true; selectByMouse: true; wrapMode: TextEdit.Wrap
                 color: dialog.ink
@@ -85,7 +94,9 @@ Dialog {
         }
         Label {
             Layout.fillWidth: true
-            text: "Stable releases only. Downloads are checked against SHA-256 from the official GitHub release. This is an integrity check; an independent publisher signature is not enforced."
+            text: appUpdater.edition === "portable"
+                ? "Stable releases only. The ZIP link and expected SHA-256 come from the official GitHub release. This app does not verify browser-downloaded bytes."
+                : "Stable releases only. In-app installer downloads are SHA-256 checked against the official GitHub release; browser downloads need manual verification. An independent publisher signature is not enforced."
             color: dialog.muted; textFormat: Text.PlainText; wrapMode: Text.Wrap; font.pixelSize: 11
         }
         Flow {
@@ -100,14 +111,23 @@ Dialog {
             UpdateAction {
                 objectName: "downloadUpdateButton"
                 text: "Download installer…"
+                visible: appUpdater.edition !== "portable"
                 enabled: appUpdater.canDownload
                 onClicked: downloadConfirm.open()
             }
             UpdateAction {
                 objectName: "installUpdateButton"
                 text: "Install and quit…"
+                visible: appUpdater.edition !== "portable"
                 enabled: appUpdater.canInstall && !dialog.workBusy
                 onClicked: installConfirm.open()
+            }
+            UpdateAction {
+                objectName: "portableUpdateButton"
+                text: "Portable ZIP…"
+                visible: appUpdater.edition === "portable"
+                enabled: appUpdater.canOpenPortable
+                onClicked: portableConfirm.open()
             }
             UpdateAction {
                 objectName: "cancelUpdateButton"
@@ -131,6 +151,47 @@ Dialog {
                 " MiB from github.com/znbsf/ShowPsiSi\n\nSHA-256:\n" + appUpdater.checksum +
                 "\n\nThe installer will not run until you separately choose Install and quit."
             textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere
+        }
+    }
+    Dialog {
+        id: portableConfirm
+        objectName: "portableUpdateConfirmation"
+        title: "Download portable ZIP in your browser?"
+        anchors.centerIn: parent
+        width: Math.min(540, dialog.width - 20)
+        modal: true
+        standardButtons: Dialog.NoButton
+        contentItem: ColumnLayout {
+            spacing: 10
+            Label {
+                Layout.fillWidth: true
+                text: "Current: " + appUpdater.currentVersion + "  →  New: " + appUpdater.latestVersion +
+                    "\n\n" + appUpdater.assetName + "\n" + (appUpdater.downloadSize / 1048576).toFixed(1) +
+                    " MiB from github.com/znbsf/ShowPsiSi"
+                textFormat: Text.PlainText; wrapMode: Text.WrapAnywhere
+            }
+            Label { text: "Expected SHA-256 (select and copy):"; textFormat: Text.PlainText }
+            TextField {
+                objectName: "portableExpectedChecksum"
+                Layout.fillWidth: true
+                text: appUpdater.checksum
+                readOnly: true; selectByMouse: true
+                Accessible.name: "Expected portable ZIP SHA-256"
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "1. Download the ZIP in your browser. This app does not verify that downloaded file.\n2. Compare the saved ZIP's SHA-256 with the value above (for example, using PowerShell Get-FileHash).\n3. Save/export your work and close all ShowPsiSi windows.\n4. Extract into a new folder and run Launch Qt.cmd there. Use the new folder in place of the old one; keep the old copy until you have checked the new version.\n\nNo setup installer or automatic file replacement is used."
+                textFormat: Text.PlainText; wrapMode: Text.Wrap
+            }
+            RowLayout {
+                UpdateAction {
+                    objectName: "confirmPortableUpdateButton"
+                    text: "Open ZIP download"
+                    enabled: appUpdater.canOpenPortable
+                    onClicked: { portableConfirm.close(); appUpdater.openPortableDownload(); }
+                }
+                UpdateAction { text: "Go back"; onClicked: portableConfirm.close() }
+            }
         }
     }
     Dialog {

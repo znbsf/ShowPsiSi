@@ -132,6 +132,11 @@ def verify_installed(package, installed):
         raise RuntimeError('Installed manifest changed')
 
 
+def remaining_payload(installed, manifest):
+    owned = [*manifest['files'], 'manifest.json', 'showpsisi-installation.json']
+    return [name for name in owned if (installed / name).exists()]
+
+
 def smoke(installer, previous, package, artifacts, version):
     if os.name != 'nt':
         raise RuntimeError('Installer smoke requires Windows; no platform pass inferred')
@@ -290,16 +295,19 @@ def smoke(installer, previous, package, artifacts, version):
                 os.environ.update(env)
             settings_preserved()
             run_setup(installed / 'unins000.exe', [], 'uninstall')
+            expected_payload = portable.verify_manifest(package)
             deadline = time.monotonic() + 30
-            while (registration() or (installed / 'bin/showpsisi-qt.exe').exists()) and time.monotonic() < deadline:
+            while (registration() or remaining_payload(installed, expected_payload)) and time.monotonic() < deadline:
                 time.sleep(.1)
-            if registration() or (installed / 'bin/showpsisi-qt.exe').exists():
-                raise RuntimeError('Uninstall left owned application/registration behind')
+            remaining = remaining_payload(installed, expected_payload)
+            if registration() or remaining:
+                raise RuntimeError(f'Uninstall left owned application/registration behind: {remaining}')
             if any(path.exists() for path in shortcuts):
                 raise RuntimeError('Uninstall left an owned shortcut behind')
             settings_preserved()
             evidence['shortcuts_verified'] = True
             evidence['settings_preserved'] = True
+            evidence['all_manifested_payload_removed'] = True
             evidence['passed'] = True
             checkpoint()
         except Exception as error:
@@ -309,7 +317,9 @@ def smoke(installer, previous, package, artifacts, version):
         finally:
             # Cleanup is scoped to this test's exact directory and never changes
             # the original failure into a pass.
-            if (installed / 'unins000.exe').exists():
+            # Inno's self-deleting uninstaller can briefly remain after success.
+            # Do not run it twice: this block is recovery for failed smoke only.
+            if not evidence['passed'] and (installed / 'unins000.exe').exists():
                 try:
                     run_setup(installed / 'unins000.exe', [], 'failure-cleanup')
                 except Exception as cleanup_error:

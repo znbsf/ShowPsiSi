@@ -21,13 +21,17 @@ plugins and QML are selected by the pinned kit's `windeployqt --release --qmldir
 No build-tree wildcard copy, test engine, SDK, Python or PowerShell is shipped.
 Deployment excludes qmltooling debug plugins and the system D3D compiler using
 Qt 6.7.3's `--skip-plugin-types qmltooling --no-system-d3d-compiler` options.
-Windows 10/11 x64 supplies D3Dcompiler_47.dll; validation records its System32
+Windows 10 1809+/11 x64 supplies D3Dcompiler_47.dll; validation records its System32
 path, version and SHA-256 and checks actual process module locations.
 Build information also retains installed Qt configuration-file content/hashes
 and installed-kit versus deployed Qt6Core hashes for source/relocation review.
 
-The ordinary GUI is launched directly or through `Launch Qt.cmd`, using only
-CMD/EXEs. Root/schema, sample and core paths are relative to the executable,
+The ordinary GUI is launched through `Launch Qt.cmd`, which uses inbox 64-bit
+Windows PowerShell for a read-only OS/runtime preflight. It does not change
+ExecutionPolicy, download, install, or elevate. Missing/old VC runtime or check
+failure stops before Qt and displays Microsoft's official prerequisite link.
+Direct EXE launch bypasses this check and can show a Windows missing-DLL error.
+Root/schema, sample and core paths are relative to the executable,
 not the working directory. Missing packaged schema/core/model data produces a
 visible disconnected message. Normal packaged launches clear inherited
 SHOWPSISI_* development/test settings. Explicit `--showpsisi-development` allows

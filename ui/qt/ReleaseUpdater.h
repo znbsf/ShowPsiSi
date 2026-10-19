@@ -16,6 +16,8 @@ class ReleaseUpdater final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString currentVersion READ currentVersion CONSTANT)
     Q_PROPERTY(QString repositoryUrl READ repositoryUrl CONSTANT)
+    Q_PROPERTY(QString edition READ edition CONSTANT)
+    Q_PROPERTY(QString editionLabel READ editionLabel CONSTANT)
     Q_PROPERTY(QString state READ state NOTIFY changed)
     Q_PROPERTY(QString status READ status NOTIFY changed)
     Q_PROPERTY(QString latestVersion READ latestVersion NOTIFY changed)
@@ -27,12 +29,15 @@ class ReleaseUpdater final : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY changed)
     Q_PROPERTY(bool canDownload READ canDownload NOTIFY changed)
     Q_PROPERTY(bool canInstall READ canInstall NOTIFY changed)
+    Q_PROPERTY(bool canOpenPortable READ canOpenPortable NOTIFY changed)
     Q_PROPERTY(bool installerSupported READ installerSupported CONSTANT)
 public:
     explicit ReleaseUpdater(QObject* parent = nullptr);
     ~ReleaseUpdater() override;
     QString currentVersion() const;
     QString repositoryUrl() const;
+    QString edition() const;
+    QString editionLabel() const;
     QString state() const { return m_state; }
     QString status() const { return m_status; }
     QString latestVersion() const { return m_release.version; }
@@ -44,6 +49,7 @@ public:
     bool busy() const;
     bool canDownload() const;
     bool canInstall() const;
+    bool canOpenPortable() const;
     bool installerSupported() const { return !m_installRoot.isEmpty(); }
     void setInstallGuard(std::function<bool()> guard) { m_installGuard = std::move(guard); }
     Q_INVOKABLE void checkForUpdates();
@@ -53,6 +59,7 @@ public:
     Q_INVOKABLE void installUpdate(bool savedWorkConfirmed);
     Q_INVOKABLE void openRepository();
     Q_INVOKABLE void openReleases();
+    Q_INVOKABLE void openPortableDownload();
 signals:
     void changed();
     void installerStarted();
@@ -74,7 +81,9 @@ private:
     std::unique_ptr<QCryptographicHash> m_hash;
     QString m_installerPath;
     QString m_installRoot;
+    bool m_isPortable = false;
     std::function<bool()> m_installGuard;
+    void inspectWindowsPackage(const QString& binPath);
     void request(const QUrl& url);
     void consume(QNetworkReply* reply);
     void finished(QNetworkReply* reply);

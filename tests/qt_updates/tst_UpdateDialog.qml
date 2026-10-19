@@ -26,6 +26,8 @@ Item {
             property string currentVersion: "0.1.0"
             property string repositoryUrl: "https://github.com/znbsf/ShowPsiSi"
             property string state: "idle"
+            property string edition: "source"
+            property string editionLabel: "Qt source build"
             property string status: "Presentation fixture · no network or installer actions"
             property string latestVersion: ""
             property string releaseNotes: ""
@@ -37,9 +39,11 @@ Item {
             property bool installerSupported: false
             property bool canDownload: false
             property bool canInstall: false
+            property bool canOpenPortable: false
             property int checks: 0
             property int downloads: 0
             property int installs: 0
+            property int portableOpens: 0
             function checkForUpdates() {
                 checks++;
             }
@@ -55,6 +59,9 @@ Item {
             }
             function openReleases() {
             }
+            function openPortableDownload() {
+                portableOpens++;
+            }
         }
         Application.UpdateDialog {
             id: dialog
@@ -65,6 +72,13 @@ Item {
             when: windowShown
             function init() {
                 appUpdater.busy = false;
+                appUpdater.edition = "source";
+                appUpdater.editionLabel = "Qt source build";
+                appUpdater.canOpenPortable = false;
+                appUpdater.portableOpens = 0;
+                appUpdater.latestVersion = "";
+                appUpdater.assetName = "";
+                appUpdater.checksum = "";
                 appUpdater.canDownload = false;
                 appUpdater.canInstall = false;
                 appUpdater.checks = 0;
@@ -74,6 +88,56 @@ Item {
             }
             function cleanup() {
                 dialog.close();
+            }
+            function test_portableBrowserFlow_data() {
+                return [
+                    {
+                        tag: "dark",
+                        light: false
+                    },
+                    {
+                        tag: "light",
+                        light: true
+                    }
+                ];
+            }
+            function test_portableBrowserFlow(data) {
+                window.light = data.light;
+                appUpdater.edition = "portable";
+                appUpdater.editionLabel = "Windows x64 Qt · portable edition (no installation)";
+                appUpdater.canOpenPortable = true;
+                appUpdater.latestVersion = "0.2.0";
+                appUpdater.assetName = "ShowPsiSi-0.2.0-windows-x64-portable.zip";
+                appUpdater.checksum = "b".repeat(64);
+                appUpdater.downloadSize = 80 * 1048576;
+                dialog.open();
+                tryCompare(dialog, "opened", true);
+                compare(findChild(dialog, "downloadUpdateButton").visible, false);
+                compare(findChild(dialog, "installUpdateButton").visible, false);
+                const portable = findChild(dialog, "portableUpdateButton");
+                verify(portable.visible && portable.enabled);
+                verify(findChild(dialog, "updateEditionLabel").text.indexOf("portable") >= 0);
+                waitForRendering(dialog.contentItem);
+                grabImage(window.contentItem).save("update-dialog-portable-" + data.tag + ".png");
+                mouseClick(portable);
+                const confirmation = findChild(dialog, "portableUpdateConfirmation");
+                tryCompare(confirmation, "opened", true);
+                const checksum = findChild(dialog, "portableExpectedChecksum");
+                compare(checksum.text, appUpdater.checksum);
+                verify(checksum.readOnly && checksum.selectByMouse);
+                waitForRendering(confirmation.contentItem);
+                grabImage(window.contentItem).save("update-dialog-portable-confirm-" + data.tag + ".png");
+                confirmation.close();
+                compare(appUpdater.portableOpens, 0);
+                mouseClick(portable);
+                tryCompare(confirmation, "opened", true);
+                mouseClick(findChild(dialog, "confirmPortableUpdateButton"));
+                compare(appUpdater.portableOpens, 1);
+                compare(appUpdater.installs, 0);
+                compare(appUpdater.downloads, 0);
+                appUpdater.canOpenPortable = false;
+                compare(portable.enabled, false);
+                compare(portable.opacity, 0.4);
             }
             function test_disabledContrast_data() {
                 return [

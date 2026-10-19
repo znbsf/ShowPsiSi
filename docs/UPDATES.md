@@ -13,8 +13,9 @@ record for platform-specific acceptance.
 
 1. Choose **About / Updates → Check for updates**. Nothing contacts GitHub on
    startup. A missing published release is reported separately from up-to-date.
-2. Review the stable version and plain-text release notes. Source, portable ZIP
-   and non-Windows builds can check releases and open the official page.
+2. Review the stable version and plain-text release notes. The dialog identifies
+   the installed, portable, or source/unsupported-platform edition. Source and
+   non-Windows builds can check releases and open the official page.
 3. The **installed Windows x64 Qt edition** offers **Download installer…**.
    Confirm the version, exact filename, size and SHA-256. Downloading never
    starts installation. Cancel, closing the dialog, a timeout, a network/TLS
@@ -32,8 +33,36 @@ record for platform-specific acceptance.
 
 In-app installation requires both the package marker in `bin/` and the fixed
 Inno installation marker in the parent package root, with the matching AppId,
-version, frontend and stable channel. Portable ZIP users are directed to the
-release page instead of receiving an `/UPDATE` command that cannot apply.
+version, frontend and stable channel. A valid Windows package with no
+installation marker is identified as portable;
+an existing malformed or mismatched installation marker falls back to an
+unrecognized/source package and cannot enable installation.
+
+### Portable edition: keep using a ZIP
+
+The portable edition never offers **Download installer** or **Install and quit**.
+Its version check selects the exact
+`ShowPsiSi-{MAJOR.MINOR.PATCH}-windows-x64-portable.zip` asset from the same stable
+release. Once its official URL and expected SHA-256 are validated, **Portable
+ZIP…** shows a separate confirmation with the version, filename, size, and a
+selectable checksum. **Open ZIP download** hands that exact official URL to the
+system browser. The release-page button remains available when no suitable ZIP
+or newer release is available.
+
+The browser performs the ZIP download. ShowPsiSi does **not** read or verify those
+downloaded bytes, unzip them, overwrite the current folder, migrate to setup, or
+quit. The confirmation explicitly requires the user to:
+
+1. Compare the saved ZIP's SHA-256 with the displayed value or that release's
+   `SHA256SUMS` (for example, with PowerShell `Get-FileHash -Algorithm SHA256`).
+2. Save/export work and close all ShowPsiSi windows before switching versions.
+3. Extract into a **new folder**, run its `Launch Qt.cmd`, and use the new folder
+   in place of the old one. Retain the old copy until the new version is checked.
+
+The installer and portable ZIP share one release `SHA256SUMS`, with distinct
+exact filename entries. A setup checksum cannot authorize a ZIP link. Missing,
+duplicate, wrong-origin, wrong-platform, or malformed ZIP metadata fails closed;
+there is no fallback that forces installation.
 
 Accepted exports have an authoritative native lifetime guard independent of
 frontend selection/query generations. Ordinary window close is refused until
@@ -53,14 +82,17 @@ manifest atomic against power loss, external termination or a native crash.
 - The release must be published, not draft/prerelease, with a strict stable tag
   `vMAJOR.MINOR.PATCH`. Numeric comparison forbids a downgrade or same-version
   reinstall. Build metadata/prerelease assets are not selected.
-- The exact installer filename is
-  `ShowPsiSi-{MAJOR.MINOR.PATCH}-windows-x64-setup.exe`. Its initial URL must match
+- The installed edition selects
+  `ShowPsiSi-{MAJOR.MINOR.PATCH}-windows-x64-setup.exe`; the portable edition selects
+  `ShowPsiSi-{MAJOR.MINOR.PATCH}-windows-x64-portable.zip`. The selected initial
+  URL must match
   that release's path in the official repository byte-for-byte. Metadata URLs,
   query/fragment additions, other owners, tags, architectures and ambiguous
   duplicate assets are rejected.
 - A valid GitHub asset `digest` of `sha256:<64 hex>` is preferred. When no digest
   is supplied, a bounded `SHA256SUMS` asset from the same official release must
-  identify the exact installer once. Missing, malformed or conflicting entries
+  identify the exact selected package once. Missing, malformed or conflicting
+  entries
   fail closed. A malformed supplied digest is never silently ignored.
 - Redirects are followed manually, up to three, only over HTTPS to
   `release-assets.githubusercontent.com` or `objects.githubusercontent.com`,
@@ -69,7 +101,9 @@ manifest atomic against power loss, external termination or a native crash.
 - Metadata is limited to 2 MiB, checksums to 64 KiB and an installer to 1 GiB;
   actual installer length must equal the declared release size. Requests use a
   15-second transfer inactivity timeout. A check has a 30-second overall bound;
-  a download has a 10-minute bound. Failures require an explicit retry.
+  an in-app installer download has a 10-minute bound. Failures require an explicit
+  retry. Portable ZIP metadata has the same 1 GiB declared-size bound, but the
+  external browser owns its transfer and the user must verify its bytes.
 - A unique private cache directory and `QSaveFile` without direct-write fallback
   stage bytes. A final installer pathname appears only after exact length and
   SHA-256 validation and successful atomic commit. Cancelled/failed files are
@@ -105,7 +139,10 @@ prerelease refusal, exact platform/asset origin, size/digest errors, checksum
 fallback/duplicates, network/TLS failures, rate limiting, no published release,
 manual retry, timeout, cancellation/stale responses, partial-file removal,
 checksum mismatch/truncation/oversize, approved/rejected redirects and loop
-bounds, file tampering and pending-operation install guards. A non-executable
+bounds, file tampering and pending-operation install guards;
+installed/portable/source
+marker detection, exact ZIP selection/checksum fallback, no portable downgrade,
+and browser handoff without any installer download/launch. A non-executable
 text fixture stands in for installer bytes. Windows wizard behavior, clean
 machine prerequisites, native dialogs and actual updater handoff require
 separate Windows evidence.
@@ -125,6 +162,7 @@ convention so availability is distinct in both themes.
 Run Qt's `qmltestrunner -input /absolute/path/to/tests/qt_updates/tst_UpdateDialog.qml`
 from an ignored artifact directory with `QT_QPA_PLATFORM=offscreen`,
 `QT_QUICK_BACKEND=software` and `QT_QUICK_CONTROLS_STYLE=Basic`. It saves
-`update-dialog-disabled-dark.png` and `update-dialog-disabled-light.png` in that
-directory. These are rendered component-fixture checks, not network or Windows
+`update-dialog-disabled-dark.png` and `update-dialog-disabled-light.png`, plus
+portable About/confirmation images in each theme, in that directory. These are
+rendered component-fixture checks, not network or Windows
 installer acceptance.

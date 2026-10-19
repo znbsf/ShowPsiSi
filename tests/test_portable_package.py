@@ -7,11 +7,14 @@ import struct
 from types import SimpleNamespace
 import unittest
 from unittest import mock
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('portable_checks', ROOT / 'scripts/ci/portable_checks.py')
 portable = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(portable)
+sys.path.insert(0, str(ROOT / 'scripts/ci'))
+import portable_launcher_checks
 
 
 class PortablePackageTests(unittest.TestCase):
@@ -24,16 +27,52 @@ class PortablePackageTests(unittest.TestCase):
                      'bin/tscore.time.xml', 'bin/tscore.ip.names', 'bin/platforms/qwindows.dll',
                      'bin/qt.conf', 'bin/showpsisi-portable.json', 'api/tools.json', 'extensions/demo.json',
                      'references/standards.json', 'references/satellites.json', 'samples/generated/lab.ts', 'samples/generated/lab.manifest.json', 'LICENSE',
-                     'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt',
+                     'THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'Launch Qt.cmd', 'README-portable.txt',
                      'assets/icons/showpsisi.svg', 'assets/icons/showpsisi-256.png', 'assets/icons/showpsisi.ico']:
             path = self.package / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture', encoding='utf-8')
-        (self.package / 'build-information.json').write_text('{"source_commit":"fixture"}')
+        (self.package / 'build-information.json').write_text('{"source_commit":"fixture","application_version":"0.1.0"}')
         (self.package / 'redistribution-review.json').write_text('{"review_complete":false}')
         self.artifacts = self.root / 'evidence'
         self.artifacts.mkdir()
-        self.zip = self.root / 'app.zip'
+        self.zip = self.root / 'ShowPsiSi-0.1.0-windows-x64-portable.zip'
+
+    def test_versioned_portable_asset_contract(self):
+        self.assertEqual(portable.portable_asset_name('0.1.0'), self.zip.name)
+        for version in (None, 'v0.1.0', '0.1', '0.1.0-beta', '00.1.0', '0.1.0/other'):
+            with self.subTest(version=version), self.assertRaises(RuntimeError):
+                portable.portable_asset_name(version)
+
+    def test_archive_cannot_mislabel_package_version(self):
+        self.approve_fixture()
+        with self.assertRaisesRegex(RuntimeError, 'asset name'):
+            portable.archive(self.package, self.artifacts, self.root / 'ShowPsiSi-0.2.0-windows-x64-portable.zip')
+
+    def test_launcher_preflight_is_read_only_and_blocks_before_qt(self):
+        launcher = ROOT / 'scripts/portable/Launch Qt.cmd'
+        text = launcher.read_text()
+        command = portable_launcher_checks.command(launcher)
+        for name in ('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll'):
+            self.assertIn(name, command)
+        self.assertIn('14.51.36231.0', command)
+        self.assertIn('10.0.17763.0', command)
+        self.assertIn('[Console]::Error.WriteLine', command)
+        for forbidden in ('ExecutionPolicy', 'Invoke-WebRequest', 'Start-Process', 'runas', 'Set-ItemProperty'):
+            self.assertNotIn(forbidden, command)
+        self.assertLess(text.index('if errorlevel 1 goto runtime_not_ready'), text.index('start "" /wait'))
+        self.assertIn('https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist', text)
+        self.assertIn('exit /b 1', text)
+
+    def test_launcher_probe_requires_exact_single_production_command(self):
+        launcher = self.root / 'launcher.cmd'
+        launcher.write_text('start qt.exe')
+        with self.assertRaisesRegex(RuntimeError, 'exactly one'):
+            portable_launcher_checks.command(launcher)
+
+    def test_non_windows_preflight_probe_never_claims_windows_pass(self):
+        with mock.patch.object(portable_launcher_checks.os, 'name', 'posix'), self.assertRaisesRegex(RuntimeError, 'requires Windows'):
+            portable_launcher_checks.probe(self.package / 'Launch Qt.cmd', self.artifacts)
 
     def tearDown(self):
         self.temp.cleanup()

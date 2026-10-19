@@ -70,6 +70,15 @@ class PortablePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'exactly one'):
             portable_launcher_checks.command(launcher)
 
+    def test_preflight_fixture_changes_only_checker_root_not_powershell_environment(self):
+        production = portable_launcher_checks.command(ROOT / 'scripts/portable/Launch Qt.cmd')
+        fixture = portable_launcher_checks.fixture_command(production)
+        self.assertEqual(fixture.replace('$env:SHOWPSISI_PREFLIGHT_FIXTURE_ROOT', '$env:SystemRoot'), production)
+        self.assertNotIn('$env:SystemRoot', fixture)
+        for bad in ('no root', '$env:SystemRoot; $env:SystemRoot'):
+            with self.assertRaisesRegex(RuntimeError, 'one DLL root'):
+                portable_launcher_checks.fixture_command(bad)
+
     def test_non_windows_preflight_probe_never_claims_windows_pass(self):
         with mock.patch.object(portable_launcher_checks.os, 'name', 'posix'), self.assertRaisesRegex(RuntimeError, 'requires Windows'):
             portable_launcher_checks.probe(self.package / 'Launch Qt.cmd', self.artifacts)

@@ -339,3 +339,47 @@ Arrival labels use packet positions unless the user supplies a transport bitrate
 in that case elapsed seconds are explicitly an estimate from that bitrate. No PCR
 or wall-clock reconstruction is claimed. Logical table groups retain version,
 current/next, extension and section evidence rather than grouping by PID alone.
+
+## Evidence-linked topology subset (2026-10-19 feature branch)
+
+The independent topology implementation adds `query_topology` with exact
+revision/cutoff/section provenance and typed graph relations. This is separate
+from the installer/portable release and does not redefine existing Services or
+semantic snapshot-diff results. Contract: [TOPOLOGY_API.md](TOPOLOGY_API.md).
+
+Application adapters implemented and exercised by real-core wire fixtures:
+
+- DVB canonical NIT/SDT, PAT-selected PMT and ES declarations; exact service
+  triplets, multiple network memberships, other-TS announcements, unresolved
+  PAT-only ONID, conflicting names/identities and PMT PID switches.
+- ATSC 1.0 complete TVCT/CVCT, one-/two-part channel forms, reserved encodings,
+  header TSID vs channel TSID, distinct duplicate observations, source references
+  with zero explicitly unidentified, inactive/analog/hidden channels and
+  independent service-location vs PMT conflicts.
+- ISDB explicit Japan/Brazil/unspecified profile basic NIT/SDT/PAT/PMT. Japan
+  TS-information remote key, raw transmission types and partial-reception service
+  references are tested. Brazil/unspecified regional descriptor semantics remain
+  unsupported, not guessed from the shared tag or transplanted from Japan.
+
+The `test_topology.py` suite uses production JSONL and MCP, checks each returned
+source against real `inspect` anchors and bytes, current/next/CRC/missing and
+reused-version boundaries, same-packet receive order, rollover, stale revisions,
+failed-analysis clearing, and more than 2,500 programs across bounded pages.
+`auto` remains explicit unresolved interpretation rather than guessing an ISDB/
+DVB family from their shared layouts or an ATSC family from a colliding table ID.
+
+Bounded DVB-S/S2/C/T delivery-parameter nodes and nominal satellite-candidate
+relations reuse the existing source-attributed local satellite lookup. Every
+parameter declaration retains its original NIT transport/descriptor identity;
+physical TP identity, actual spacecraft and capture-time assignment stay unknown.
+Unknown DVB-T center frequency retains null Hz plus other known parameters;
+raw reserved codes remain unnormalized. Co-located/no-match/unavailable-catalog
+states remain explicit, and ISDB same-tag
+interpretations are guarded. This does not add a transponder database or tuning.
+
+Unsupported topology projections are reported in every result: BAT/regional LCN,
+physical transponder/satellite identification, S2X/T2 expansion, full PSIP auxiliary/EPG, and ISDB
+BIT/CDT/SDTT/logo/broadcaster chains. Existing raw/Metadata access remains.
+A source anchor is section-scoped original bytes; no arbitrary merged-XML byte
+mapping or physical reception/media availability is claimed. Native Qt/WebView2
+interaction acceptance remains a separate test gate.

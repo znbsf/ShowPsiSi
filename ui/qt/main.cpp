@@ -62,7 +62,7 @@ class Bridge:public QObject {
     QVariantMap m_state,m_detail;
     QString m_root,m_sample,m_error,stderrTail,m_availability="starting";
     bool m_busy=false,m_cancelling=false,m_inspecting=false,m_comparing=false;
-    int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0;
+    int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0,latestTopology=0;
     quint64 generation=0;
     QHash<int,Request> methods;
     QSet<int> pendingExports;
@@ -72,7 +72,7 @@ class Bridge:public QObject {
     QQuickWindow* window=nullptr;
 
     void clearIntentions(){
-        latestInspect=latestQuery=latestPreview=latestComparison=0;
+        latestInspect=latestQuery=latestPreview=latestComparison=latestTopology=0;
         m_detail.clear();m_inspecting=false;m_comparing=false;
         emit detailChanged();emit inspectingChanged();emit comparingChanged();
         emit workspaceInvalidated();
@@ -102,7 +102,7 @@ class Bridge:public QObject {
         if(request.generation!=generation)return;
         if((method=="analyze"&&id!=activeAnalysis)||(method=="inspect"&&id!=latestInspect)||
            (method=="query"&&id!=latestQuery)||(method=="preview_rename"&&id!=latestPreview)||
-           (method=="diff_snapshots"&&id!=latestComparison))return;
+           (method=="diff_snapshots"&&id!=latestComparison)||(method=="query_topology"&&id!=latestTopology))return;
         if(method=="inspect"){m_inspecting=false;emit inspectingChanged();}
         if(method=="diff_snapshots"){m_comparing=false;emit comparingChanged();}
         const bool cancelRequested=method=="analyze"&&m_cancelling;
@@ -257,7 +257,8 @@ public:
             dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();emit stateChanged();mark("analyze_requested");
         }
         if(method=="inspect"){latestInspect=id;m_detail.clear();m_inspecting=true;emit detailChanged();emit inspectingChanged();}
-        if(method=="query"){latestQuery=id;latestInspect=latestPreview=0;m_detail.clear();m_inspecting=false;emit detailChanged();emit inspectingChanged();}
+        if(method=="query"){latestQuery=id;latestInspect=latestPreview=latestTopology=0;m_detail.clear();m_inspecting=false;emit detailChanged();emit inspectingChanged();}
+        if(method=="query_topology")latestTopology=id;
         if(method=="preview_rename")latestPreview=id;
         if(method=="diff_snapshots"){latestComparison=id;m_comparing=true;emit comparingChanged();}
         methods.insert(id,{method,generation});

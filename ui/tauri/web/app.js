@@ -206,6 +206,143 @@ let firstPaint = false,
   treeSearch = "",
   openNodes = new Set(),
   view = "tree";
+// Independent semantic selection, keyboard focus and evidence activation.
+let topology = {snapshot:null,family:'all',search:'',expanded:{},limits:{},selected:'',focused:'',active:null,resolution:null,
+  loading:false,error:'',stale:false,epoch:0,cutoff:null,label:'',origin:'',workspace:null,history:[],revealed:false,scroll:0};
+function workspaceCutoff() { return data.selected_packet ?? Math.max(0,(data.packets || 1)-1); }
+function topologyCutoff() { return topology.cutoff ?? workspaceCutoff(); }
+function inspectionState() { return {selected,selectedService,selectedKey,detail,detailError,aggregateDiagnostic,treeSearch,openNodes:new Set(openNodes),view,inspectionEvidence,comparisonEvidence,evidenceScope,analysisRevision:data.revision,workspacePacket:workspaceCutoff(),wasLoading:loadingDetail}; }
+function restoreInspectionState(saved) {
+  ++inspectEpoch; loadingDetail=false;
+  if(saved && (saved.analysisRevision===undefined || saved.analysisRevision===data.revision) && (saved.workspacePacket===undefined || saved.workspacePacket===workspaceCutoff())) {
+    ({selected,selectedService,selectedKey,detail,detailError,aggregateDiagnostic,treeSearch,openNodes,view,inspectionEvidence}=saved);
+    comparisonEvidence=saved.comparisonEvidence || '';evidenceScope=saved.evidenceScope || evidenceScope;
+    if(saved.wasLoading && selected) {const epoch=inspectEpoch;queueMicrotask(()=>{if(epoch===inspectEpoch)inspect(selected,selectedService,selectedKey,inspectionEvidence);});}
+  } else {selectionReset();inspectionEvidence=null;comparisonEvidence='';}
+}
+function resetTopology() {
+  topology={snapshot:null,family:'all',search:'',expanded:{},limits:{},selected:'',focused:'',active:null,resolution:null,
+    loading:false,error:'',stale:false,epoch:topology.epoch+1,cutoff:null,label:'',origin:'',workspace:null,history:[],revealed:false,scroll:0};
+}
+async function loadTopology(more=false) {
+  if(busy || cancelling || backendFailure || !data.complete || topology.loading) return;
+  const epoch=++topology.epoch,revision=data.revision,cutoff=topologyCutoff();
+  const offset=more ? topology.snapshot?.page?.next_offset : 0;
+  if(more && offset==null) return;
+  topology.loading=true;topology.error='';topology.stale=!!topology.snapshot && !more;
+  renderList();renderInspector();
+  try {
+    const result=await call('query_topology',{at_packet:cutoff,analysis_revision:revision,offset,limit:500});
+    if(epoch!==topology.epoch || revision!==data.revision || cutoff!==topologyCutoff()) return;
+    const error=workbench.validateTopology(result,revision,cutoff);if(error)throw new Error(error);
+    topology.snapshot=more?workbench.mergeTopology(topology.snapshot,result):result;
+    topology.stale=false;
+    if(!more) (result.projections || []).forEach(p=>p.roots.forEach(id=>{if(topology.expanded[id]===undefined)topology.expanded[id]=true;}));
+    if(topology.selected && !workbench.topologyNodes(topology.snapshot).some(n=>n.node_id===topology.selected)) topology.error='The previous object is not observed in this loaded snapshot. Its name has not been substituted.';
+  } catch(error) {
+    if(epoch!==topology.epoch)return;
+    topology.error=String(error);topology.stale=!!topology.snapshot;
+  } finally {
+    if(epoch===topology.epoch) {topology.loading=false;if(tab==='Topology'){renderList();renderInspector();}}
+  }
+}
+function topologyNode(id=topology.selected) { return workbench.topologyNodes(topology.snapshot || {}).find(n=>n.node_id===id); }
+function topologyRemember() {
+  topology.history.push({selected:topology.selected,focused:topology.focused,active:topology.active,resolution:topology.resolution,inspection:inspectionState(),scroll:$('#list').scrollTop,expanded:{...topology.expanded},limits:{...topology.limits},search:topology.search,family:topology.family});
+  if(topology.history.length>100)topology.history.shift();
+}
+function selectTopology(id,remember=true) {
+  if(!topologyNode(id))return;
+  if(remember && topology.selected && (topology.selected!==id || topology.active))topologyRemember();
+  ++inspectEpoch;loadingDetail=false;topology.active=null;topology.resolution=null;topology.selected=id;
+  let n=topologyNode(id),seen={};while(n?.parent_id && !seen[n.parent_id]){seen[n.parent_id]=true;topology.expanded[n.parent_id]=true;topology.limits[n.parent_id]=Number.MAX_SAFE_INTEGER;n=topologyNode(n.parent_id);}
+  renderList();renderInspector();
+}
+function topologyBack() {
+  if(topology.revealed) {topology.revealed=false;tab='Topology';search=topology.search;$('#search').value=search;render();$('#list').scrollTop=topology.scroll;$('#topology-show-table')?.focus({preventScroll:true});return;}
+  if(topology.active) {const ref=topology.active,node=topologyNode(),index=node?workbench.topologyEvidence(node,topology.snapshot.edges).findIndex(item=>item.ref===ref):-1;++inspectEpoch;loadingDetail=false;topology.active=null;topology.resolution=null;renderInspector();if(index>=0)$('#inspector [data-topology-source="'+index+'"]')?.focus({preventScroll:true});return;}
+  const previous=topology.history.pop();
+  if(previous) {Object.assign(topology,{selected:previous.selected,focused:previous.focused,active:previous.active,resolution:previous.resolution,expanded:previous.expanded,limits:previous.limits,search:previous.search,family:previous.family});search=topology.search;$('#search').value=search;restoreInspectionState(previous.inspection);renderList();renderInspector();$('#list').scrollTop=previous.scroll;}
+  else if(topology.origin==='Changes') {changeTab('Changes');render();}
+}
+async function inspectTopologyEvidence(ref) {
+  if(busy || backendFailure || topology.stale || !topology.snapshot)return;
+  if(ref.analysis_revision!==data.revision || ref.at_packet!==topology.snapshot.at_packet) {topology.error='Source evidence context differs from this topology snapshot.';renderInspector();return;}
+  topology.active=ref;topology.resolution=null;evidenceScope='section';view='tree';
+  await inspect(ref.section_id,-1,'topology:'+topology.selected+':'+ref.assertion_key,
+    {kind:'topology',atPacket:ref.at_packet,label:(topology.label || 'Topology')+' · packet '+num(ref.at_packet),ref,nodeId:topology.selected});
+}
+function topologySourceHeader() {
+  if(!topology.active || !(tab==='Topology' || topology.revealed))return '';
+  const ref=topology.active,locator=ref.locator || {},resolution=topology.resolution,sourceId=detail.id || ref.section_id;
+  const canReveal=ref.at_packet===workspaceCutoff() && ref.analysis_revision===data.revision && !loadingDetail && !detailError;
+  return `<div class="topology-source-context"><div><button class="btn small" id="topology-back">← ${topology.revealed?'Back to Topology':'Back to object'}</button><strong>${esc(ref.assertion_key)}</strong><button class="btn small" id="topology-show-table" ${canReveal?'':'disabled'} title="${canReveal?'Reveal this exact section without changing the snapshot':'Tables reveal requires the same workspace cutoff; source inspection remains available here'}">Show in Tables</button></div><details><summary>Source evidence · cutoff #${num(ref.at_packet)} · revision ${num(ref.analysis_revision)}</summary><p class="meta topology-source-id">Exact section: ${esc(sourceId)}${sourceId!==ref.section_id?'<br>Original assertion: '+esc(ref.section_id):''}</p><p>${esc(locator.display_path || '')} · ${esc(ref.role || '')}<br>Workspace stays at #${num(workspaceCutoff())}${ref.at_packet!==workspaceCutoff()?' · Tables reveal unavailable at a different workspace cutoff.':''}</p></details><p id="topology-locator-status" role="status">${esc(loadingDetail?'Locating exact source…':resolution?.message || detailError || 'Exact section requested; locator resolution pending.')}${evidenceScope==='merged'?' Source anchor applies only to Selected section.':''}</p></div>`;
+}
+function bindTopologySourceHeader() {
+  $('#topology-back')?.addEventListener('click',topologyBack);
+  $('#topology-show-table')?.addEventListener('click',()=>{
+    if(!topology.active || topology.active.at_packet!==workspaceCutoff())return;
+    topology.scroll=$('#list').scrollTop;topology.revealed=true;tab='Tables';filter='';pidFilter=null;search='';$('#search').value='';showBadCrc=true;
+    const sourceId=detail.id || topology.active.section_id;
+    const model=workbench.tables(data,null,'',true,''),group=model.groups.find(g=>g.section_ids.includes(sourceId));
+    if(group){openTableGroups.add(group.id);page=Math.floor(model.groups.indexOf(group)/PAGE_SIZE);}else {groupedTables=false;page=Math.max(0,Math.floor(model.sections.findIndex(r=>r.id===sourceId)/PAGE_SIZE));}
+    render();requestAnimationFrame(()=>[...$('#list').querySelectorAll('[data-key]')].find(e=>e.dataset.key===sourceId)?.scrollIntoView({block:'nearest'}));
+  });
+}
+function renderTopologyInspector() {
+  const node=topologyNode(),snapshot=topology.snapshot,panel=$('#inspector');
+  panel.innerHTML=`<div class="panel-title">OBJECT INSPECTOR <span class="muted">TOPOLOGY</span></div>${topology.history.length || topology.origin==='Changes'?'<div class="topology-actions"><button class="btn small" id="topology-back">← Back</button></div>':''}${topology.error?`<p class="topology-warning" role="status">${esc(topology.stale?'Stale topology · ':'')}${esc(topology.error)}</p>`:''}${node?`<div class="inspector-heading"><h2>${esc(node.label)}</h2></div><p class="meta identity-line">${esc(node.object_type.replace(/_/g,' '))} · ${esc(workbench.topologyStatus(node))}</p><div class="topology-summary"><h3>Identity</h3>${topologyDefinition(node.identity)}<p class="meta">Profile: ${esc(snapshot.interpretation_profile)} · snapshot #${num(snapshot.at_packet)}</p><h3>Relationships</h3>${(snapshot.edges || []).filter(e=>e.from===node.node_id || e.to===node.node_id).map(e=>{const target=topologyNode(e.from===node.node_id?e.to:e.from);return `<div class="topology-relation"><span>${e.from===node.node_id?'→':'←'} ${esc(e.relation)} · ${esc(e.resolution_status)}</span>${target?`<button class="btn small" data-topology-target="${esc(target.node_id)}">${esc(target.label)}</button>`:`<span class="meta">${esc(e.from===node.node_id?e.to:e.from)} · object not loaded</span>`}</div>`;}).join('') || '<p class="meta">No resolved relationships supplied.</p>'}<h3>Sources</h3><div class="topology-sources">${workbench.topologyEvidence(node,snapshot.edges).map((item,i)=>{const ref=item.ref,t=ref.table_identity || {};return `<button class="btn topology-source" data-topology-source="${i}" ${topology.stale || busy || backendFailure?'disabled':''}><strong>${esc(ref.assertion_key)}${item.relation?' · '+esc(item.relation):''}</strong><span>PID ${hex(t.pid)} · TID ${hex(t.table_id,2)} · ${t.version==null?'unversioned':'v'+esc(t.version)} · §${esc(t.section_number)}</span><span>${esc(ref.role || '')} · ${esc(ref.locator?.precision || 'section')} · #${num(ref.at_packet)}</span></button>`;}).join('') || '<p class="meta">No source references supplied for this object.</p>'}</div>${node.unresolved_reasons?.length?`<h3>Unknowns and conflicts</h3><ul>${node.unresolved_reasons.map(r=>`<li>${esc(typeof r==='string'?r:JSON.stringify(r))}</li>`).join('')}</ul>`:''}${(node.reference_sources || []).length?`<details class="topology-attributes"><summary>Catalog reference sources · not wire evidence</summary>${node.reference_sources.map(source=>topologyDefinition(source)).join('')}</details>`:''}${Object.keys(node.attributes || {}).length?`<details class="topology-attributes"><summary>Additional attributes</summary>${topologyDefinition(node.attributes)}</details>`:''}<p class="meta topology-boundary">Signalling observations do not establish physical reception or playable media.</p></div>`:`<div class="empty"><h3>${topology.loading?'Loading topology…':'Select a semantic object'}</h3><p>Select an object to see its identity, relationships and all source evidence. Arrow keys move focus without changing your selection.</p></div>`}`;
+  $('#topology-back')?.addEventListener('click',topologyBack);
+  panel.querySelectorAll('[data-topology-target]').forEach(el=>el.onclick=()=>selectTopology(el.dataset.topologyTarget));
+  const refs=node?workbench.topologyEvidence(node,snapshot.edges):[];
+  panel.querySelectorAll('[data-topology-source]').forEach(el=>el.onclick=()=>inspectTopologyEvidence(refs[Number(el.dataset.topologySource)].ref));
+}
+function topologyDefinition(values) {
+  return '<dl class="topology-definition">'+Object.keys(values || {}).map(key=>`<div><dt>${esc(workbench.topologyFieldLabel(key))}</dt><dd>${esc(values[key] && typeof values[key]==='object'?JSON.stringify(values[key]):workbench.value(key,values[key]))}</dd></div>`).join('')+'</dl>';
+}
+function renderTopology() {
+  const snapshot=topology.snapshot || {},nodes=workbench.topologyNodes(snapshot),list=$('#list'),hadFocus=list.contains(document.activeElement),scroll=topology.restoreScroll?topology.scroll:list.scrollTop;topology.restoreScroll=false;
+  const model=workbench.topologyRows(snapshot,topology.family,topology.search,topology.expanded,topology.limits);
+  const families=snapshot.projections || [],loaded=nodes.length,total=snapshot.counts?.nodes ?? snapshot.page?.total ?? loaded;
+  $('#table-filter-tools').innerHTML=families.length>1?`<select id="topology-family" aria-label="Topology view family"><option value="all">All observed families</option>${families.map(p=>`<option value="${esc(p.family)}" ${topology.family===p.family?'selected':''}>${esc(p.label)}</option>`).join('')}</select>`:'';
+  $('#topology-family')?.addEventListener('change',e=>{topology.family=e.target.value;renderTopology();});
+  $('#result-count').textContent=topology.search?num(model.matched)+' matching loaded objects':num(loaded)+' / '+num(total)+' objects loaded';
+  $('#service-head').innerHTML=`<div class="topology-context"><strong>${esc(topology.label || (families.length===1?families[0].label:'Signal topology'))}</strong><span>${snapshot.at_packet!=null?'Observed through packet #'+num(snapshot.at_packet):'Snapshot pending'} · ${esc(snapshot.interpretation_profile || 'context pending')}</span>${topology.label?`<span>Workspace stays at #${num(workspaceCutoff())}</span>`:''}</div>${snapshot.coverage?`<details class="topology-coverage" ${topology.coverageOpen?'open':''}><summary>Coverage · ${esc(snapshot.status)} · ${num(snapshot.counts?.raw_sections)} raw sections retained</summary>${topologyDefinition(snapshot.coverage)}${(snapshot.diagnostics || []).length?`<p>${snapshot.diagnostics.map(d=>esc(typeof d==='string'?d:JSON.stringify(d))).join('<br>')}</p>`:''}</details>`:''}${topology.error?`<p class="topology-warning" role="status">${esc(topology.stale?'Stale · ':'')}${esc(topology.error)} <button class="btn small" id="retry-topology" ${topology.loading || backendFailure?'disabled':''}>Retry</button></p>`:''}${snapshot.page?.has_more?'<p class="meta topology-loaded-note">Search covers loaded objects only. Load more to search the remaining objects; ancestor context is retained.</p>':''}`;
+  $('#retry-topology')?.addEventListener('click',()=>loadTopology());
+  $('.topology-coverage')?.addEventListener('toggle',e=>{if(e.target.isConnected)topology.coverageOpen=e.target.open;});
+  $('#page-label').textContent=(topology.loading?'Loading… · ':'')+num(model.total)+' loaded objects in this view · '+(snapshot.counts?num(snapshot.counts.unresolved)+' unresolved in snapshot':'unresolved count pending');
+  $('#prev').disabled=true;$('#next').disabled=true;
+  list.setAttribute('role','tree');list.setAttribute('aria-label','Semantic signal topology');list.setAttribute('aria-busy',String(topology.loading));
+  const visible=model.rows.filter(r=>!r.more);
+  if(!visible.some(r=>r.node.node_id===topology.focused))topology.focused=visible[0]?.node.node_id || '';
+  list.innerHTML=model.rows.map(row=>row.more?`<div class="topology-more" style="--level:${row.depth}"><button class="btn small" data-topology-more="${esc(row.parent_id || '$roots')}">Show ${Math.min(100,row.remaining)} more child objects · ${num(row.remaining)} remaining</button></div>`:(()=>{const n=row.node;return `<div role="treeitem" aria-level="${row.depth}" ${row.has_children?`aria-expanded="${row.expanded}"`:''} aria-selected="${topology.selected===n.node_id}" tabindex="${topology.focused===n.node_id?0:-1}" class="topology-row ${topology.selected===n.node_id?'selected':''}" data-topology-node="${esc(n.node_id)}" data-parent="${esc(row.parent_id || '')}" style="--level:${row.depth}" aria-label="${esc(n.label+' · '+workbench.topologyStatus(n))}"><span class="topology-disclosure" data-topology-fold="${esc(n.node_id)}" aria-hidden="true">${row.has_children?(row.expanded?'▾':'▸'):'·'}</span><span class="topology-object"><strong>${esc(n.label)}</strong><small title="${esc(workbench.topologyIdentityDetails(n))}">${esc(workbench.topologyIdentity(n) || n.object_type.replace(/_/g,' '))}</small></span><span class="topology-state">${esc(workbench.topologyStatus(n))}</span><span class="topology-count" title="Source references for this object and related relationships">${num(workbench.topologyEvidence(n,snapshot.edges).length)} sources</span></div>`;})()).join('') || `<div class="empty"><h3>${topology.loading?'Loading semantic objects…':topology.search?'No matching loaded objects':'No semantic relationships in this context'}</h3><p>${busy?'Wait for analysis to complete.':!data.complete?'Analyze a transport stream to begin.':`Retained ${num(snapshot.counts?.raw_sections ?? data.tables?.length)} raw sections. Tables remains available; an empty topology does not mean no signal or decoding failure.`}</p></div>`;
+  if(snapshot.page?.has_more)list.insertAdjacentHTML('beforeend',`<div class="topology-load"><button class="btn" id="topology-load-more" ${topology.loading || backendFailure?'disabled':''}>${topology.loading?'Loading…':'Load next objects'} (${num(loaded)} / ${num(total)})</button></div>`);
+  $('#topology-load-more')?.addEventListener('click',()=>loadTopology(true));
+  list.querySelectorAll('[data-topology-more]').forEach(el=>el.onclick=()=>{const id=el.dataset.topologyMore;topology.limits[id]=(topology.limits[id] || 100)+100;renderTopology();});
+  const items=[...list.querySelectorAll('[data-topology-node]')];
+  const focus=(id)=>{const el=items.find(e=>e.dataset.topologyNode===id);if(el){topology.focused=id;items.forEach(e=>e.tabIndex=e===el?0:-1);el.focus({preventScroll:true});el.scrollIntoView({block:'nearest'});}};
+  const fold=(id,open)=>{topology.expanded[id]=open;renderTopology();};
+  items.forEach(el=>{
+    const id=el.dataset.topologyNode;
+    el.onfocus=()=>{topology.focused=id;items.forEach(e=>e.tabIndex=e===el?0:-1);};
+    el.onclick=e=>{if(e.target.closest('[data-topology-fold]') && el.hasAttribute('aria-expanded')){fold(id,el.getAttribute('aria-expanded')!=='true');return;}topology.focused=id;selectTopology(id);[...list.querySelectorAll('[data-topology-node]')].find(e=>e.dataset.topologyNode===id)?.focus();};
+    el.onkeydown=e=>{
+      const index=items.indexOf(el),expanded=el.getAttribute('aria-expanded')==='true',branch=el.hasAttribute('aria-expanded');
+      if(['ArrowUp','ArrowDown','Home','End','ArrowLeft','ArrowRight','Enter',' '].includes(e.key))e.preventDefault();
+      if(e.key==='ArrowUp' || e.key==='ArrowDown')focus(items[Math.max(0,Math.min(items.length-1,index+(e.key==='ArrowDown'?1:-1)))].dataset.topologyNode);
+      else if(e.key==='Home' || e.key==='End')focus(items[e.key==='Home'?0:items.length-1].dataset.topologyNode);
+      else if(e.key==='ArrowRight' && branch){if(!expanded)fold(id,true);else focus(items[index+1]?.dataset.topologyNode);}
+      else if(e.key==='ArrowLeft'){if(branch && expanded)fold(id,false);else focus(el.dataset.parent);}
+      else if(e.key==='Enter' || e.key===' ')selectTopology(id);
+      else if(e.key.length===1 && !e.ctrlKey && !e.metaKey && !e.altKey){const now=Date.now();topology.typed=now-(topology.typedAt || 0)<700?(topology.typed || '')+e.key.toLowerCase():e.key.toLowerCase();topology.typedAt=now;const ordered=items.slice(index+1).concat(items.slice(0,index+1));const found=ordered.find(x=>x.getAttribute('aria-label').toLowerCase().startsWith(topology.typed));if(found){e.preventDefault();focus(found.dataset.topologyNode);}}
+    };
+  });
+  list.scrollTop=scroll;if(hadFocus)focus(topology.focused);
+}
+function openComparisonTopology(side,label) {
+  changeTab('Topology');++topology.epoch;topology.loading=false;topology.cutoff=side.at_packet;topology.label='Comparison '+label;topology.active=null;topology.snapshot=null;topology.selected='';topology.focused='';topology.history=[];render();loadTopology();
+}
+
 const PAGE_SIZE = 100;
 const native = window.__TAURI__;
 const invoke = (...args) =>
@@ -293,6 +430,7 @@ function disconnectBackend(reason) {
   ++scanEpoch;
   ++inspectEpoch;
   ++queryEpoch;
+  ++topology.epoch;topology.loading=false;topology.stale=!!topology.snapshot;topology.error=backendFailure;
   ++comparison.epoch;
   comparison.loading = false;
   comparison.error = backendFailure;
@@ -316,7 +454,7 @@ function call(method, params = {}) {
     // Only idle read requests expire. Analysis may be long-running, and write
     // timeouts would leave ambiguous outcomes. Backend exit rejects every job.
     const canTimeout =
-      ["inspect", "query", "diff_snapshots", "capabilities"].includes(method) &&
+      ["inspect", "query", "query_topology", "diff_snapshots", "capabilities"].includes(method) &&
       !busy &&
       ![...pending.values()].some((job) => job.method === "analyze");
     const timer = canTimeout
@@ -352,6 +490,7 @@ function selectionReset() {
 function resetAnalysisViews() {
   // A saved comparison workspace and an edit token belong to one analysis.
   // Never restore them after a cancellation or a new source revision.
+  resetTopology();
   savedWorkspace = null;
   comparisonEvidence = "";
   inspectionEvidence = null;
@@ -471,7 +610,7 @@ async function scan() {
       cancelling = false;
       activeAnalyze = null;
       render();
-      if (succeeded) defaultInspect();
+      if (succeeded) {if(tab==='Topology')loadTopology();else defaultInspect();}
       if (returnFocus && !backendFailure) $("#scan").focus();
     }
   }
@@ -502,12 +641,26 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
     const result = await call("inspect", {
       id,
       ...(atPacket != null ? { at_packet: atPacket } : {}),
+      ...(evidence?.kind==='topology' ? {analysis_revision:evidence.ref.analysis_revision} : {}),
     });
     if (epoch !== inspectEpoch) return;
+    if(evidence?.kind==='topology') {
+      if(evidence.nodeId!==topology.selected || evidence.ref!==topology.active || evidence.ref.analysis_revision!==data.revision) return;
+      if(id===evidence.ref.section_id) {
+        topology.resolution=workbench.resolveTopologyEvidence(evidence.ref,result);
+        if(topology.resolution.status==='mismatch') throw new Error(topology.resolution.message);
+      } else {
+        if(result.id!==id || result.analysis_revision!==evidence.ref.analysis_revision || result.native_table_at_packet!==evidence.atPacket)throw new Error('Source-section context does not match the requested evidence.');
+        topology.resolution={status:'fallback',precision:'section',anchor_index:-1,path:'section',byte_range:null,message:'Another section in this source group is open. The original assertion anchor applies to '+evidence.ref.section_id+'.'};
+      }
+    }
     detail = result;
     openNodes = new Set();
     const visit=(node,parent='')=>{const path=parent?parent+'/'+node.id:node.id;if(workbench.defaultOpen(path)) openNodes.add(path);(node.children || []).forEach(child=>visit(child,path));};
     visit(sectionTree());
+    if(evidence?.kind==='topology' && topology.resolution?.path) {
+      const parts=topology.resolution.path.split('/');for(let i=1;i<=parts.length;i++)openNodes.add(parts.slice(0,i).join('/'));
+    }
     if (comparisonEvidence)
       notice(comparisonEvidence + " · evidence loaded · main snapshot unchanged");
     else if ($("#notice").classList.contains("error"))
@@ -520,6 +673,7 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
     if (epoch === inspectEpoch) {
       loadingDetail = false;
       renderInspector();
+      if(evidence?.kind==='topology' && document.activeElement===document.body) {const target=$('#tree-area [data-source-highlight]') || $('#topology-back');if(target){target.tabIndex=0;target.focus({preventScroll:true});}}
       const identity=[detail.pid,detail.table_id,detail.extension].join(":");
       if(identity!==historyIdentity) historyPage=0;
       historyIdentity=identity; renderTimeline();
@@ -555,6 +709,7 @@ async function snapshot(packet, id, sid = -1) {
   invalidatePreview();
   if ($("#edit-dialog").open) $("#edit-dialog").close();
   selectionReset();
+  ++topology.epoch;topology.loading=false;topology.active=null;topology.cutoff=null;topology.label='';topology.history=[];topology.snapshot=null;topology.workspace=null;topology.sourceWorkspace=null;
   renderInspector();
   notice("Loading packet snapshot…");
   try {
@@ -564,6 +719,7 @@ async function snapshot(packet, id, sid = -1) {
     page = 0;
     render();
     if (id) inspect(id, sid);
+    else if(tab==='Topology')loadTopology();
     else defaultInspect();
     notice(
       packet < 0
@@ -696,7 +852,7 @@ function render() {
   renderExplorer();
   $("#extension").innerHTML =
     `<div class="panel-title">DESCRIPTOR EXTENSION</div><strong>${esc(data.extension_id || "No extension reported")}</strong><p>Schema extensions use their declared scope. Native decoding follows the table context; raw evidence is retained.</p>`;
-  $("#tabs").innerHTML = ["Services", "Tables", "EPG", "Issues", "Changes"]
+  $("#tabs").innerHTML = ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
     .map(
       (t) =>
         `<button role="tab" aria-selected="${tab === t}" tabindex="${tab === t ? 0 : -1}" class="${tab === t ? "active" : ""}" data-tab="${t}" ${tip(t)}>${t}${t === "Issues" && data.diagnostics?.length ? ` <span class="tab-count">${num(data.diagnostics.length)}</span>` : ""}</button>`,
@@ -710,6 +866,7 @@ function render() {
         page = 0;
         render();
         $('#tabs [aria-selected="true"]').focus();
+        $('#tabs [aria-selected="true"]').scrollIntoView({block:'nearest',inline:'nearest'});
       };
       el.onkeydown = (e) => {
         if (["ArrowLeft", "ArrowRight"].includes(e.key)) {
@@ -721,13 +878,16 @@ function render() {
             ];
           next.click();
           $('#tabs [aria-selected="true"]').focus();
+        $('#tabs [aria-selected="true"]').scrollIntoView({block:'nearest',inline:'nearest'});
         }
       };
     });
   $("#search").placeholder =
     tab === "Services"
       ? "Search services, providers, SID…"
-      : tab === "Tables"
+      : tab === "Topology"
+        ? "Search loaded objects, IDs, types, states…"
+        : tab === "Tables"
         ? "Search table, PID, version…"
         : tab === "EPG"
           ? "Search programmes, SID, start time…"
@@ -792,6 +952,7 @@ function navigateRecords(event,current) {
   items.forEach(el=>el.tabIndex=-1); if(target) {target.tabIndex=0;target.focus();}
 }
 function renderList() {
+  $("#list").setAttribute('aria-busy','false');
   $("#list").onscroll = () => { $("#service-head").scrollLeft = $("#list").scrollLeft; };
   $(".searchbar").hidden = tab === "Changes";
   $("#list").setAttribute("role", tab === "Changes" ? "region" : "listbox");
@@ -800,6 +961,7 @@ function renderList() {
     renderComparison();
     return;
   }
+  if (tab === "Topology") { renderTopology(); return; }
   const rows = recordRows();
   const tableModel = workbench.tables(data,pidFilter,filter,showBadCrc,search);
   const groups = tab === "Tables" && groupedTables ? tableModel.groups : [];
@@ -911,6 +1073,29 @@ function renderList() {
 }
 function changeTab(next) {
   if (next === tab) return;
+  const previousTab=tab;
+  if(previousTab==='Topology') {
+    topology.scroll=$('#list').scrollTop;
+    topology.sourceWorkspace=inspectionState();
+    restoreInspectionState(topology.workspace);
+    search=topology.recordSearch || '';$('#search').value=search;
+    if(topology.origin==='Changes') {
+      if(next==='Changes') {tab=next;return;}
+      if(savedWorkspace) {restoreInspectionState(savedWorkspace);savedWorkspace=null;}
+    }
+  }
+  if(next==='Topology') {
+    topology.workspace=inspectionState();topology.origin=previousTab;topology.recordSearch=search;++inspectEpoch;loadingDetail=false;
+    if(previousTab!=='Changes') {topology.cutoff=null;topology.label='';}
+    search=topology.search;$('#search').value=search;topology.restoreScroll=true;
+    if(topology.active && topology.sourceWorkspace)restoreInspectionState(topology.sourceWorkspace);
+    tab=next;
+    if(!topology.snapshot || topology.snapshot.analysis_revision!==data.revision || topology.snapshot.at_packet!==topologyCutoff()) {
+      ++topology.epoch;topology.loading=false;topology.active=null;topology.snapshot=null;queueMicrotask(()=>loadTopology());
+    }
+    return;
+  }
+  topology.revealed=false;
   let restoreInspection = false;
   if (next === "Changes") {
     savedWorkspace = { selected, selectedService, selectedKey, detail, detailError,
@@ -998,7 +1183,7 @@ function comparisonSide(side, label, change, index) {
   if (!side) return `<div class="comparison-side absent"><h4>${label}</h4><p>No observed record in this state</p></div>`;
   const value = side.value;
   const fields = [...new Set([...(change.changed_fields || []).filter((field) => field !== "payload"), ...(change.kind === "services" ? ["name", "provider", "pmt_pid"] : change.kind === "events" ? ["title", "start", "duration_seconds"] : ["name", "version", "bytes"])])].filter((field) => change.changed_fields?.includes(field) || Object.prototype.hasOwnProperty.call(value, field));
-  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span>${side.evidence?.length ? `<button class="btn small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure ? "disabled" : ""} title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button>` : ""}${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · v${evidence.version} · section ${evidence.section}</button>`).join("")}</div></div>`;
+  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span><button class="btn small" data-comparison-topology="${index}:${label[0]}" ${busy || backendFailure?'disabled':''}>Topology at ${label[0]}</button>${side.evidence?.length ? `<button class="btn small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure ? "disabled" : ""} title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button>` : ""}${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · v${evidence.version} · section ${evidence.section}</button>`).join("")}</div></div>`;
 }
 function renderComparisonResults() {
   const result = comparison.result;
@@ -1019,6 +1204,7 @@ function renderComparisonResults() {
         : (value.name || "Table") + " · PID " + hex(identity.pid) + " · section " + identity.section;
     return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${change.changed_fields?.length ? `<p class="changed-fields">Changed: ${change.changed_fields.map(esc).join(", ")}</p>${change.changed_fields.includes("payload") ? '<p class="meta">Raw section payload differs. Open source evidence to inspect its bytes.</p>' : ""}` : ""}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div></article>`;
   }).join("") : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+  $('#list').querySelectorAll('[data-comparison-topology]').forEach(el=>el.onclick=()=>{const [index,letter]=el.dataset.comparisonTopology.split(':');const change=result.changes[Number(index)];openComparisonTopology(letter==='A'?change.before:change.after,letter);});
   $("#list").querySelectorAll("[data-use-comparison]").forEach((el) => {
     el.onclick = () => {
       if (busy || backendFailure || result !== comparison.result) return;
@@ -1118,7 +1304,8 @@ function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1
   const selfMatch = needle.split(/\s+/).every(term => (node.label + " " + (node.value ?? "")).toLowerCase().includes(term));
   if (needle && !ancestorMatch && !nodeMatches(node, needle)) return "";
   if (++treeNodesRendered > 2500) return "";
-  const accessible = `role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
+  const located=inspectionEvidence?.kind==='topology' && evidenceScope==='section' && topology.resolution?.status==='resolved' && topology.resolution.path===path;
+  const accessible = `${located?'data-source-highlight="true" ':''}role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
   const kind = ["number", "string", "boolean"].includes(node.kind) ? node.kind : "meta";
   const label = `<span class="node-label ${node.tone || ""}" title="${esc(fieldHelp[node.label] || node.label)}">${highlightedTreeText(node.label)}</span>${node.value !== undefined ? `<span class="node-value" data-value-kind="${kind}">${highlightedTreeText(node.value)}</span>` : ""}`;
   if (!node.children)
@@ -1250,6 +1437,15 @@ function hexDump(raw) {
     );
   }).join("\n");
 }
+function topologyHexDump(raw) {
+  const range=inspectionEvidence?.kind==='topology' && evidenceScope==='section' && topology.resolution?.status==='resolved'?topology.resolution.byte_range:null;
+  if(!range)return esc(hexDump(raw));
+  const bytes=String(raw || '').match(/.{1,2}/g) || [];
+  return Array.from({length:Math.ceil(bytes.length/16)},(_,row)=>{
+    const start=row*16,slice=bytes.slice(start,start+16);
+    return start.toString(16).toUpperCase().padStart(4,'0')+'  '+slice.map((byte,index)=>{const offset=start+index;return offset>=range.offset && offset<range.offset+range.length?'<mark class="source-byte">'+esc(byte)+'</mark>':esc(byte);}).join(' ')+' '.repeat((16-slice.length)*3)+'  '+esc(slice.map(byte=>{const c=parseInt(byte,16);return c>=32 && c<127?String.fromCharCode(c):'.';}).join(''));
+  }).join('\n');
+}
 function nativeReferences(node) {
   return node
     ? [
@@ -1341,6 +1537,7 @@ function metadataPanel() {
 }
 function renderInspector() {
   const panel = $("#inspector");
+  if (tab === "Topology" && !topology.active) { renderTopologyInspector(); return; }
   // Read live disclosure state before replacing its DOM. The asynchronous
   // toggle event may not have fired when a source-section change starts.
   const previousSectionGroup = panel.querySelector("#section-group");
@@ -1353,10 +1550,11 @@ function renderInspector() {
     if (tab === "Changes" && !loadingDetail && !detailError) {
       // Comparison mode replaces the record list, so a "select a record" hint
       // would point at nothing. Describe the workflow that is actually on screen.
-      panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="muted">COMPARISON</span></div><div class="empty"><span class="empty-icon">⇄</span><h3>Compare two observed states</h3><p>Choose packet cutoffs A and B in the record pane, then compare. Each change lists its own before/after evidence; selecting that evidence inspects the exact section here without moving the workbench snapshot. Use <em>Use snapshot</em> when you deliberately want the workbench to move to that cutoff.</p>${comparison.error ? `<p class="bad">${esc(comparison.error)}</p>` : ""}<p class="meta">Only observed valid current sections are compared. A missing observation is not proof that a service stopped broadcasting.</p></div>`;
+      panel.innerHTML = topologySourceHeader()+`<div class="panel-title">SECTION INSPECTOR <span class="muted">COMPARISON</span></div><div class="empty"><span class="empty-icon">⇄</span><h3>Compare two observed states</h3><p>Choose packet cutoffs A and B in the record pane, then compare. Each change lists its own before/after evidence; selecting that evidence inspects the exact section here without moving the workbench snapshot. Use <em>Use snapshot</em> when you deliberately want the workbench to move to that cutoff.</p>${comparison.error ? `<p class="bad">${esc(comparison.error)}</p>` : ""}<p class="meta">Only observed valid current sections are compared. A missing observation is not proof that a service stopped broadcasting.</p></div>`;
       return;
     }
-    panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR</div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError && !backendFailure ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
+    panel.innerHTML = topologySourceHeader()+`<div class="panel-title">SECTION INSPECTOR</div>${comparisonEvidence && inspectionEvidence?.kind!=='topology' ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="empty"><span class="empty-icon">${loadingDetail ? "◌" : detailError ? "⚠" : "⌘"}</span><h3>${loadingDetail ? "Loading section…" : detailError ? "Unable to inspect section" : "Inspect the signal"}</h3><p>${esc(detailError || "Select a service, table, programme or issue to explore its source section.")}</p>${detailError && !backendFailure ? '<button class="btn" id="retry-inspect">Retry</button>' : ""}</div>`;
+    bindTopologySourceHeader();
     $("#retry-inspect")?.addEventListener("click", () =>
       inspect(selected, selectedService, selectedKey, inspectionEvidence),
     );
@@ -1369,7 +1567,8 @@ function renderInspector() {
     nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
   const xmlSource = evidenceScope === "section" ? detail.section_tsduck_xml : detail.merged?.complete ? detail.merged.tsduck_xml : null;
   const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
-  panel.innerHTML = `<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}">Merged table</button><span class="meta">Section: fields + bytes · Merged: SDK tree + XML</span></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? esc(hexDump(detail.raw_hex)) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  panel.innerHTML = topologySourceHeader()+`<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence && inspectionEvidence?.kind!=='topology' ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ v${detail.version}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · Section ${detail.section}/${detail.last_section} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}">Merged table</button><span class="meta">Section: fields + bytes · Merged: SDK tree + XML</span></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? topologyHexDump(detail.raw_hex) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  bindTopologySourceHeader();
   $("#section-group")?.addEventListener("toggle", event => { if (event.target.isConnected) sectionGroupOpen = event.target.open; });
   panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); });
   const sectionChoice = panel.querySelector("#section-choice");
@@ -1420,6 +1619,8 @@ function renderInspector() {
       }
     };
     renderTree();
+    const sourceTarget=$('#tree-area [data-source-highlight]');
+    if(sourceTarget && !treeSearch)requestAnimationFrame(()=>sourceTarget.scrollIntoView({block:'nearest'}));
     $("#expand-tree").onclick = () => {
       const expand = (node, parent = "", index = 0) => {
         const path = parent ? parent + "/" + (node.id ?? index) : node.id;
@@ -1762,6 +1963,7 @@ $("#edit-dialog").addEventListener("close", () => {
 });
 $("#search").oninput = (e) => {
   search = e.target.value;
+  if(tab === "Topology") topology.search=search;
   page = 0;
   renderList();
 };
@@ -1769,6 +1971,7 @@ $("#search").onkeydown = (event) => {
   if (event.key === "Escape") {
     event.preventDefault();
     search = "";
+    if(tab === "Topology")topology.search="";
     event.target.value = "";
     page = 0;
     renderList();
@@ -1787,6 +1990,7 @@ $("#next").onclick = () => {
   $("#list").scrollTop = 0;
 };
 document.addEventListener("keydown", (e) => {
+  if(e.altKey && e.key === "ArrowLeft" && (tab === "Topology" || topology.revealed)) {e.preventDefault();topologyBack();return;}
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     if (tab === "Changes") { changeTab("Services"); render(); }
@@ -1948,6 +2152,7 @@ function uiState() {
     theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
     records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
     history:{all:allTableHistory,entries:workbench.history(data,detail,allTableHistory),page:historyPage},evidence_scope:evidenceScope,
+    topology:{profile:topology.snapshot?.interpretation_profile,cutoff:topology.snapshot?.at_packet,selected_node:topology.selected,focused_node:topology.focused,expanded_ids:Object.keys(topology.expanded).filter(id=>topology.expanded[id]),search:topology.search,family:topology.family,loaded_nodes:workbench.topologyNodes(topology.snapshot || {}).length,total_nodes:topology.snapshot?.counts?.nodes,loading:topology.loading,stale:topology.stale,error:topology.error,evidence_ref:topology.active,locator_resolution:topology.resolution,return_depth:topology.history.length},inspection_context:inspectionEvidence?.kind || (comparisonEvidence?"comparison":"workspace"),
     tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
@@ -1955,13 +2160,13 @@ function uiState() {
     source_map:{tree:"ui/tauri/web/app.js:sectionTree/drawNode",style:"ui/tauri/web/style.css",transport:"ui/tauri/src-tauri/src/main.rs"}};
 }
 function uiAction(action) {
-  if (action.name === "select_tab" && ["Services","Tables","EPG","Issues","Changes"].includes(action.value)) {
+  if (action.name === "select_tab" && ["Services","Topology","Tables","EPG","Issues","Changes"].includes(action.value)) {
     const target = [...document.querySelectorAll("[data-tab]")].find(el=>el.dataset.tab===action.value);
     if (!target) throw new Error("Tab unavailable"); target.click();
   } else if (action.name === "select_record" && (data.tables || []).some(r=>r.id===action.id)) { changeTab("Tables");inspect(action.id);
   } else if (action.name === "set_bad_crc" && typeof action.value === "boolean") {showBadCrc=action.value;page=0;render();
   } else if (action.name === "set_grouped" && typeof action.value === "boolean") {groupedTables=action.value;page=0;renderList();
-  } else if (action.name === "search_records" && typeof action.value === "string" && action.value.length<=512) {search=action.value;page=0;$("#search").value=search;renderList();
+  } else if (action.name === "search_records" && typeof action.value === "string" && action.value.length<=512) {search=action.value;if(tab==='Topology')topology.search=search;page=0;$("#search").value=search;renderList();
   } else if (action.name === "set_scope" && ["merged","section"].includes(action.value)) {evidenceScope=action.value;renderInspector();
   } else if (action.name === "set_view" && ["Structure","Hex","XML","Decoded","Metadata","References"].includes(action.value)) {view={Structure:"tree",Hex:"hex",XML:"xml",Decoded:"decoded",Metadata:"metadata",References:"references"}[action.value];renderInspector();
   } else if (action.name === "history_scope" && typeof action.value === "boolean") {allTableHistory=action.value;historyPage=0;renderTimeline();
@@ -2065,6 +2270,7 @@ window.showpsisi = {
   getState: () => data,
   getDetail: () => detail,
   getComparison: () => comparison.result,
+  getTopology: () => topology.snapshot,
   getUiState: uiState,
 };
 boot().catch((error) => {

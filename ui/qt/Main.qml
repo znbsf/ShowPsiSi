@@ -67,11 +67,206 @@ ApplicationWindow {
     property bool backendReady: core.available && !core.busy
     property var detail: core.detail
     property string tab: "Services"
+    property string previousTab: "Services"
     onTabChanged: {
-        if (tab !== "Changes" && selectedChange) {
+        if(previousTab === "Topology" && !!topologyData.analysis_revision && tab !== "Topology" && !topologyTransition && !topologyTablesReveal){let point=topologyNavigationPoint();point.tab="Topology";topologyBackStack=topologyBackStack.concat([point]);}
+        previousTab=tab;
+        if (tab !== "Changes" && selectedChange && !topologyTransition) {
             restoreComparisonWorkspace();
         }
+        if(tab === "Topology" && !topologyTransition && !topologyLoading && (!topologyData.analysis_revision || topologyStale))loadTopology(false);
     }
+    // Semantic objects, keyboard focus and raw evidence are independent states.
+    property var topologyData: ({})
+    property bool topologyLoading: false
+    property string topologyError: ""
+    property bool topologyFailed: false
+    property string topologyFamily: ""
+    property string topologySelection: ""
+    property string topologyFocus: ""
+    property var topologyExpanded: ({})
+    property var topologyLimits: ({})
+    property var topologyEvidenceRef: null
+    onTopologyEvidenceRefChanged: if(!topologyEvidenceRef){hexEvidence.deselect();topologySectionContext=null;}
+    property var topologyResolution: ({})
+    property var topologySectionContext: null
+    property var topologyRequest: ({})
+    property var topologyOrigin: null
+    property var topologyBackStack: []
+    property bool topologyTransition: false
+    property bool topologyTablesReveal: false
+    property var topologyCutoff: null
+    property string topologyScopeLabel: "Current observation"
+    property var topologyNode: (topologyData.nodes || []).concat(topologyData.context_nodes || []).find(function(n) { return n.node_id === topologySelection; }) || null
+    property var topologyRelations: (topologyData.edges || []).filter(function(e) { return e.from === topologySelection || e.to === topologySelection; })
+    property var topologySources: topologyNode ? Shared.workbench.topologyEvidence(topologyNode, topologyData.edges || []) : []
+    property var topologyRowModel: Shared.workbench.topologyRows ? Shared.workbench.topologyRows(topologyData, topologyFamily, topologySearch.text, topologyExpanded, topologyLimits) : ({rows:[]})
+    property var topologyRows: (topologyRowModel.rows || []).map(function(r){return r.more ? r : Object.assign({},r,{node_id:r.node.node_id,branch:r.has_children,open:r.expanded});})
+    property bool topologySummary: tab === "Topology" && !topologyEvidenceRef
+    property bool topologyStale: topologyFailed || !!topologyData.analysis_revision && (topologyData.analysis_revision !== analysisState.analysis_revision || topologyData.at_packet !== (topologyCutoff === null ? currentPacket() : topologyCutoff))
+    property bool topologyCanReveal: !!topologyEvidenceRef && topologyEvidenceRef.at_packet === currentPacket() && topologyEvidenceRef.analysis_revision === analysisState.analysis_revision
+    function topologyNodeById(id) { return (topologyData.nodes || []).concat(topologyData.context_nodes || []).find(function(n) { return n.node_id === id; }); }
+    function topologyStatusText(node) { return node ? Shared.workbench.topologyStatus(node) : ""; }
+    function topologyIdentityText(node) { return node ? Shared.workbench.topologyIdentity(node) : ""; }
+    function topologyFullIdentityText(node) { return node ? Shared.workbench.topologyIdentityDetails(node) : ""; }
+    function topologyCoverageText() {
+        let coverage=topologyData.coverage || {};
+        return "Profile: " + (typeof topologyData.interpretation_profile==="object" ? JSON.stringify(topologyData.interpretation_profile) : topologyData.interpretation_profile || "not loaded") +
+            ((coverage.missing_tables || []).length ? "\nMissing tables: "+coverage.missing_tables.join(", ") : "") +
+            ((coverage.unsupported_relations || []).length ? "\nOutside the current semantic coverage:\n"+coverage.unsupported_relations.join("\n") : "") +
+            ((topologyData.diagnostics || []).length ? "\nDiagnostics:\n"+JSON.stringify(topologyData.diagnostics,null,2) : "");
+    }
+    function topologySourceText(ref) {
+        let t=ref.table_identity || {}, l=ref.locator || {};
+        return (ref.assertion_key || "Source") + " · PID " + hex(t.pid) + " · TID " + hex(t.table_id,2) + " · §" + t.section_number + " · " + (l.precision || "section") + "\n" + (l.display_path || ref.section_id) + "\n" + ref.section_id + " · v" + (t.version === null ? "—" : t.version) + " · " + (t.current ? "current" : "next") + " · cutoff #" + num(ref.at_packet) + " · " + (ref.role || "evidence");
+    }
+    function clearTopology() {
+        topologyData={};topologyLoading=false;topologyError="";topologyFailed=false;topologyFamily="";topologySelection="";topologyFocus="";
+        topologyExpanded={};topologyEvidenceRef=null;topologyResolution={};topologySectionContext=null;topologyRequest={};topologyOrigin=null;
+        topologyBackStack=[];topologyTablesReveal=false;topologyCutoff=null;topologyScopeLabel="Current observation";
+    }
+    function loadTopology(append) {
+        if (!backendReady || !analysisState.complete || topologyLoading) return;
+        let cutoff=topologyCutoff === null ? currentPacket() : topologyCutoff;
+        let offset=append && topologyData.page ? topologyData.page.next_offset : 0;
+        if(append && (offset === null || offset === undefined))return;
+        topologyRequest={revision:analysisState.analysis_revision,cutoff:cutoff,offset:offset};
+        topologyLoading=true;topologyError="";
+        core.send("query_topology", {analysis_revision:analysisState.analysis_revision,at_packet:cutoff,offset:offset,limit:500});
+    }
+    function acceptTopology(result) {
+        result=JSON.parse(JSON.stringify(result));
+        topologyLoading=false;
+        if(result.message){topologyError=result.message;topologyFailed=true;return;}
+        let contractError=Shared.workbench.validateTopology(result,topologyRequest.revision,topologyRequest.cutoff);
+        if(contractError){topologyError=contractError;topologyFailed=true;return;}
+        topologyFailed=false;
+        if(topologyRequest.offset){
+            let merged=Object.assign({},result);
+            ["nodes","context_nodes","edges"].forEach(function(key){
+                let id=key === "edges" ? "edge_id" : "node_id", all=(topologyData[key] || []).slice();
+                (result[key] || []).forEach(function(value){if(!all.some(function(old){return old[id]===value[id];}))all.push(value);});
+                merged[key]=all;
+            });
+            topologyData=merged;
+        }else topologyData=result;
+        let families=result.projections || [];
+        if(!families.some(function(p){return p.family===topologyFamily;}))topologyFamily=families.length ? families[0].family : "";
+        if(!topologyFocus && topologyRows.length)topologyFocus=topologyRows[0].node_id;
+        if(topologySelection && !topologyNode && !(result.page || {}).has_more)topologyError="The previous object is not observed at this cutoff. Choose an available object.";
+    }
+    function topologyNavigationPoint() {
+        return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,family:topologyFamily,
+            evidence:topologyEvidenceRef,sectionContext:topologySectionContext,resolution:topologyResolution,view:inspectorView,scope:evidenceScope,tab:tab,
+            scroll:topologyList.contentY,revision:analysisState.analysis_revision,cutoff:topologyData.at_packet};
+    }
+    function pushTopologyBack() { topologyBackStack=topologyBackStack.concat([topologyNavigationPoint()]); }
+    function topologyBack() {
+        if(topologyBackStack.length){
+            let stack=topologyBackStack.slice(), saved=stack.pop();topologyBackStack=stack;
+            if(saved.revision!==analysisState.analysis_revision || saved.cutoff!==topologyData.at_packet){notice="The saved object belongs to an older observation. Reload Topology.";return;}
+            topologySelection=saved.selection;topologyFocus=saved.focus;topologyExpanded=saved.expanded;topologySearch.text=saved.search;topologyFamily=saved.family;
+            topologyTablesReveal=false;topologyTransition=true;tab=saved.tab;topologyTransition=false;topologyEvidenceRef=null;topologyResolution={};
+            if(saved.evidence){if(saved.sectionContext){topologyEvidenceRef=saved.evidence;openTopologySibling(saved.sectionContext,false);}else openTopologyEvidence(saved.evidence,false);}
+            inspectorView=saved.view;evidenceScope=saved.scope;
+            Qt.callLater(function(){topologyList.contentY=saved.scroll;focusTopologyRow(saved.focus);});
+            return;
+        }
+        if(topologyOrigin){
+            let origin=topologyOrigin;topologyOrigin=null;topologyCutoff=null;topologyEvidenceRef=null;topologyScopeLabel="Current observation";
+            topologyTransition=true;tab="Changes";selectedChange=origin.row;comparisonSide=origin.side;comparisonWorkspace=origin.workspace;topologyTransition=false;
+            inspectChange(origin.row,origin.side,origin.index);return;
+        }
+        if(topologyEvidenceRef){topologyEvidenceRef=null;topologyResolution={};topologyTablesReveal=false;tab="Topology";focusTopologyRow(topologyFocus);}
+    }
+    function focusTopologyRow(id) {
+        let index=topologyRows.findIndex(function(r){return r.node_id===id;});
+        if(index>=0){topologyList.currentIndex=index;topologyFocus=id;topologyList.positionViewAtIndex(index,ListView.Contain);topologyList.forceActiveFocus();}
+    }
+    function selectTopologyNode(id, remember) {
+        let node=topologyNodeById(id);if(!node)return;
+        if(remember && topologySelection && topologySelection!==id)pushTopologyBack();
+        topologySelection=id;topologyFocus=id;topologyEvidenceRef=null;topologyResolution={};topologySectionContext=null;topologyTablesReveal=false;if(!topologyFailed)topologyError="";
+        let expanded=Object.assign({},topologyExpanded), parent=node.parent_id, seen={};
+        while(parent && !seen[parent]){seen[parent]=true;expanded[parent]=true;let p=topologyNodeById(parent);parent=p ? p.parent_id : null;}
+        topologyExpanded=expanded;topologyFamily=node.family;
+    }
+    function activateTopologyRow(row) {
+        if(row.more){let limits=Object.assign({},topologyLimits),key=row.parent_id || "$roots";limits[key]=(limits[key] || 100)+100;topologyLimits=limits;return;}
+        selectTopologyNode(row.node_id,true);
+    }
+    function selectTopologyRelation(edge) {
+        let target=edge.from===topologySelection ? edge.to : edge.from;
+        if(!topologyNodeById(target)){topologyError="This related object is not loaded. Load more objects to navigate to it.";return;}
+        selectTopologyNode(target,true);topologySearch.clear();Qt.callLater(function(){focusTopologyRow(target);});
+    }
+    function toggleTopologyRow(row) {
+        if(!row || !row.branch || topologySearch.text.trim())return;
+        let expanded=Object.assign({},topologyExpanded);expanded[row.node_id]=!row.open;topologyExpanded=expanded;
+    }
+    function openTopologyEvidence(ref, remember) {
+        if(!backendReady || topologyStale || !ref)return;
+        if(ref.analysis_revision!==analysisState.analysis_revision || ref.at_packet!==topologyData.at_packet){topologyError="This source belongs to an older observation. Reload Topology.";return;}
+        if(remember!==false)pushTopologyBack();
+        topologyEvidenceRef=ref;topologyResolution={};topologySectionContext=null;topologyTablesReveal=false;
+        selected=ref.section_id;selectedService=-1;preview={};treeSearch.clear();collapsed={};evidenceScope="Section";inspectorView="Structure";
+        core.send("inspect",{id:ref.section_id,analysis_revision:ref.analysis_revision,at_packet:ref.at_packet});
+    }
+    function openTopologySibling(section, remember) {
+        if(!topologyEvidenceRef || !backendReady || topologyStale)return;
+        if(remember!==false)pushTopologyBack();
+        topologySectionContext=section;topologyResolution={};selected=section.id;selectedService=-1;preview={};
+        treeSearch.clear();collapsed={};evidenceScope="Section";inspectorView="Structure";
+        core.send("inspect",{id:section.id,analysis_revision:topologyEvidenceRef.analysis_revision,at_packet:topologyEvidenceRef.at_packet});
+    }
+    function topologyActiveSourceText() {
+        if(!topologyEvidenceRef)return "";
+        if(!topologySectionContext)return topologySourceText(topologyEvidenceRef);
+        let section=topologySectionContext;
+        return "Related section · PID "+hex(section.pid)+" · TID "+hex(section.table_id,2)+" · §"+section.section+"\n"+section.id+" · cutoff #"+num(topologyEvidenceRef.at_packet)+"\nOriginal semantic source is retained for Back.";
+    }
+    function resolveTopologyInspection(result) {
+        if(!topologyEvidenceRef)return;
+        if(result.message){topologyResolution={status:"error",message:result.message};return;}
+        if(topologySectionContext){
+            let valid=result.id===topologySectionContext.id && result.analysis_revision===topologyEvidenceRef.analysis_revision && result.native_table_at_packet===topologyEvidenceRef.at_packet;
+            topologyResolution={status:valid ? "related_section" : "mismatch",precision:valid ? "section" : "none",path:valid ? "section" : "",message:valid ? "Opened the exact related section at the original evidence cutoff; the original semantic field locator does not apply." : "The returned related section or its observation context does not match."};
+        }else topologyResolution=Shared.workbench.resolveTopologyEvidence(topologyEvidenceRef,result);
+        if(topologyResolution.path){
+            let path=topologyResolution.path.replace(/^section\//,"");
+            let open={};let parts=path.split("/");for(let i=1;i<=parts.length;i++)open[parts.slice(0,i).join("/")]=false;collapsed=open;treeSearch.clear();
+            topologyRevealTimer.restart();
+        }
+        highlightTopologyHex();
+    }
+    function highlightTopologyHex() {
+        let range=topologyResolution.byte_range || topologyResolution.range;
+        if(!topologyEvidenceRef || !range || range.offset_scope!=="section_bytes")return;
+        let start=range.offset,end=start+range.length-1;
+        if(range.length>0 && end<(detail.raw_hex || "").replace(/\s/g,"").length/2){
+            let pos=function(offset){return Math.floor(offset/16)*54+6+(offset%16)*3;};
+            Qt.callLater(function(){hexEvidence.select(pos(start),pos(end)+2);});
+        }
+    }
+    function showTopologyInTables() {
+        if(!topologyCanReveal)return;
+        pushTopologyBack();topologyTablesReveal=true;
+        let targetId=topologySectionContext ? topologySectionContext.id : topologyEvidenceRef.section_id;
+        let r=(analysisState.tables || []).find(function(row){return row.id===targetId;});
+        if(!r){topologyError="The source section is unavailable in this workbench cutoff.";return;}
+        filter=r.name || "Private / other";pidFilter=r.pid;recordSearch.clear();showInvalidSections=r.crc?.status==="invalid" || showInvalidSections;
+        groupedTables=false;tab="Tables";
+        let index=rawTableRows.findIndex(function(row){return row.id===r.id;});tablePage=Math.max(0,Math.floor(index/100));
+        Qt.callLater(function(){recordList.currentIndex=index%100;recordList.positionViewAtIndex(recordList.currentIndex,ListView.Contain);});
+    }
+    function openComparisonTopology() {
+        if(!selectedChange || !selectedChange[comparisonSide])return;
+        topologyOrigin={row:selectedChange,side:comparisonSide,index:comparisonEvidenceIndex,workspace:comparisonWorkspace};
+        topologyCutoff=selectedChange[comparisonSide].at_packet;topologyScopeLabel="Comparison "+(comparisonSide==="before"?"A":"B");
+        topologyBackStack=[];topologyEvidenceRef=null;topologySelection="";topologyData={};
+        topologyTransition=true;tab="Topology";selectedChange=null;topologyTransition=false;loadTopology(false);
+    }
+    onInspectorViewChanged: if(inspectorView === "Hex")highlightTopologyHex()
     property string inspectorView: "Structure"
     property string epgLanguage: ""
     property var identifierResult: ({})
@@ -168,7 +363,7 @@ ApplicationWindow {
     property string notice: ""
     function agentState() {
         let diagnostics = core.diagnostics();
-        return JSON.stringify({settled: !core.busy && !core.inspecting && !core.comparing && diagnostics.pending === 0,
+        return JSON.stringify({settled: !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
@@ -177,10 +372,29 @@ ApplicationWindow {
             history: {all:allTableHistory,entries:historyRows,page:historyPage}, evidence_scope:evidenceScope.toLowerCase(), tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
             focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
             tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
+            topology: {data:topologyData,family:topologyFamily,selected_node:topologySelection,focused_node:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,rows:topologyRows,loading:topologyLoading,stale:topologyStale,error:topologyError,summary:topologySummary,sources:topologySources,active_evidence:topologyEvidenceRef,section_context:topologySectionContext,resolution:topologyResolution,back_depth:topologyBackStack.length,scope:topologyScopeLabel,can_reveal:topologyCanReveal},
+            comparison_context: {data:comparison,selected:selectedChange,side:comparisonSide,origin:topologyOrigin},
+            inspection: {id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,anchors:detail.evidence_anchors || [],hex_selection:hexEvidence.selectedText},
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
-        if (action.name === "select_tab" && ["Services", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;
+        if (action.name === "select_tab" && ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;
+        else if (action.name === "compare_snapshots" && Number.isInteger(action.from) && Number.isInteger(action.to) && action.from>=0 && action.to>=0 && action.from<analysisState.packets && action.to<analysisState.packets) {tab="Changes";fromPacket.text=String(action.from);toPacket.text=String(action.to);compareSnapshots(0);}
+        else if (action.name === "comparison_source" && Number.isInteger(action.index) && (comparison.changes || [])[action.index] && ["before","after"].indexOf(action.side)>=0) inspectChange(comparison.changes[action.index],action.side);
+        else if (action.name === "comparison_topology" && selectedChange) openComparisonTopology();
+        else if (action.name === "topology_select" && topologyNodeById(action.id)) selectTopologyNode(action.id,true);
+        else if (action.name === "topology_search" && typeof action.value === "string" && action.value.length<=512) topologySearch.text=action.value;
+        else if (action.name === "topology_family" && (topologyData.projections || []).some(function(p){return p.family===action.value;})) topologyFamily=action.value;
+        else if (action.name === "topology_toggle" && topologyRows.some(function(r){return r.node_id===action.id;})) toggleTopologyRow(topologyRows.find(function(r){return r.node_id===action.id;}));
+        else if (action.name === "topology_focus" && topologyRows.some(function(r){return r.node_id===action.id;})) focusTopologyRow(action.id);
+        else if (action.name === "topology_source" && Number.isInteger(action.index) && topologySources[action.index]) openTopologyEvidence(topologySources[action.index].ref);
+        else if (action.name === "topology_sibling" && typeof action.id==="string" && siblingSections.some(function(r){return r.id===action.id;})) openTopologySibling(siblingSections.find(function(r){return r.id===action.id;}));
+        else if (action.name === "topology_back") topologyBack();
+        else if (action.name === "topology_tables") showTopologyInTables();
+        else if (action.name === "topology_more") loadTopology(true);
+        else if (action.name === "topology_reload") loadTopology(false);
+        else if (action.name === "topology_key" && ["Up","Down","Left","Right","Home","End","Return","Space","Tab","Ctrl+K","Escape","Alt+Left","F6"].indexOf(action.value)>=0) core.key(action.value);
+        else if (action.name === "select_snapshot" && Number.isInteger(action.packet) && action.packet>=-1 && action.packet<Number(analysisState.packets || 0)) snapshot(action.packet);
         else if (action.name === "select_record" && typeof action.id === "string" && (analysisState.tables || []).some(function(r){return r.id===action.id;})) { tab="Tables";inspect(action.id); }
         else if (action.name === "set_bad_crc" && typeof action.value === "boolean") showInvalidSections=action.value;
         else if (action.name === "set_grouped" && typeof action.value === "boolean") groupedTables=action.value;
@@ -616,6 +830,7 @@ ApplicationWindow {
     }
     function inspectChange(row, sideName, evidenceIndex) {
         if (!backendReady) return;
+        topologyEvidenceRef=null;topologyResolution={};
         let side = row && row[sideName];
         if (!side || !(side.evidence || []).length)
             return;
@@ -636,6 +851,7 @@ ApplicationWindow {
             notice = "Aggregate diagnostic: no individual section is indexed.";
             return;
         }
+        if(topologyEvidenceRef && id!==topologyEvidenceRef.section_id){topologyEvidenceRef=null;topologyResolution={};}
         selected = id;
         selectedService = sid === undefined ? -1 : sid;
         preview = {};
@@ -684,6 +900,7 @@ ApplicationWindow {
         core.send("export", params);
     }
     function clearWorkspaceIntentions() {
+        clearTopology();
         inspected = false;
         selected = "";
         selectedService = -1;
@@ -733,6 +950,7 @@ ApplicationWindow {
     }
     function snapshot(packet, id, sid) {
         if (!backendReady || !analysisState.complete) return;
+        topologyEvidenceRef=null;topologyResolution={};topologyLoading=false;topologyOrigin=null;topologyBackStack=[];topologyCutoff=null;topologyScopeLabel="Current observation";
         selectedChange = null;
         comparisonWorkspace = null;
         previewIntent = {};
@@ -910,10 +1128,13 @@ ApplicationWindow {
             if (core.availability === "disconnected") {
                 autoTimer.stop();
                 fileDialog.close();
+                topologyLoading=false;topologyError="Backend disconnected. Restart the application to continue.";
                 notice = "Backend disconnected. Restart the application to continue.";
             }
         }
         function onResponse(method, result) {
+            if (method === "query_topology") { acceptTopology(result); return; }
+            if (method === "inspect" && topologyEvidenceRef) resolveTopologyInspection(result);
             if (method === "lookup_identifier") identifierResult=result;
             if (method === "lookup_satellite") satelliteResult=result;
             if (method === "query") comparisonTestTimer.completedQueries++;
@@ -956,6 +1177,7 @@ ApplicationWindow {
                     defaultInspect();
                 snapshotTarget = "";
                 snapshotTargetService = -1;
+                if(tab === "Topology")loadTopology(false);
             }
             if (method === "diff_snapshots") {
                 comparison = result;
@@ -989,6 +1211,16 @@ ApplicationWindow {
         function onCompletedPaint() {
             if (core.env("SHOWPSISI_SCREENSHOT") && core.env("SHOWPSISI_SCRIPT") !== "refinement")
                 captureTimer.start();
+        }
+    }
+    Timer {
+        id: topologyRevealTimer
+        interval: 30
+        onTriggered: {
+            if(!topologyEvidenceRef || detail.id!==(topologySectionContext ? topologySectionContext.id : topologyEvidenceRef.section_id) || core.inspecting)return;
+            let path=(topologyResolution.path || "").replace(/^section\//,"");
+            let index=treeRows.findIndex(function(r){return r.path===path;});
+            if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Center);if(tab==="Topology")tree.forceActiveFocus();}
         }
     }
     Timer {
@@ -2404,28 +2636,29 @@ ApplicationWindow {
     }
     UpdateDialog {
         id: updateDialog
-        workBusy: core.busy || core.inspecting || core.comparing || core.exportPending || exporting || saveDialog.visible
+        workBusy: core.busy || core.inspecting || core.comparing || topologyLoading || core.exportPending || exporting || saveDialog.visible
         lightTheme: win.lightTheme
     }
 
     Shortcut {
         sequence: "Ctrl+K"
         onActivated: {
-            recordSearch.forceActiveFocus();
-            recordSearch.selectAll();
+            if(tab === "Topology"){topologySearch.forceActiveFocus();topologySearch.selectAll();}
+            else {recordSearch.forceActiveFocus();recordSearch.selectAll();}
         }
     }
-    Shortcut { sequence: "Alt+Left"; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Alt+Left"; onActivated: { if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack();else resizeInspector(24); } }
     Shortcut { sequence: "Alt+Right"; onActivated: resizeInspector(-24) }
     Shortcut { sequence: "Alt+Up"; onActivated: resizeTimeline(24) }
     Shortcut { sequence: "Alt+Down"; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
         onActivated: {
-            if (recordList.activeFocus || recordSearch.activeFocus) {
+            if(tab === "Topology" && topologySummary){topologySourcesList.forceActiveFocus();return;}
+            if (recordList.activeFocus || recordSearch.activeFocus || topologyList.activeFocus || topologySearch.activeFocus) {
                 inspectorView = "Structure";
                 tree.forceActiveFocus();
-            } else recordList.forceActiveFocus();
+            } else if(tab === "Topology")topologyList.forceActiveFocus();else recordList.forceActiveFocus();
         }
     }
     Shortcut {
@@ -2850,14 +3083,17 @@ ApplicationWindow {
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 0
-                    RowLayout {
+                    Flow {
                         Layout.fillWidth: true
+                        Layout.preferredHeight: implicitHeight
                         spacing: 0
                         Repeater {
-                            model: ["Services", "Tables", "EPG", "Issues", "Changes"]
+                            model: ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
                             NavItem {
                                 required property string modelData
                                 objectName: "tab_" + modelData
+                                leftPadding: 5
+                                rightPadding: 5
                                 text: modelData
                                 implicitHeight: 35
                                 highlighted: tab === modelData
@@ -2875,12 +3111,192 @@ ApplicationWindow {
                                 }
                             }
                         }
-                        Item {
+                    }
+                    RowLayout {
+                        visible: topologyBackStack.length>0 || !!topologyOrigin || !!topologyEvidenceRef
+                        Layout.fillWidth:true
+                        Layout.leftMargin:8
+                        Action {objectName:"topologyBack";text:"← Back";onClicked:topologyBack()}
+                        PlainLabel {text:topologyTablesReveal ? "Topology source · current workbench cutoff unchanged" : topologyScopeLabel;Layout.fillWidth:true;elide:Text.ElideRight;color:muted;font.pixelSize:11}
+                    }
+                    ColumnLayout {
+                        id: topologyPanel
+                        visible: tab === "Topology"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        spacing: 4
+                        RowLayout {
                             Layout.fillWidth: true
+                            Layout.margins: 8
+                            FieldChoice {
+                                id: topologyFamilyChoice
+                                objectName: "topologyFamily"
+                                visible: (topologyData.projections || []).length > 1
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                model: topologyData.projections || []
+                                textRole: "label"
+                                valueRole: "family"
+                                currentIndex: Math.max(0, (topologyData.projections || []).findIndex(function(p){return p.family===topologyFamily;}))
+                                onActivated: {topologyFamily=currentValue;topologyFocus="";}
+                                Accessible.name: "Topology view family, without changing the decoding profile"
+                                SafeTip { visible: anchorHovered; text: "Filters derived objects only. The scan interpretation profile is unchanged." }
+                            }
+                            PlainLabel {
+                                visible: (topologyData.projections || []).length <= 1
+                                text: (topologyData.projections || []).length ? topologyData.projections[0].label : "Signal topology"
+                                Layout.fillWidth: true
+                                color: ink
+                                elide: Text.ElideRight
+                            }
+                            Action { objectName:"topologyRetry"; text:topologyLoading ? "Loading…" : "Reload"; enabled:backendReady && !!analysisState.complete && !topologyLoading; onClicked:loadTopology(false) }
+                        }
+                        FieldInput {
+                            id: topologySearch
+                            objectName: "topologySearch"
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            implicitHeight: 30
+                            placeholderText: "Find objects, IDs, types or states… Ctrl+K"
+                            placeholderTextColor: muted
+                            Accessible.name: "Search loaded topology objects, names, decimal or hexadecimal identities, types and states"
+                            selectByMouse: true
+                            Keys.onEscapePressed: clear()
+                            onAccepted: {topologyList.forceActiveFocus();if(topologyRows.length)topologyList.currentIndex=0;}
+                        }
+                        PlainLabel {
+                            objectName: "topologyContext"
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            font.pixelSize: 11
+                            wrapMode: Text.Wrap
+                            color: muted
+                            text: topologyScopeLabel + " · observed through packet #" + num(topologyData.at_packet === undefined ? currentPacket() : topologyData.at_packet) + "\n" + (topologyData.nodes || []).length + " / " + ((topologyData.page || {}).total || 0) + " objects loaded" + (topologySearch.text.trim() ? " · search covers loaded objects only" : "") + " · ↑ ↓ focus · Enter select"
+                        }
+                        PlainLabel {
+                            objectName:"topologyStatus"
+                            visible: !!topologyError || topologyStale || topologyLoading
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            wrapMode: Text.Wrap
+                            color: topologyError ? removedColor : warningColor
+                            text: topologyLoading ? "Loading objects at this cutoff…" : topologyError || "Stale observation. Reload to inspect the current cutoff."
+                            Accessible.name: text
+                        }
+                        PlainLabel {
+                            visible: !!topologySelection && !topologyRows.some(function(r){return r.node_id===topologySelection;})
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            wrapMode: Text.Wrap
+                            color: muted
+                            text: "Selected object is retained; its row is hidden by the current search or collapsed branch."
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.leftMargin: 8
+                            Layout.rightMargin: 8
+                            TinyLabel { text: "OBJECT / IDENTITY"; Layout.fillWidth:true }
+                            TinyLabel { text: "STATE"; Layout.preferredWidth:100 }
+                            TinyLabel { text: "SOURCES"; Layout.preferredWidth:54; horizontalAlignment:Text.AlignRight }
+                        }
+                        ListView {
+                            id: topologyList
+                            objectName: "topologyTree"
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            model: topologyRows
+                            reuseItems: true
+                            activeFocusOnTab: true
+                            keyNavigationEnabled: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            Accessible.role: Accessible.Tree
+                            Accessible.name: "Signal topology objects"
+                            Accessible.description: "Arrow keys move focus. Left and right collapse or expand. Enter and Space select an object. Tab moves to other controls."
+                            ScrollBar.vertical: ScrollBar {}
+                            onCurrentIndexChanged: {let row=topologyRows[currentIndex];if(row && !row.more)topologyFocus=row.node_id;}
+                            Keys.onReturnPressed: {let row=topologyRows[currentIndex];if(row)activateTopologyRow(row);}
+                            Keys.onSpacePressed: {let row=topologyRows[currentIndex];if(row)activateTopologyRow(row);}
+                            Keys.onRightPressed: {
+                                let row=topologyRows[currentIndex];if(!row || row.more)return;
+                                if(row.branch && !row.open)toggleTopologyRow(row);
+                                else if(currentIndex+1<count && topologyRows[currentIndex+1].depth>row.depth)currentIndex++;
+                            }
+                            Keys.onLeftPressed: {
+                                let row=topologyRows[currentIndex];if(!row)return;
+                                if(row.branch && row.open && !topologySearch.text.trim())toggleTopologyRow(row);
+                                else for(let i=currentIndex-1;i>=0;--i)if(topologyRows[i].depth<row.depth){currentIndex=i;break;}
+                            }
+                            Keys.onPressed: function(event){if(event.key===Qt.Key_Home || event.key===Qt.Key_End){if(count)currentIndex=event.key===Qt.Key_Home?0:count-1;event.accepted=true;}}
+                            delegate: NavItem {
+                                id: topologyDelegate
+                                required property var modelData
+                                required property int index
+                                objectName: "topologyNode:" + (modelData.node_id || ("more:"+index))
+                                width: ListView.view.width
+                                height: treeRowHeight
+                                focusPolicy: Qt.NoFocus
+                                leftPadding: 6 + modelData.depth*14
+                                rightPadding: 8
+                                highlighted: !modelData.more && topologySelection === modelData.node_id
+                                keyboardCurrent: topologyList.activeFocus && topologyList.currentIndex === index
+                                Accessible.role: Accessible.TreeItem
+                                Accessible.name: modelData.more ? "Show " + modelData.remaining + " more objects" : modelData.node.label + ". " + topologyIdentityText(modelData.node) + ". " + topologyStatusText(modelData.node) + ". " + (modelData.node.evidence || []).length + " sources."
+                                Accessible.description: "Level " + (modelData.depth+1) + (modelData.branch ? (modelData.open ? ", expanded" : ", collapsed") : "")
+                                Accessible.selected: highlighted
+                                Accessible.focusable: true
+                                Accessible.focused: keyboardCurrent
+                                Accessible.onPressAction: clicked()
+                                contentItem: RowLayout {
+                                    spacing: 5
+                                    PlainLabel {
+                                        text: modelData.more ? "+" : modelData.branch ? (modelData.open ? "▾" : "▸") : "·"
+                                        color:muted
+                                        Layout.preferredWidth:12
+                                        Layout.fillHeight:true
+                                        verticalAlignment:Text.AlignVCenter
+                                        MouseArea { anchors.fill:parent; enabled:!!modelData.branch; onClicked:{topologyList.currentIndex=index;topologyList.forceActiveFocus();toggleTopologyRow(modelData);} }
+                                    }
+                                    PlainLabel {
+                                        text: modelData.more ? "Show more · " + modelData.remaining + " remaining" : modelData.node.label + (topologyIdentityText(modelData.node) ? " · " + topologyIdentityText(modelData.node) : "")
+                                        color: ink
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        elide: Text.ElideRight
+                                    }
+                                    PlainLabel { visible:!modelData.more; text:topologyStatusText(modelData.node); color:muted; Layout.preferredWidth:100; elide:Text.ElideRight; font.pixelSize:10 }
+                                    PlainLabel { visible:!modelData.more; text:modelData.more ? "" : String((modelData.node.evidence || []).length); color:muted; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
+                                }
+                                onClicked: {topologyList.currentIndex=index;topologyList.forceActiveFocus();activateTopologyRow(modelData);}
+                                SafeTip { visible:anchorHovered; text:modelData.more ? "Reveal the next group of loaded objects" : modelData.node.label+"\n"+topologyFullIdentityText(modelData.node)+"\n"+topologyStatusText(modelData.node)+"\n"+(modelData.node.unresolved_reasons || []).join("\n") }
+                            }
+                            PlainLabel {
+                                anchors.centerIn: parent
+                                width: parent.width-30
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.Wrap
+                                visible: !topologyRows.length && !topologyLoading
+                                text: !analysisState.complete ? "Analyze a source to derive semantic objects." : topologyError ? "Topology is unavailable. Raw evidence remains in Tables." : topologySearch.text.trim() ? "No loaded objects match. Clear search or load more objects." : "Retained " + ((topologyData.counts || {}).raw_sections || (analysisState.tables || []).length) + " raw sections. No semantic relationships can be established in this context. Open Tables for the original evidence."
+                                color:muted
+                            }
+                        }
+                        Action {
+                            objectName:"topologyLoadMore"
+                            visible: !!(topologyData.page || {}).has_more
+                            text: topologyLoading ? "Loading…" : "Load more objects · " + ((topologyData.page || {}).total-(topologyData.nodes || []).length) + " remaining"
+                            Layout.fillWidth:true
+                            Layout.margins:8
+                            enabled:backendReady && !topologyLoading && !topologyStale
+                            onClicked:loadTopology(true)
                         }
                     }
                     FieldInput {
                         id: recordSearch
+                        visible: tab !== "Topology"
                         objectName: "recordSearch"
                         Layout.fillWidth: true
                         Layout.leftMargin: 8
@@ -3078,6 +3494,7 @@ ApplicationWindow {
                         Layout.rightMargin: 8
                         PlainLabel {
                             id: recordCountLabel
+                            visible: tab !== "Topology"
                             text: tab === "Tables" ? tableModel.count_text : tab + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
@@ -3104,7 +3521,7 @@ ApplicationWindow {
                         Action { objectName:"tableNext"; text:"Next"; enabled:(tablePage+1)*100<parent.total; onClicked:tablePage++ }
                     }
                     PlainLabel {
-                        visible: selectionHidden && (tab === "Tables" || !!recordSearch.text.trim())
+                        visible: tab !== "Topology" && selectionHidden && (tab === "Tables" || !!recordSearch.text.trim())
                         text: "Selected evidence is retained; its record is hidden by this filter."
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
@@ -3125,6 +3542,7 @@ ApplicationWindow {
                     }
                     ListView {
                         id: recordList
+                        visible: tab !== "Topology"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         model: rows
@@ -3230,14 +3648,100 @@ ApplicationWindow {
                 SplitView.minimumWidth: 330
                 SplitView.maximumWidth: 1600
                 ColumnLayout {
+                    id: topologySummaryColumn
+                    visible: topologySummary
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    spacing: 6
+                    TinyLabel { text:"OBJECT SUMMARY"; Layout.fillWidth:true }
+                    ScrollView {
+                        id: topologySummaryScroll
+                        Layout.fillWidth:true
+                        Layout.preferredHeight: Math.min(compactInspector ? 160 : 240, inspectorPane.height*0.42)
+                        clip:true
+                        contentWidth:availableWidth
+                        TextArea {
+                            objectName:"topologySummaryText"
+                            readOnly:true
+                            selectByMouse:true
+                            textFormat:TextEdit.PlainText
+                            wrapMode:TextEdit.Wrap
+                            color:ink
+                            font.pixelSize:12
+                            text: !topologyNode ? "Select a semantic object to see its identity, claims and all source references. Arrow keys move focus without changing the selected object.\n\n" + topologyCoverageText() : topologyNode.label + "\n" + topologyFullIdentityText(topologyNode) + "\n" + topologyStatusText(topologyNode) + "\nObservation: " + topologyNode.observation_status + " · Resolution: " + topologyNode.resolution_status + "\n" + topologyNode.object_type + " · " + topologyNode.family + ((topologyNode.reference_sources || []).length ? "\n\nCatalog provenance (external reference, not captured section evidence):\n"+JSON.stringify(topologyNode.reference_sources,null,2) : "") + "\n\n" + Object.keys(topologyNode.attributes || {}).map(function(k){let v=topologyNode.attributes[k];return k+": "+(v!==null && typeof v==="object" ? JSON.stringify(v) : Shared.workbench.value(k,v));}).join("\n") + (Object.keys(topologyNode.attribute_conflicts || {}).length ? "\n\nConflicting assertions:\n"+JSON.stringify(topologyNode.attribute_conflicts,null,2) : "") + ((topologyNode.unresolved_reasons || []).length ? "\n\nUnresolved:\n"+topologyNode.unresolved_reasons.join("\n") : "")
+                        }
+                    }
+                    PlainLabel { visible:!!topologyNode; text:"Relations · "+topologyRelations.length+"\n"+(topologyData.coverage ? "Only implemented, evidence-backed relations are shown." : ""); color:muted; Layout.fillWidth:true; wrapMode:Text.Wrap; font.pixelSize:11; HoverHandler {id:topologyCoverageHover} SafeTip {visible:topologyCoverageHover.hovered;text:topologyCoverageText()} }
+                    ListView {
+                        id: topologyRelationsList
+                        visible:topologyRelations.length>0
+                        Layout.fillWidth:true
+                        Layout.preferredHeight:Math.min(compactInspector ? 72 : 100,topologyRelations.length*36)
+                        clip:true
+                        model:topologyRelations
+                        activeFocusOnTab:true
+                        keyNavigationEnabled:true
+                        ScrollBar.vertical:ScrollBar {}
+                        Keys.onReturnPressed: {let edge=topologyRelations[currentIndex];if(edge)selectTopologyRelation(edge);}
+                        delegate: NavItem {
+                            required property var modelData
+                            required property int index
+                            readonly property string targetId: modelData.from===topologySelection ? modelData.to : modelData.from
+                            readonly property var targetNode: topologyNodeById(targetId)
+                            width:ListView.view.width
+                            height:36
+                            text:(modelData.from===topologySelection ? modelData.relation.replace(/_/g," ")+" → " : "← "+modelData.relation.replace(/_/g," ")+" · ")+(targetNode ? targetNode.label : targetId)+" · "+modelData.resolution_status
+                            keyboardCurrent:topologyRelationsList.activeFocus && topologyRelationsList.currentIndex===index
+                            focusPolicy:Qt.NoFocus
+                            Accessible.name:text
+                            onClicked:selectTopologyRelation(modelData)
+                            SafeTip { visible:anchorHovered; text:anchorText+"\n"+(modelData.evidence || []).length+" relationship sources" }
+                        }
+                    }
+                    TinyLabel { text:"ALL SOURCES · "+topologySources.length; Layout.fillWidth:true }
+                    ListView {
+                        id: topologySourcesList
+                        objectName:"topologySources"
+                        Layout.fillWidth:true
+                        Layout.fillHeight:true
+                        clip:true
+                        model:topologySources
+                        activeFocusOnTab:true
+                        keyNavigationEnabled:true
+                        reuseItems:true
+                        ScrollBar.vertical:ScrollBar {}
+                        Accessible.role:Accessible.List
+                        Accessible.name:"All object and relationship source references"
+                        Keys.onReturnPressed: {let item=topologySources[currentIndex];if(item)openTopologyEvidence(item.ref);}
+                        Keys.onSpacePressed: {let item=topologySources[currentIndex];if(item)openTopologyEvidence(item.ref);}
+                        delegate: NavItem {
+                            required property var modelData
+                            required property int index
+                            objectName:"topologySource:"+index
+                            width:ListView.view.width
+                            height:74
+                            enabled:backendReady && !topologyStale
+                            keyboardCurrent:topologySourcesList.activeFocus && topologySourcesList.currentIndex===index
+                            focusPolicy:Qt.NoFocus
+                            text:(modelData.relation ? modelData.relation+" · " : "")+topologySourceText(modelData.ref)
+                            contentItem:PlainLabel { text:parent.text; color:ink; wrapMode:Text.Wrap; elide:Text.ElideRight; maximumLineCount:4; font.pixelSize:11 }
+                            Accessible.name:text
+                            onClicked:{topologySourcesList.currentIndex=index;openTopologyEvidence(modelData.ref);}
+                            SafeTip {visible:anchorHovered;text:anchorText}
+                        }
+                    }
+                    PlainLabel { visible:!!topologyNode && !topologySources.length; text:"No source references are available for this object."; color:muted; Layout.fillWidth:true; wrapMode:Text.Wrap }
+                }
+                ColumnLayout {
                     id: inspectorColumn
+                    visible: !topologySummary
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: spaceUnit
                     RowLayout {
                         Layout.fillWidth: true
                         TinyLabel {
-                            text: "SECTION INSPECTOR"
+                            text: topologyEvidenceRef ? "SOURCE EVIDENCE" : "SECTION INSPECTOR"
                             Layout.fillWidth: true
                         }
                         Action { text:(arrivalOpen?"▾ ":"▸ ")+"Arrival"; objectName:"arrivalToggle"; visible:!!detail.id; implicitHeight:20; onClicked:arrivalOpen=!arrivalOpen }
@@ -3246,6 +3750,38 @@ ApplicationWindow {
                             text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
                             color: detail.valid === false ? removedColor : muted
                             font.pixelSize: 11
+                        }
+                    }
+                    ColumnLayout {
+                        visible: !!topologyEvidenceRef
+                        Layout.fillWidth:true
+                        spacing:4
+                        RowLayout {
+                            Layout.fillWidth:true
+                            Action { objectName:"topologyReturnObject"; text:"← Object"; onClicked:topologyBack() }
+                            Action { objectName:"topologyShowTables"; text:"Show in Tables"; enabled:topologyCanReveal; onClicked:showTopologyInTables(); SafeTip {visible:anchorHovered;text:topologyCanReveal ? "Reveal this exact section in Tables without changing the workbench cutoff" : "This source has a different cutoff. Inspect it here; use an explicit snapshot change to show it in Tables."} }
+                            Item {Layout.fillWidth:true}
+                            Action { objectName:"topologyRetrySource"; text:"Retry"; enabled:backendReady && !core.inspecting && !topologyStale; onClicked:openTopologyEvidence(topologyEvidenceRef,false) }
+                        }
+                        PlainLabel {
+                            objectName:"topologyEvidenceContext"
+                            Layout.fillWidth:true
+                            wrapMode:Text.Wrap
+                            maximumLineCount:compactInspector ? 3 : 5
+                            elide:Text.ElideRight
+                            color:muted
+                            font.pixelSize:11
+                            text:topologyActiveSourceText()
+                            HoverHandler {id:topologyEvidenceHover}
+                            SafeTip {visible:topologyEvidenceHover.hovered;text:anchorText}
+                        }
+                        PlainLabel {
+                            objectName:"topologyPrecision"
+                            Layout.fillWidth:true
+                            wrapMode:Text.Wrap
+                            color:topologyResolution.status==="resolved" ? blue : warningColor
+                            font.pixelSize:11
+                            text:core.inspecting ? "Loading exact section…" : topologyResolution.message || "Resolving the requested source locator…"
                         }
                     }
                     ColumnLayout {
@@ -3283,6 +3819,14 @@ ApplicationWindow {
                                 Accessible.name: "Comparison source evidence"
                                 onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
                                 SafeTip { visible: anchorHovered; text: comparisonSource.currentText }
+                            }
+                            Action {
+                                objectName:"comparisonTopology"
+                                text:compactInspector ? "Tree" : "Topology"
+                                Accessible.name:"Topology at the selected comparison cutoff"
+                                enabled:backendReady && !!selectedChange && !core.inspecting
+                                onClicked:openComparisonTopology()
+                                SafeTip {visible:anchorHovered;text:"Inspect semantic objects at this comparison cutoff without changing the workbench snapshot"}
                             }
                             Action {
                                 objectName: "useComparisonSnapshot"
@@ -3379,7 +3923,7 @@ ApplicationWindow {
                             implicitHeight: 28
                             model: siblingSections.map(function(r) { return "Section " + r.section + "/" + r.last_section + " · " + crcText(r) + " · #" + r.first_packet; })
                             currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
-                            onActivated: { let r=siblingSections[currentIndex]; if(r) inspect(r.id, -1, detail.native_table_at_packet); }
+                            onActivated: { let r=siblingSections[currentIndex]; if(r){if(topologyEvidenceRef)openTopologySibling(r);else inspect(r.id, -1, detail.native_table_at_packet);} }
                             Accessible.name: "Select original section evidence"
                         }
                     }
@@ -3545,7 +4089,7 @@ ApplicationWindow {
                             required property int index
                             property alias rowTooltip: treeTooltip
                             objectName: "tree:" + modelData.path
-                            highlighted: tree.currentIndex === index
+                            highlighted: tree.currentIndex === index || !!topologyEvidenceRef && modelData.path === (topologyResolution.path || "").replace(/^section\//,"")
                             keyboardCurrent: tree.currentIndex === index && tree.activeFocus
                             Accessible.role: Accessible.ListItem
                             Accessible.name: modelData.label + (modelData.value ? ": " + modelData.value : "")
@@ -3607,6 +4151,7 @@ ApplicationWindow {
                         clip: true
                         TextArea {
                             id: hexEvidence
+                            persistentSelection: true
                             textFormat: TextEdit.PlainText
                             readOnly: true
                             selectByMouse: true

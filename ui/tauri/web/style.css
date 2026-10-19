@@ -1492,3 +1492,59 @@ dialog label { color: var(--muted); }
 .explorer-row.all-tables .family-label { grid-column: 2 / span 2; color: var(--text); }
 .table-controls { flex-wrap: wrap; }
 .table-controls select { max-width: 160px; min-width: 85px; padding: 3px; font-size: 11px; }
+
+/* Engine-owned semantic topology, inside the existing three-pane workbench. */
+.center { container-type: inline-size; }
+#tabs { overflow-x: auto; flex-shrink: 0; }
+#tabs button { flex-shrink: 0; }
+.topology-context { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.topology-context span { color: var(--muted); }
+.topology-row { display: grid; grid-template-columns: 18px minmax(100px,1fr) minmax(90px,auto) auto; align-items: center; gap: 8px; min-height: 48px; padding: 6px 12px 6px calc(8px + (var(--level) - 1)*18px); border-bottom: 1px solid var(--border); cursor: default; }
+.topology-row:hover { background: var(--hover); }
+.topology-row.selected { background: var(--selected); box-shadow: inset 3px 0 var(--accent); }
+.topology-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.topology-disclosure { min-width: 18px; min-height: 28px; display: grid; place-items: center; cursor: pointer; }
+.topology-object { display: flex; flex-direction: column; min-width: 0; gap: 3px; overflow-wrap: anywhere; }
+.topology-object strong { font-size: 13px; font-weight: 550; }
+.topology-object small,.topology-state,.topology-count { font-size: 12px; line-height: 1.4; color: var(--muted); }
+.topology-count { white-space: nowrap; }
+.topology-more,.topology-load { padding: 10px 14px 10px calc(10px + (var(--level,1) - 1)*18px); }
+.topology-warning { padding: 10px 14px; color: var(--red); font-size: 12px; overflow-wrap: anywhere; }
+.topology-loaded-note { padding: 4px 14px; }
+.topology-summary { padding: 0 16px 16px; overflow: auto; }
+.topology-summary h3 { font-size: 13px; margin: 18px 0 8px; }
+.topology-definition { font-size: 12px; margin: 0; }
+.topology-definition > div { display: grid; grid-template-columns: minmax(90px,1fr) minmax(100px,2fr); gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--border); }
+.topology-definition dt { color: var(--muted); }
+.topology-definition dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.topology-relation { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 9px; font-size: 12px; }
+.topology-relation button { white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.topology-sources { display: flex; flex-direction: column; gap: 6px; }
+.topology-source { display: flex; flex-direction: column; gap: 4px; text-align: left; white-space: normal; overflow-wrap: anywhere; font-size: 12px; line-height: 1.4; }
+.topology-source span { color: var(--muted); }
+.topology-attributes { margin-top: 16px; font-size: 12px; }
+.topology-attributes summary { min-height: 28px; cursor: pointer; }
+.topology-boundary { margin-top: 18px; }
+.topology-source-context { padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.topology-source-context > div { display: flex; align-items: center; gap: 10px; }
+.topology-source-context p { margin: 6px 0; overflow-wrap: anywhere; }
+.topology-actions { padding: 8px 14px; }
+[data-source-highlight] > .tree-row { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--selected); }
+mark.source-byte { color: var(--text); background: var(--selected); outline: 1px solid var(--accent); }
+@container (max-width: 550px) {
+  .topology-row { grid-template-columns: 18px minmax(100px,1fr) auto; }
+  .topology-state { grid-column: 2; }
+  .topology-count { grid-column: 3; grid-row: 2; }
+}
+.topology-summary { flex: 1; min-height: 0; }
+.topology-source-context { flex-shrink: 0; max-height: 210px; overflow: auto; }
+.topology-source-context .meta,.topology-summary .meta,.topology-loaded-note { font-size: 12px; }
+.topology-source-id { font-family: var(--mono); }
+.topology-source-context { padding: 6px 10px; max-height: 160px; }
+.topology-source-context > div { flex-wrap: wrap; gap: 5px; }
+.topology-source-context > div strong { flex: 1; min-width: 50px; overflow-wrap: anywhere; }
+.topology-source-context details { margin-top: 4px; }
+.topology-source-context summary { min-height: 20px; cursor: pointer; color: var(--muted); }
+.topology-source-context p { margin: 3px 0; }
+.topology-coverage { padding: 5px 14px; font-size: 12px; max-height: 160px; overflow: auto; border-bottom: 1px solid var(--border); }
+.topology-coverage summary { cursor: pointer; min-height: 22px; color: var(--muted); }

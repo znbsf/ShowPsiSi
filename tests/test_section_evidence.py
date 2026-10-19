@@ -37,6 +37,52 @@ class SectionEvidenceTests(unittest.TestCase):
         cleared=self.scan([(0,pat2)])
         self.assertEqual(len(cleared['table_history']),1)
 
+    def test_short_pat_pmt_are_retained_invalid_without_crash_or_derived_fields(self):
+        for tid,pid in [(0,0),(2,0x100)]:
+            for length in (0,1,2,5,8,12,20,40):
+                with self.subTest(table_id=tid,payload_length=length):
+                    raw=bytes([tid,0x30,length])+bytes(length)
+                    state=self.scan([(pid,raw)],standards='dvb',extra_pids=[pid])
+                    row=next(r for r in state['tables'] if r['table_id']==tid)
+                    self.assertFalse(row['valid']);self.assertTrue(any(d['code']=='long_section_required' for d in state['diagnostics']))
+                    detail=self.core.call('inspect',{'id':row['id']});self.assertEqual(detail['raw_hex'],raw.hex().upper());self.assertNotIn('programs',detail['fields']);self.assertNotIn('streams',detail['fields'])
+                    graph=self.core.call('query_topology',{});self.assertFalse(any(n['object_type'] in ('program','component') for n in graph['nodes']))
+    def test_short_pat_pmt_cannot_discover_forged_dependent_pids(self):
+        pat=bytearray(section(0,1,1,word(100)+word(0xe321)));pat[1]&=0x7f;pat[-4:]=crc(pat[:-4]).to_bytes(4,'big')
+        pmt=bytearray(section(2,100,1,word(0xe200)+word(0xf000)+b'\x05'+word(0xe321)+word(0xf000)));pmt[1]&=0x7f;pmt[-4:]=crc(pmt[:-4]).to_bytes(4,'big')
+        private=section(0x80,3,1,b'not-discovered')
+        for pid,raw in [(0,pat),(0x100,pmt)]:
+            with self.subTest(table_id=raw[0]):
+                state=self.scan([(pid,bytes(raw)),(0x321,private)],standards='dvb',extra_pids=[pid]);self.assertNotIn(0x321,[r['pid'] for r in state['tables']]);self.assertFalse(state['tables'][0]['valid'])
+        # The same process remains usable and normal discovery still works.
+        good=section(0,1,1,word(100)+word(0xe321));state=self.scan([(0,good),(0x321,private)],standards='dvb');self.assertIn(0x321,[r['pid'] for r in state['tables']])
+
+    @staticmethod
+    def short_envelope(raw):
+        changed=bytearray(raw);changed[1]&=0x7f;changed[-4:]=crc(changed[:-4]).to_bytes(4,'big');return bytes(changed)
+    def test_short_sdt_and_cat_do_not_fabricate_services_or_descriptors(self):
+        for tid,pid,raw in [(0x42,0x11,self.sdt(last=0)),(0x46,0x11,section(0x46,1,1,self.sdt(last=0)[8:-4])),(1,1,section(1,1,1,descriptor(9,word(1)+word(0xe100))))]:
+            with self.subTest(table_id=tid):
+                raw=self.short_envelope(raw);state=self.scan([(pid,raw)],standards='dvb',extra_pids=[pid]);row=state['tables'][0]
+                self.assertFalse(row['valid']);self.assertEqual(state['services'],[]);self.assertEqual(state['events'],[])
+                detail=self.core.call('inspect',{'id':row['id']});self.assertEqual(detail['raw_hex'],raw.hex().upper());self.assertEqual(detail['services'],[]);self.assertEqual(detail['descriptors'],[]);self.assertTrue(any(d['code']=='long_section_required' for d in state['diagnostics']))
+                graph=self.core.call('query_topology',{});self.assertFalse(any(n['object_type']=='service' for n in graph['nodes']))
+    def test_short_network_bouquet_and_eit_tables_do_not_fabricate_lcns_or_events(self):
+        lcn=descriptor(0x5f,(0x28).to_bytes(4,'big'))+descriptor(0x83,word(100)+word(0x8007));transport=word(1)+word(2)+word(0xf000|len(lcn))+lcn;network=word(0xf000)+word(0xf000|len(transport))+transport
+        for tid,pid in [(0x40,0x10),(0x41,0x10),(0x4a,0x11)]:
+            with self.subTest(table_id=tid):
+                raw=self.short_envelope(section(tid,10,1,network));state=self.scan([self.sdt(last=0),(pid,raw)],standards='dvb');row=next(r for r in state['tables'] if r['table_id']==tid)
+                self.assertFalse(row['valid']);self.assertEqual(len(state['services']),1);self.assertIsNone(state['services'][0]['logical_channel_number']);detail=self.core.call('inspect',{'id':row['id']});self.assertNotIn('transports',detail['fields']);self.assertEqual(detail['descriptors'],[]);self.assertEqual(detail['raw_hex'],raw.hex().upper())
+        title=descriptor(0x4d,b'eng\x03Bad\x00');event=word(123)+bytes.fromhex('eb96123456010000')+word(0x8000|len(title))+title
+        for tid in range(0x4e,0x70):
+            with self.subTest(table_id=tid):
+                raw=self.short_envelope(section(tid,100,1,word(1)+word(2)+bytes([0,tid])+event));state=self.scan([(0x12,raw)],standards='dvb');self.assertFalse(state['tables'][0]['valid']);self.assertEqual(state['events'],[]);detail=self.core.call('inspect',{'id':state['tables'][0]['id']});self.assertEqual(detail['events'],[]);self.assertEqual(detail['raw_hex'],raw.hex().upper())
+        good=section(0x4e,100,1,word(1)+word(2)+bytes([0,0x4e])+event);self.assertEqual(len(self.scan([(0x12,good)],standards='dvb')['events']),1)
+        good=section(0x40,10,1,network);self.assertEqual(self.scan([self.sdt(last=0),(0x10,good)],standards='dvb')['services'][0]['logical_channel_number'],7)
+    def test_genuine_short_tdt_tot_rst_remain_valid(self):
+        tdt=bytes.fromhex('707005eb96123456');tot=bytearray.fromhex('73700beb96123456f000');tot+=crc(tot).to_bytes(4,'big');rst=bytes.fromhex('717000')
+        state=self.scan([(0x14,tdt),(0x14,bytes(tot)),(0x13,rst)],standards='dvb');self.assertEqual(len(state['tables']),3);self.assertTrue(all(r['valid'] for r in state['tables']));self.assertFalse(state['diagnostics'])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.core=Core()
     def tearDown(self):

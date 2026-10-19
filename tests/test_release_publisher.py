@@ -20,7 +20,8 @@ import release_publisher as release
 
 SOURCE = 'a' * 40
 TRIGGER = 'b' * 40
-REQUEST = {'schema_version': 1, 'version': '0.1.0', 'source_sha': SOURCE, 'ci_run_id': 123}
+OTHER_VERSION = str(int(release.VERSION.split('.')[0]) + 1) + '.0.0'
+REQUEST = {'schema_version': 1, 'version': release.VERSION, 'source_sha': SOURCE, 'ci_run_id': 123}
 
 
 def write_json(path, value):
@@ -140,7 +141,7 @@ class RequestTests(unittest.TestCase):
             release.load_request(self.api(), env, event)
 
     def test_wrong_version_source_or_unknown_inputs_rejected(self):
-        for key, value in [('version', '0.2.0'), ('source_sha', TRIGGER), ('url', 'https://evil.example'),
+        for key, value in [('version', OTHER_VERSION), ('source_sha', TRIGGER), ('url', 'https://evil.example'),
                            ('ci_run_id', True), ('ci_run_id', -1), ('schema_version', True)]:
             request = dict(REQUEST, **{key: value})
             with self.subTest(key=key, value=value), self.assertRaises(release.ReleaseError):
@@ -158,7 +159,7 @@ class RequestTests(unittest.TestCase):
 
     def test_wrong_versioned_trigger_branch_is_rejected(self):
         env, event = self.context()
-        env['GITHUB_REF'] = event['ref'] = 'refs/heads/release-publish/v0.2.0'
+        env['GITHUB_REF'] = event['ref'] = 'refs/heads/release-publish/v' + OTHER_VERSION
         with self.assertRaisesRegex(release.ReleaseError, 'versioned'):
             release.load_request(self.api(), env, event)
 
@@ -485,6 +486,10 @@ class PayloadTests(TemporaryTest):
         fixture.runtime['retrieved_at_utc'] = '2026-10-19T09:03:28.5633900Z'
         write_json(fixture.prerequisite, fixture.runtime)
         package = fixture.package
+        build_path = package / 'build-information.json'
+        build = release.read_json(build_path)
+        build['application_version'] = release.VERSION
+        write_json(build_path, build)
         for path in package.rglob('*.json'):
             if path.name not in ('build-information.json', 'redistribution-review.json', 'manifest.json'):
                 write_json(path, {})
@@ -498,7 +503,8 @@ class PayloadTests(TemporaryTest):
             path.mkdir()
         setup = self.setup_dir / release.SETUP
         setup.write_bytes(b'MZ unit fixture, never executable')
-        record = fixture.prepare()
+        record = release.installer.prepare(package, fixture.evidence, fixture.prerequisite, release.VERSION,
+                                           fixture.root / 'generated', fixture.root / 'output', SOURCE)
         record.update(installer_sha256=release.sha256(setup), installer_bytes=setup.stat().st_size)
         write_json(self.setup_dir / 'installer-build.json', record)
         write_json(self.ie / 'artifacts/installer-candidate/installer-build.json', record)
@@ -856,7 +862,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn('pull_request_target', workflow)
 
     def test_notes_disclose_all_unverified_boundaries(self):
-        notes = (ROOT / 'docs/releases/v0.1.0.md').read_text()
+        notes = (ROOT / f'docs/releases/{release.TAG}.md').read_text()
         for phrase in ('unsigned', '1809', 'UAC', 'Internet', 'Clean-machine', 'future-version', 'manual checksum'):
             self.assertIn(phrase, notes)
 

@@ -95,8 +95,122 @@ workbench.structure = function(detail, scope, sid) {
     warnings:detail.descriptors.filter(function(d){return d.malformed || d.native_decode_warning;})}));
   if((detail.issues || []).length) children.push(workbench.objectNode('issues','Validation issues',detail.issues));
   children.push(workbench.objectNode('evidence','Source evidence',{first_packet:detail.first_packet,last_packet:detail.last_packet,first_file_offset:detail.first_file_offset,offset_note:detail.offset_note,native_table_at_packet:detail.native_table_at_packet,inspection_scope:detail.inspection_scope,identity:detail.identity,occurrences:(detail.occurrences || []).slice(0,500),display_note:(detail.occurrences || []).length>500?'First 500 occurrences; full list available through Agent API':'All indexed occurrences'}));
+  if((detail.evidence_anchors || []).length) children.splice(1,0,{id:'anchors',label:'Source evidence anchors · exact section',children:detail.evidence_anchors.map(function(anchor,i){return {id:String(i),label:anchor.label || anchor.display_path || anchor.field_id || anchor.container_id || 'Source anchor',value:anchor.value==null?(anchor.byte_range?'Section bytes '+anchor.byte_range.offset+'–'+(anchor.byte_range.offset+anchor.byte_range.length-1):'No byte range supplied'):workbench.value(anchor.label || '',anchor.value),children:[workbench.objectNode('locator','Engine source locator',anchor)]};})});
   return {id:'section',label:detail.name+' section',value:'v'+detail.version+' · '+(detail.valid?'valid':'invalid'),children:children};
 };
 workbench.defaultOpen = function(path) {
   return path==='section' || /^section\/(native|fields|services|descriptors)(?:$|\/)/.test(path) && !/\/(meta|attributes)$/.test(path);
+};
+
+// Topology is an engine-owned semantic projection. These helpers only format
+// returned objects and compare opaque evidence identities; they never join
+// protocol fields, parse XML or infer standards from names/table identifiers.
+workbench.topologyStatus = function(node) {
+  var labels={observed_here:'Observed here',announced_only:'Announced only',incomplete:'Incomplete',conflict:'Conflict',unresolved:'Unresolved',resolved:'Resolved'};
+  var status=node.observation_status || node.resolution_status || 'unresolved',resolution=node.resolution_status;
+  var text=labels[status] || String(status);
+  if(resolution && resolution!=='resolved' && resolution!==status) text=(labels[resolution] || String(resolution))+' · '+text;
+  return text;
+};
+workbench.topologyIdentity = function(node) {
+  var identity=node.identity || {},parts=[];
+  var fields=[['network_id','NID'],['original_network_id','ONID'],['transport_stream_id','TSID'],['service_id','SID'],['bouquet_id','BID'],['program_number','Program'],['pid','PID'],['table_id','TID'],['atsc_source_id','Source ID'],['component_tag','Tag']];
+  fields.forEach(function(field){var value=identity[field[0]];if(value!=null)parts.push(field[1]+' '+(typeof value==='number'?workbench.hex(value,field[0]==='table_id' || field[0]==='component_tag'?2:4):String(value)));});
+  var channel=identity.channel_number;
+  if(channel && channel.format==='two_part' && channel.major!=null && channel.minor!=null)parts.unshift('CH '+channel.major+'.'+channel.minor);
+  else if(channel && channel.format==='one_part' && channel.one_part!=null)parts.unshift('CH '+channel.one_part);
+  // Opaque graph links and unrecognized identities remain in the full inspector,
+  // not the narrow row. This is formatting, not a new protocol identity join.
+  return parts.join(' · ');
+};
+workbench.topologyFieldLabel = function(key) {
+  var labels={network_id:'Network ID (NID)',original_network_id:'Original network ID (ONID)',transport_stream_id:'Transport stream ID (TSID)',service_id:'Service ID (SID)',bouquet_id:'Bouquet ID (BID)',program_number:'MPEG program number',pid:'Packet identifier (PID)',table_id:'Table ID (TID)',atsc_source_id:'ATSC programme source ID',component_tag:'Component tag',channel_number:'Virtual channel number',program_node_id:'Program object reference',vct_context:'VCT context reference'};
+  return labels[key] || key.replace(/_/g,' ');
+};
+workbench.topologyIdentityDetails = function(node) {
+  return Object.keys(node.identity || {}).map(function(key){var value=node.identity[key];return workbench.topologyFieldLabel(key)+': '+(value && typeof value==='object'?JSON.stringify(value):workbench.value(key,value));}).join('\n');
+};
+workbench.topologySearch = function(node, query) {
+  var values=[];
+  function visit(value,key) {
+    if(value && typeof value==='object') Object.keys(value).forEach(function(k){visit(value[k],k);});
+    else if(value!=null) values.push(String(value),typeof value==='number'?workbench.hex(value):'',typeof value==='number'?workbench.hex(value,2):'');
+  }
+  visit({label:node.label,type:node.object_type,identity:node.identity,attributes:node.attributes,status:workbench.topologyStatus(node)},'');
+  var text=values.join(' ').toLowerCase();
+  return String(query || '').trim().toLowerCase().split(/\s+/).filter(Boolean).every(function(term){return text.indexOf(term)>=0;});
+};
+workbench.topologyNodes = function(snapshot) {
+  var nodes=[],seen={};
+  (snapshot.context_nodes || []).concat(snapshot.nodes || []).forEach(function(node){if(!seen[node.node_id]) {seen[node.node_id]=true;nodes.push(node);}});
+  return nodes;
+};
+workbench.validateTopology = function(snapshot,revision,cutoff) {
+  if(!snapshot || snapshot.schema_version!==1 || !Array.isArray(snapshot.nodes) || !Array.isArray(snapshot.projections)) return 'Unsupported or incomplete topology response.';
+  if(snapshot.analysis_revision!==revision) return 'Topology belongs to a different analysis revision.';
+  if(snapshot.at_packet!==cutoff) return 'Topology cutoff does not match the requested snapshot.';
+  var seen={};
+  for(var i=0;i<snapshot.nodes.length;i++) {var n=snapshot.nodes[i];if(!n || typeof n.node_id!=='string' || !n.node_id || seen[n.node_id]) return 'Topology contains an invalid or repeated object identity.';seen[n.node_id]=true;}
+  return '';
+};
+workbench.mergeTopology = function(current,page) {
+  if(!current) return page;
+  if(current.analysis_revision!==page.analysis_revision || current.at_packet!==page.at_packet || current.interpretation_profile!==page.interpretation_profile) throw new Error('Topology page context changed. Reload this snapshot.');
+  var result=Object.assign({},page),nodes={},edges={};
+  workbench.topologyNodes(current).concat(workbench.topologyNodes(page)).forEach(function(n){nodes[n.node_id]=n;});
+  (current.edges || []).concat(page.edges || []).forEach(function(e){edges[e.edge_id]=e;});
+  result.nodes=Object.keys(nodes).map(function(id){return nodes[id];});result.context_nodes=[];
+  result.edges=Object.keys(edges).map(function(id){return edges[id];});
+  return result;
+};
+workbench.topologyRows = function(snapshot,family,query,expanded,limits) {
+  var nodes=workbench.topologyNodes(snapshot || {}),byId={},children={},matches={},include={},rows=[],hidden=0;
+  nodes=nodes.filter(function(n){return !family || family==='all' || n.family===family;});
+  nodes.forEach(function(n){byId[n.node_id]=n;children[n.node_id]=[];});
+  var roots=[];
+  nodes.forEach(function(n){if(n.parent_id && byId[n.parent_id]) children[n.parent_id].push(n.node_id);else roots.push(n.node_id);});
+  var searching=!!String(query || '').trim();
+  nodes.forEach(function(n){matches[n.node_id]=!searching || workbench.topologySearch(n,query);if(matches[n.node_id]) {var id=n.node_id,visited={};while(id && byId[id] && !visited[id]) {visited[id]=true;include[id]=true;id=byId[id].parent_id;}}});
+  var seen={};
+  function visit(ids,depth,parent,ancestorMatch) {
+    var available=ids.filter(function(id){return !searching || include[id] || ancestorMatch;});
+    var limit=limits && limits[parent || '$roots'] || 100;
+    available.slice(0,limit).forEach(function(id){
+      if(seen[id]) return;seen[id]=true;
+      var node=byId[id],branch=children[id].length>0,open=searching || !!(expanded && expanded[id]);
+      rows.push({node:node,depth:depth,parent_id:parent,has_children:branch,expanded:branch && open,match:matches[id],child_count:children[id].length});
+      if(open) visit(children[id],depth+1,id,ancestorMatch || (searching && matches[id]));
+    });
+    if(available.length>limit) {hidden+=available.length-limit;rows.push({more:true,parent_id:parent,depth:depth,remaining:available.length-limit});}
+  }
+  visit(roots,1,null,false);
+  return {rows:rows,total:nodes.length,matched:nodes.filter(function(n){return matches[n.node_id];}).length,hidden:hidden};
+};
+workbench.topologyEvidence = function(node,edges) {
+  var refs=[],seen={};
+  function add(ref,edge) {
+    var key=JSON.stringify([ref.section_id,ref.assertion_key,ref.role,ref.locator,edge ? edge.edge_id : '']);
+    if(seen[key])return;seen[key]=true;
+    refs.push({ref:ref,edge_id:edge ? edge.edge_id : null,relation:edge ? edge.relation : null,target:edge ? (edge.from===node.node_id?edge.to:edge.from) : null});
+  }
+  (node.evidence || []).forEach(function(ref){add(ref,null);});
+  (edges || []).filter(function(e){return e.from===node.node_id || e.to===node.node_id;}).forEach(function(e){(e.evidence || []).forEach(function(ref){add(ref,e);});});
+  return refs;
+};
+workbench.resolveTopologyEvidence = function(ref,detail) {
+  function fail(message){return {status:'mismatch',precision:'none',message:message,anchor_index:-1,byte_range:null};}
+  if(!ref || !detail || detail.id!==ref.section_id) return fail('Returned section does not match the requested evidence.');
+  if(detail.analysis_revision!==ref.analysis_revision) return fail('Evidence belongs to a different analysis revision.');
+  if(detail.native_table_at_packet!==ref.at_packet) return fail('Evidence cutoff does not match the topology snapshot.');
+  var identity=ref.table_identity || {},keys={pid:'pid',table_id:'table_id',extension:'extension',version:'version',section_number:'section',current:'current'};
+  for(var key in keys) if(identity[key]!=null && identity[key]!==detail[keys[key]]) return fail('Returned table identity does not match '+key+'.');
+  var locator=ref.locator || {},anchors=detail.evidence_anchors || [],index=-1,precision='section';
+  if(locator.precision==='field' && locator.field_id) {index=anchors.findIndex(function(a){return a.field_id===locator.field_id && a.precision==='field' && a.resolution_status==='resolved';});if(index>=0)precision='field';}
+  if(index<0 && locator.container_id) {index=anchors.findIndex(function(a){return a.container_id===locator.container_id && a.precision==='container' && a.resolution_status==='resolved';});if(index>=0)precision='container';}
+  var range=index>=0?anchors[index].byte_range:null;
+  if(range && (range.offset_scope!=='section_bytes' || !Number.isSafeInteger(range.offset) || !Number.isSafeInteger(range.length) || range.offset<0 || range.length<1 || range.offset+range.length>String(detail.raw_hex || '').length/2)) range=null;
+  if(range && precision===locator.precision && locator.byte_range && (range.offset!==locator.byte_range.offset || range.length!==locator.byte_range.length || range.offset_scope!==locator.byte_range.offset_scope)) range=null;
+  return {status:index>=0?'resolved':'fallback',precision:precision,anchor_index:index,path:index>=0?'section/anchors/'+index:'section',byte_range:range,
+    message:precision==='field'?'Exact source field located'+(range?' · section byte range available.':' · byte range not provided.'):
+      precision==='container'?'Located the source container; exact field position is unavailable.':'Located the exact section; a supported field/container anchor was not provided.'};
 };

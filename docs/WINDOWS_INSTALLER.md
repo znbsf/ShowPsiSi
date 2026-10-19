@@ -1,7 +1,9 @@
 # Windows Qt installer and update asset contract
 
 Implementation date: 2026-10-19. Primary target: Windows 10/11 x64, Qt + the
-production shared engine. Tauri/WebView2 remains experimental and is not an
+production shared engine. Setup permits native x64 Windows only; ARM64 emulation
+is not enabled because its system-runtime/load-path behavior is not validated.
+Tauri/WebView2 remains experimental and is not an
 installer payload. This pipeline prepares unsigned CI candidates; it does not
 publish a GitHub release or create a release tag.
 

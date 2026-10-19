@@ -13,8 +13,10 @@ AppUpdatesURL=https://github.com/znbsf/ShowPsiSi/releases
 DefaultDirName={localappdata}\Programs\ShowPsiSi
 DefaultGroupName=ShowPsiSi
 PrivilegesRequired=lowest
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+; System32 runtime checks are validated for native x64 Windows only.
+; ARM64 emulation needs its own runtime/load-path acceptance before enabling it.
+ArchitecturesAllowed=x64os
+ArchitecturesInstallIn64BitMode=x64os
 MinVersion=10.0
 UsePreviousAppDir=yes
 UsePreviousTasks=yes

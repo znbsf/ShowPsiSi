@@ -358,6 +358,9 @@ for line in sys.stdin:
                 report = self.run_script('operations-parity', directory, overrides={'SHOWPSISI_THEME':theme})
                 self.assertTrue(all(report['checks'].values()), report)
                 self.assertGreaterEqual(len(report['checks']), 12)
+                for check in ('tooltip_attached_values', 'tooltip_detached_hidden',
+                              'tooltip_detached_text', 'tooltip_anchor_rebound'):
+                    self.assertTrue(report['checks'][check], report)
                 self.assertEqual((Path(directory)/'operations-parity.png.edit.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
 
     def test_snapshot_comparison_and_evidence_cutoffs(self):

@@ -15,6 +15,11 @@ Dialog {
     readonly property color ink: lightTheme ? "#202733" : "#dce1e9"
     readonly property color muted: lightTheme ? "#566171" : "#abb4c2"
     readonly property color surface: lightTheme ? "#ffffff" : "#20232a"
+    // The workbench explicitly supplies palette ink, including the disabled
+    // group. Preserve enabled contrast while making unavailable actions clear.
+    component UpdateAction: Button {
+        opacity: enabled ? 1 : 0.4
+    }
     closePolicy: Popup.CloseOnEscape
     background: Rectangle { color: dialog.surface; border.color: dialog.lightTheme ? "#6f7b8a" : "#778496"; radius: 6 }
     onClosed: {
@@ -38,8 +43,8 @@ Dialog {
             Accessible.name: "Official GitHub repository URL"
         }
         RowLayout {
-            Button { objectName: "openRepositoryButton"; text: "GitHub repository"; onClicked: appUpdater.openRepository() }
-            Button { objectName: "openReleasesButton"; text: "Release page"; onClicked: appUpdater.openReleases() }
+            UpdateAction { objectName: "openRepositoryButton"; text: "GitHub repository"; onClicked: appUpdater.openRepository() }
+            UpdateAction { objectName: "openReleasesButton"; text: "Release page"; onClicked: appUpdater.openReleases() }
         }
         Label {
             Layout.fillWidth: true
@@ -86,25 +91,25 @@ Dialog {
         Flow {
             Layout.fillWidth: true
             spacing: 6
-            Button {
+            UpdateAction {
                 objectName: "checkUpdatesButton"
                 text: appUpdater.state === "error" || appUpdater.state === "cancelled" ? "Retry check" : "Check for updates"
                 enabled: !appUpdater.busy && appUpdater.state !== "launching"
                 onClicked: appUpdater.checkForUpdates()
             }
-            Button {
+            UpdateAction {
                 objectName: "downloadUpdateButton"
                 text: "Download installer…"
                 enabled: appUpdater.canDownload
                 onClicked: downloadConfirm.open()
             }
-            Button {
+            UpdateAction {
                 objectName: "installUpdateButton"
                 text: "Install and quit…"
                 enabled: appUpdater.canInstall && !dialog.workBusy
                 onClicked: installConfirm.open()
             }
-            Button {
+            UpdateAction {
                 objectName: "cancelUpdateButton"
                 text: appUpdater.busy ? "Cancel request" : "Close"
                 onClicked: appUpdater.busy ? appUpdater.cancel() : dialog.close()
@@ -143,13 +148,13 @@ Dialog {
                 textFormat: Text.PlainText; wrapMode: Text.Wrap
             }
             RowLayout {
-                Button {
+                UpdateAction {
                     objectName: "confirmInstallUpdateButton"
                     text: "My work is saved · Install and quit"
                     enabled: appUpdater.canInstall && !dialog.workBusy
                     onClicked: { installConfirm.close(); appUpdater.installUpdate(true); }
                 }
-                Button { text: "Go back"; onClicked: installConfirm.close() }
+                UpdateAction { text: "Go back"; onClicked: installConfirm.close() }
             }
         }
     }

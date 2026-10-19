@@ -796,6 +796,10 @@ ApplicationWindow {
     component SafeTip: ToolTip {
         id: tip
         property var anchorControl: parent
+        // Popup.parent can clear before a delegate's bindings are torn down.
+        // Keep all parent-derived values safe throughout that detached interval.
+        readonly property bool anchorHovered: !!(anchorControl && anchorControl.hovered)
+        readonly property string anchorText: anchorControl ? String(anchorControl.text || "") : ""
         contentItem: PlainLabel {
             objectName: "plainTooltipContent"
             text: tip.text
@@ -1487,6 +1491,9 @@ ApplicationWindow {
         property var change: null
         property var initial: null
         property int evidenceIndex: 0
+        property var tooltipProbe: null
+        property var tooltipOwner: null
+        property var statusTooltipOwner: null
         onTriggered: {
             if (!analysisState.complete || core.busy || core.inspecting || core.comparing || core.diagnostics().pending > 0) return;
             if (phase === 0) {
@@ -1494,6 +1501,31 @@ ApplicationWindow {
                 inspect(service.source_id, service.id);
                 phase = 1;
             } else if (phase === 1) {
+                let row = tree.itemAtIndex(0);
+                if (!row) return;
+                tooltipProbe = row.rowTooltip;
+                tooltipOwner = tooltipProbe.parent;
+                statusTooltipOwner = statusTooltip.parent;
+                tooltipProbe.open();
+                phase = 1.1;
+            } else if (phase === 1.1) {
+                if (!tooltipProbe.visible) return;
+                checks.tooltip_attached_values = tooltipProbe.anchorControl === tooltipOwner && tooltipProbe.anchorHovered === !!tooltipOwner.hovered && tooltipProbe.visible;
+                // Reproduce the Popup parent-detach interval deterministically;
+                // delegate retirement order differs between Windows and Linux.
+                tooltipProbe.parent = null;
+                statusTooltip.parent = null;
+                phase = 1.2;
+            } else if (phase === 1.2) {
+                checks.tooltip_detached_hidden = !tooltipProbe.anchorControl && !tooltipProbe.anchorHovered && !tooltipProbe.visible;
+                checks.tooltip_detached_text = statusTooltip.anchorText === "" && statusTooltip.text === "";
+                tooltipProbe.parent = tooltipOwner;
+                statusTooltip.parent = statusTooltipOwner;
+                phase = 1.3;
+            } else if (phase === 1.3) {
+                checks.tooltip_anchor_rebound = tooltipProbe.anchorControl === tooltipOwner && statusTooltip.anchorControl === statusTooltipOwner && statusTooltip.text === statusTooltipOwner.text;
+                core.hover("treeSearch");
+                tooltipProbe = null; tooltipOwner = null; statusTooltipOwner = null;
                 initial = {id:selected, sid:selectedService, at:analysisState.selected_packet};
                 openComparison();
                 fromPacket.text = String(analysisState.history[0].last_packet);
@@ -2515,7 +2547,7 @@ ApplicationWindow {
                 text: "Reset layout"
                 onClicked: resetLayout()
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Drag the dividers to resize. Alt+Left/Right resizes the inspector; Alt+Up/Down resizes the timeline. Changes are saved on this computer."
                 }
             }
@@ -2535,7 +2567,7 @@ ApplicationWindow {
                 text: "Save diagnostics"
                 enabled: !core.busy && !core.inspecting && !core.comparing
                 onClicked: notice = uiAgent.saveBundle()
-                SafeTip { visible: anchorControl.hovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
+                SafeTip { visible: anchorHovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
             }
         }
     }
@@ -2595,7 +2627,7 @@ ApplicationWindow {
                 ]
                 Accessible.name: "Broadcast standard context for next scan"
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
                 }
             }
@@ -2610,7 +2642,7 @@ ApplicationWindow {
                 enabled: backendReady
                 Accessible.name: "Additional packet identifiers, comma separated"
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Optional extra packet identifiers, decimal or hexadecimal, from 0 to 8191."
                 }
                 onAccepted: scan()
@@ -2631,7 +2663,7 @@ ApplicationWindow {
                 enabled: backendReady
                 onClicked: fileDialog.open()
                 SafeTip {
-                    visible: anchorControl.hovered
+                    visible: anchorHovered
                     text: "Open transport stream (Ctrl+O)"
                 }
             }
@@ -2651,7 +2683,7 @@ ApplicationWindow {
                 enabled: core.available && !core.cancelling
                 onClicked: cancelScan()
                 Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
-                SafeTip { visible: anchorControl.hovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
+                SafeTip { visible: anchorHovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
             }
         }
         PlainLabel {
@@ -2787,7 +2819,7 @@ ApplicationWindow {
                             onClicked: {
                                 selectExplorer(modelData); explorerList.forceActiveFocus();
                             }
-                            SafeTip { visible:anchorControl.hovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
+                            SafeTip { visible:anchorHovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
                         }
                     }
                     TinyLabel { text: "↑ ↓ Home End · focus\nEnter / Space · select"; Layout.margins: 7 }
@@ -2838,7 +2870,7 @@ ApplicationWindow {
                                     }
                                 }
                                 SafeTip {
-                                    visible: anchorControl.hovered
+                                    visible: anchorHovered
                                     text: explanation(modelData)
                                 }
                             }
@@ -2911,7 +2943,7 @@ ApplicationWindow {
                                 text: "Use current"
                                 enabled: backendReady && !!analysisState.complete && !core.comparing
                                 onClicked: { fromPacket.text = String(currentPacket()); comparison = {}; }
-                                SafeTip { visible: anchorControl.hovered; text: "Set A to the selected history snapshot, or the final packet in Latest view." }
+                                SafeTip { visible: anchorHovered; text: "Set A to the selected history snapshot, or the final packet in Latest view." }
                             }
                         }
                         RowLayout {
@@ -2935,7 +2967,7 @@ ApplicationWindow {
                                 text: "Use current"
                                 enabled: backendReady && !!analysisState.complete && !core.comparing
                                 onClicked: { toPacket.text = String(currentPacket()); comparison = {}; }
-                                SafeTip { visible: anchorControl.hovered; text: "Set B to the selected history snapshot, or the final packet in Latest view." }
+                                SafeTip { visible: anchorHovered; text: "Set B to the selected history snapshot, or the final packet in Latest view." }
                             }
                         }
                         RowLayout {
@@ -3019,7 +3051,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                             color: changedColor
                             text: Object.keys(comparison.summary || {}).map(function (kind) { let count = comparison.summary[kind]; return kind + ": +" + count.added + " / −" + count.removed + " / ~" + count.changed; }).join("  ·  ")
-                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorControl.text }
+                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorText }
                             HoverHandler { id: comparisonSummaryHover }
                         }
                         PlainLabel {
@@ -3060,7 +3092,7 @@ ApplicationWindow {
                             implicitHeight: 24
                             text: (showInvalidSections ? "✓ " : "") + "Bad CRC · " + hiddenInvalidCount
                             onClicked: showInvalidSections = !showInvalidSections
-                            SafeTip { visible:anchorControl.hovered; text:"Include CRC-invalid evidence in table groups and exact sections" }
+                            SafeTip { visible:anchorHovered; text:"Include CRC-invalid evidence in table groups and exact sections" }
                         }
                     }
                     RowLayout {
@@ -3174,7 +3206,7 @@ ApplicationWindow {
                                 activate(modelData);
                             }
                             SafeTip {
-                                visible: anchorControl.hovered
+                                visible: anchorHovered
                                 text: (tab === "Services" ? "LCN: Logical channel number (" + (modelData.lcn_status || "unknown") + ") · SID: Service identifier · PMT: Program Map Table\nProvider: " + (modelData.provider || "unknown") + " · Group: " + (modelData.group || "unknown") + "\n" : "") + (tab === "Tables" ? modelData.name + " · " + explanation(modelData.name) + "\n" : "") + rowTitle(modelData) + "\n" + rowSubtitle(modelData) + (tab === "Services" ? "\nType " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + "\nVideo PIDs: " + pidList(modelData.video_pids,modelData.media_status) + " · Audio PIDs: " + pidList(modelData.audio_pids,modelData.media_status) : "")
                             }
                         }
@@ -3250,7 +3282,7 @@ ApplicationWindow {
                                 enabled: backendReady && count > 0
                                 Accessible.name: "Comparison source evidence"
                                 onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
-                                SafeTip { visible: anchorControl.hovered; text: comparisonSource.currentText }
+                                SafeTip { visible: anchorHovered; text: comparisonSource.currentText }
                             }
                             Action {
                                 objectName: "useComparisonSnapshot"
@@ -3264,7 +3296,7 @@ ApplicationWindow {
                                     recordSearch.clear();
                                     snapshot(side.at_packet, side.evidence[0].id, row.kind === "services" ? side.value.id : -1);
                                 }
-                                SafeTip { visible: anchorControl.hovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
+                                SafeTip { visible: anchorHovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
                             }
                         }
                         PlainLabel {
@@ -3440,8 +3472,8 @@ ApplicationWindow {
                             Keys.onEscapePressed: clear()
                             onAccepted: { tree.forceActiveFocus(); if (treeRows.length) tree.currentIndex=0; }
                         }
-                        Action { objectName: "expandAllSections"; text: "+"; Accessible.name: "Expand all fields"; onClicked: foldAll(false); SafeTip { visible: anchorControl.hovered; text: "Expand all fields" } }
-                        Action { objectName: "collapseAllSections"; text: "−"; Accessible.name: "Collapse all fields"; onClicked: foldAll(true); SafeTip { visible: anchorControl.hovered; text: "Collapse all fields" } }
+                        Action { objectName: "expandAllSections"; text: "+"; Accessible.name: "Expand all fields"; onClicked: foldAll(false); SafeTip { visible: anchorHovered; text: "Expand all fields" } }
+                        Action { objectName: "collapseAllSections"; text: "−"; Accessible.name: "Collapse all fields"; onClicked: foldAll(true); SafeTip { visible: anchorHovered; text: "Collapse all fields" } }
                     }
                     PlainLabel {
                         visible: inspectorView === "Structure" && !!treeSearch.text.trim()
@@ -3511,6 +3543,7 @@ ApplicationWindow {
                         delegate: NavItem {
                             required property var modelData
                             required property int index
+                            property alias rowTooltip: treeTooltip
                             objectName: "tree:" + modelData.path
                             highlighted: tree.currentIndex === index
                             keyboardCurrent: tree.currentIndex === index && tree.activeFocus
@@ -3557,7 +3590,8 @@ ApplicationWindow {
                                     win.toggle(modelData.path);
                             }
                             SafeTip {
-                                visible: anchorControl.hovered
+                                id: treeTooltip
+                                visible: anchorHovered
                                 text: modelData.label + (modelData.value ? ": " + modelData.value : "")
                             }
                         }
@@ -3631,7 +3665,7 @@ ApplicationWindow {
                                 placeholderText: "Next scan default charset (e.g. UTF-8)"
                                 enabled: backendReady
                                 Accessible.name: "Default input charset for next scan"
-                                SafeTip { visible: anchorControl.hovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
+                                SafeTip { visible: anchorHovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
                             }
                             FieldChoice {
                                 id: epgLanguageChoice
@@ -3958,7 +3992,7 @@ ApplicationWindow {
                     SafeTip {
                         id: statusTooltip
                         visible: statusHover.hovered
-                        text: anchorControl.text
+                        text: anchorText
                     }
                     HoverHandler {
                         id: statusHover

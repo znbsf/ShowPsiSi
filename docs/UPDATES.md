@@ -113,3 +113,18 @@ separate Windows evidence.
 API references: [GitHub releases](https://docs.github.com/en/rest/releases/releases),
 [GitHub release assets](https://docs.github.com/en/rest/releases/assets),
 [Qt network request/redirect policy](https://doc.qt.io/qt-6/qnetworkrequest.html).
+
+### Dialog enabled/disabled visual states
+
+`tests/qt_updates/tst_UpdateDialog.qml` loads the actual production dialog with
+an inert presentation fixture. It asserts disabled actions do not open
+confirmations, checks busy/work-pending transitions, and preserves full enabled
+text opacity/ink. Disabled buttons use the workbench's existing 40% opacity
+convention so availability is distinct in both themes.
+
+Run Qt's `qmltestrunner -input /absolute/path/to/tests/qt_updates/tst_UpdateDialog.qml`
+from an ignored artifact directory with `QT_QPA_PLATFORM=offscreen`,
+`QT_QUICK_BACKEND=software` and `QT_QUICK_CONTROLS_STYLE=Basic`. It saves
+`update-dialog-disabled-dark.png` and `update-dialog-disabled-light.png` in that
+directory. These are rendered component-fixture checks, not network or Windows
+installer acceptance.

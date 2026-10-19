@@ -163,6 +163,9 @@ class InstallerPackageTests(unittest.TestCase):
         self.assertNotIn('/passive', code)
         self.assertNotIn('[UninstallDelete]', code)
         self.assertIn('PrivilegesRequired=lowest', code)
+        self.assertIn('ArchitecturesAllowed=x64os', code)
+        self.assertIn('ArchitecturesInstallIn64BitMode=x64os', code)
+        self.assertNotIn('x64compatible', code)
         self.assertIn('CloseApplications=no', code)
         self.assertIn('AppMutex=Local\\ShowPsiSi.ApplicationLifetime', code)
 

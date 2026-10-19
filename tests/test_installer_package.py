@@ -11,6 +11,54 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts/ci'))
 import installer_checks as installer
 import portable_checks as portable
+import inno_compiler
+
+
+class InnoCompilerTests(unittest.TestCase):
+    def test_loaded_engine_version_is_independent_of_zero_driver_pe_version(self):
+        for version in ('6.3.0', '6.7.1'):
+            self.assertEqual(inno_compiler.parse_version(
+                f'Inno Setup 6 Command-Line Compiler\nCompiler engine version: Inno Setup {version}\n'), version)
+
+    def test_missing_ambiguous_prerelease_or_unsupported_engine_is_rejected(self):
+        for value in ('', 'Inno Setup 6 Command-Line Compiler\n',
+                      'Compiler engine version: Inno Setup 6.2.2\n',
+                      'Compiler engine version: Inno Setup 7.0.0\n',
+                      'Compiler engine version: Inno Setup 6.7.1-beta\n',
+                      'Compiler engine version: Inno Setup 6.7.1\n' * 2):
+            with self.subTest(value=value), self.assertRaises(RuntimeError):
+                inno_compiler.parse_version(value)
+
+    def test_probe_disables_output_and_hashes_actual_engine_components(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('ISCC.exe', 'ISCmplr.dll', 'ISPP.dll'):
+                (root / name).write_bytes(b'unit fixture, not an actual Windows binary')
+            result = mock.Mock(returncode=0, stdout='Compiler engine version: Inno Setup 6.7.1\n')
+            with mock.patch.object(inno_compiler.subprocess, 'run', return_value=result) as run:
+                record = inno_compiler.identity(root / 'ISCC.exe')
+            self.assertEqual(record['version'], '6.7.1')
+            self.assertEqual(set(record['files_sha256']), {'ISCC.exe', 'ISCmplr.dll', 'ISPP.dll'})
+            self.assertEqual(run.call_args.args[0][1:], ['/O-', '-'])
+            self.assertIn('Output=no', run.call_args.kwargs['input'])
+            self.assertIn('Ver < 0x06030000 || Ver >= 0x07000000', run.call_args.kwargs['input'])
+
+    def test_failed_probe_cannot_supply_a_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('ISCC.exe', 'ISCmplr.dll', 'ISPP.dll'):
+                (root / name).write_bytes(b'unit fixture')
+            result = mock.Mock(returncode=2, stdout='Compiler engine version: Inno Setup 6.7.1\nError')
+            with mock.patch.object(inno_compiler.subprocess, 'run', return_value=result), self.assertRaisesRegex(RuntimeError, 'probe failed'):
+                inno_compiler.identity(root / 'ISCC.exe')
+
+    def test_missing_compiler_component_fails_before_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            compiler = Path(directory) / 'ISCC.exe'
+            compiler.write_bytes(b'unit fixture')
+            with mock.patch.object(inno_compiler.subprocess, 'run') as run, self.assertRaises(FileNotFoundError):
+                inno_compiler.identity(compiler)
+            run.assert_not_called()
 
 
 class InstallerPackageTests(unittest.TestCase):

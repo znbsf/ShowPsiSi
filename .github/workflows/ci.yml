@@ -153,6 +153,11 @@ jobs:
         with:
           python-version: '3.12'
           architecture: x64
+      - name: Check hosted Inno compiler engine and installer contracts
+        run: |
+          python scripts/ci/inno_compiler.py --compiler "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m unittest discover -s tests -p test_installer_package.py -v
       - name: Extract pinned TSDuck SDK and install Qt 6.7.3
         run: ./scripts/ci/windows.ps1 -Phase Dependencies
       - name: Build MSVC engine and deploy Qt runtime

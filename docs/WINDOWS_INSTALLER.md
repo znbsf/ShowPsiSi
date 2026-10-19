@@ -69,8 +69,11 @@ an engineering gate and does not establish legal clearance.
 3. Run `scripts/package-installer.ps1` with explicit Package, Validation,
    PrerequisiteDirectory, Output, Work and Python paths. Use the official
    Inno Setup 6.3+ compiler already provided by the Windows hosted image, or pass
-   its explicit path. Its version and hash are recorded; no compiler is downloaded
-   or installed automatically.
+   its explicit path. A no-output script compile checks the loaded engine version
+   (6.3+ and below 7), because the ISCC driver PE version can be zero. The driver,
+   compiler and preprocessor hashes and probe output are recorded; no compiler is
+   downloaded or installed automatically. See the official [ISCC implementation](https://github.com/jrsoftware/issrc/blob/is-6_7_1/Projects/ISCC.dpr)
+   and [predefined version variable](https://jrsoftware.org/ishelp/topic_predefinedvars.htm).
 4. Run `scripts/ci/installer_checks.py smoke`. CI builds a clearly named TEST-ONLY
    0.0.0 installer around the same reviewed payload for the upgrade fixture. It
    is never uploaded as a release artifact or included in SHA256SUMS.

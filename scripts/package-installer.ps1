@@ -22,9 +22,12 @@ if (Test-Path -LiteralPath $Output) { throw "Refusing stale installer output: $O
 if (Test-Path -LiteralPath $Work) { throw "Refusing stale installer work directory: $Work" }
 if (-not $InnoCompiler) { $InnoCompiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe' }
 if (-not (Test-Path -LiteralPath $InnoCompiler -PathType Leaf)) { throw 'Install official Inno Setup 6.3+ or pass -InnoCompiler. CI uses the hosted image tool.' }
-$CompilerInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($InnoCompiler)
-$CompilerVersion = '{0}.{1}.{2}.{3}' -f $CompilerInfo.FileMajorPart, $CompilerInfo.FileMinorPart, $CompilerInfo.FileBuildPart, $CompilerInfo.FilePrivatePart
-if ([Version]$CompilerVersion -lt [Version]'6.3.0.0' -or [Version]$CompilerVersion -ge [Version]'7.0.0.0') { throw "Unverified Inno compiler version: $CompilerVersion" }
+# ISCC.exe is a driver: hosted Inno 6.7.1 has a zero PE FileVersion. Query the
+# loaded engine through a no-output compile, retaining the same supported range.
+$CompilerJson = & $Python (Join-Path $PSScriptRoot 'ci/inno_compiler.py') --compiler $InnoCompiler
+if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the loaded Inno compiler engine.' }
+$Compiler = $CompilerJson | ConvertFrom-Json -AsHashtable
+$CompilerVersion = $Compiler.version
 $Project = Get-Content -LiteralPath (Join-Path $Root 'CMakeLists.txt') -Raw
 $Match = [regex]::Match($Project, 'project\(ShowPsiSi VERSION ([0-9]+\.[0-9]+\.[0-9]+) ')
 if (-not $Match.Success) { throw 'Unable to read canonical CMake project version.' }
@@ -62,6 +65,7 @@ $Record['installer_sha256'] = $Hash
 $Record['installer_bytes'] = (Get-Item -LiteralPath $Installer).Length
 $Record['inno_setup_version'] = $CompilerVersion
 $Record['inno_compiler_sha256'] = (Get-FileHash -LiteralPath $InnoCompiler -Algorithm SHA256).Hash.ToLowerInvariant()
+$Record['inno_compiler_identity'] = $Compiler
 $Record['installer_source_sha256'] = (Get-FileHash -LiteralPath (Join-Path $Generated 'ShowPsiSi.iss') -Algorithm SHA256).Hash.ToLowerInvariant()
 $Record | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Output 'installer-build.json') -Encoding utf8NoBOM
 if ($CreateUpgradeFixture) {

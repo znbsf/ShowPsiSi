@@ -46,6 +46,9 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 // Resolve version-specific symbols from both shared libraries before startup.
 // A mismatched installed runtime must fail rather than decode with an unsafe ABI.
@@ -1021,8 +1024,36 @@ public:
         if(name.empty()||name.size()>180)throw std::runtime_error("Service name must contain 1..180 UTF-8 bytes");
         ts::BinaryTable table;table.addNewSection(r.raw.data(),r.raw.size(),ts::PID(r.pid),ts::CRC32::CHECK);ts::SDT sdt(duck,table);
         if(!sdt.isValid()||!sdt.services.count(sid))throw std::runtime_error("Service is absent from target SDT");
+        size_t serviceDescriptors=0;for(const auto& descriptor:sdt.services[sid].descs)if(descriptor.tag()==ts::DID_DVB_SERVICE)++serviceDescriptors;
+        if(serviceDescriptors>1)throw std::runtime_error("Ambiguous duplicate service descriptors; no preview created");
+        const ts::SDT original(duck,table);
         std::string before=sdt.services[sid].serviceName(duck).toUTF8();sdt.services[sid].setName(duck,ts::UString::FromUTF8(name));sdt.incrementVersion();
         ts::BinaryTable changed;if(!sdt.serialize(duck,changed))throw std::runtime_error("TSDuck could not serialize edit");
+        // setName() has no failure result: an oversized service_descriptor can
+        // disappear, and a regional output charset can silently drop characters.
+        // A valid SDT/CRC therefore does not prove that the requested edit survived.
+        // Verify the exact bytes that will be exported before publishing any token.
+        const ts::SDT verified(duck,changed);
+        auto preserved=[](bool ok){if(!ok)throw std::runtime_error("Rename would change unrelated SDT metadata; no preview created");};
+        preserved(verified.isValid()&&verified.isActual()==original.isActual()&&verified.ts_id==original.ts_id&&
+                  verified.onetw_id==original.onetw_id&&verified.isCurrent()==original.isCurrent()&&
+                  verified.version()==sdt.version()&&verified.services.size()==original.services.size());
+        for(const auto& [id,old]:original.services){
+            const auto found=verified.services.find(id);preserved(found!=verified.services.end());const auto& edited=found->second;
+            preserved(edited.EITs_present==old.EITs_present&&edited.EITpf_present==old.EITpf_present&&
+                      edited.running_status==old.running_status&&edited.CA_controlled==old.CA_controlled);
+            if(id!=sid){preserved(edited.descs==old.descs);continue;}
+            size_t target=0;while(target<old.descs.size()&&old.descs[target].tag()!=ts::DID_DVB_SERVICE)++target;
+            ts::ServiceDescriptor previous,actual;
+            const bool existed=target<old.descs.size();
+            if((existed&&!old.locateServiceDescriptor(duck,previous))||
+               !edited.locateServiceDescriptor(duck,actual)||actual.service_name.toUTF8()!=name||
+               actual.provider_name!=(existed?previous.provider_name:ts::UString())||
+               actual.service_type!=(existed?previous.service_type:1))
+                throw std::runtime_error("Service name cannot be encoded losslessly within the descriptor capacity for this charset; no preview created");
+            preserved(edited.descs.size()==old.descs.size()+(existed?0:1)&&edited.descs[target].tag()==ts::DID_DVB_SERVICE);
+            for(size_t i=0;i<old.descs.size();++i)if(i!=target)preserved(edited.descs[i]==old.descs[i]);
+        }
         for(size_t i=0;i<changed.sectionCount();i++){auto s=changed.sectionAt(i);patchSections.push_back({r.pid,Bytes(s->content(),s->content()+s->size())});}
         pending={{"token",std::to_string(revision)+":"+id+":"+fingerprint(patchSections.front().second)},{"source_id",id},{"revision",revision},{"service_id",sid},{"before",before},{"after",name},{"old_version",r.version},{"new_version",sdt.version()},{"crc_recomputed",true},{"writes_source",false}};
         return pending;
@@ -1134,10 +1165,29 @@ struct QueuedRequest {
     std::shared_ptr<AnalysisControl> control;
 };
 
+#ifdef _WIN32
+// Installer/uninstaller AppMutex uses the same name as the Qt process. The
+// non-owned handle allows multiple workbenches, but blocks replacing shared
+// runtime/resources while any core (including standalone JSONL/MCP) is alive.
+class ApplicationLifetimeMutex {
+    HANDLE handle;
+public:
+    ApplicationLifetimeMutex():handle(CreateMutexW(nullptr,FALSE,L"Local\\ShowPsiSi.ApplicationLifetime")) {
+        if(!handle)throw std::runtime_error("Cannot create the application lifetime mutex; refusing unprotected startup (Windows error "+std::to_string(GetLastError())+")");
+    }
+    ApplicationLifetimeMutex(const ApplicationLifetimeMutex&)=delete;
+    ApplicationLifetimeMutex& operator=(const ApplicationLifetimeMutex&)=delete;
+    ~ApplicationLifetimeMutex(){CloseHandle(handle);}
+};
+#endif
+
 static int runCore(int argc,char**argv) {
     std::cin.tie(nullptr);
     fs::path root=fs::current_path();for(int i=1;i+1<argc;i++)if(std::string(argv[i])=="--root")root=pathFromUtf8(argv[++i]);
     try {
+#ifdef _WIN32
+        const ApplicationLifetimeMutex applicationLifetime;
+#endif
         Engine engine(root);
         // The reader validates JSON and schemas only. No Engine/TSDuck calls or
         // state access are permitted there, even for a cancellation response.

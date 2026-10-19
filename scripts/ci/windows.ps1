@@ -78,7 +78,7 @@ try {
             & (Join-Path $Root 'scripts/setup-tsduck.ps1') -Sdk $Sdk -ValidateOnly
             Assert-File (Join-Path $Qt 'lib/cmake/Qt6/Qt6Config.cmake')
             Invoke-Checked 'cmake' @('--version')
-            Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', '-DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
+            Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', '-DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON', '-DSHOWPSISI_BUILD_UPDATER_TESTS=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
             Invoke-Checked 'cmake' @('--build', $Build, '--config', 'Release', '--parallel', '2', '--verbose')
             Assert-File $env:SHOWPSISI_CORE
             Assert-File $env:SHOWPSISI_TEST_CORE
@@ -100,8 +100,11 @@ try {
             if (-not $CompilerInfo) { throw 'CMake compiler identity unavailable.' }
             $CompilerVersion = Select-String -LiteralPath $CompilerInfo.FullName -Pattern '^set\(CMAKE_CXX_COMPILER_VERSION "([^"]+)"\)'
             if (-not $CompilerVersion) { throw 'CMake compiler version unavailable.' }
+            $ProjectVersion = [regex]::Match((Get-Content -LiteralPath (Join-Path $Root 'CMakeLists.txt') -Raw), 'project\(ShowPsiSi VERSION ([0-9]+\.[0-9]+\.[0-9]+) ')
+            if (-not $ProjectVersion.Success) { throw 'Canonical application version unavailable.' }
             $BuildRecord = @{
                 source_commit = (& git rev-parse HEAD).Trim()
+                application_version = $ProjectVersion.Groups[1].Value
                 source_root = $Root
                 compiler_version = $CompilerVersion.Matches[0].Groups[1].Value
                 production = @{}

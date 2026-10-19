@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Installer packaging contract regressions
+        run: python -m unittest discover -s tests -p test_installer_package.py -v
       - name: Workbench text and control contrast regression
         run: python -m unittest discover -s tests -p test_ui_contrast.py -v
       - name: Install pinned official TSDuck SDK
@@ -111,9 +113,10 @@ jobs:
       - name: Build and exercise compiled Qt workbench
         run: |
           export LD_LIBRARY_PATH="$PWD/.deps/Qt/6.7.3/gcc_64/lib:${LD_LIBRARY_PATH:-}"
-          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$PWD/.deps/Qt/6.7.3/gcc_64" -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$PWD/.deps/Qt/6.7.3/gcc_64" -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON -DSHOWPSISI_BUILD_UPDATER_TESTS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel 2
           python scripts/make_fixture.py
+          ctest --test-dir build --output-on-failure --no-tests=error -R updater
           python scripts/ci/windows_native_checks.py --artifacts artifacts/linux-qt --qt
       - name: Keep strict Qt regression evidence
         if: always()
@@ -138,7 +141,7 @@ jobs:
   windows-native:
     name: Windows MSVC engine and Qt
     runs-on: windows-2022
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: pwsh
@@ -155,6 +158,11 @@ jobs:
       - name: Build MSVC engine and deploy Qt runtime
         id: build
         run: ./scripts/ci/windows.ps1 -Phase Build
+      - name: Qt update-client security and version tests
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: |
+          $env:PATH = "$PWD/.deps/Qt/6.7.3/msvc2019_64/bin;$PWD/build/windows/bin/Release;$env:PATH"
+          ctest --test-dir build/windows -C Release --output-on-failure --no-tests=error -R updater
       - name: Windows engine, protocol and transport regressions
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: ./scripts/ci/windows.ps1 -Phase EngineTests
@@ -177,6 +185,42 @@ jobs:
           $ready = Test-Path artifacts/ShowPsiSi-windows-x64-qt.zip
           "ready=$($ready.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           if (-not $ready) { "Portable binary upload blocked by runtime or redistribution review. See portable-validation/distribution-gate.json." >> $env:GITHUB_STEP_SUMMARY }
+      - name: Verify official Microsoft runtime download without executing it
+        if: ${{ success() && steps.portable.outputs.ready == 'true' }}
+        run: ./scripts/prepare-windows-prerequisite.ps1 -Output "$PWD/.deps/installer-prerequisite"
+      - name: Build per-user installer from exact reviewed payload
+        id: installer
+        if: ${{ success() && steps.portable.outputs.ready == 'true' }}
+        run: |
+          ./scripts/package-installer.ps1 -Package "$PWD/artifacts/portable-stage" -Validation "$PWD/artifacts/portable-validation" -PrerequisiteDirectory "$PWD/.deps/installer-prerequisite" -Output "$PWD/artifacts/installer-candidate" -Work "$PWD/artifacts/installer-build" -Python (Get-Command python).Source -CreateUpgradeFixture
+      - name: Install, upgrade, repair and uninstall in a Unicode path
+        id: installer_smoke
+        if: ${{ success() && steps.installer.outcome == 'success' }}
+        run: |
+          $record = Get-Content artifacts/installer-candidate/installer-build.json -Raw | ConvertFrom-Json
+          python scripts/ci/installer_checks.py smoke --package artifacts/portable-stage --artifacts artifacts/installer-validation --version $record.version --installer "artifacts/installer-candidate/$($record.asset_name)" --previous artifacts/installer-build/test-only/TEST-ONLY-previous-version.exe
+      - name: Keep verified Windows installer candidate (never publish a release)
+        if: ${{ success() && steps.installer_smoke.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShowPsiSi-windows-x64-installer
+          path: |
+            artifacts/installer-candidate/ShowPsiSi-*-windows-x64-setup.exe
+            artifacts/installer-candidate/SHA256SUMS
+            artifacts/installer-candidate/installer-build.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep installer validation and prerequisite provenance (no Microsoft binary)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-validation
+          path: |
+            artifacts/installer-validation
+            artifacts/installer-candidate/installer-build.json
+            .deps/installer-prerequisite/vc-runtime.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Keep cleared portable CI artifact (never publish a release)
         if: ${{ success() && steps.portable.outputs.ready == 'true' }}
         uses: actions/upload-artifact@v4

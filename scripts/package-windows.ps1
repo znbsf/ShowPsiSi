@@ -106,6 +106,7 @@ $QtCoreRelocation = @{
 }
 $Metadata = @{
     source_commit = $SourceCommit
+    application_version = $Record.application_version
     qt_version = '6.7.3'; qt_kit = 'win64_msvc2019_64'
     qt_origin = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_673/'
     tsduck_version = '3.45-4798'

@@ -4,6 +4,20 @@
 
 本轮在独立 Linux 云环境开发。既有 Qt、Linux Tauri 和 Chromium 工作台基线已连接真实引擎验证，包含 Linux 原生打开／保存对话框、编辑导出和回读；TSDuck 3.45 升级后的逐项验证范围见 [协议覆盖记录](docs/PROTOCOL_COVERAGE.md)。原有 Windows 运行证据保留；新代码尚需 Windows WebView2 和 macOS 回归。
 
+## Windows 安装与更新（发布准备中）
+
+首个安装版本面向 Windows 10/11 x64，使用 Qt 工作台。正式下载以
+[本仓库 Releases](https://github.com/znbsf/ShowPsiSi/releases) 为准；当前分支的安装候选和验证结果见
+[发布准备记录](docs/RELEASE_READINESS.md)。不要把尚未发布的候选称为稳定发行版。
+
+- 安装到当前用户目录，保留现有用户设置；程序中 About / Updates 显示版本和本 GitHub 仓库。
+- 手动检查稳定新版本，查看说明，再选择下载。校验 SHA-256 后，由用户明确选择安装并退出。
+- 缺少所需微软 VC++ 运行库时，安装器会询问是否下载并打开微软官方安装程序；首次安装可能需要联网和管理员确认。
+- 运行中的实例或导出会阻止不安全的替换/退出。取消或网络错误不能被视为成功安装。
+- 独立 ZIP、源码构建及 Tauri 使用官方 Release 页面；不声称具备 Qt 安装版的自动安装流程。
+
+完整边界见 [安装器](docs/WINDOWS_INSTALLER.md) 和 [更新器](docs/UPDATES.md)。
+
 ## 编辑器式工作台
 
 - 中性深色布局、可调整并记忆的面板、一键恢复布局、可见焦点、键盘导航和记录搜索。

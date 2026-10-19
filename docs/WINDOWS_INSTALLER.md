@@ -81,6 +81,13 @@ an engineering gate and does not establish legal clearance.
    prerequisite metadata even after failure. Do not upload the downloaded
    Microsoft EXE or the test-only installer.
 
+Shortcut validation uses the explicit Unicode [IShellLinkW interface](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-ishelllinkw),
+requires both the exact resolved executable path and matching filesystem identity,
+and retains `.lnk` bytes, decoded/expected paths and the former WScript reader's
+raw output before cleanup. An early Windows-only Chinese/space-path round trip
+tests the reader independently of the installer. This replaces an ambiguous
+text-only smoke failure; it does not by itself establish that failure's cause.
+
 The installer independently requires fresh runtime validation tied to the exact
 payload manifest, matching application version and clean checkout source commit,
 a satisfied test-host runtime minimum, and an exact match of

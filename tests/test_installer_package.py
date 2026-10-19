@@ -12,6 +12,75 @@ sys.path.insert(0, str(ROOT / 'scripts/ci'))
 import installer_checks as installer
 import portable_checks as portable
 import inno_compiler
+import windows_shortcuts
+
+
+class ShortcutIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.expected = self.root / '应用 target.exe'
+        self.expected.write_bytes(b'same bytes do not imply the same file')
+        self.link = self.root / 'shortcut.lnk'
+        self.link.write_bytes(b'unit fixture shortcut bytes')
+        self.evidence = self.root / 'evidence'
+
+    def verify(self, target):
+        with mock.patch.object(windows_shortcuts, 'read_target', return_value=str(target)), \
+             mock.patch.object(windows_shortcuts, 'legacy_diagnostic', return_value={'decoded_utf8': 'diagnostic only'}):
+            return windows_shortcuts.verify(self.link, self.expected, self.evidence)
+
+    def test_exact_target_retains_unicode_paths_and_link_bytes(self):
+        result = self.verify(self.expected)
+        self.assertTrue(result['passed'])
+        self.assertTrue(result['resolved_equal'])
+        self.assertTrue(result['same_file'])
+        self.assertEqual(result['target'], str(self.expected))
+        self.assertEqual((self.evidence / 'shortcut.lnk').read_bytes(), self.link.read_bytes())
+
+    def test_wrong_target_with_identical_contents_is_rejected_with_evidence(self):
+        wrong = self.root / 'wrong.exe'
+        wrong.write_bytes(self.expected.read_bytes())
+        with self.assertRaisesRegex(RuntimeError, 'Unexpected shortcut target'):
+            self.verify(wrong)
+        result = json.loads((self.evidence / 'target.json').read_text())
+        self.assertFalse(result['passed'])
+        self.assertFalse(result['same_file'])
+        self.assertEqual(result['expected'], str(self.expected))
+        self.assertEqual(result['target'], str(wrong))
+        self.assertEqual((self.evidence / 'shortcut.lnk').read_bytes(), self.link.read_bytes())
+
+    def test_missing_target_never_passes_and_original_link_is_retained(self):
+        with self.assertRaises(FileNotFoundError):
+            self.verify(self.root / 'missing.exe')
+        result = json.loads((self.evidence / 'target.json').read_text())
+        self.assertFalse(result['passed'])
+        self.assertIn('error', result)
+        self.assertTrue((self.evidence / 'shortcut.lnk').exists())
+
+    def test_non_windows_probe_does_not_claim_native_validation(self):
+        with mock.patch.object(windows_shortcuts.os, 'name', 'posix'), self.assertRaisesRegex(RuntimeError, 'requires Windows'):
+            windows_shortcuts.probe(self.evidence)
+
+    def test_legacy_invalid_text_and_failed_process_preserve_raw_bytes(self):
+        result = mock.Mock(returncode=1, stdout=b'\xffinvalid utf8', stderr=b'failure output')
+        with mock.patch.dict(windows_shortcuts.os.environ, {'SystemRoot': str(self.root)}), \
+             mock.patch.object(windows_shortcuts.subprocess, 'run', return_value=result):
+            record = windows_shortcuts.legacy_diagnostic(self.link)
+        self.assertEqual(record['stdout_hex'], result.stdout.hex())
+        self.assertEqual(record['stderr_hex'], result.stderr.hex())
+        self.assertEqual(record['exit_code'], 1)
+        self.assertIn('utf8_decode_error', record)
+
+    def test_legacy_timeout_preserves_partial_output(self):
+        error = windows_shortcuts.subprocess.TimeoutExpired('powershell', 30, output=b'partial', stderr=b'diagnostic')
+        with mock.patch.dict(windows_shortcuts.os.environ, {'SystemRoot': str(self.root)}), \
+             mock.patch.object(windows_shortcuts.subprocess, 'run', side_effect=error):
+            record = windows_shortcuts.legacy_diagnostic(self.link)
+        self.assertTrue(record['timeout'])
+        self.assertEqual(record['stdout_hex'], b'partial'.hex())
+        self.assertEqual(record['stderr_hex'], b'diagnostic'.hex())
 
 
 class InnoCompilerTests(unittest.TestCase):

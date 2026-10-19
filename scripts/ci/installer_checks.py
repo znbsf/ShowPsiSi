@@ -15,6 +15,7 @@ import time
 from urllib.parse import urlsplit
 
 import portable_checks as portable
+import windows_shortcuts
 
 APP_ID = '{13C6E0A2-B226-4BAA-A218-8DD167D78D4C}'
 UNINSTALL_KEY = 'Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\' + APP_ID + '_is1'
@@ -157,17 +158,11 @@ def smoke(installer, previous, package, artifacts, version):
     if any(path.exists() for path in shortcuts):
         raise RuntimeError('Smoke refuses to overwrite pre-existing ShowPsiSi shortcuts')
     def verify_shortcuts(installed):
-        powershell = Path(os.environ['SystemRoot']) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
-        for path in shortcuts:
+        for index, path in enumerate(shortcuts):
             if not path.is_file():
                 raise RuntimeError(f'Missing per-user shortcut: {path}')
-            # Constant script; the tested path is passed as environment data.
-            command = "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; $s = (New-Object -ComObject WScript.Shell).CreateShortcut($env:SHOWPSISI_SMOKE_LINK); $s.TargetPath"
-            target = subprocess.check_output([str(powershell), '-NoProfile', '-NonInteractive', '-Command', command],
-                                             env=dict(os.environ, SHOWPSISI_SMOKE_LINK=str(path)), text=True,
-                                             timeout=30).strip()
-            if Path(target).resolve() != (installed / 'bin/showpsisi-qt.exe').resolve():
-                raise RuntimeError(f'Unexpected shortcut target: {path}')
+            windows_shortcuts.verify(path, installed / 'bin/showpsisi-qt.exe',
+                                     artifacts / f'shortcut-{len(evidence["steps"])}-{index}')
     settings_key = 'Software\\ShowPsiSi\\ShowPsiSi'
     sentinel_name = 'installerSmokeSentinel'
     sentinel = 'preserve-' + str(time.time_ns())

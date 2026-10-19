@@ -158,6 +158,8 @@ jobs:
           python scripts/ci/inno_compiler.py --compiler "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m unittest discover -s tests -p test_installer_package.py -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/ci/windows_shortcuts.py --artifacts artifacts/installer-shortcut-probe
       - name: Extract pinned TSDuck SDK and install Qt 6.7.3
         run: ./scripts/ci/windows.ps1 -Phase Dependencies
       - name: Build MSVC engine and deploy Qt runtime
@@ -222,6 +224,7 @@ jobs:
           name: windows-installer-validation
           path: |
             artifacts/installer-validation
+            artifacts/installer-shortcut-probe
             artifacts/installer-candidate/installer-build.json
             .deps/installer-prerequisite/vc-runtime.json
           if-no-files-found: warn

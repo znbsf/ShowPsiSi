@@ -81,6 +81,11 @@ Before any write, the publisher verifies:
   A blocked distribution record fails. Clean-machine, native-dialog and actual
   missing-runtime-bootstrap flags stay explicitly false rather than becoming
   inferred passes.
+  Prerequisite provenance is compared in full. Its UTC retrieval timestamp may
+  differ only by insignificant fractional trailing zeros introduced by JSON
+  serialization (for example, `.5633900Z` and `.56339Z`). Calendar/time syntax is
+  validated, no fractional precision is rounded away, and all other fields must
+  remain equal. Original archive/file bytes and hashes are never rewritten.
 
 Only then can it create the fixed-version tag at the exact source and a draft
 release. It uploads only the versioned setup, versioned ZIP, common SHA256SUMS

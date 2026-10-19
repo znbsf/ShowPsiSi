@@ -315,6 +315,50 @@ class DownloadTests(TemporaryTest):
         self.assertEqual(opened.call_count, 1)
 
 
+class PrerequisiteTimestampTests(unittest.TestCase):
+    def value(self, stamp):
+        return {'retrieved_at_utc': stamp, 'sha256': 'a' * 64, 'version': '14.51.36247.0'}
+
+    def test_fractional_zero_padding_is_equivalent_without_mutation(self):
+        original = self.value('2026-10-19T09:03:28.5633900Z')
+        expected = self.value('2026-10-19T09:03:28.56339Z')
+        self.assertEqual(release.canonical_prerequisite(original), expected)
+        self.assertEqual(original['retrieved_at_utc'], '2026-10-19T09:03:28.5633900Z')
+
+    def test_zero_fraction_equals_integral_second(self):
+        self.assertEqual(release.canonical_prerequisite(self.value('2026-10-19T09:03:28.0000000Z')),
+                         self.value('2026-10-19T09:03:28Z'))
+
+    def test_submicrosecond_differences_are_not_rounded_away(self):
+        first = release.canonical_prerequisite(self.value('2026-10-19T09:03:28.5633901Z'))
+        for stamp in ('2026-10-19T09:03:28.5633900Z', '2026-10-19T09:03:28.5633902Z',
+                      '2026-10-19T09:03:28.563390101Z', '2026-10-19T09:03:29.5633901Z'):
+            with self.subTest(stamp=stamp):
+                self.assertNotEqual(first, release.canonical_prerequisite(self.value(stamp)))
+
+    def test_invalid_dates_offsets_missing_or_excessive_fraction_fail(self):
+        for stamp in (None, True, 123, '', '2026-02-30T09:03:28Z', '2026-10-19T24:03:28Z',
+                      '2026-10-19T09:03:60Z', '2026-10-19T09:03:28.Z',
+                      '2026-10-19T09:03:28+00:00', '2026-10-19 09:03:28Z',
+                      '2026-10-19T09:03:28z', '0000-10-19T09:03:28Z', '2026-13-19T09:03:28Z',
+                      '2026-10-19T09:03:28.1234567890Z', '2026-10-19T09:03:28Z\n'):
+            with self.subTest(stamp=stamp), self.assertRaises(release.ReleaseError):
+                release.canonical_prerequisite(self.value(stamp))
+        with self.assertRaises(release.ReleaseError):
+            release.canonical_prerequisite({})
+
+    def test_provenance_must_be_an_object(self):
+        for value in (None, [], True, 1, '2026-10-19T09:03:28Z'):
+            with self.subTest(value=value), self.assertRaises(release.ReleaseError):
+                release.canonical_prerequisite(value)
+
+    def test_other_fields_and_extra_fields_remain_exact(self):
+        first = self.value('2026-10-19T09:03:28.5633900Z')
+        for changed in (dict(first, sha256='b' * 64), dict(first, version='14.51.36248.0'),
+                        dict(first, extra='unreviewed')):
+            self.assertNotEqual(release.canonical_prerequisite(first), release.canonical_prerequisite(changed))
+
+
 class PayloadTests(TemporaryTest):
     def setUp(self):
         super().setUp()
@@ -324,6 +368,8 @@ class PayloadTests(TemporaryTest):
         self.addCleanup(fixture.tearDown)
         self.addCleanup(fixture.doCleanups)
         self.fixture = fixture
+        fixture.runtime['retrieved_at_utc'] = '2026-10-19T09:03:28.5633900Z'
+        write_json(fixture.prerequisite, fixture.runtime)
         package = fixture.package
         for path in package.rglob('*.json'):
             if path.name not in ('build-information.json', 'redistribution-review.json', 'manifest.json'):
@@ -386,6 +432,29 @@ class PayloadTests(TemporaryTest):
         with self.assertRaises((release.ReleaseError, json.JSONDecodeError)):
             release.decode_json(data)
         self.validate()
+
+    def test_equivalent_runtime_timestamp_spelling_is_accepted(self):
+        path = self.ie / '.deps/installer-prerequisite/vc-runtime.json'
+        value = release.read_json(path)
+        value['retrieved_at_utc'] = '2026-10-19T09:03:28.56339Z'
+        write_json(path, value)
+        self.validate()
+
+    def test_different_runtime_instant_is_rejected(self):
+        path = self.ie / '.deps/installer-prerequisite/vc-runtime.json'
+        value = release.read_json(path)
+        value['retrieved_at_utc'] = '2026-10-19T09:03:28.5633901Z'
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'provenance differs'):
+            self.validate()
+
+    def test_changed_runtime_provenance_field_is_rejected(self):
+        path = self.ie / '.deps/installer-prerequisite/vc-runtime.json'
+        value = release.read_json(path)
+        value['sha256'] = 'c' * 64
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'provenance differs'):
+            self.validate()
 
     def test_setup_tamper_rejected(self):
         with (self.setup_dir / release.SETUP).open('ab') as output:

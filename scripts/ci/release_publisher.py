@@ -5,6 +5,7 @@ No credentials, arbitrary URLs, source paths or release text are accepted in the
 request. All network errors are sanitized to avoid exposing signed download URLs.
 """
 import base64
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -400,6 +401,27 @@ def check_steps(smoke):
             'Installer acceptance exit status mismatch')
 
 
+def canonical_prerequisite(value):
+    """Compare the complete provenance, ignoring only UTC fractional zero padding.
+
+    PowerShell JSON roundtrips can shorten .5633900Z to .56339Z. Do not round
+    through datetime/float: even a differing seventh fractional digit matters.
+    Original files and artifact hashes remain unchanged.
+    """
+    require(isinstance(value, dict), 'Invalid Microsoft runtime provenance')
+    stamp = value.get('retrieved_at_utc')
+    match = re.fullmatch(r'([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.([0-9]{1,9}))?Z', stamp) if isinstance(stamp, str) else None
+    require(match is not None, 'Invalid Microsoft runtime retrieval timestamp')
+    try:
+        datetime.strptime(match[1], '%Y-%m-%dT%H:%M:%S')
+    except ValueError:
+        raise ReleaseError('Invalid Microsoft runtime retrieval timestamp') from None
+    fraction = (match[2] or '').rstrip('0')
+    result = dict(value)
+    result['retrieved_at_utc'] = match[1] + ('.' + fraction if fraction else '') + 'Z'
+    return result
+
+
 def validate_payload(work, request):
     setup_dir, zip_dir, installer_evidence, portable_evidence = [work / name for name in ARTIFACTS]
     require({p.name for p in setup_dir.iterdir()} == {SETUP, 'SHA256SUMS', 'installer-build.json'},
@@ -456,7 +478,9 @@ def validate_payload(work, request):
             and record.get('package_manifest_sha256') == manifest_hash and record.get('signing') == 'unsigned candidate',
             'Installer identity is not bound to the exact approved payload')
     runtime = record.get('prerequisite', {})
-    require(runtime == read_json(installer_evidence / '.deps/installer-prerequisite/vc-runtime.json'), 'Microsoft runtime provenance differs')
+    require(canonical_prerequisite(runtime) == canonical_prerequisite(
+        read_json(installer_evidence / '.deps/installer-prerequisite/vc-runtime.json')),
+        'Microsoft runtime provenance differs')
     installer.verify_prerequisite(runtime)
     smoke = read_json(installer_evidence / 'artifacts/installer-validation/installer-smoke.json')
     require(all(smoke.get(key) is True for key in ('passed', 'settings_preserved', 'shortcuts_verified', 'all_manifested_payload_removed'))

@@ -69,3 +69,25 @@ Vendored JSON header: `https://raw.githubusercontent.com/nlohmann/json/v3.11.3/s
 TSDuck license is BSD-2-Clause: [official license](https://tsduck.io/license). Qt modules have their own license terms: [Qt licensing documentation](https://doc.qt.io/qt-6/licensing.html). Tauri and its dependencies retain their own licenses. No installer or redistribution license audit has been completed; local runtime size staging is not a release package.
 
 The official sample recordings are separately sourced data, not our own source code; they are excluded from source distribution. See `samples/real/provenance.json`.
+
+## Static Expat 2.9.0
+
+The local DVB-I importer uses the official [Expat 2.9.0 release](https://github.com/libexpat/libexpat/releases/tag/R_2_9_0),
+statically linked into both production and test engines. No additional runtime
+DLL or configure-time download is used. The official `expat-2.9.0.tar.xz` was
+verified before extraction: 534,052 bytes, SHA-256
+`1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051`.
+
+`third_party/expat/SHOWPSISI_SOURCE.json` records the exact URL and hashes of
+every vendored upstream file. Sources are unmodified; optional tools, examples,
+tests and documentation inputs are omitted and disabled. Upstream `COPYING`
+(MIT), authors and per-file notices remain included; the upstream CMake file
+identifies its KDE BSD buildsystem license. Builds use the matching generated
+`expat_config.h`, namespace and entity-protection features, with no fallback to
+an arbitrary system Expat. See [DVB-I API](DVB_I_API.md) for hardening limits.
+
+This dependency has explicit pinned source, notice and metadata
+gates in the [portable license review](PORTABLE_LICENSE_REVIEW.md#protocol-increment-static-expat-290-2026-10-19).
+MIT and per-file notices (including SipHash CC0) accompany the package; omission
+fails closed independently of regenerated file inventories. Fresh hosted Windows
+packaging/runtime acceptance remains a separate exact-revision gate.

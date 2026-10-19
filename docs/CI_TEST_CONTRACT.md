@@ -117,3 +117,20 @@ Regressions cover each of those cases. Resource-path runs also retain their
 explicit result/log/screenshot/trace evidence before temporary cleanup, including
 incomplete-result and completed-acceptance failures. No timeout, acceptance
 threshold, diagnostic gate, or production code changed.
+
+## Responsive title-bar controls
+
+PR #25 run `39255322746` failed six browser flows with a 527px document at
+520px viewport width. The shared title bar remained one flex row after adding
+the input-kind selector. Its buttons exhausted the row, shrinking that selector
+to its arrow before wider system fonts forced page overflow. DejaVu Sans
+reproduces all six failures at exactly 527px; a narrower default font can hide
+the selector label without overflowing, and the adjacent 521px breakpoint also
+overflows. Do not hide overflow or relax the existing viewport assertions.
+
+The title bar now wraps and preserves its controls' intrinsic widths. The
+dedicated browser regression checks full selector width, visible/hit-testable
+controls, and no page overflow at 520/521/760/761/900/1100/1440px, in both themes
+and both TS/DVB-I workspaces with default and DejaVu Sans fonts. The original
+cancellation, comparison, theme, layout-reset, tree and evidence tests retain
+their assertions. Browser evidence does not establish native WebView2 behavior.

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <splice_information_table pts_adjustment="90">
+    <private_command identifier="0x11223344">DEADBEEF</private_command>
+  </splice_information_table>
+</tsduck>

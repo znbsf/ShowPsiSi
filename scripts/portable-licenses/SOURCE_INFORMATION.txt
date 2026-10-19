@@ -8,9 +8,15 @@ commit when reproducing that build.
 Repository: https://github.com/znbsf/ShowPsiSi
 nlohmann/json: https://github.com/nlohmann/json/tree/v3.11.3
 
-ACCOMPANYING QT SOURCE
-The sources/ directory accompanies the binary with complete official Qt 6.7.3
-source archives for the deployed qtbase, qtdeclarative and qtsvg families:
+CORRESPONDING QT SOURCE - FREE SAME-RELEASE DOWNLOAD
+See SOURCE_DOWNLOAD.txt in this package for the exact versioned source asset,
+free official download URL, application revision and rebuild-script location.
+Downloading this source is optional for running or installing the application.
+The publisher must provide matching source beside the binary release under the
+LGPLv3 / GPLv3 section 6(d) network-download route, without additional charge.
+
+The ShowPsiSi-VERSION-corresponding-source.zip asset retains the complete original
+Qt 6.7.3 source archives for deployed qtbase, qtdeclarative and qtsvg families:
 qtbase-everywhere-src-6.7.3.tar.xz
 SHA256 8ccbb9ab055205ac76632c9eeddd1ed6fc66936fc56afc2ed0fd5d9e23da3097
 qtdeclarative-everywhere-src-6.7.3.tar.xz
@@ -20,7 +26,9 @@ SHA256 40142cb71fb1e07ad612bc361b67f5d54cd9367f9979ae6b86124a064deda06b
 Official URL prefix:
 https://download.qt.io/archive/qt/6.7/6.7.3/submodules/
 Exact URLs and verified publisher checksums are also in source-index.json;
-manifest.json hashes every archive included in this particular stage.
+source-manifest.json hashes every archive in the paired corresponding-source ZIP.
+The binary and source assets share the exact build/source identity and common
+release SHA256SUMS; publication requires both inventories and uploaded bytes.
 
 These archives include the source families' build scripts and third-party
 sources. License/copyright material is also copied under licenses/qt/ for
@@ -31,8 +39,9 @@ and relocatable; its Qt6Core DLL was unchanged by deployment (installed/deployed
 hashes are recorded under qt_core_relocation). No local Qt source patches were
 applied. The provided source families and their build scripts correspond to
 this official 6.7.3 kit. An upstream
-link alone is not used as a substitute for accompanying the binary with source.
-Keep these sources available wherever the corresponding binary is delivered.
+link alone is not used as a substitute for the same-release source asset.
+Keep the exact source available while offering its binaries and as long as
+required by GPLv3 section 6(d). Do not repoint old binaries to newer sources.
 
 REBUILDING AND REPLACEMENT
 Extract the source archives and follow their included build documentation using
@@ -55,10 +64,26 @@ These selected permissive licenses do not require a source offer merely for
 binary redistribution. Sources are identified for transparency; this file is
 not a legally binding written source offer.
 
-SYSTEM PREREQUISITES
-Microsoft's official supported-runtime rule and download:
-https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170
-https://aka.ms/vc14/vc_redist.x64.exe
-The x64 runtime must be at least 14.51.36231.0 (or the higher recorded minimum).
-Install it separately under Microsoft's terms. No automatic installation is
-performed by the portable application.
+MICROSOFT APP-LOCAL RUNTIME PROVENANCE
+The five unmodified release x64 DLLs come from the exact official Microsoft
+Visual C++ Redistributable 14.51.36247.0. See bin/showpsisi-vc-runtime.json for
+the immutable source URL, original EXE SHA-256/size and each DLL identity.
+Build-time extraction treats the signed EXE/CABs as data, verifies the original
+Microsoft signature and every selected DLL's signature/version/architecture,
+and never executes the runtime installer. No System32 DLL is copied.
+The minimum compatible runtime is 14.51.36231.0. The application-local copies
+receive security servicing through reviewed application updates, not through
+the shared-runtime installation. Supported Windows still supplies UCRT and D3D.
+Redistribution is subject to the applicable Visual Studio product terms and REDIST list:
+https://learn.microsoft.com/en-us/visualstudio/releases/2026/redistribution
+https://learn.microsoft.com/en-us/cpp/windows/redistributing-visual-cpp-files
+The review record is licenses/microsoft/REDISTRIBUTION-REVIEW.json. A missing
+project declaration does not establish that the distributor lacks rights;
+technical extraction and build success do not themselves establish those rights.
+
+EXPAT STATIC CORE DEPENDENCY
+Expat 2.9.0: unmodified official library sources, statically linked.
+Exact archive URL, SHA-256 and vendored file inventory are in
+licenses/expat/SOURCE-PROVENANCE.json and source-index.json.
+MIT/CC0 do not require an accompanying source archive; the pinned
+source reference is provenance, not an unfulfilled source offer.

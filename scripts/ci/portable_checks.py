@@ -21,6 +21,9 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import static_dependencies
+import vc_runtime
+import corresponding_source
 
 
 def digest(path):
@@ -34,6 +37,9 @@ def inventory(package):
 
 
 def manifest(package):
+    build_record = static_dependencies.read_json(package / 'build-information.json')
+    if 'corresponding_source' in build_record:
+        corresponding_source.validate_metadata(package)
     files = inventory(package)
     required = ['bin/showpsisi-core.exe', 'bin/showpsisi-qt.exe', 'bin/tsduck.dll',
                 'bin/tscore.dll', 'bin/tsduck.tables.model.xml', 'bin/tsduck.dtv.names',
@@ -64,6 +70,13 @@ def verify_manifest(package):
     value = json.loads((package / 'manifest.json').read_text(encoding='utf-8'))
     if value['files'] != inventory(package):
         raise RuntimeError('Package changed after manifest generation')
+    if value['build'] != static_dependencies.read_json(package / 'build-information.json'):
+        raise RuntimeError('Package build identity differs from manifest')
+    static_dependencies.verify_package(package, value['build'])
+    if value['build'].get('crt_mode') == 'AppLocal':
+        vc_runtime.verify_package(package, value['build'])
+    if 'corresponding_source' in value['build']:
+        corresponding_source.validate_package(package, require_review=False)
     return value
 
 
@@ -92,7 +105,7 @@ def pe_dependencies(package):
                 for entry in getattr(pe, table, []):
                     name = entry.dll.decode('ascii')
                     local = next((p for p in (path.parent / name, bindir / name) if p.is_file()), None)
-                    crt = re.match(r'(msvcp|vcruntime|concrt|vcomp)\d', name, re.I)
+                    crt = re.match(r'(msvcp|vcruntime|concrt|vcomp|vcamp|vccorlib)\d', name, re.I)
                     if local:
                         source = local.relative_to(package).as_posix()
                     elif re.match(r'msvcr\d', name, re.I) and name.lower() != 'msvcrt.dll':
@@ -185,7 +198,7 @@ def runtime_requirement(package):
     directory = package / 'bin' if build['crt_mode'] == 'AppLocal' else Path(os.environ['SystemRoot']) / 'System32'
     minimum = tuple(map(int, build['crt_minimum_version'].split('.')))
     versions = {}
-    for name in ('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll'):
+    for name in ('vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll'):
         path = directory / name
         if not path.is_file():
             versions[name] = {'path': str(path), 'satisfied': False, 'error': 'missing'}
@@ -229,6 +242,44 @@ def loaded_modules(process, package):
     return paths
 
 
+def capture_runtime(process, package, artifacts):
+    build = vc_runtime.read_json(package / 'build-information.json')
+    if build.get('crt_mode') != 'AppLocal':
+        return None
+    import windows_runtime_modules
+    return windows_runtime_modules.capture_loaded_modules(
+        process, package, artifacts / f'runtime-modules-{process.pid}-{time.time_ns()}.json')
+
+
+def verify_applocal_validation(package, validation):
+    """Recheck native evidence offline; a runner's System32 is not local proof."""
+    import windows_runtime_modules
+    if validation.get('crt_mode') != 'AppLocal':
+        raise RuntimeError('App-local validation mode is missing')
+    captures = [(validation.get('core', {}).get('runtime_modules'), 'showpsisi-core.exe'),
+                (validation.get('qt_offscreen', {}).get('runtime_modules'), 'showpsisi-qt.exe')]
+    for stage in ('launcher_startup', 'direct_exe_startup'):
+        values = validation.get(stage, {}).get('process_runtime', {})
+        if set(values) != {'showpsisi-core.exe', 'showpsisi-qt.exe'}:
+            raise RuntimeError(f'App-local process evidence is incomplete: {stage}')
+        captures.extend((values[name], name) for name in sorted(values))
+    for report, name in captures:
+        windows_runtime_modules.verify_capture(report, package, name)
+
+
+def verify_applocal_installer_validation(package, smoke):
+    import windows_runtime_modules
+    if smoke.get('crt_mode') != 'AppLocal' or smoke.get('runtime_bootstrap_exercised') is not False:
+        raise RuntimeError('App-local installed runtime evidence has wrong mode/bootstrap claim')
+    windows_runtime_modules.verify_capture(smoke.get('installed_core', {}).get('runtime_modules'),
+                                           package, 'showpsisi-core.exe')
+    captures = smoke.get('installed_qt_startup', {}).get('process_runtime', {})
+    if set(captures) != {'showpsisi-core.exe', 'showpsisi-qt.exe'}:
+        raise RuntimeError('Installed app-local process evidence is incomplete')
+    for name, report in captures.items():
+        windows_runtime_modules.verify_capture(report, package, name)
+
+
 def core_probe(package, artifacts):
     import core_client
     core_client.ROOT = package
@@ -237,6 +288,7 @@ def core_probe(package, artifacts):
     with core_client.Core() as core:
         call = lambda method, params=None: core.submit(method, params).result(timeout=30)
         capabilities = call('capabilities')
+        runtime_modules = capture_runtime(core.proc, package, artifacts)
         modules = loaded_modules(core.proc, package)
         state = call('analyze', {'path': str(source)})
         assert len(state['services']) == 6, state
@@ -263,7 +315,7 @@ def core_probe(package, artifacts):
         assert len(call('analyze', {'path': str(source)})['services']) == 6
     assert core.proc.returncode == 0, core.proc.returncode
     assert digest(source) == before
-    return {'capabilities': capabilities, 'modules': modules, 'comparison': comparison,
+    return {'capabilities': capabilities, 'modules': modules, 'runtime_modules': runtime_modules, 'comparison': comparison,
             'cancellation': cancellation, 'source_sha256_unchanged': before,
             'core_exit_code': core.proc.returncode, 'named_xml_raw_export_readback': 'passed'}
 
@@ -283,6 +335,7 @@ def qt_probe(package, artifacts, env):
         proc = subprocess.Popen([str(package / 'bin/showpsisi-qt.exe'), '--showpsisi-development'], env=env, stdout=log, stderr=log)
         try:
             report = wait_for_qt_result(result, proc, 60)
+            runtime_modules = capture_runtime(proc, package, artifacts)
             modules = loaded_modules(proc, package)
         finally:
             proc.terminate()
@@ -307,7 +360,7 @@ def qt_probe(package, artifacts, env):
             child.kill()
             child.wait(timeout=5)
             raise RuntimeError('Qt left its packaged backend running')
-    return {'report': report, 'modules': modules, 'backend_cleanup': 'passed'}
+    return {'report': report, 'modules': modules, 'runtime_modules': runtime_modules, 'backend_cleanup': 'passed'}
 
 
 def launcher_probe(package, artifacts, env, direct=False):
@@ -338,13 +391,15 @@ def launcher_probe(package, artifacts, env, direct=False):
             time.sleep(.1)
         else:
             raise RuntimeError('CMD launcher did not start Qt and core')
+        runtime = {name: capture_runtime(names[name], package, artifacts)
+                   for name in ('showpsisi-qt.exe', 'showpsisi-core.exe')}
         modules = {name: loaded_modules(names[name], package)
                    for name in ('showpsisi-qt.exe', 'showpsisi-core.exe')}
         arguments = names['showpsisi-core.exe'].cmdline()[1:]
         assert len(arguments) == 2 and arguments[0] == '--root', arguments
         assert Path(arguments[1]).resolve() == package.resolve(), arguments
         assert not (artifacts / 'must-not-exist.json').exists()
-        return {'process_modules': modules, 'scope': 'startup only; no native desktop interaction claimed'}
+        return {'process_modules': modules, 'process_runtime': runtime, 'scope': 'startup only; no native desktop interaction claimed'}
     finally:
         for child in reversed(owned):
             try:
@@ -364,9 +419,10 @@ def validate(package, artifacts, qt):
         raise RuntimeError('Validation artifacts must be outside the package tree')
     if os.name != 'nt':
         raise RuntimeError('Runtime validation requires Windows; no cross-platform pass inferred')
-    verify_manifest(package)
+    manifest_value = verify_manifest(package)
     artifacts.mkdir(parents=True, exist_ok=False)
-    evidence = {'passed': False, 'native_windows_desktop_verified': False}
+    evidence = {'passed': False, 'native_windows_desktop_verified': False,
+                'crt_mode': manifest_value['build'].get('crt_mode')}
     def checkpoint():
         (artifacts / 'portable-validation.json').write_text(json.dumps(evidence, indent=2), encoding='utf-8')
     checkpoint()
@@ -409,12 +465,16 @@ def validate(package, artifacts, qt):
             os.environ.clear()
             os.environ.update(saved_env)
     verify_manifest(package)
+    if evidence['crt_mode'] == 'AppLocal':
+        verify_applocal_validation(package, evidence)
     evidence['passed'] = True
     evidence['package_manifest_sha256'] = digest(package / 'manifest.json')
     (artifacts / 'portable-validation.json').write_text(json.dumps(evidence, indent=2), encoding='utf-8')
 
 
 def review_inventory(value):
+    if 'corresponding_source' in value.get('build', {}):
+        return corresponding_source.review_inventory(value)
     # Our newly built EXEs/configuration are source-commit + test-manifest bound.
     # Review third-party libraries, QML/plugin/data, and exact notice/source bytes;
     # otherwise freshly built executable hashes would create a circular CI gate.
@@ -431,17 +491,39 @@ def portable_asset_name(version):
     return f'ShowPsiSi-{version}-windows-x64-portable.zip'
 
 
-def archive(package, artifacts, output):
+def verify_corresponding_source(package, source_archive):
+    build = static_dependencies.read_json(package / 'build-information.json')
+    if 'corresponding_source' not in build:
+        return None
+    if source_archive is None:
+        raise RuntimeError('The paired corresponding-source archive is required')
+    source_archive = Path(source_archive)
+    corresponding_source.verify_archive(source_archive, package,
+                                       build['source_commit'], build['application_version'])
+    return {'asset_name': source_archive.name, 'bytes': source_archive.stat().st_size,
+            'sha256': digest(source_archive), 'source_commit': build['source_commit'],
+            'application_version': build['application_version']}
+
+
+def archive(package, artifacts, output, source_archive=None):
     if output.resolve().is_relative_to(package.resolve()) or output.with_suffix(output.suffix + '.sha256').resolve().is_relative_to(package.resolve()):
         raise RuntimeError('Archive and checksum must be outside the package tree')
     if output.exists():
         raise RuntimeError(f'Refusing existing/stale archive: {output}')
     value = verify_manifest(package)
+    source_evidence = verify_corresponding_source(package, source_archive)
+    if source_evidence is not None:
+        (artifacts / 'corresponding-source-validation.json').write_text(
+            json.dumps(source_evidence, indent=2) + '\n', encoding='utf-8')
+    if value['build'].get('crt_mode') == 'AppLocal':
+        vc_runtime.distribution_gate(package)
     if output.name != portable_asset_name(value['build'].get('application_version')):
         raise RuntimeError('Portable asset name does not match its application version')
     validation = json.loads((artifacts / 'portable-validation.json').read_text(encoding='utf-8'))
     if not validation.get('passed') or validation.get('package_manifest_sha256') != digest(package / 'manifest.json'):
         raise RuntimeError('Runtime validation has not passed')
+    if value['build'].get('crt_mode') == 'AppLocal':
+        verify_applocal_validation(package, validation)
     if not validation.get('runtime_requirement', {}).get('satisfied'):
         status = {'archive_created': False, 'runtime_gate': 'blocked',
                   'reason': 'Test host/app-local VC runtime does not satisfy the documented minimum version.'}
@@ -475,6 +557,7 @@ def main():
     parser.add_argument('--artifacts', type=Path)
     parser.add_argument('--qt', type=Path)
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--corresponding-source', type=Path)
     args = parser.parse_args()
     package = args.package.resolve()
     if args.mode == 'manifest':
@@ -482,7 +565,7 @@ def main():
     elif args.mode == 'validate':
         validate(package, args.artifacts.resolve(), args.qt.resolve())
     else:
-        archive(package, args.artifacts.resolve(), args.output.resolve())
+        archive(package, args.artifacts.resolve(), args.output.resolve(), args.corresponding_source)
 
 
 if __name__ == '__main__':

@@ -184,6 +184,19 @@ private slots:
         QVERIFY(parseChecksum("invalid line\n" + line, name, &error).isEmpty());
         QVERIFY(parseChecksum(QByteArray(MaxChecksumBytes + 1, 'x'), name, &error).isEmpty());
     }
+    void checksumParserKeepsBinarySelectionWithSourceSidecar() {
+        const QByteArray setupHash = QCryptographicHash::hash(installerBytes, QCryptographicHash::Sha256);
+        const QByteArray zipHash = QCryptographicHash::hash("portable fixture", QCryptographicHash::Sha256);
+        const QByteArray sourceHash = QCryptographicHash::hash("source fixture", QCryptographicHash::Sha256);
+        const QString setup = "ShowPsiSi-0.3.0-windows-x64-setup.exe";
+        const QString portable = "ShowPsiSi-0.3.0-windows-x64-portable.zip";
+        const QByteArray sums = setupHash.toHex() + "  " + setup.toUtf8() + "\n" +
+            zipHash.toHex() + "  " + portable.toUtf8() + "\n" +
+            sourceHash.toHex() + "  ShowPsiSi-0.3.0-corresponding-source.zip\n";
+        QString error;
+        QCOMPARE(parseChecksum(sums, setup, &error), setupHash);
+        QCOMPARE(parseChecksum(sums, portable, &error), zipHash);
+    }
     void redirectsRestrictedToHttpsCdn() {
         QVERIFY(isAllowedAssetRedirect(QUrl("https://release-assets.githubusercontent.com/a?token=fixture")));
         QVERIFY(isAllowedAssetRedirect(QUrl("https://objects.githubusercontent.com/a")));

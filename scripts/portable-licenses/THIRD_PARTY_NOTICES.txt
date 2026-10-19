@@ -1,8 +1,8 @@
 WINDOWS QT/CORE PORTABLE CI CANDIDATE - THIRD-PARTY NOTICES
 The selected licensing routes and exact reviewed dependency/source/notice bytes
 are recorded in redistribution-review.json. Changed dependencies or materials
-require a new review. This candidate is not a public release or installer;
-native interactive Windows desktop acceptance is recorded separately.
+require a new review. Package licensing review and native interactive Windows desktop acceptance are
+recorded separately; neither follows merely from a successful compilation.
 
 ShowPsiSi: Copyright and MIT license in LICENSE and licenses/ShowPsiSi-MIT.txt.
 nlohmann/json 3.11.3: MIT; see licenses/nlohmann-json-MIT.txt.
@@ -47,12 +47,22 @@ Upstream source links/build evidence and notice hashes are in source-index.json.
 No separate TSDuck plugin, Dektec runtime, Linux libusb, or VATek Qt tool is
 selected for inclusion merely because upstream umbrella notices mention it.
 
-MICROSOFT / WINDOWS PREREQUISITES
-The selected route requires supported Windows 10/11 x64 and a separately
-installed Microsoft x64 Visual C++ v14 runtime at least 14.51.36231.0, or a
-higher minimum if build-information.json states one. Windows supplies its OS
-libraries, including the system D3D compiler. Do not copy Microsoft runtime
-DLLs from System32 into this package. The official runtime download and its
-terms are Microsoft's responsibility; this package does not install it.
-This candidate excludes D3Dcompiler_47.dll and all app-local Microsoft VC DLLs.
-Its runtime checks require the system-provided dependencies.
+MICROSOFT APP-LOCAL VISUAL C++ RUNTIME
+The app-local candidate includes five unmodified Microsoft release x64 DLLs
+from the pinned official Visual C++ Redistributable 14.51.36247.0, satisfying
+the 14.51.36231.0 toolset minimum: msvcp140.dll, msvcp140_1.dll,
+msvcp140_2.dll, vcruntime140.dll and vcruntime140_1.dll.
+Exact source/version/SHA-256 identities are in bin/showpsisi-vc-runtime.json.
+The corresponding distribution review is licenses/microsoft/REDISTRIBUTION-REVIEW.json.
+Microsoft files are not licensed under the application's MIT license or Qt's
+LGPL. Their applicable terms and distribution basis must be reviewed before
+this candidate is distributed. This notice does not grant redistribution rights.
+No shared runtime is installed or removed, and no Microsoft installer is run.
+Runtime security servicing is delivered by a newly reviewed ShowPsiSi update.
+Supported Windows supplies OS components including UCRT and D3Dcompiler_47.dll;
+these are not copied from System32 or included in the application package.
+
+EXPAT STATIC CORE DEPENDENCY
+Expat 2.9.0 is statically linked into showpsisi-core. MIT license and
+copyright notices: licenses/expat/COPYING.txt and UPSTREAM-NOTICES.txt.
+The embedded SipHash implementation uses the CC0-1.0 dedication.

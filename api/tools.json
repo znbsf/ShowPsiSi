@@ -11,11 +11,105 @@
     "export": "signalling snapshot, not live remultiplexing",
     "native_json": "XML element names and values preserved; attribute keys use ASCII lowercase for API compatibility. Rare case collisions preserve all original attributes in xml_attributes and identify collisions. tsduck_xml retains SDK XML spelling.",
     "native_decoding": "TSDuck registered tables/descriptors with complete-table assembly and explicit signalling standards context; raw fallback for unknown/unsupported structures. TS files only, DTMB context includes registered DTMB signalling descriptors only; no RF demodulation or blanket standards-conformance claim.",
+    "j94_system_b": "Explicit ITU-T J.94 (10/2016) System B section inspection; descriptor-revised NIT/NTT/short-VCT subtables via bounded query_cable_oob, plus STT arithmetic. Raw short headers stay unversioned. No current SCTE65 equivalence, synchronized network lineup, receiver actions, OOB hardware or snapshot export.",
     "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness.",
     "ordinary_request_queue": 64,
     "cancellation": "Cooperative targeted cancellation of queued or running analyses. Integer/string request IDs are distinct. Accepted cancellation wins over completion until the terminal commit. Blocking file reads, SDK work and stdout may delay cancellation."
   },
   "tools": [
+    {
+      "name": "import_dvbi",
+      "description": "Import a bounded local regular UTF-8 DVB-I XML file, without network access. Transactionally replaces only the independent metadata document after parsing succeeds; leaves TS state and old document intact on failure. No asynchronous cancellation.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "profile": {
+            "type": "string",
+            "enum": [
+              "etsi-ts-103770-v1.2.1"
+            ]
+          },
+          "expected_document_revision": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "path",
+          "profile"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_dvbi",
+      "description": "Read a page of service-list, service, instance and LCN metadata. Unsupported XML namespaces remain raw-only. Exact declared identities and source locators; no inferred media reception or TS association.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "inspect_dvbi",
+      "description": "Inspect one namespace-expanded XML element at an exact document revision and a bounded page of authoritative original file bytes encoded as hex. Text is XML-normalized UTF-8, never a substitute for original bytes. No PID, CRC or packet positions.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "document_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "element_id": {
+            "type": "string"
+          },
+          "child_offset": {"type": "integer", "minimum": 0, "maximum": 20000},
+          "child_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+          "source_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4194304
+          },
+          "source_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536
+          }
+        },
+        "required": [
+          "document_revision"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
     {
       "name": "lookup_satellite",
       "description": "Read-only candidate GEO satellite lookup in an incomplete local reference catalog. Orbital position only; no confirmed identity or transponder validation. Raw query and catalog provenance retained. No scan required.",
@@ -87,7 +181,8 @@
               "isdb-japan",
               "isdb-brazil",
               "scte",
-              "dtmb"
+              "dtmb",
+              "j94-system-b"
             ],
             "description": "Signalling interpretation context. auto may be ambiguous; select the known broadcast family. Does not configure RF demodulation."
           },
@@ -372,6 +467,37 @@
       "annotations": {
         "readOnlyHint": false,
         "destructiveHint": false
+      }
+    },
+    {
+      "name": "query_cable_oob",
+      "description": "Read edition-pinned J.94 descriptor-revised subtables at an exact analysis revision and packet cutoff. Absent/ambiguous revision metadata is not assembled; conflicts and missing ranges remain evidence. No complete network lineup or receiver activation. Continuation pages require explicit analysis_revision and at_packet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 512
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
       }
     }
   ]

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tsduck>
+  <splice_information_table pts_adjustment="90">
+    <splice_insert splice_event_id="123" out_of_network="true" pts_time="8589934500" unique_program_id="55" avail_num="2" avails_expected="4">
+      <break_duration auto_return="true" duration="900000" />
+    </splice_insert>
+  </splice_information_table>
+</tsduck>

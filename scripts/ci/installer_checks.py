@@ -1,7 +1,7 @@
 """Fail-closed installer input checks and Windows install/upgrade/uninstall smoke.
 
 The existing portable manifest and exact third-party review remain authoritative.
-Generated setup files do not add Microsoft binaries to the reviewed payload.
+App-local runtime bytes and the distributor entitlement have independent gates.
 """
 import argparse
 import json
@@ -67,8 +67,12 @@ def gate(package, artifacts, source_commit, version):
     review = json.loads((package / 'redistribution-review.json').read_text(encoding='utf-8-sig'))
     if review.get('review_complete') is not True or review.get('reviewed_files') != portable.review_inventory(value):
         raise RuntimeError('Installer blocked: exact runtime/source/notice redistribution review is incomplete')
-    if value['build'].get('crt_mode') != 'Prerequisite':
-        raise RuntimeError('This installer implements the reviewed prerequisite route only')
+    mode = value['build'].get('crt_mode')
+    if mode not in ('Prerequisite', 'AppLocal'):
+        raise RuntimeError('Unsupported reviewed runtime route')
+    if mode == 'AppLocal':
+        portable.vc_runtime.distribution_gate(package)
+        portable.verify_applocal_validation(package, validation)
     if value['build'].get('crt_minimum_version') != MINIMUM_RUNTIME:
         raise RuntimeError('Installer minimum runtime does not match the validated payload')
     return value
@@ -81,12 +85,18 @@ def safe_iss(value, constants=False):
     return value.replace('{', '{{') if constants else value
 
 
-def prepare(package, artifacts, prerequisite, version, generated, output, source_commit, upgrade_fixture=False):
+def prepare(package, artifacts, prerequisite, version, generated, output, source_commit, upgrade_fixture=False,
+            source_archive=None):
     version_tuple(version, 3)
     if generated.resolve().is_relative_to(package.resolve()) or output.resolve().is_relative_to(package.resolve()):
         raise RuntimeError('Installer work/output must be outside the immutable package tree')
     manifest = gate(package, artifacts, source_commit, version)
+    source_evidence = portable.verify_corresponding_source(package, source_archive)
     runtime = verify_prerequisite(json.loads(prerequisite.read_text(encoding='utf-8-sig')))
+    if manifest['build']['crt_mode'] == 'AppLocal':
+        source = manifest['build']['crt_provenance']['source']
+        if any(runtime.get(key) != value for key, value in source.items()):
+            raise RuntimeError('Bundled runtime differs from verified official source EXE')
     generated.mkdir(parents=True, exist_ok=False)
     # The former-version fixture exercises actual Inno upgrade bookkeeping; it is
     # deliberately named TEST-ONLY and never included in release upload/checksums.
@@ -95,7 +105,7 @@ def prepare(package, artifacts, prerequisite, version, generated, output, source
                 f'ShowPsiSi-{version}-windows-x64-setup')
     defines = {'AppVersion': effective_version, 'PackageRoot': package.resolve(),
                'InstallerOutput': output.resolve(), 'InstallerBaseName': basename,
-               'VcMinimum': MINIMUM_RUNTIME, 'VcUrl': runtime['url'], 'VcSha256': runtime['sha256']}
+               'CrtMode': manifest['build']['crt_mode'], 'VcMinimum': MINIMUM_RUNTIME, 'VcUrl': runtime['url'], 'VcSha256': runtime['sha256']}
     (generated / 'generated.iss').write_text('\n'.join(
         f'#define {key} "{safe_iss(value)}"' for key, value in defines.items()) + '\n', encoding='utf-8-sig')
     marker = {'schema_version': 1, 'app_id': APP_ID, 'installer': 'inno', 'frontend': 'qt',
@@ -116,8 +126,11 @@ def prepare(package, artifacts, prerequisite, version, generated, output, source
     record = {'schema_version': 1, 'version': effective_version, 'test_fixture': upgrade_fixture,
               'asset_name': basename + '.exe', 'source_commit': manifest['build']['source_commit'],
               'package_manifest_sha256': portable.digest(package / 'manifest.json'),
-              'prerequisite': runtime, 'signing': 'unsigned candidate',
+              'prerequisite': runtime, 'crt_mode': manifest['build']['crt_mode'],
+              'crt_provenance': manifest['build'].get('crt_provenance'), 'signing': 'unsigned candidate',
               'scope': 'Windows x64 Qt/core per-user installer; Tauri excluded'}
+    if source_evidence is not None:
+        record['corresponding_source'] = source_evidence
     (generated / 'installer-inputs.json').write_text(json.dumps(record, indent=2) + '\n', encoding='utf-8')
     return record
 
@@ -174,7 +187,8 @@ def smoke(installer, previous, package, artifacts, version):
     evidence = {'passed': False, 'installer_sha256': portable.digest(installer),
                 'package_manifest_sha256': portable.digest(package / 'manifest.json'),
                 'clean_machine_verified': False, 'native_dialogs_verified': False,
-                'runtime_bootstrap_exercised': False, 'steps': []}
+                'runtime_bootstrap_exercised': False, 'steps': [],
+                'crt_mode': portable.verify_manifest(package)['build'].get('crt_mode')}
     result_path = artifacts / 'installer-smoke.json'
     def checkpoint():
         temporary = result_path.with_suffix('.tmp')
@@ -293,6 +307,8 @@ def smoke(installer, previous, package, artifacts, version):
                 os.chdir(cwd)
                 os.environ.clear()
                 os.environ.update(env)
+            if evidence['crt_mode'] == 'AppLocal':
+                portable.verify_applocal_installer_validation(package, evidence)
             settings_preserved()
             run_setup(installed / 'unins000.exe', [], 'uninstall')
             expected_payload = portable.verify_manifest(package)
@@ -342,9 +358,11 @@ def main():
     parser.add_argument('--upgrade-fixture', action='store_true')
     parser.add_argument('--installer', type=Path)
     parser.add_argument('--previous', type=Path)
+    parser.add_argument('--corresponding-source', type=Path)
     args = parser.parse_args()
     if args.mode == 'prepare':
-        prepare(args.package, args.artifacts, args.prerequisite, args.version, args.generated, args.output, args.source_commit, args.upgrade_fixture)
+        prepare(args.package, args.artifacts, args.prerequisite, args.version, args.generated, args.output,
+                args.source_commit, args.upgrade_fixture, args.corresponding_source)
     else:
         smoke(args.installer.resolve(), args.previous.resolve(), args.package.resolve(), args.artifacts.resolve(), args.version)
 

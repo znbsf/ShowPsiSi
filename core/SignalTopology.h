@@ -21,6 +21,25 @@ inline J locator(const Record& r,const std::string& key,size_t offset=SIZE_MAX,s
         {"byte_range",bounded?J{{"offset_scope","section_bytes"},{"offset",offset},{"length",length}}:J()},
         {"display_path",key}};
 }
+// NorDig Unified 3.2.2 12.3.5 / Rules of Operation 12.1.10.5.
+// Private meaning requires an earlier valid PDS in this exact SDT service loop.
+// Only the common DVB linkage prefix is projected; private tail bytes stay raw.
+struct SimulcastDeclaration {size_t serviceOffset,pdsOffset,offset;unsigned sourceService,targetOnid,targetTsid,targetService;};
+inline std::vector<SimulcastDeclaration> simulcastDeclarations(const Record& r,const std::string& profile) {
+    std::vector<SimulcastDeclaration> out;
+    if(profile!="dvb"||!r.valid||r.pid!=0x11||(r.tid!=0x42&&r.tid!=0x46)||r.raw.size()<15||(r.raw[1]&0x80)==0)return out;
+    const auto& b=r.raw;const size_t end=b.size()-4;
+    for(size_t p=11;p+5<=end;){const size_t next=p+5+(u16(b,p+3)&4095);if(next>end)break;
+        uint32_t pds=0;size_t pdsOffset=SIZE_MAX;
+        for(size_t q=p+5;q+2<=next;){const size_t n=b[q+1],stop=q+2+n;if(stop>next)break;
+            if(b[q]==0x5f){pds=n==4?(uint32_t(u16(b,q+2))<<16)|u16(b,q+4):0;pdsOffset=n==4?q:SIZE_MAX;}
+            else if(b[q]==0x0f){pds=0;pdsOffset=SIZE_MAX;} // TS 101 211 4.2.7.1 namespace barrier.
+            else if(b[q]==0x4a&&n>=7&&b[q+8]==0x82&&pds==0x29&&pdsOffset!=SIZE_MAX)
+                out.push_back({p,pdsOffset,q,u16(b,p),u16(b,q+4),u16(b,q+2),u16(b,q+6)});
+            q=stop;
+        }p=next;
+    }return out;
+}
 // These byte locators describe exact original section bytes only. They never
 // claim offsets in merged SDK XML. Repeated loop entries use their wire offset.
 inline J anchors(const Record& r,const std::string& profile) {
@@ -37,7 +56,8 @@ inline J anchors(const Record& r,const std::string& profile) {
             p=next;
         }
     };
-    const bool longHeader=b.size()>=8&&(b[1]&0x80)!=0;
+    const bool cableShort=profile=="j94-system-b"&&r.tid>=0xc2&&r.tid<=0xc5;
+    const bool longHeader=!cableShort&&b.size()>=8&&(b[1]&0x80)!=0;
     if(longHeader){add("table_id_extension",3,2,0);add("section_header",0,8,0,"container");}
     else if(b.size()>=3)add("section_header",0,3,0,"container");
     // Short sections (including TDT/TOT and cable OOB SI) do not carry the
@@ -48,6 +68,29 @@ inline J anchors(const Record& r,const std::string& profile) {
     if((r.tid==0x42||r.tid==0x46)&&end>=11){add("original_network_id",8,2,0);for(size_t p=11;p+5<=end;){size_t next=p+5+(u16(b,p+3)&4095);if(next>end)break;add("service_id",p,2,p);add("service",p,next-p,p,"container");descriptors(p+5,next);p=next;}}
     if((r.tid==0x40||r.tid==0x41)&&end>=12){size_t n=u16(b,8)&4095;descriptors(10,10+n);for(const auto& t:r.fields.value("transports",J::array())){size_t p=t["descriptor_offset"].get<size_t>()-6,bytes=t["descriptor_bytes"];add("transport",p,6+bytes,p,"container");add("transport_stream_id",p,2,p);add("original_network_id",p+2,2,p);descriptors(p+6,p+6+bytes);}}
     if(profile=="atsc"&&(r.tid==0xc8||r.tid==0xc9)&&end>=10){size_t p=10;for(unsigned i=0;i<b[9]&&p+32<=end;i++){size_t next=p+32+(u16(b,p+30)&1023);if(next>end)break;add("virtual_channel",p,next-p,p,"container");add("short_name",p,14,p);add("channel_number",p+14,3,p);add("channel_tsid",p+22,2,p);add("program_number",p+24,2,p);add("channel_flags",p+26,2,p,"container");add("atsc_source_id",p+28,2,p);descriptors(p+32,next);p=next;}}
+    // NorDig private meanings are supplied only by the earlier on-wire PDS +
+    // typed v2 decoder. These anchors refer to original bytes, never merged XML.
+    if(profile=="dvb"&&(r.tid==0x40||r.tid==0x41))for(const auto& d:r.descriptors)if(d.value("lcn_list_decode_status",std::string())=="decoded"){
+        for(const auto& list:d.value("lcn_lists",J::array())){
+            const size_t p=list["list_offset"],nameBytes=list["channel_list_name_bytes"],length=6+nameBytes+4*list["services"].size();
+            add("nordig_channel_list",p,length,p,"container");
+            add("nordig_channel_list_id",p,1,p);
+            if(nameBytes)add("nordig_channel_list_name",p+2,nameBytes,p);
+            add("nordig_country_code",p+2+nameBytes,3,p);
+            for(const auto& entry:list["services"]){const size_t q=entry["entry_offset"];
+                add("nordig_list_entry",q,4,q,"container");add("nordig_service_id",q,2,q);
+                add("nordig_logical_channel_number",q+2,2,q);add("nordig_visible_service_flag",q+2,2,q);
+            }
+        }
+    }
+    std::set<size_t> namespaceAnchors;
+    for(const auto& d:simulcastDeclarations(r,profile)){
+        if(namespaceAnchors.insert(d.pdsOffset).second)add("nordig_private_data_specifier",d.pdsOffset+2,4,d.pdsOffset);
+        add("nordig_replacement_transport_stream_id",d.offset+2,2,d.offset);
+        add("nordig_replacement_original_network_id",d.offset+4,2,d.offset);
+        add("nordig_replacement_service_id",d.offset+6,2,d.offset);
+        add("nordig_replacement_linkage_type",d.offset+8,1,d.offset);
+    }
     return out;
 }
 
@@ -250,6 +293,81 @@ class Builder {
             }
         }
     }
+    void nordigLists(){
+        if(family!="dvb")return;
+        std::map<std::string,size_t> declarations;
+        for(auto* r:sections)if(r->pid==0x10&&(r->tid==0x40||r->tid==0x41)){
+            const std::string networkId=family+":network:"+num(r->ext);
+            for(const auto& t:r->fields.value("transports",J::array())){
+                const unsigned onid=t["original_network_id"],tsid=t["transport_stream_id"];
+                const size_t start=t["descriptor_offset"],length=t["descriptor_bytes"];
+                for(const auto& d:r->descriptors){const size_t p=d["offset"],bytes=d["length"];
+                    if(p<start||p+2+bytes>start+length||d.value("lcn_list_decode_status",std::string())!="decoded")continue;
+                    for(const auto& list:d.value("lcn_lists",J::array())){
+                        const auto transportEvidence=ref(*r,"transport",start-6);
+                        const unsigned listId=list["channel_list_id"];const size_t q=list["list_offset"],nameBytes=list["channel_list_name_bytes"];
+                        const std::string id=family+":nordig-list:"+num(onid)+":"+num(listId);
+                        // A list is unique within ONID, not NIT network_id. Root
+                        // placement preserves all network memberships equally.
+                        auto& n=node(id,"channel_list",{{"original_network_id",onid},{"channel_list_id",listId},{"namespace","nordig_lcd_v2"}},"NorDig list "+hexid(listId,2)+" / ONID "+hexid(onid));
+                        const auto listEvidence=ref(*r,"nordig_channel_list",q),idEvidence=ref(*r,"nordig_channel_list_id",q);
+                        addEvidence(n,transportEvidence);addEvidence(n,idEvidence);
+                        attribute(n,"channel_list_name",list["channel_list_name"],nameBytes?ref(*r,"nordig_channel_list_name",q+2):listEvidence);
+                        attribute(n,"country_code",list["country_code"],ref(*r,"nordig_country_code",q+2+nameBytes));
+                        n["attributes"]["selection_status"]="selection_required";n["attributes"]["selected"]=false;
+                        n["attributes"]["transmission_completeness"]="unknown";
+                        edge(networkId,id,"announces",J::array({ref(*r,"table_id_extension",3),transportEvidence,listEvidence}));
+                        for(const auto& entry:list["services"]){const unsigned sid=entry["service_id"];const size_t offset=entry["entry_offset"];
+                            const std::string entryId=id+":entry:"+num(tsid)+":"+num(sid);
+                            auto& item=node(entryId,"channel_list_entry",{{"original_network_id",onid},{"transport_stream_id",tsid},{"service_id",sid},{"channel_list_id",listId}},"List service "+hexid(tsid)+" / "+hexid(sid),"announced_only",id);
+                            const auto serviceEvidence=ref(*r,"nordig_service_id",offset),numberEvidence=ref(*r,"nordig_logical_channel_number",offset+2);
+                            addEvidence(item,transportEvidence);addEvidence(item,idEvidence);addEvidence(item,serviceEvidence);
+                            attribute(item,"logical_channel_number",entry["number"],numberEvidence);
+                            attribute(item,"visible",entry["visible"],ref(*r,"nordig_visible_service_flag",offset+2));
+                            attribute(item,"allocation_status",entry["allocation_status"],numberEvidence);
+                            item["attributes"]["selected"]=false;item["attributes"]["receiver_policy_applied"]=false;
+                            const std::string generation=num(r->tid)+":"+num(r->ext)+":"+num(r->version)+":"+entryId;
+                            if(++declarations[generation]>1||entry.value("duplicate_service",false))reason(item,"Duplicate service declaration within one NIT generation's channel list","conflict");
+                            edge(id,entryId,"contains",J::array({transportEvidence,idEvidence,ref(*r,"nordig_list_entry",offset)}));
+                        }
+                    }
+                }
+            }
+        }
+        for(auto& [id,n]:nodes)if(n["object_type"]=="channel_list_entry"){
+            const auto& identity=n["identity"];const std::string target=service(identity["original_network_id"],identity["transport_stream_id"],identity["service_id"]);
+            if(nodes.count(target)){J evidence=n["evidence"];for(const auto& e:nodes.at(target)["evidence"])evidence.push_back(e);edge(id,target,"references",evidence);}
+            else reason(n,"Referenced SDT service not observed","unresolved");
+        }
+    }
+    void nordigSimulcast(){
+        if(family!="dvb")return;
+        std::map<std::string,std::set<std::string>> alternatives;
+        for(auto* r:sections)for(const auto& d:simulcastDeclarations(*r,profile)){
+            const unsigned sourceOnid=u16(r->raw,8);const std::string origin=service(sourceOnid,r->ext,d.sourceService);
+            if(!nodes.count(origin))continue;
+            const std::string id=origin+":nordig-simulcast:"+num(d.targetOnid)+":"+num(d.targetTsid)+":"+num(d.targetService);
+            alternatives[origin].insert(id);
+            auto& n=node(id,"simulcast_replacement_reference",{{"original_network_id",d.targetOnid},{"transport_stream_id",d.targetTsid},{"service_id",d.targetService},{"namespace","nordig_simulcast_replacement"}},"Simulcast replacement "+hexid(d.targetOnid)+" / "+hexid(d.targetTsid)+" / "+hexid(d.targetService),"announced_only",origin);
+            const auto serviceEvidence=ref(*r,"service_id",d.serviceOffset),pdsEvidence=ref(*r,"nordig_private_data_specifier",d.pdsOffset+2),descriptorEvidence=ref(*r,"descriptor",d.offset);
+            addEvidence(n,serviceEvidence);addEvidence(n,pdsEvidence);addEvidence(n,descriptorEvidence);
+            attribute(n,"target_original_network_id",d.targetOnid,ref(*r,"nordig_replacement_original_network_id",d.offset+4));
+            attribute(n,"target_transport_stream_id",d.targetTsid,ref(*r,"nordig_replacement_transport_stream_id",d.offset+2));
+            attribute(n,"target_service_id",d.targetService,ref(*r,"nordig_replacement_service_id",d.offset+6));
+            attribute(n,"linkage_type",0x82,ref(*r,"nordig_replacement_linkage_type",d.offset+8));
+            n["attributes"]["receiver_policy_applied"]=false;n["attributes"]["selected"]=false;
+            n["attributes"]["media_equivalence"]="unverified";n["attributes"]["reception_and_decoder_support"]="unverified";
+            n["references"]=J::array({J{{"id","nordig-unified"},{"title","NorDig Unified Requirements"},{"version","3.2.2 (November 2025)"},{"url","https://nordig.org/wp-content/uploads/2016/03/NorDig-Unified-Requirements-ver.-3.2.2.pdf"},{"clause","12.3.5"},{"scope","contextual declaration; no receiver conformance claim"}}});
+            edge(origin,id,"contains",J::array({serviceEvidence,pdsEvidence,descriptorEvidence}));
+        }
+        for(const auto& [origin,ids]:alternatives)for(const auto& id:ids){auto& n=nodes.at(id);const auto& i=n["identity"];
+            if(ids.size()>1)reason(n,"Competing simulcast replacement targets; no target selected","conflict");
+            const std::string target=service(i["original_network_id"],i["transport_stream_id"],i["service_id"]);
+            if(target==origin)reason(n,"Simulcast replacement points to its declaring service; no receiver action applied","conflict");
+            if(nodes.count(target)){J evidence=n["evidence"];for(const auto& e:nodes.at(target)["evidence"])evidence.push_back(e);edge(id,target,"references",evidence,n["resolution_status"]);}
+            else reason(n,"Referenced replacement SDT service not observed","unresolved");
+        }
+    }
     void mpegPrograms(){
         for(const auto& [key,mappings]:pats){auto [tsid,sid]=key;std::string id,parent;bool ambiguous=localTransports[tsid].size()>1;
             if(family!="atsc"&&localTransports[tsid].size()==1){parent=*localTransports[tsid].begin();unsigned onid=nodes.at(parent)["identity"]["original_network_id"];std::string candidate=service(onid,tsid,sid);if(nodes.count(candidate))id=candidate;}
@@ -325,7 +443,7 @@ public:
     Builder(const std::vector<const Record*>& input,ts::DuckContext& ctx,const fs::path& resources,std::string standard,size_t rev,uint64_t cutoff):sections(input),duck(ctx),root(resources),profile(std::move(standard)),revision(rev),at(cutoff){family=profile=="dvb"?"dvb":profile=="atsc"?"atsc":profile.rfind("isdb",0)==0?"isdb":"unresolved";}
     J build(const J& args,size_t rawSections,const J& incomplete){
         indexPrograms();
-        if(family=="dvb"||family=="isdb"){nit();sdt();mpegPrograms();}
+        if(family=="dvb"||family=="isdb"){nit();sdt();nordigLists();nordigSimulcast();mpegPrograms();}
         else if(family=="atsc"){mpegPrograms();vct();}
         else{mpegPrograms();diagnostics.push_back({{"code","explicit_profile_required"},{"message","Select DVB, ATSC or an ISDB analysis profile and rescan to resolve ambiguous signalling families. View filters do not change interpretation."}});}
         // Resolve only explicit ISDB service triplets. Missing SDT remains a
@@ -351,7 +469,7 @@ public:
         for(const auto& id:order)if(contextIds.count(id))context.push_back(nodes.at(id));
         for(const auto& e:edges)if(selectedIds.count(e["from"].get<std::string>()))selectedEdges.push_back(e);
         std::string label=family=="dvb"?"DVB":family=="atsc"?"ATSC 1.0":profile=="isdb-japan"?"ISDB Japan":profile=="isdb-brazil"?"ISDB Brazil":family=="isdb"?"ISDB · region unspecified":"Unresolved signalling";
-        J unsupported=J::array({"BAT/bouquet and regional LCN semantic projections","Physical transponder/satellite identification, S2 extension/S2X/T2 and non-DVB delivery topology","ATSC MGT/STT/RRT/EPG/ETT semantic relationships","ISDB BIT/CDT/SDTT/logo/broadcaster semantic relationships","Actual media presence, RF tuning, layers and reception"});
+        J unsupported=J::array({"BAT/bouquet, receiver regional/list choice and simulcast replacement actions","Physical transponder/satellite identification, S2 extension/S2X/T2 and non-DVB delivery topology","ATSC MGT/STT/RRT/EPG/ETT semantic relationships","ISDB BIT/CDT/SDTT/logo/broadcaster semantic relationships","Actual media presence, RF tuning, layers and reception"});
         if(family=="isdb"&&profile!="isdb-japan")unsupported.push_back("ISDB remote-control and partial-reception semantics outside validated Japan profile");
         return {{"schema_version",1},{"analysis_revision",revision},{"at_packet",at},{"interpretation_profile",profile},{"status",family=="unresolved"?"unresolved":nodes.empty()&&diagnostics.empty()?"empty":unresolved||!diagnostics.empty()||!missing.empty()?"incomplete":"ok"},
             {"diagnostics",diagnostics},{"counts",{{"nodes",nodes.size()},{"edges",edges.size()},{"unresolved",unresolved},{"raw_sections",rawSections}}},

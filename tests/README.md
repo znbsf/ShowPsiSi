@@ -1,5 +1,16 @@
 # Validation
 
+Windows AppLocal packaging helper regressions run with Python 3.12 and pinned
+`pefile==2024.8.26`: `test_vc_runtime.py`, `test_applocal_validation.py`,
+`test_corresponding_source.py`, `test_portable_package.py`,
+`test_installer_package.py` and `test_release_publisher.py`. Use
+`python -m unittest discover -s tests -p NAME.py -v` for each named suite.
+They cover exact byte/provenance gates, source pairing and publication failure
+paths; their Linux passes do not establish native Windows execution.
+`test_windows_acceptance_host.py` is Windows-only and belongs in the Windows CI
+job, outside Linux's no-skip engine gate. See the separate
+[clean-host and module acceptance contract](../docs/WINDOWS_APPLOCAL_ACCEPTANCE.md).
+
 Workbench parity: `test_section_evidence.py` checks all-family content history,
 including repeated/reused versions, private, short, next and invalid evidence.
 The `workbench` cases in Qt/browser suites and `test_ui_agent.py` check matching
@@ -233,3 +244,23 @@ bounded pagination above 2,500 programs. Included in the strict engine runner.
 `topology_fixture.py` is the shared deterministic wire generator for frontend
 checks; it does not return mocked topology data. See
 [the API contract](../docs/TOPOLOGY_API.md) for explicit unsupported semantics.
+
+## Protocol source navigation
+
+`test_qt_protocol_cards.py` and `test_web_ui.py` include real-engine NorDig SDT
+simulcast field jumps and three-table PAT/PMT/AIT carriage sources in both themes.
+They retain exact revision/cutoff/byte-range and Back-context assertions. Run the
+complete Qt/browser gates after integrating protocol changes, using immutable
+core/helper/API/reference inputs. See the [protocol test contract](../docs/PROTOCOL_TEST_PLAN.md)
+and [supported subsets](../docs/PROTOCOL_COVERAGE.md#current-protocol-extension-support).
+
+```sh
+python scripts/ci/windows_native_checks.py --qt --artifacts artifacts/protocol-qt
+python -m unittest discover -s tests -p test_web_ui.py -v
+python -m unittest discover -s tests -p test_cloud_preview.py -v
+python -m unittest discover -s tests -p test_ui_contrast.py -v
+```
+
+The runner name does not identify the host OS. Offscreen Qt and sandboxed
+Chromium checks do not prove native Windows/macOS dialogs, WebView2, GPU,
+clean-machine installation or receiver conformance.

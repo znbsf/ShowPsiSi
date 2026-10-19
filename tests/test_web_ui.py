@@ -27,6 +27,270 @@ sys.path.insert(0,str(ROOT/'scripts'))
 from cloud_preview import Bridge, Server
 
 class BrowserTests(unittest.TestCase):
+    def dvbi_import(self,raw=None,name='dvbi.xml'):
+        from dvbi_fixture import fixture
+        path=self.output/name;path.write_bytes(fixture() if raw is None else raw)
+        self.page.locator('#input-kind').select_option('dvbi')
+        self.page.locator('#dvbi-source').fill(str(path));self.page.locator('#dvbi-import').click()
+        self.page.wait_for_function('()=>window.showpsisi.getUiState().dvbi.metadata && !window.showpsisi.getUiState().dvbi.importing && !window.showpsisi.getUiState().dvbi.loading')
+        return path
+
+    def test_dvbi_independent_session_sources_unknowns_and_original_bytes(self):
+        from dvbi_fixture import fixture
+        self.topology_source();self.select_topology_service();p=self.page
+        p.locator('[data-topology-source]').filter(has_text='name').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        before=p.evaluate('({state:window.showpsisi.getState(),detail:window.showpsisi.getDetail(),topology:window.showpsisi.getUiState().topology})')
+        widths=p.evaluate('({left:document.querySelector("#split-left").getAttribute("aria-valuenow"),right:document.querySelector("#split-right").getAttribute("aria-valuenow")})')
+        requests=[];p.on('request',lambda r:requests.append(r.url))
+        path=self.dvbi_import();self.assertEqual(p.evaluate('window.showpsisi.getDvbi().nodes.length'),13)
+        p.keyboard.press('Control+k');self.assertEqual(p.evaluate('document.activeElement.id'),'dvbi-search')
+        self.assertFalse(p.locator('#reset-layout').is_visible())
+        p.set_viewport_size({'width':1000,'height':900});p.set_viewport_size({'width':1440,'height':1000})
+        self.assertFalse(p.locator('#timeline').is_visible());self.assertFalse(p.locator('#standards').is_visible())
+        self.assertFalse(p.locator('#app > footer').is_visible());self.assertIn('Local XML · document revision',p.locator('#dvbi-footer').inner_text())
+        first=p.locator('[data-dvbi-node]').first;first.focus();p.keyboard.press('ArrowRight');p.keyboard.press('ArrowDown')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().dvbi.selected'),'')
+        p.keyboard.press('Enter');self.assertTrue(p.evaluate('window.showpsisi.getUiState().dvbi.selected'))
+        for theme in ('dark','light'):
+            if p.locator('html').get_attribute('data-theme')!=theme:p.locator('#theme-toggle').click()
+            p.screenshot(path=str(self.artifacts/('dvbi-service-object-'+theme+'.png')),full_page=True)
+        root=p.evaluate('window.showpsisi.getDvbi().nodes.find(n=>!n.parent_id).node_id')
+        p.locator('[data-dvbi-node="'+root+'"]').click()
+        for theme in ('dark','light'):
+            if p.locator('html').get_attribute('data-theme')!=theme:p.locator('#theme-toggle').click()
+            p.screenshot(path=str(self.artifacts/('dvbi-list-object-'+theme+'.png')),full_page=True)
+        self.assertIn('Region ref north',p.locator('#dvbi-list').inner_text());self.assertIn('Region ref south',p.locator('#dvbi-list').inner_text())
+        refs=p.evaluate('workbench.dvbiEvidence(window.showpsisi.getDvbi().nodes.find(n=>!n.parent_id))')
+        index=next(i for i,r in enumerate(refs) if r['precision']=='attribute')
+        p.locator('#dvbi-ref-'+str(index)).click();p.wait_for_function('()=>window.showpsisi.getUiState().dvbi.resolution?.precision==="attribute"')
+        self.assertEqual(p.locator('[data-dvbi-highlight="attribute"]').count(),1)
+        for view in ('text','hex','metadata','structure'):
+            p.locator('[data-dvbi-view="'+view+'"]').click()
+            if view=='text':self.assertEqual(p.locator('[data-dvbi-highlight="element-start"]').inner_text(),'<')
+        p.keyboard.press('Alt+ArrowLeft');self.assertEqual(p.evaluate('document.activeElement.id'),'dvbi-ref-'+str(index))
+        unknown=next(i for i,r in enumerate(refs) if 'FutureFeature' in r['path'])
+        p.locator('#dvbi-ref-'+str(unknown)).click();p.wait_for_function('()=>window.showpsisi.getDvbiDetail()?.element.local_name==="FutureFeature"')
+        self.assertIn('unknown extension',p.locator('#dvbi-inspector').inner_text())
+        self.assertIn('0–0 / 0 children',p.locator('#dvbi-document').inner_text())
+        for theme in ('light','dark'):
+            if p.locator('html').get_attribute('data-theme')!=theme:p.locator('#theme-toggle').click()
+            p.screenshot(path=str(self.artifacts/('dvbi-sources-'+theme+'.png')),full_page=True)
+        self.assertFalse(any('example.invalid' in url for url in requests),'Signalling URLs must never be fetched')
+        self.assertEqual(path.read_bytes(),fixture())
+        p.locator('#input-kind').select_option('ts')
+        after=p.evaluate('({state:window.showpsisi.getState(),detail:window.showpsisi.getDetail(),topology:window.showpsisi.getUiState().topology})')
+        self.assertEqual(before,after);self.assertTrue(p.locator('#topology-back').is_visible())
+        self.assertEqual(widths,p.evaluate('({left:document.querySelector("#split-left").getAttribute("aria-valuenow"),right:document.querySelector("#split-right").getAttribute("aria-valuenow")})'))
+        self.assertTrue(p.locator('#reset-layout').is_visible());self.assertTrue(p.locator('#app > footer').is_visible())
+        p.locator('#input-kind').select_option('dvbi');self.assertEqual(p.evaluate('window.showpsisi.getDvbiDetail().element.local_name'),'FutureFeature')
+        p.locator('[data-dvbi-node]').first.click();self.assertIsNone(p.evaluate('window.showpsisi.getDvbiDetail()'))
+        self.assertNotIn('Element navigation',p.locator('#dvbi-document').inner_text())
+
+    def test_dvbi_failed_replacement_preserves_document_and_unsupported_raw_navigation(self):
+        from dvbi_fixture import fixture
+        p=self.page;path=self.dvbi_import();p.locator('[data-dvbi-node]').first.click();p.locator('#dvbi-root').click()
+        p.wait_for_function('()=>window.showpsisi.getDvbiDetail()!=null')
+        before=p.evaluate('({snapshot:window.showpsisi.getDvbi(),detail:window.showpsisi.getDvbiDetail(),selected:window.showpsisi.getUiState().dvbi.selected})')
+        invalid=self.output/'bad.xml';invalid.write_text('<!DOCTYPE x [<!ENTITY e SYSTEM "file:///secret">]><x>&e;</x>')
+        p.locator('#dvbi-source').fill(str(invalid));p.locator('#dvbi-import').click()
+        p.wait_for_function('()=>!window.showpsisi.getUiState().dvbi.importing && !!window.showpsisi.getUiState().dvbi.error')
+        self.assertEqual(before,p.evaluate('({snapshot:window.showpsisi.getDvbi(),detail:window.showpsisi.getDvbiDetail(),selected:window.showpsisi.getUiState().dvbi.selected})'))
+        self.assertTrue(p.locator('#dvbi-message').inner_text())
+        unsupported=self.output/'unknown.xml';unsupported.write_bytes(fixture(namespace='urn:unknown:edition'))
+        p.locator('#dvbi-source').fill(str(unsupported));p.locator('#dvbi-import').click()
+        p.wait_for_function('()=>window.showpsisi.getDvbi()?.status==="unsupported" && !window.showpsisi.getUiState().dvbi.importing')
+        self.assertEqual(p.evaluate('window.showpsisi.getDvbi().nodes.length'),0)
+        p.locator('#dvbi-root').click();p.wait_for_function('()=>window.showpsisi.getDvbiDetail()!=null')
+        p.locator('[data-dvbi-view="text"]').click();self.assertIn('urn:unknown:edition',p.locator('#dvbi-inspector pre.evidence').inner_text())
+        revision=p.evaluate('window.showpsisi.getDvbi().document_revision');p.locator('#dvbi-import').click()
+        p.wait_for_function('(revision)=>window.showpsisi.getDvbi()?.document_revision>revision && !window.showpsisi.getUiState().dvbi.importing',arg=revision)
+
+    def test_dvbi_pagination_children_and_utf8_original_source_marker(self):
+        from dvbi_fixture import many_services
+        p=self.page;raw=b'\xef\xbb\xbf'+many_services(510).replace(b'?>\n',b'?>\r\n<!-- prefix \xf0\x9f\x8e\xac -->\r\n').replace(b'\n',b'\r\n')
+        self.dvbi_import(raw);self.assertEqual(p.evaluate('window.showpsisi.getDvbi().nodes.length'),500)
+        p.locator('#dvbi-search').fill('Programme 509');self.assertEqual(p.locator('[data-dvbi-node]').count(),0)
+        self.assertIn('loaded objects only',p.locator('#dvbi-loaded-note').inner_text())
+        p.locator('#dvbi-more').click();p.wait_for_function('()=>window.showpsisi.getDvbi().nodes.length===511')
+        self.assertGreater(p.locator('[data-dvbi-node]').count(),0)
+        self.assertEqual(p.evaluate('new Set(window.showpsisi.getDvbi().nodes.map(n=>n.node_id)).size'),511)
+        p.locator('#dvbi-root').click();p.wait_for_function('()=>window.showpsisi.getDvbiDetail()!=null')
+        self.assertEqual(p.locator('#dvbi-document [data-dvbi-child]').count(),100)
+        p.locator('#dvbi-child-next').click();p.wait_for_function('()=>window.showpsisi.getDvbiDetail()?.child_page.offset===100')
+        p.locator('[data-dvbi-view="text"]').click()
+        self.assertEqual(p.locator('[data-dvbi-highlight="element-start"]').inner_text(),'<')
+        source=p.evaluate('window.showpsisi.getDvbiDetail().original_source')
+        self.assertEqual(bytes.fromhex(source['data']),raw[source['offset']:source['offset']+source['length']])
+        p.locator('#dvbi-source-next').click();p.wait_for_function('()=>window.showpsisi.getDvbiDetail()?.original_source.offset===4096')
+        self.assertEqual(p.locator('[data-dvbi-highlight="element-start"]').count(),0)
+        p.locator('#dvbi-element-start').click();p.wait_for_function('()=>window.showpsisi.getDvbiDetail()?.original_source.offset===window.showpsisi.getDvbiDetail()?.element.original_byte_offset')
+        self.assertEqual(p.locator('[data-dvbi-highlight="element-start"]').inner_text(),'<')
+
+    def test_dvbi_new_import_supersedes_pending_query(self):
+        from dvbi_fixture import fixture,many_services
+        self.gate_native_messages();self.dvbi_import(many_services(510));p=self.page
+        p.evaluate('window.testGate.methods=["query_dvbi"]');p.locator('#dvbi-more').click()
+        p.wait_for_function('()=>window.testGate.held.length===1')
+        replacement=self.output/'replacement.xml';replacement.write_bytes(fixture())
+        p.locator('#dvbi-source').fill(str(replacement));p.locator('#dvbi-import').click()
+        p.wait_for_function('()=>window.testGate.held.length===2')
+        p.evaluate('window.testGate.release("query_dvbi")')
+        p.wait_for_function('()=>window.showpsisi.getDvbi()?.document_revision===2 && !window.showpsisi.getUiState().dvbi.importing && !window.showpsisi.getUiState().dvbi.loading')
+        self.assertEqual(p.evaluate('window.showpsisi.getDvbi().nodes.length'),13)
+        self.assertEqual(p.evaluate('window.showpsisi.getDvbi().source.path'),str(replacement))
+
+    def test_dvbi_delayed_inspection_supersession_and_foreign_source_rejection(self):
+        self.gate_native_messages();self.dvbi_import();p=self.page
+        p.locator('[data-dvbi-node]').first.click()
+        p.evaluate('window.testGate.methods=["inspect_dvbi"]')
+        p.locator('[data-dvbi-ref]').first.click();p.wait_for_function('()=>window.testGate.held.length===1')
+        self.assertIn('Loading XML',p.locator('#dvbi-inspector').inner_text())
+        p.locator('#dvbi-root').click();p.wait_for_function('()=>window.testGate.held.length===2')
+        p.evaluate('window.testGate.release("inspect_dvbi")')
+        p.wait_for_function('()=>!window.showpsisi.getUiState().dvbi.inspectLoading')
+        self.assertEqual(p.evaluate('window.showpsisi.getDvbiDetail().element.element_id'),'e0')
+        p.locator('#dvbi-root').click();p.wait_for_function('()=>window.testGate.held.length===1')
+        p.evaluate('window.testGate.held[0].event.payload.result.source.sha256="foreign";window.testGate.release("inspect_dvbi")')
+        p.wait_for_function('()=>!!window.showpsisi.getUiState().dvbi.inspectError')
+        self.assertIsNone(p.evaluate('window.showpsisi.getDvbiDetail()'))
+        self.assertEqual(p.locator('[data-dvbi-highlight]').count(),0)
+        p.evaluate('window.testGate.methods=[]');p.locator('#dvbi-retry-inspect').click()
+        p.wait_for_function('()=>window.showpsisi.getDvbiDetail()!=null')
+        self.bridge.proc.kill();self.bridge.proc.wait(timeout=5)
+        p.wait_for_function('()=>!!window.showpsisi.getUiState().diagnostics.error')
+        self.assertTrue(p.locator('#dvbi-root').is_disabled());self.assertTrue(p.locator('#dvbi-import').is_disabled())
+
+    def test_protocol_source_actions_exact_anchor_fallback_and_back(self):
+        from protocol_ui_fixture import protocol_ui_fixture
+        p=self.page;path=self.output/'protocol-sources.ts';path.write_bytes(protocol_ui_fixture())
+        p.locator('#standards').select_option('dvb');self.analyze(path)
+        p.locator('[data-tab="Tables"]').click();p.locator('#search').fill('AIT');p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('()=>window.showpsisi.getDetail().table_id===0x74');p.locator('[data-view="metadata"]').click();p.locator('#protocol-next').click()
+        source=p.locator('.protocol-sources').first;source.locator('summary').click()
+        button=source.locator('[data-protocol-source]').first;button_id=button.get_attribute('id');section=p.evaluate('window.showpsisi.getDetail().id')
+        button.click();p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().protocol_source.resolution!=null')
+        self.assertIn(p.evaluate('window.showpsisi.getUiState().protocol_source.resolution.precision'),('field','container'))
+        for view in ('hex','xml','decoded','metadata','references','tree'):p.locator('[data-view="'+view+'"]').click()
+        p.locator('#protocol-back').click();self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),section)
+        self.assertIn('21–40',p.locator('section[aria-label="Protocol summaries"]').inner_text())
+        self.assertEqual(p.evaluate('document.activeElement.id'),button_id)
+        from test_nordig import NorDigTests
+        case=NorDigTests();pid,raw=case.nit(case.pds()+b'\x87\x02\x01\xff')
+        from test_protocol_coverage import ProtocolCoverageTests
+        path=self.output/'malformed-nordig.ts';path.write_bytes(b''.join(ProtocolCoverageTests.packetize(0x10,raw)))
+        self.analyze(path);p.locator('[data-tab="Tables"]').click();p.locator('#search').fill('NIT');p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('()=>window.showpsisi.getDetail().table_id===0x40');p.locator('[data-view="metadata"]').click()
+        p.locator('.protocol-sources summary').click();p.locator('[data-protocol-source]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().protocol_source.resolution?.precision==="section"')
+        self.assertEqual(p.locator('[data-source-highlight]').count(),0)
+        p.locator('[data-view="hex"]').click();self.assertEqual(p.locator('.source-byte').count(),0)
+
+    def test_dsmcc_module_cards_keep_snapshot_hash_and_all_sources(self):
+        import test_dsmcc_summaries as f
+        p=self.page
+        for complete in (False,True):
+            with self.subTest(complete=complete):
+                sections=[f.dii(),f.ddb(b'abcd')]+([f.ddb(b'ef',block=1)] if complete else [])
+                path=self.output/('module-'+str(complete)+'.ts');raw=f.packetize([(0x150,r) for r in sections]);path.write_bytes(raw)
+                p.locator('#standards').select_option('dvb');p.locator('#extra-pids').fill('0x150');self.analyze(path)
+                p.locator('[data-tab="Tables"]').click()
+                if p.locator('#table-group-toggle').get_attribute('aria-pressed')=='true':p.locator('#table-group-toggle').click()
+                source=p.evaluate('window.showpsisi.getState().tables.reduce((a,b)=>a.first_packet>b.first_packet?a:b).id')
+                p.locator('#list [data-key="'+source+'"]').click();p.wait_for_function('(id)=>window.showpsisi.getDetail()?.id===id',arg=source)
+                p.locator('[data-view="metadata"]').click()
+                module=p.locator('.protocol-card').filter(has_text='download_module ·')
+                self.assertEqual(module.count(),1);text=module.inner_text()
+                self.assertIn('assembly status: '+('complete' if complete else 'incomplete'),text)
+                self.assertIn('execution status: not_executed',text)
+                digest=hashlib.sha256(b'abcdef').hexdigest()
+                self.assertIn('assembled sha256: '+(digest if complete else 'null'),text)
+                refs=p.evaluate("workbench.protocolCardSources(workbench.protocolCards(window.showpsisi.getDetail(),0,50).cards.find(c=>c.evidence?.object?.object_type==='download_module')).map(s=>s.ref)")
+                self.assertEqual(len({r['section_id'] for r in refs}),len(sections))
+                self.assertGreaterEqual(len(refs),len(sections))
+                for index,ref in enumerate(refs):
+                    module=p.locator('.protocol-card').filter(has_text='download_module ·')
+                    disclosure=module.locator('.protocol-sources')
+                    if disclosure.get_attribute('open') is None:disclosure.locator('summary').click()
+                    disclosure.locator('[data-protocol-source]').nth(index).click()
+                    p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getUiState().protocol_source.resolution')
+                    detail=p.evaluate('window.showpsisi.getDetail()');resolution=p.evaluate('window.showpsisi.getUiState().protocol_source.resolution')
+                    self.assertEqual(detail['id'],ref['section_id']);self.assertEqual(detail['analysis_revision'],ref['analysis_revision']);self.assertEqual(detail['native_table_at_packet'],len(sections)-1)
+                    self.assertEqual(resolution['status'],'resolved');self.assertIn(resolution['precision'],('field','container'))
+                    p.locator('[data-view="hex"]').click();self.assertGreater(p.locator('.source-byte').count(),0)
+                    p.locator('#protocol-back').click();self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),source)
+                self.assertEqual(path.read_bytes(),raw)
+
+    def test_j94_explicit_profile_short_header_and_raw_fallback(self):
+        from test_cable_oob import nit
+        from test_protocol_coverage import ProtocolCoverageTests
+        p=self.page
+        for protocol,status in ((0,'decoded'),(1,'unknown_or_unsupported')):
+            with self.subTest(protocol=protocol):
+                raw=nit(protocol=protocol)
+                source=self.output/('j94-'+str(protocol)+'.ts')
+                encoded=b''.join(ProtocolCoverageTests.packetize(0x1ffc,raw));source.write_bytes(encoded)
+                p.locator('#standards').select_option('j94-system-b');self.analyze(source)
+                p.locator('[data-tab="Tables"]').click()
+                p.locator('#list .table-branch > summary').first.click()
+                p.wait_for_function('()=>window.showpsisi.getDetail().versioning_supported===false')
+                p.locator('[data-view="tree"]').click()
+                self.assertEqual(p.evaluate('window.showpsisi.getDetail().raw_hex'),raw.hex().upper())
+                self.assertEqual(p.evaluate('window.showpsisi.getDetail().table_decode_category'),status)
+                self.assertIn('version not carried',p.locator('#inspector').inner_text())
+                self.assertIn('section number not carried',p.locator('#inspector').inner_text())
+                self.assertIn('extension not carried',p.locator('#list').inner_text())
+                self.assertIn('map assembly unsupported',p.locator('#list').inner_text())
+                text=p.locator('main').inner_text()+p.locator('#timeline').inner_text()
+                for fabricated in ('vnull','§null','Version null','section null','null/null','Ext 0x0000','observed 0/1'):
+                    self.assertNotIn(fabricated,text)
+                p.locator('[data-view="hex"]').click()
+                self.assertIn('C2',p.locator('pre.evidence').inner_text())
+                self.assertEqual(source.read_bytes(),encoded)
+
+    def test_protocol_cards_real_engine_paging_themes_and_reset(self):
+        from protocol_ui_fixture import protocol_ui_fixture
+        raw=protocol_ui_fixture();path=self.output/'protocol-cards.ts';path.write_bytes(raw)
+        p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path)
+        p.locator('[data-tab="Tables"]').click();p.locator('#search').fill('AIT')
+        p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('() => window.showpsisi.getDetail().table_id === 0x74')
+        p.locator('[data-view="metadata"]').click()
+        region=p.locator('section[aria-label="Protocol summaries"]')
+        self.assertEqual(region.locator('.metadata-card').count(),20)
+        self.assertIn('not executed',region.inner_text())
+        p.locator('#protocol-next').focus();p.locator('#protocol-next').press('Enter')
+        self.assertIn('21–40',region.inner_text())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'protocol-next')
+        p.keyboard.press('Enter');self.assertIn('41–60',region.inner_text())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'protocol-next')
+        # Sixteen applications yield 64 object cards, two summary cards, and
+        # the newly source-linked PAT/PMT carriage declaration.
+        p.keyboard.press('Enter');self.assertIn('61–67 of 67',region.inner_text())
+        self.assertEqual(region.locator('.metadata-card').count(),7)
+        self.assertIn('application_carriage · resolved',region.inner_text())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'protocol-previous')
+        p.keyboard.press('Enter');self.assertIn('41–60',region.inner_text())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'protocol-previous')
+        p.keyboard.press('Enter');self.assertIn('21–40',region.inner_text())
+        p.keyboard.press('Enter');self.assertIn('1–20',region.inner_text())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'protocol-next')
+        for theme in ('dark','light'):
+            if p.locator('html').get_attribute('data-theme')!=theme:p.locator('#theme-toggle').click()
+            self.assertEqual(region.locator('.metadata-card').count(),20)
+            evidence=region.locator('.metadata-card details').nth(1)
+            if evidence.get_attribute('open') is None:evidence.locator('summary').click()
+            self.assertIn('section_id',evidence.inner_text())
+            p.screenshot(path=str(self.artifacts/f'protocol-cards-{theme}.png'),full_page=True)
+        p.locator('#protocol-next').click()
+        p.locator('#search').fill('PMT');p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('() => window.showpsisi.getDetail().table_id === 2')
+        self.assertEqual(p.locator('section[aria-label="Protocol summaries"]').count(),0)
+        p.locator('#search').fill('AIT');p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('() => window.showpsisi.getDetail().table_id === 0x74')
+        self.assertIn('1–20',region.inner_text())
+        self.assertEqual(path.read_bytes(),raw)
+
     def topology_source(self, profile='dvb', sections=None):
         from topology_fixture import parts, write_ts
         source=write_ts(self.output/('topology-'+profile+'.ts'),sections or parts(profile))
@@ -41,6 +305,141 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#search').fill(node['label'])
         self.page.locator('[data-topology-node="'+node['node_id']+'"]').click()
         return node
+
+    def test_nordig_lists_entries_keep_distinct_exact_source_containers(self):
+        from test_nordig import NorDigTests
+        from make_fixture import descriptor
+        case=NorDigTests();body=case.channel_list(entries=((100,7,True),(101,8,True)))+case.channel_list(2,entries=((200,9,True),(201,10,True)))
+        path=self.topology_source(sections=[case.nit(case.pds()+descriptor(0x87,body))]);before=path.read_bytes();p=self.page
+        nodes=p.evaluate('window.showpsisi.getTopology().nodes.filter(n=>["channel_list","channel_list_entry"].includes(n.object_type))')
+        self.assertEqual(len(nodes),6);containers=set()
+        for node in nodes:
+            p.locator('#search').fill(node['label']);p.locator('[data-topology-node="'+node['node_id']+'"]').click()
+            sources=p.evaluate('(id)=>{const g=window.showpsisi.getTopology();return workbench.topologyEvidence(g.nodes.find(n=>n.node_id===id),g.edges)}',node['node_id'])
+            assertion='nordig_channel_list' if node['object_type']=='channel_list' else 'nordig_list_entry'
+            own=next(s['ref'] for s in sources if s['ref']['assertion_key']==assertion)
+            index=next(i for i,s in enumerate(sources) if s['ref']==own)
+            p.locator('[data-topology-source]').nth(index).click();p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getUiState().topology.locator_resolution')
+            resolution=p.evaluate('window.showpsisi.getUiState().topology.locator_resolution')
+            self.assertEqual(resolution['status'],'resolved');self.assertEqual(resolution['precision'],'container');self.assertEqual(resolution['byte_range'],own['locator']['byte_range'])
+            containers.add(own['locator']['container_id']);p.locator('[data-view="hex"]').click();self.assertGreater(p.locator('.source-byte').count(),0)
+            p.locator('#topology-back').click()
+        self.assertEqual(len(containers),6);self.assertEqual(path.read_bytes(),before)
+
+    def test_simulcast_declaration_exact_field_jumps_and_back_both_themes(self):
+        from protocol_ui_fixture import simulcast_ui_parts
+        p = self.page
+        path = self.topology_source(sections=simulcast_ui_parts())
+        original = path.read_bytes()
+        node = p.evaluate('window.showpsisi.getTopology().nodes.find(n=>n.object_type==="simulcast_replacement_reference")')
+        self.assertEqual(node['resolution_status'], 'resolved')
+        self.assertFalse(node['attributes']['receiver_policy_applied'])
+        expected = {'nordig_private_data_specifier', 'nordig_replacement_original_network_id',
+                    'nordig_replacement_transport_stream_id', 'nordig_replacement_service_id',
+                    'nordig_replacement_linkage_type'}
+        p.set_viewport_size({'width':1000, 'height':900})
+        for theme in ('dark', 'light'):
+            with self.subTest(theme=theme):
+                if p.locator('html').get_attribute('data-theme') != theme:
+                    p.locator('#theme-toggle').click()
+                p.locator('#search').fill(node['label'])
+                p.locator('[data-topology-node="'+node['node_id']+'"]').click()
+                sources = p.evaluate('(id)=>{const g=window.showpsisi.getTopology();return workbench.topologyEvidence(g.nodes.find(n=>n.node_id===id),g.edges)}', node['node_id'])
+                seen = set()
+                for index, source in enumerate(sources):
+                    ref = source['ref']
+                    if ref['assertion_key'] not in expected or ref['assertion_key'] in seen:
+                        continue
+                    seen.add(ref['assertion_key'])
+                    p.locator('[data-topology-source]').nth(index).click()
+                    p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getUiState().topology.locator_resolution')
+                    detail = p.evaluate('window.showpsisi.getDetail()')
+                    resolution = p.evaluate('window.showpsisi.getUiState().topology.locator_resolution')
+                    self.assertEqual(detail['id'], ref['section_id'])
+                    self.assertEqual(detail['analysis_revision'], ref['analysis_revision'])
+                    self.assertEqual(detail['native_table_at_packet'], ref['at_packet'])
+                    self.assertEqual(resolution['status'], 'resolved')
+                    self.assertEqual(resolution['precision'], 'field')
+                    self.assertEqual(resolution['byte_range'], ref['locator']['byte_range'])
+                    self.assertEqual(p.locator('[data-source-highlight]').count(), 1)
+                    p.locator('[data-view="hex"]').click()
+                    self.assertEqual(p.locator('.source-byte').count(), ref['locator']['byte_range']['length'])
+                    p.locator('#topology-back').click()
+                    self.assertEqual(p.evaluate('window.showpsisi.getUiState().topology.selected_node'), node['node_id'])
+                self.assertEqual(seen, expected)
+                p.screenshot(path=str(self.artifacts/('simulcast-compact-'+theme+'.png')), full_page=True)
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_carriage_card_three_table_sources_restore_origin_both_themes(self):
+        from protocol_ui_fixture import carriage_ui_parts
+        from test_application_summaries import packetize
+        p = self.page
+        path = self.output/'carriage-ui.ts'
+        original = packetize(carriage_ui_parts())
+        path.write_bytes(original)
+        p.locator('#standards').select_option('dvb')
+        self.analyze(path)
+        p.locator('[data-tab="Tables"]').click()
+        p.locator('#search').fill('AIT')
+        p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('()=>window.showpsisi.getDetail()?.table_id===0x74')
+        source_id = p.evaluate('window.showpsisi.getDetail().id')
+        p.evaluate('(id)=>window.showpsisi.snapshot(2,id)', source_id)
+        p.wait_for_function('(id)=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail()?.id===id', arg=source_id)
+        p.locator('#table-family').select_option('AIT')
+        p.locator('[data-view="metadata"]').click()
+        p.set_viewport_size({'width':1000, 'height':900})
+        origin = p.evaluate('window.showpsisi.getDetail()')
+        origin_state = p.evaluate('window.showpsisi.getUiState()')
+        origin_history = p.locator('.history-point').all_text_contents()
+        origin_page = p.locator('#page-label').inner_text()
+        self.assertEqual(origin_state['packet'], 2)
+        for theme in ('dark', 'light'):
+            with self.subTest(theme=theme):
+                if p.locator('html').get_attribute('data-theme') != theme:
+                    p.locator('#theme-toggle').click()
+                card = p.locator('.protocol-card').filter(has_text='application_carriage · resolved')
+                self.assertEqual(card.count(), 1)
+                self.assertIn('runtime compatibility: not_evaluated', card.inner_text())
+                refs = p.evaluate("workbench.protocolCardSources(workbench.protocolCards(window.showpsisi.getDetail(),0,50).cards.find(c=>c.evidence?.object?.object_type==='application_carriage')).map(s=>s.ref)")
+                self.assertEqual({r['table_identity']['table_id'] for r in refs}, {0, 2, 0x74})
+                for index, ref in enumerate(refs):
+                    card = p.locator('.protocol-card').filter(has_text='application_carriage · resolved')
+                    disclosure = card.locator('.protocol-sources')
+                    if disclosure.get_attribute('open') is None:
+                        disclosure.locator('summary').click()
+                    button = disclosure.locator('[data-protocol-source]').nth(index)
+                    button_id = button.get_attribute('id')
+                    button.click()
+                    p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getUiState().protocol_source.resolution')
+                    detail = p.evaluate('window.showpsisi.getDetail()')
+                    resolution = p.evaluate('window.showpsisi.getUiState().protocol_source.resolution')
+                    self.assertEqual(detail['id'], ref['section_id'])
+                    self.assertEqual(detail['analysis_revision'], ref['analysis_revision'])
+                    self.assertEqual(detail['native_table_at_packet'], ref['at_packet'])
+                    self.assertEqual(resolution['status'], 'resolved')
+                    self.assertEqual(resolution['precision'], ref['locator']['precision'])
+                    self.assertEqual(resolution['byte_range'], ref['locator']['byte_range'])
+                    p.locator('[data-view="hex"]').click()
+                    self.assertEqual(p.locator('.source-byte').count(), ref['locator']['byte_range']['length'])
+                    p.locator('#protocol-back').click()
+                    p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+                    restored = p.evaluate('window.showpsisi.getDetail()')
+                    self.assertEqual(restored['id'], origin['id'])
+                    self.assertEqual(restored['native_table_at_packet'], origin['native_table_at_packet'])
+                    self.assertEqual(p.evaluate('document.activeElement.id'), button_id)
+                    restored_state = p.evaluate('window.showpsisi.getUiState()')
+                    for key in ('selected', 'packet', 'table_filter', 'records', 'history', 'evidence_scope'):
+                        self.assertEqual(restored_state[key], origin_state[key], key)
+                    self.assertEqual(p.locator('#search').input_value(), 'AIT')
+                    self.assertEqual(p.locator('#table-family').input_value(), 'AIT')
+                    self.assertEqual(p.locator('#page-label').inner_text(), origin_page)
+                    self.assertEqual(p.locator('.history-point').all_text_contents(), origin_history)
+                    self.assertEqual(p.locator('.selection-hidden').count(), 0)
+                    self.assertEqual(p.locator('#list [data-key="'+origin['id']+'"]').get_attribute('aria-selected'), 'true')
+                card.locator('article > strong').scroll_into_view_if_needed()
+                p.screenshot(path=str(self.artifacts/('carriage-compact-'+theme+'.png')), full_page=True)
+        self.assertEqual(path.read_bytes(), original)
 
     def test_topology_objects_all_sources_six_views_and_back(self):
         source=self.topology_source()
@@ -1609,6 +2008,55 @@ class BrowserTests(unittest.TestCase):
                     self.assertIn('generic_descriptor',self.page.locator('#tree-area').inner_text())
                     self.page.screenshot(path=str(self.artifacts/'tsduck345-dsmcc-guarded-inspector.png'),full_page=True)
 
+    def test_titlebar_controls_fit_and_input_label_remains_readable(self):
+        self.analyze()
+        p=self.page
+        # DejaVu Sans reproduces the 527px title bar from Linux CI at a
+        # 520px viewport. The default font can hide the selector label while
+        # still passing a page-overflow check, so verify intrinsic width too.
+        for font in ('system-ui','DejaVu Sans, sans-serif'):
+            p.locator('.titlebar').evaluate('(element,font)=>element.style.fontFamily=font',font)
+            for theme in ('dark','light'):
+                if p.locator('html').get_attribute('data-theme')!=theme:
+                    p.locator('#theme-toggle').click()
+                for kind in ('ts','dvbi'):
+                    p.locator('#input-kind').select_option(kind)
+                    self.assertEqual(p.locator('#app').get_attribute('data-input-kind'),kind)
+                    for width in (520,521,760,761,900,1100,1440):
+                        with self.subTest(font=font,theme=theme,kind=kind,width=width):
+                            p.set_viewport_size({'width':width,'height':1000})
+                            self.assertLessEqual(p.evaluate('document.documentElement.scrollWidth'),width)
+                            geometry=p.locator('.titlebar').evaluate('''header=>{
+                              const bounds=header.getBoundingClientRect();
+                              const controls=[...header.querySelectorAll('button,select')]
+                                .filter(e=>e.getClientRects().length).map(e=>{
+                                  const r=e.getBoundingClientRect();
+                                  return {id:e.id,left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+                                    reachable:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};
+                                });
+                              const select=header.querySelector('#input-kind'),natural=select.cloneNode(true);
+                              natural.removeAttribute('id');
+                              natural.style.cssText='position:fixed;visibility:hidden;width:max-content;max-width:none';
+                              natural.style.font=getComputedStyle(select).font;
+                              document.body.append(natural);
+                              const naturalWidth=natural.getBoundingClientRect().width;natural.remove();
+                              return {bounds:bounds.toJSON(),controls,naturalWidth,
+                                selectWidth:select.getBoundingClientRect().width};
+                            }''')
+                            self.assertGreaterEqual(geometry['selectWidth'],geometry['naturalWidth']-1,geometry)
+                            for control in geometry['controls']:
+                                self.assertGreaterEqual(control['left'],0,control)
+                                self.assertLessEqual(control['right'],width,control)
+                                self.assertGreaterEqual(control['top'],geometry['bounds']['top'],control)
+                                self.assertLessEqual(control['bottom'],geometry['bounds']['bottom'],control)
+                                self.assertTrue(control['reachable'],control)
+                            if width==520:
+                                p.screenshot(path=str(self.artifacts/f'titlebar-{kind}-{theme}-{font.split(",")[0]}.png'),full_page=True)
+        p.locator('#input-kind').select_option('ts')
+        p.set_viewport_size({'width':520,'height':1000})
+        p.locator('#reset-layout').click()
+        self.assertIsNone(p.evaluate('localStorage.getItem("showpsisi.workbench.layout.v1")'))
+
     def test_references_and_responsive_tree(self):
         self.page.locator('#standards').select_option('dvb')
         self.analyze()
@@ -1727,7 +2175,7 @@ class BrowserTests(unittest.TestCase):
             self.page.wait_for_timeout(50)
             self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),width+1)
             if width>760:
-                self.assertGreaterEqual(self.page.locator('.center').bounding_box()['width'],220)
+                self.assertGreaterEqual(self.page.locator('#panes .center').bounding_box()['width'],220)
                 self.assertGreaterEqual(self.page.locator('#inspector').bounding_box()['width'],300)
         self.page.set_viewport_size({'width':1440,'height':1000})
         self.page.wait_for_function('() => document.querySelector("#split-right").getAttribute("aria-valuenow") === "600"')

@@ -29,6 +29,13 @@ def write_json(path, value):
     path.write_text(json.dumps(value), encoding='utf-8')
 
 
+def runtime_signature_fixture(metadata):
+    """Synthetic native report for inert unit bytes, never a signature claim."""
+    return [{'name': name, 'sha256': identity['sha256'], 'signature_status': 'Valid',
+             'signer_subject': 'CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US',
+             'signer_thumbprint': 'ABCDEF0123' * 4} for name, identity in metadata['files'].items()]
+
+
 class TemporaryTest(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -474,7 +481,272 @@ class PrerequisiteTimestampTests(unittest.TestCase):
             self.assertNotEqual(release.canonical_prerequisite(first), release.canonical_prerequisite(changed))
 
 
+class AppLocalRuntimeTests(TemporaryTest):
+    """Synthetic bytes exercise the verifier, never clear the real license gate."""
+    def setUp(self):
+        super().setUp()
+        self.package = self.work / 'package'
+        self.package.mkdir()
+        self.pin = copy.deepcopy(release.vc_runtime.pin())
+        self.metadata = copy.deepcopy(self.pin['package_metadata'])
+        for name, identity in self.metadata['files'].items():
+            path = self.package / 'bin' / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(b'unit fixture, not executable: ' + name.encode('ascii'))
+            identity.update(sha256=release.sha256(path), bytes=path.stat().st_size)
+        self.pin['package_metadata'] = copy.deepcopy(self.metadata)
+        patch = mock.patch.object(release.vc_runtime, 'pin', return_value=self.pin)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.build = {'crt_mode': 'AppLocal', 'crt_minimum_version': release.installer.MINIMUM_RUNTIME,
+                      'crt_provenance': copy.deepcopy(self.metadata)}
+        self.record = {'crt_mode': 'AppLocal', 'crt_provenance': copy.deepcopy(self.metadata)}
+        self.prerequisite = dict(self.metadata['source'], schema_version=1,
+                                minimum_version=release.installer.MINIMUM_RUNTIME,
+                                signature_status='Valid',
+                                signer_subject='CN=Microsoft Corporation, O=Microsoft Corporation, C=US')
+        self.metadata_path = self.package / 'bin/showpsisi-vc-runtime.json'
+        write_json(self.metadata_path, self.metadata)
+        self.signatures = runtime_signature_fixture(self.metadata)
+        self.signatures_path = self.work / 'runtime-signatures.json'
+        write_json(self.signatures_path, self.signatures)
+
+    def verify(self):
+        release.installer.verify_prerequisite(self.prerequisite)
+        release.check_installer_runtime(self.package, self.build, self.record, self.prerequisite)
+        release.check_applocal_signatures(self.package, self.signatures_path)
+
+    def verify_signatures(self):
+        release.check_applocal_signatures(self.package, self.signatures_path)
+
+    def test_signature_record_order_and_thumbprint_case_are_not_identity(self):
+        self.signatures.reverse()
+        self.signatures[0]['signer_thumbprint'] = self.signatures[0]['signer_thumbprint'].lower()
+        write_json(self.signatures_path, self.signatures)
+        self.verify()
+
+    def test_signature_report_must_be_an_exact_five_record_array(self):
+        for value in (None, {}, True, self.signatures[0], [], self.signatures[:-1],
+                      self.signatures + [dict(self.signatures[0])], self.signatures[:-1] + [None]):
+            write_json(self.signatures_path, value)
+            with self.subTest(value=value), self.assertRaisesRegex(release.ReleaseError, 'signature records'):
+                self.verify_signatures()
+
+    def test_signature_record_fields_and_types_are_exact(self):
+        original = copy.deepcopy(self.signatures)
+        for key in original[0]:
+            for value in (None, True, 1, {}, []):
+                records = copy.deepcopy(original)
+                records[0][key] = value
+                write_json(self.signatures_path, records)
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(release.ReleaseError, 'signature records'):
+                    self.verify_signatures()
+            records = copy.deepcopy(original)
+            records[0].pop(key)
+            write_json(self.signatures_path, records)
+            with self.subTest(missing=key), self.assertRaisesRegex(release.ReleaseError, 'signature records'):
+                self.verify_signatures()
+        records = copy.deepcopy(original)
+        records[0]['unreviewed'] = 'extra'
+        write_json(self.signatures_path, records)
+        with self.assertRaisesRegex(release.ReleaseError, 'signature records'):
+            self.verify_signatures()
+
+    def test_signature_names_cannot_be_duplicate_aliases_or_unpinned(self):
+        for name in (self.signatures[1]['name'], self.signatures[0]['name'].upper(),
+                     '../' + self.signatures[0]['name'], 'unreviewed.dll'):
+            records = copy.deepcopy(self.signatures)
+            records[0]['name'] = name
+            write_json(self.signatures_path, records)
+            with self.subTest(name=name), self.assertRaisesRegex(release.ReleaseError, 'five unique pinned DLLs'):
+                self.verify_signatures()
+
+    def test_signature_hash_must_match_the_pin_and_actual_packaged_dll(self):
+        self.signatures[0]['sha256'] = 'f' * 64
+        write_json(self.signatures_path, self.signatures)
+        with self.assertRaisesRegex(release.ReleaseError, 'signature hash'):
+            self.verify_signatures()
+        write_json(self.signatures_path, runtime_signature_fixture(self.metadata))
+        (self.package / 'bin' / self.signatures[0]['name']).write_bytes(b'changed packaged DLL')
+        with self.assertRaisesRegex(release.ReleaseError, 'signature hash'):
+            self.verify_signatures()
+
+    def test_signature_status_and_organization_must_be_valid_microsoft(self):
+        for status in ('UnknownError', 'NotSigned', 'HashMismatch', 'NotTrusted', 'valid', ''):
+            records = copy.deepcopy(self.signatures)
+            records[0]['signature_status'] = status
+            write_json(self.signatures_path, records)
+            with self.subTest(status=status), self.assertRaisesRegex(release.ReleaseError, 'valid Microsoft evidence'):
+                self.verify_signatures()
+        for subject in ('CN=Microsoft Corporation', 'CN=Microsoft Corporation, O=Other Corporation',
+                        'O=Microsoft Corporation Attacker', 'CN=O=Microsoft Corporation, O=Other Corporation',
+                        'O=Other Corporation, O=Microsoft Corporation',
+                        'CN="Attacker, O=Microsoft Corporation, C=US", O=Other Corporation',
+                        r'CN=Attacker\, O=Microsoft Corporation, C=US',
+                        'CN=Microsoft Corporation,\nO=Microsoft Corporation', ''):
+            records = copy.deepcopy(self.signatures)
+            records[0]['signer_subject'] = subject
+            write_json(self.signatures_path, records)
+            with self.subTest(subject=subject), self.assertRaisesRegex(release.ReleaseError, 'valid Microsoft evidence'):
+                self.verify_signatures()
+
+    def test_signature_thumbprint_requires_exact_certificate_hash_shape(self):
+        for thumbprint in ('', 'a' * 39, 'a' * 41, 'a' * 64, 'g' * 40,
+                           ('a' * 40) + '\n', ' ' + ('a' * 40), ':'.join(['aa'] * 20)):
+            records = copy.deepcopy(self.signatures)
+            records[0]['signer_thumbprint'] = thumbprint
+            write_json(self.signatures_path, records)
+            with self.subTest(thumbprint=thumbprint), self.assertRaisesRegex(release.ReleaseError, 'valid Microsoft evidence'):
+                self.verify_signatures()
+
+    def test_signature_report_duplicate_json_keys_are_rejected(self):
+        raw = json.dumps(self.signatures).replace('"signature_status": "Valid"',
+            '"signature_status": "NotSigned", "signature_status": "Valid"', 1)
+        self.signatures_path.write_text(raw)
+        with self.assertRaisesRegex(release.ReleaseError, 'Duplicate JSON'):
+            self.verify_signatures()
+
+    def test_exact_applocal_runtime_preserves_original_source_proof_without_execution(self):
+        with mock.patch.object(release.subprocess, 'run', side_effect=AssertionError('Artifacts must not execute')):
+            self.verify()
+
+    def test_applocal_cannot_use_historical_missing_mode_default(self):
+        self.record.pop('crt_mode')
+        with self.assertRaisesRegex(release.ReleaseError, 'provenance differs'):
+            self.verify()
+
+    def test_missing_or_changed_complete_installer_provenance_is_rejected(self):
+        for value in (None, {}, dict(self.metadata, unexpected='unreviewed')):
+            self.record['crt_provenance'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(release.ReleaseError, 'provenance differs'):
+                self.verify()
+
+    def test_changed_source_url_hash_size_or_version_is_rejected(self):
+        original = copy.deepcopy(self.prerequisite)
+        for key, value in (('url', 'https://download.microsoft.com/other/vc_redist.x64.exe'),
+                           ('sha256', 'c' * 64), ('bytes', self.metadata['source']['bytes'] + 1),
+                           ('version', '14.51.36248.0'), ('official_source', 'https://evil.example/redist.exe')):
+            self.prerequisite = dict(original, **{key: value})
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                self.verify()
+
+    def test_source_byte_count_and_authenticode_cannot_be_dropped(self):
+        original = copy.deepcopy(self.prerequisite)
+        for key in ('bytes', 'signature_status', 'signer_subject'):
+            self.prerequisite = dict(original)
+            self.prerequisite.pop(key)
+            with self.subTest(key=key), self.assertRaises(RuntimeError):
+                self.verify()
+
+    def test_source_byte_count_type_is_exact(self):
+        self.prerequisite['bytes'] = float(self.prerequisite['bytes'])
+        with self.assertRaisesRegex(release.ReleaseError, 'source differs'):
+            self.verify()
+
+    def test_matching_but_unpinned_provenance_is_rejected(self):
+        self.metadata['files']['msvcp140_2.dll']['version'] = '14.51.36248.0'
+        self.build['crt_provenance'] = copy.deepcopy(self.metadata)
+        self.record['crt_provenance'] = copy.deepcopy(self.metadata)
+        write_json(self.metadata_path, self.metadata)
+        with self.assertRaisesRegex(RuntimeError, 'reviewed pin'):
+            self.verify()
+
+    def test_metadata_types_cannot_change_in_installer_record(self):
+        for value in (True, 1.0):
+            self.record['crt_provenance']['schema_version'] = value
+            with self.subTest(value=value), self.assertRaisesRegex(release.ReleaseError, 'provenance differs'):
+                self.verify()
+
+    def test_changed_or_missing_fifth_dll_is_rejected(self):
+        path = self.package / 'bin/msvcp140_2.dll'
+        path.write_bytes(b'changed')
+        with self.assertRaisesRegex(RuntimeError, 'runtime bytes'):
+            self.verify()
+        path.unlink()
+        with self.assertRaisesRegex(RuntimeError, 'runtime bytes'):
+            self.verify()
+
+    def test_duplicate_runtime_control_metadata_is_rejected(self):
+        self.metadata_path.write_bytes(b'{"schema_version":1,"schema_version":1}')
+        with self.assertRaisesRegex(release.ReleaseError, 'Duplicate JSON'):
+            self.verify()
+
+    def test_prerequisite_cannot_smuggle_applocal_provenance(self):
+        self.build['crt_mode'] = 'Prerequisite'
+        self.record['crt_mode'] = 'Prerequisite'
+        with self.assertRaisesRegex(release.ReleaseError, 'mode/provenance mismatch'):
+            self.verify()
+
+
 class PayloadTests(TemporaryTest):
+    def configure_package(self, fixture):
+        import corresponding_source
+        self.source = corresponding_source
+        shutil.copytree(ROOT / 'scripts/portable-licenses/licenses', fixture.package / 'licenses', dirs_exist_ok=True)
+        pins = copy.deepcopy(self.source.QT_ARCHIVES)
+        for pin in pins:
+            path = fixture.package / 'sources' / pin['filename']
+            path.parent.mkdir(exist_ok=True)
+            path.write_bytes(b'unit fixture original Qt archive: ' + pin['module'].encode('ascii'))
+            pin.update(sha256=release.sha256(path), bytes=path.stat().st_size)
+        patch = mock.patch.object(self.source, 'QT_ARCHIVES', pins)
+        patch.start()
+        self.addCleanup(patch.stop)
+        records = [dict(pin, url='https://download.qt.io/archive/qt/6.7/6.7.3/submodules/' + pin['filename'],
+                        publisher_checksum_verified=True) for pin in pins]
+        index_path = fixture.package / 'source-index.json'
+        index = release.read_json(index_path)
+        index.pop('corresponding_source', None)
+        index['qt_source_archives'] = copy.deepcopy(records)
+        write_json(index_path, index)
+        attribution_path = fixture.package / 'licenses/qt/source-attributions.json'
+        attribution = release.read_json(attribution_path)
+        attribution['archives'] = copy.deepcopy(records)
+        write_json(attribution_path, attribution)
+        qtcore = fixture.package / 'bin/Qt6Core.dll'
+        qtcore.write_bytes(b'unit fixture, not executable QtCore')
+        config = {
+            'mkspecs/qconfig.pri': 'QT_VERSION = 6.7.3\n',
+            'mkspecs/qmodule.pri': 'QT.global_private.enabled_features = relocatable\n',
+            'include/QtCore/qconfig.h': '#define QT_FEATURE_shared 1\n#define QT_FEATURE_static -1\n#define QT_VERSION_STR "6.7.3"\n'}
+        build_path = fixture.package / 'build-information.json'
+        build = release.read_json(build_path)
+        build.update(qt_version='6.7.3', qt_source_archives=records,
+                     qt_build_configuration={name: {'content': text, 'sha256': hashlib.sha256(text.encode()).hexdigest()}
+                                             for name, text in config.items()},
+                     qt_core_relocation={'installed_kit_sha256': release.sha256(qtcore),
+                                         'deployed_sha256': release.sha256(qtcore)})
+        write_json(build_path, build)
+
+    def configure_validation(self, validation):
+        pass
+
+    def configure_preflight(self, preflight):
+        pass
+
+    def configure_smoke(self, smoke):
+        pass
+
+    def finalize_artifacts(self):
+        pass
+
+    def prepare_source_artifact(self):
+        return None
+
+    def bind_checksums(self):
+        zipped = self.zip_dir / release.PORTABLE
+        paths = [self.setup_dir / release.SETUP, zipped]
+        directories = [self.setup_dir, self.zip_dir]
+        source_dir = self.work / release.SOURCE_ARTIFACT
+        if source_dir.is_dir():
+            paths.append(source_dir / release.CORRESPONDING_SOURCE)
+            directories.append(source_dir)
+        sums = ''.join(f'{release.sha256(path)}  {path.name}\n' for path in paths)
+        for directory in directories:
+            (directory / 'SHA256SUMS').write_text(sums)
+        for path in paths[1:]:
+            path.with_suffix(path.suffix + '.sha256').write_text(f'{release.sha256(path)}  {path.name}\n')
+
     def setUp(self):
         super().setUp()
         import test_installer_package
@@ -491,40 +763,47 @@ class PayloadTests(TemporaryTest):
         build['application_version'] = release.VERSION
         write_json(build_path, build)
         for path in package.rglob('*.json'):
-            if path.name not in ('build-information.json', 'redistribution-review.json', 'manifest.json'):
+            if path.name not in ('build-information.json', 'redistribution-review.json', 'manifest.json', 'source-index.json', 'SOURCE-PROVENANCE.json'):
                 write_json(path, {})
         write_json(package / 'bin/showpsisi-portable.json', {'schema_version': 1, 'scope': 'qt-core', 'resource_root': '..'})
         opaque = package / 'licenses/qt/upstream-attribution.json'
         opaque.parent.mkdir(parents=True)
         opaque.write_bytes(b'{"upstream":"retained","upstream":"verbatim control \x01"}')
+        self.configure_package(fixture)
         fixture.fixture.approve_fixture()
+        validation = json.loads((fixture.evidence / 'portable-validation.json').read_text())
+        validation.update(native_windows_desktop_verified=False)
+        validation['runtime_requirement']['required_minimum'] = release.installer.MINIMUM_RUNTIME
+        self.configure_validation(validation)
+        write_json(fixture.evidence / 'portable-validation.json', validation)
         self.setup_dir, self.zip_dir, self.ie, self.pe = [self.work / name for name in release.ARTIFACTS]
         for path in (self.setup_dir, self.zip_dir, self.ie, self.pe):
             path.mkdir()
         setup = self.setup_dir / release.SETUP
         setup.write_bytes(b'MZ unit fixture, never executable')
+        source_archive = self.prepare_source_artifact()
         record = release.installer.prepare(package, fixture.evidence, fixture.prerequisite, release.VERSION,
-                                           fixture.root / 'generated', fixture.root / 'output', SOURCE)
+                                           fixture.root / 'generated', fixture.root / 'output', SOURCE,
+                                           source_archive=source_archive)
         record.update(installer_sha256=release.sha256(setup), installer_bytes=setup.stat().st_size)
         write_json(self.setup_dir / 'installer-build.json', record)
         write_json(self.ie / 'artifacts/installer-candidate/installer-build.json', record)
         write_json(self.ie / '.deps/installer-prerequisite/vc-runtime.json', fixture.runtime)
-        validation = json.loads((fixture.evidence / 'portable-validation.json').read_text())
-        validation.update(native_windows_desktop_verified=False)
-        validation['runtime_requirement']['required_minimum'] = release.installer.MINIMUM_RUNTIME
-        write_json(fixture.evidence / 'portable-validation.json', validation)
-        release.portable.archive(package, fixture.evidence, self.zip_dir / release.PORTABLE)
-        sums = ''.join(f'{release.sha256(path)}  {path.name}\n' for path in (setup, self.zip_dir / release.PORTABLE))
-        (self.setup_dir / 'SHA256SUMS').write_text(sums)
-        (self.zip_dir / 'SHA256SUMS').write_text(sums)
+        release.portable.archive(package, fixture.evidence, self.zip_dir / release.PORTABLE, source_archive=source_archive)
+        self.bind_checksums()
         write_json(self.pe / 'portable-validation/portable-validation.json', validation)
+        if source_archive is not None:
+            shutil.copyfile(fixture.evidence / 'corresponding-source-validation.json',
+                            self.pe / 'portable-validation/corresponding-source-validation.json')
         (self.pe / 'portable-stage').mkdir()
         for name in ('manifest.json', 'build-information.json'):
             shutil.copyfile(package / name, self.pe / 'portable-stage' / name)
-        write_json(self.pe / 'portable-launcher-probe/preflight.json', {'passed': True,
+        preflight = {'passed': True,
                    'launcher_sha256': release.sha256(package / 'Launch Qt.cmd'), 'cases': [
                        {'name': name, 'exit_code': code} for name, code in
-                       [('host-runtime-ready', 0), ('missing-runtime-blocked', 1), ('old-runtime-blocked', 1)]]})
+                       [('host-runtime-ready', 0), ('missing-runtime-blocked', 1), ('old-runtime-blocked', 1)]]}
+        self.configure_preflight(preflight)
+        write_json(self.pe / 'portable-launcher-probe/preflight.json', preflight)
         self.smoke = {'passed': True, 'installer_sha256': release.sha256(setup),
                       'package_manifest_sha256': release.sha256(package / 'manifest.json'),
                       'clean_machine_verified': False, 'native_dialogs_verified': False, 'runtime_bootstrap_exercised': False,
@@ -533,8 +812,10 @@ class PayloadTests(TemporaryTest):
                       'steps': [{'name': name, 'exit_code': code} for name, code in [
                           ('reject-uninstalled-update', 7), ('install-previous', 0), ('reject-live-app-update', 1),
                           ('reject-live-app-uninstall', 1), ('upgrade', 0), ('reinstall', 0), ('reject-downgrade', 7), ('uninstall', 0)]]}
+        self.configure_smoke(self.smoke)
         self.smoke_path = self.ie / 'artifacts/installer-validation/installer-smoke.json'
         write_json(self.smoke_path, self.smoke)
+        self.finalize_artifacts()
 
     def validate(self):
         return release.validate_payload(self.work, REQUEST)
@@ -542,9 +823,12 @@ class PayloadTests(TemporaryTest):
     def test_full_same_source_payload_is_accepted_without_execution(self):
         with mock.patch.object(release.subprocess, 'run', side_effect=AssertionError('Artifacts must not execute')):
             files, manifest, runtime = self.validate()
-        self.assertEqual(set(files), {release.SETUP, release.PORTABLE, 'SHA256SUMS'})
+        expected = {release.SETUP, release.PORTABLE, 'SHA256SUMS'}
+        if (self.work / release.SOURCE_ARTIFACT).exists():
+            expected.add(release.CORRESPONDING_SOURCE)
+        self.assertEqual(set(files), expected)
         self.assertEqual(manifest, self.smoke['package_manifest_sha256'])
-        self.assertEqual(runtime, 'b' * 64)
+        self.assertEqual(runtime, self.fixture.runtime['sha256'])
 
     def test_reviewed_upstream_json_is_opaque_but_hash_bound(self):
         with zipfile.ZipFile(self.zip_dir / release.PORTABLE) as archive:
@@ -601,12 +885,8 @@ class PayloadTests(TemporaryTest):
                 if name.endswith('/bin/showpsisi-core.exe'):
                     data += b'changed bytes'
                 archive.writestr(name, data)
-        setup = self.setup_dir / release.SETUP
-        sums = ''.join(f'{release.sha256(path)}  {path.name}\n' for path in (setup, zipped))
-        for path in (self.setup_dir / 'SHA256SUMS', self.zip_dir / 'SHA256SUMS'):
-            path.write_text(sums)
-        (self.zip_dir / (release.PORTABLE + '.sha256')).write_text(f'{release.sha256(zipped)}  {release.PORTABLE}\n')
-        with self.assertRaisesRegex(RuntimeError, 'changed after manifest'):
+        self.bind_checksums()
+        with self.assertRaisesRegex(RuntimeError, 'changed after manifest|Binary package manifest/build mismatch'):
             self.validate()
 
     def test_installer_smoke_false_or_hash_mismatch_rejected(self):
@@ -635,7 +915,7 @@ class PayloadTests(TemporaryTest):
     def test_preflight_failure_rejected(self):
         path = self.pe / 'portable-launcher-probe/preflight.json'
         value = json.loads(path.read_text())
-        value['cases'][1]['exit_code'] = 0
+        next(case for case in value['cases'] if case['name'] == 'missing-runtime-blocked')['exit_code'] = 0
         write_json(path, value)
         with self.assertRaisesRegex(release.ReleaseError, 'launcher'):
             self.validate()
@@ -648,6 +928,355 @@ class PayloadTests(TemporaryTest):
         for raw in ((('a' * 64 + '  a.exe\n') * 2).encode(), ('a' * 64 + '  extra.exe\n').encode()):
             with self.assertRaises(release.ReleaseError):
                 release.exact_checksums(raw, {'a.exe': 'a' * 64, 'b.zip': 'b' * 64})
+
+
+class AppLocalPayloadTests(PayloadTests):
+    """Run the complete historical publisher attacks through AppLocal too.
+
+    Only fake byte identities and PE readers are substituted. All inventory,
+    provenance, capture, licensing and publisher acceptance gates run normally.
+    These synthetic reports are unit fixtures, never Windows execution evidence.
+    """
+    def configure_package(self, fixture):
+        super().configure_package(fixture)
+        import windows_runtime_modules
+        self.modules = windows_runtime_modules
+        self.metadata = copy.deepcopy(release.vc_runtime.pin()['package_metadata'])
+        for name, identity in self.metadata['files'].items():
+            path = fixture.package / 'bin' / name
+            path.write_bytes(b'unit fixture, not executable: ' + name.encode('ascii'))
+            identity.update(sha256=release.sha256(path), bytes=path.stat().st_size)
+        pin = copy.deepcopy(release.vc_runtime.pin())
+        pin['package_metadata'] = copy.deepcopy(self.metadata)
+        for patch in (mock.patch.object(release.vc_runtime, 'pin', return_value=pin),
+                      mock.patch.object(self.modules, 'pe_identity', return_value={
+                          'machine': 'AMD64', 'version': self.metadata['version']}),
+                      mock.patch.object(self.modules, 'required_crt_modules', return_value=sorted(self.metadata['files']))):
+            patch.start()
+            self.addCleanup(patch.stop)
+        write_json(fixture.package / 'bin/showpsisi-vc-runtime.json', self.metadata)
+        build = release.read_json(fixture.package / 'build-information.json')
+        build.update(crt_mode='AppLocal', crt_provenance=copy.deepcopy(self.metadata))
+        write_json(fixture.package / 'build-information.json', build)
+        fixture.runtime.update(self.metadata['source'])
+        write_json(fixture.prerequisite, fixture.runtime)
+        write_json(fixture.package / release.vc_runtime.REVIEW_NAME, {
+            'schema_version': 1, 'review_complete': True,
+            'license_basis': {'applicable_terms_url': 'https://example.invalid/unit-fixture-terms',
+                              'distribution_basis': 'Unit fixture only; never a real redistribution approval'},
+            'source_sha256': self.metadata['source']['sha256'], 'runtime_version': self.metadata['version'],
+            'files': copy.deepcopy(self.metadata['files'])})
+
+    def capture(self, executable, root=r'C:\Unit fixture\Relocated app 空间'):
+        paths = [root + '\\bin\\' + name for name in [executable, *sorted(self.metadata['files'])]]
+        identities = {name: dict(identity, path=root + '\\bin\\' + name)
+                      for name, identity in self.metadata['files'].items()}
+        path_identities = {}
+        for path in paths:
+            local = self.fixture.package / 'bin' / path.rsplit('\\', 1)[1]
+            path_identities[path] = {'raw_path': path, 'resolved_path': path,
+                                     'file_id': {'device': 7, 'inode': local.stat().st_ino},
+                                     'bytes': local.stat().st_size, 'sha256': release.sha256(local)}
+        return {'schema_version': 2, 'passed': True, 'pid': 123, 'platform': 'Windows',
+                'package_root': root, 'executable': paths[0], 'executable_name': executable,
+                'executable_sha256': release.sha256(self.fixture.package / 'bin' / executable),
+                'sampled_at_utc': '2026-10-19T09:00:00+00:00', 'process_created_unix': 100,
+                'command_line': [paths[0]], 'path_identities': path_identities,
+                'module_paths': paths, 'raw_modules': [{'path': path} for path in paths],
+                'runtime': {'passed': True, 'mode': 'AppLocal',
+                            'required_modules': sorted(self.metadata['files']), 'modules': identities}}
+
+    def configure_validation(self, validation):
+        validation.update(crt_mode='AppLocal', runtime_requirement=self.modules.inspect_runtime(self.fixture.package))
+        validation['core'] = {'runtime_modules': self.capture('showpsisi-core.exe')}
+        validation['qt_offscreen'] = {'runtime_modules': self.capture('showpsisi-qt.exe')}
+        for stage in ('launcher_startup', 'direct_exe_startup'):
+            validation[stage] = {'process_runtime': {name: self.capture(name)
+                                for name in ('showpsisi-core.exe', 'showpsisi-qt.exe')}}
+
+    def configure_preflight(self, preflight):
+        preflight.update(schema_version=1, mode='AppLocal', clean_machine_verified=False,
+                         package_manifest_sha256=release.sha256(self.fixture.package / 'manifest.json'))
+        preflight['cases'] = [{'name': name, 'exit_code': code, 'fixture_root_binding': fixture,
+                               'stdout': '', 'stdout_hex': '', 'stderr': diagnostic,
+                               'stderr_hex': diagnostic.encode().hex()}
+                              for name, (code, diagnostic, fixture) in release.portable_launcher_checks.REQUIRED_CASES.items()]
+
+    def configure_smoke(self, smoke):
+        root = r'C:\Unit fixture\Installed app 空间'
+        smoke.update(crt_mode='AppLocal', installed_core={'runtime_modules': self.capture('showpsisi-core.exe', root)},
+                     installed_qt_startup={'process_runtime': {name: self.capture(name, root)
+                        for name in ('showpsisi-core.exe', 'showpsisi-qt.exe')}})
+
+    def finalize_artifacts(self):
+        super().finalize_artifacts()
+        self.signatures_path = self.ie / '.deps/app-local-runtime-work/runtime-signatures.json'
+        write_json(self.signatures_path, runtime_signature_fixture(self.metadata))
+
+    def test_native_dll_signature_evidence_cannot_be_omitted(self):
+        self.signatures_path.unlink()
+        with self.assertRaisesRegex(release.ReleaseError, 'signature evidence is missing'):
+            self.validate()
+
+    def test_native_dll_signature_evidence_cannot_reference_other_bytes(self):
+        records = release.read_json(self.signatures_path)
+        records[0]['sha256'] = 'f' * 64
+        write_json(self.signatures_path, records)
+        with self.assertRaisesRegex(release.ReleaseError, 'signature hash'):
+            self.validate()
+
+    def test_native_dll_signature_evidence_cannot_duplicate_a_record(self):
+        records = release.read_json(self.signatures_path)
+        records[-1] = dict(records[0])
+        write_json(self.signatures_path, records)
+        with self.assertRaisesRegex(release.ReleaseError, 'five unique pinned DLLs'):
+            self.validate()
+
+    def test_native_dll_signature_evidence_cannot_add_a_sixth_dll(self):
+        records = release.read_json(self.signatures_path)
+        records.append(dict(records[0], name='unreviewed.dll'))
+        write_json(self.signatures_path, records)
+        with self.assertRaisesRegex(release.ReleaseError, 'signature records'):
+            self.validate()
+
+    def test_native_dll_signature_evidence_requires_valid_microsoft_signatures(self):
+        records = release.read_json(self.signatures_path)
+        records[-1]['signature_status'] = 'NotSigned'
+        write_json(self.signatures_path, records)
+        with self.assertRaisesRegex(release.ReleaseError, 'valid Microsoft evidence'):
+            self.validate()
+
+    def test_valid_dll_signatures_do_not_replace_original_exe_signature_proof(self):
+        record = release.read_json(self.setup_dir / 'installer-build.json')
+        record['prerequisite']['signature_status'] = 'NotSigned'
+        for path in (self.setup_dir / 'installer-build.json', self.ie / 'artifacts/installer-candidate/installer-build.json'):
+            write_json(path, record)
+        write_json(self.ie / '.deps/installer-prerequisite/vc-runtime.json', record['prerequisite'])
+        with self.assertRaisesRegex(RuntimeError, 'signature'):
+            self.validate()
+
+    def change_validation(self, change):
+        path = self.pe / 'portable-validation/portable-validation.json'
+        value = release.read_json(path)
+        change(value)
+        write_json(path, value)
+
+    def rebind_unit_payload(self):
+        """Refresh all outer identities to test the inner gate, never real assets."""
+        package = self.fixture.package
+        self.fixture.fixture.approve_fixture()
+        manifest_hash = release.sha256(package / 'manifest.json')
+        validation = release.read_json(self.pe / 'portable-validation/portable-validation.json')
+        validation['package_manifest_sha256'] = manifest_hash
+        write_json(self.pe / 'portable-validation/portable-validation.json', validation)
+        for name in ('manifest.json', 'build-information.json'):
+            shutil.copyfile(package / name, self.pe / 'portable-stage' / name)
+        record = release.read_json(self.setup_dir / 'installer-build.json')
+        record['package_manifest_sha256'] = manifest_hash
+        for path in (self.setup_dir / 'installer-build.json', self.ie / 'artifacts/installer-candidate/installer-build.json'):
+            write_json(path, record)
+        self.smoke['package_manifest_sha256'] = manifest_hash
+        write_json(self.smoke_path, self.smoke)
+        preflight_path = self.pe / 'portable-launcher-probe/preflight.json'
+        preflight = release.read_json(preflight_path)
+        preflight['package_manifest_sha256'] = manifest_hash
+        write_json(preflight_path, preflight)
+        zipped = self.zip_dir / release.PORTABLE
+        with zipfile.ZipFile(zipped, 'w') as archive:
+            for path in sorted(package.rglob('*')):
+                if path.is_file():
+                    archive.write(path, 'ShowPsiSi-windows-x64/' + path.relative_to(package).as_posix())
+        self.bind_checksums()
+
+    def test_incomplete_microsoft_review_cannot_pass_with_refreshed_inventory(self):
+        path = self.fixture.package / release.vc_runtime.REVIEW_NAME
+        value = release.read_json(path)
+        value['review_complete'] = False
+        write_json(path, value)
+        self.rebind_unit_payload()
+        with self.assertRaisesRegex(RuntimeError, 'redistribution.*review is incomplete'):
+            self.validate()
+
+    def test_missing_microsoft_license_basis_cannot_pass_with_refreshed_inventory(self):
+        path = self.fixture.package / release.vc_runtime.REVIEW_NAME
+        value = release.read_json(path)
+        value['license_basis'] = None
+        write_json(path, value)
+        self.rebind_unit_payload()
+        with self.assertRaisesRegex(RuntimeError, 'redistribution.*review is incomplete'):
+            self.validate()
+
+    def test_installer_cannot_omit_applocal_provenance(self):
+        record = release.read_json(self.setup_dir / 'installer-build.json')
+        record.pop('crt_provenance')
+        for path in (self.setup_dir / 'installer-build.json', self.ie / 'artifacts/installer-candidate/installer-build.json'):
+            write_json(path, record)
+        with self.assertRaisesRegex(release.ReleaseError, 'provenance differs from the package'):
+            self.validate()
+
+    def test_system_runtime_fallback_is_rejected_even_with_matching_hashes(self):
+        def change(value):
+            report = value['launcher_startup']['process_runtime']['showpsisi-qt.exe']
+            old = report['runtime']['modules']['msvcp140.dll']['path']
+            wrong = r'C:\Windows\System32\msvcp140.dll'
+            report['module_paths'] = [wrong if path == old else path for path in report['module_paths']]
+            report['raw_modules'] = [{'path': path} for path in report['module_paths']]
+            report['runtime']['modules']['msvcp140.dll']['path'] = wrong
+            report['path_identities'][wrong] = dict(report['path_identities'].pop(old), raw_path=wrong, resolved_path=wrong)
+        self.change_validation(change)
+        with self.assertRaisesRegex(RuntimeError, 'outside package bin'):
+            self.validate()
+
+    def test_missing_direct_startup_core_capture_is_rejected(self):
+        self.change_validation(lambda value: value['direct_exe_startup']['process_runtime'].pop('showpsisi-core.exe'))
+        with self.assertRaisesRegex(RuntimeError, 'evidence is incomplete'):
+            self.validate()
+
+    def test_changed_observed_runtime_hash_is_rejected(self):
+        self.change_validation(lambda value: value['core']['runtime_modules']['runtime']['modules']['msvcp140_2.dll'].update(sha256='c' * 64))
+        with self.assertRaisesRegex(RuntimeError, 'hash-bound package'):
+            self.validate()
+
+    def test_missing_raw_capture_is_rejected(self):
+        self.change_validation(lambda value: value['qt_offscreen']['runtime_modules'].pop('raw_modules'))
+        with self.assertRaisesRegex(RuntimeError, 'raw memory-map evidence'):
+            self.validate()
+
+    def test_installed_runtime_capture_is_required_independently(self):
+        self.smoke['installed_qt_startup']['process_runtime'].pop('showpsisi-core.exe')
+        write_json(self.smoke_path, self.smoke)
+        with self.assertRaisesRegex(RuntimeError, 'Installed app-local process evidence'):
+            self.validate()
+
+    def test_missing_corrupted_runtime_preflight_is_rejected(self):
+        path = self.pe / 'portable-launcher-probe/preflight.json'
+        value = release.read_json(path)
+        value['cases'] = [case for case in value['cases'] if case['name'] != 'corrupted-runtime-blocked']
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'launcher runtime acceptance'):
+            self.validate()
+
+    def test_preflight_is_bound_to_exact_package_manifest(self):
+        path = self.pe / 'portable-launcher-probe/preflight.json'
+        value = release.read_json(path)
+        value['package_manifest_sha256'] = 'f' * 64
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'preflight identity'):
+            self.validate()
+
+    def test_preflight_raw_diagnostic_cannot_be_dropped(self):
+        path = self.pe / 'portable-launcher-probe/preflight.json'
+        value = release.read_json(path)
+        next(case for case in value['cases'] if case['name'] == 'old-runtime-blocked')['stderr_hex'] = ''
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'subprocess evidence disagrees'):
+            self.validate()
+
+    def test_boolean_exit_status_is_not_a_success_code(self):
+        path = self.pe / 'portable-launcher-probe/preflight.json'
+        value = release.read_json(path)
+        value['cases'][0]['exit_code'] = False
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'launcher runtime acceptance'):
+            self.validate()
+
+
+class SidecarPayloadTests(AppLocalPayloadTests):
+    def configure_package(self, fixture):
+        super().configure_package(fixture)
+        self.original_sources = fixture.root / 'original-qt-sources'
+        shutil.move(fixture.package / 'sources', self.original_sources)
+        index_path = fixture.package / 'source-index.json'
+        index = release.read_json(index_path)
+        index['corresponding_source'] = dict(self.source.POLICY)
+        write_json(index_path, index)
+        self.source.stamp(fixture.package)
+        def approve_fixture():
+            value = {'build': release.read_json(fixture.package / 'build-information.json'),
+                     'files': release.portable.inventory(fixture.package)}
+            write_json(fixture.package / 'redistribution-review.json', {
+                'schema_version': 1, 'review_complete': True, 'reviewed_files': release.portable.review_inventory(value)})
+            release.portable.manifest(fixture.package)
+            fixture.fixture.validation()
+        fixture.fixture.approve_fixture = approve_fixture
+
+    def prepare_source_artifact(self):
+        source_dir = self.work / release.SOURCE_ARTIFACT
+        source_dir.mkdir(exist_ok=True)
+        self.source_zip = source_dir / release.CORRESPONDING_SOURCE
+        self.source.build_archive(self.fixture.package, self.original_sources, self.source_zip)
+        return self.source_zip
+
+    def rebind_unit_payload(self):
+        super().rebind_unit_payload()
+        self.source_zip.unlink()
+        self.source_zip.with_suffix('.zip.sha256').unlink()
+        self.prepare_source_artifact()
+        evidence = release.portable.verify_corresponding_source(self.fixture.package, self.source_zip)
+        record = release.read_json(self.setup_dir / 'installer-build.json')
+        record['corresponding_source'] = evidence
+        for path in (self.setup_dir / 'installer-build.json', self.ie / 'artifacts/installer-candidate/installer-build.json'):
+            write_json(path, record)
+        write_json(self.pe / 'portable-validation/corresponding-source-validation.json', evidence)
+        self.bind_checksums()
+
+    def test_declared_sidecar_is_required(self):
+        shutil.rmtree(self.work / release.SOURCE_ARTIFACT)
+        self.bind_checksums()
+        with self.assertRaisesRegex(release.ReleaseError, 'corresponding-source artifact is missing'):
+            self.validate()
+
+    def test_removed_declaration_cannot_release_stripped_sources_as_legacy(self):
+        for name in ('build-information.json', 'source-index.json'):
+            path = self.fixture.package / name
+            value = release.read_json(path)
+            value.pop('corresponding_source')
+            write_json(path, value)
+        shutil.rmtree(self.work / release.SOURCE_ARTIFACT)
+        # Rebuild every binary identity as an attacker could, but do not restore
+        # the required originals or permit the absent source ZIP to reappear.
+        AppLocalPayloadTests.rebind_unit_payload(self)
+        with self.assertRaisesRegex(RuntimeError, 'Invalid source/package directory'):
+            self.validate()
+
+    def test_third_checksum_entry_is_required(self):
+        hashes = ''.join(f'{release.sha256(path)}  {path.name}\n'
+                         for path in (self.setup_dir / release.SETUP, self.zip_dir / release.PORTABLE))
+        for directory in (self.setup_dir, self.zip_dir, self.work / release.SOURCE_ARTIFACT):
+            (directory / 'SHA256SUMS').write_text(hashes)
+        with self.assertRaisesRegex(release.ReleaseError, 'checksum'):
+            self.validate()
+
+    def test_installer_must_bind_the_exact_source_asset(self):
+        record = release.read_json(self.setup_dir / 'installer-build.json')
+        record['corresponding_source']['sha256'] = 'f' * 64
+        for path in (self.setup_dir / 'installer-build.json', self.ie / 'artifacts/installer-candidate/installer-build.json'):
+            write_json(path, record)
+        with self.assertRaisesRegex(release.ReleaseError, 'corresponding-source evidence differs'):
+            self.validate()
+
+    def test_source_must_be_bound_to_portable_validation(self):
+        path = self.pe / 'portable-validation/corresponding-source-validation.json'
+        value = release.read_json(path)
+        value['source_commit'] = TRIGGER
+        write_json(path, value)
+        with self.assertRaisesRegex(release.ReleaseError, 'corresponding-source evidence differs'):
+            self.validate()
+
+    def test_changed_original_archive_fails_even_after_all_manifest_and_outer_hash_updates(self):
+        with zipfile.ZipFile(self.source_zip) as archive:
+            entries = {item.filename.removeprefix(self.source.ZIP_ROOT): archive.read(item) for item in archive.infolist()}
+        entries['sources/' + self.source.QT_ARCHIVES[0]['filename']] += b'unreviewed changes'
+        files = {name: {'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+                 for name, data in entries.items() if name != self.source.MANIFEST}
+        build = self.source.decode_json(entries['build-information.json'])
+        entries[self.source.MANIFEST] = json.dumps(self.source._source_manifest(build, files)).encode()
+        with zipfile.ZipFile(self.source_zip, 'w') as archive:
+            for name, data in entries.items():
+                archive.writestr(self.source.ZIP_ROOT + name, data)
+        self.bind_checksums()
+        with self.assertRaisesRegex(RuntimeError, 'source/notice material differs|source archive bytes/hash mismatch'):
+            self.validate()
 
 
 class ArtifactIdentityTests(TemporaryTest):
@@ -671,6 +1300,31 @@ class ArtifactIdentityTests(TemporaryTest):
         self.assertEqual(len(selected), 4)
         self.assertEqual(self.api.download.call_count, 4)
         self.assertTrue(all(call.args[0].startswith(release.PREFIX + '/actions/artifacts/') for call in self.api.download.call_args_list))
+
+    def add_source_artifact(self):
+        source = copy.deepcopy(self.items[0])
+        source.update(id=999, name=release.SOURCE_ARTIFACT,
+                      archive_download_url=release.API + release.PREFIX + '/actions/artifacts/999/zip')
+        self.items.append(source)
+        return source
+
+    def test_fifth_source_artifact_has_same_exact_identity_and_download_verification(self):
+        self.add_source_artifact()
+        selected = release.fetch_artifacts(self.api, REQUEST, self.work)
+        self.assertEqual(len(selected), 5)
+        self.assertEqual(selected[-1]['name'], release.SOURCE_ARTIFACT)
+        self.assertEqual(self.api.download.call_count, 5)
+
+    def test_foreign_source_sidecar_run_is_rejected(self):
+        source = self.add_source_artifact()
+        source['workflow_run']['head_sha'] = TRIGGER
+        with self.assertRaisesRegex(release.ReleaseError, 'wrong source/run'):
+            release.fetch_artifacts(self.api, REQUEST, self.work)
+
+    def test_duplicate_source_sidecars_are_rejected(self):
+        self.items.append(copy.deepcopy(self.add_source_artifact()))
+        with self.assertRaisesRegex(release.ReleaseError, 'missing or duplicated'):
+            release.fetch_artifacts(self.api, REQUEST, self.work)
 
     def test_foreign_run_source_or_repository_rejected_before_download(self):
         original = copy.deepcopy(self.items[0]['workflow_run'])
@@ -775,9 +1429,9 @@ class PublicationTests(TemporaryTest):
         result = self.publish()
         self.assertFalse(result['draft'])
         self.assertEqual(self.api.tag, SOURCE)
-        self.assertEqual(len(self.api.assets), 4)
+        self.assertEqual(len(self.api.assets), len(self.files))
         methods = [w[0] for w in self.api.writes]
-        self.assertEqual(methods, ['POST', 'POST', 'UPLOAD', 'UPLOAD', 'UPLOAD', 'UPLOAD', 'PATCH'])
+        self.assertEqual(methods, ['POST', 'POST'] + ['UPLOAD'] * len(self.files) + ['PATCH'])
 
     def test_successful_rerun_has_no_mutations(self):
         self.publish()
@@ -797,7 +1451,7 @@ class PublicationTests(TemporaryTest):
         retained = self.api.assets[0]['id']
         self.publish()
         self.assertEqual(self.api.assets[0]['id'], retained)
-        self.assertEqual(len(self.api.assets), 4)
+        self.assertEqual(len(self.api.assets), len(self.files))
 
     def test_mismatched_existing_tag_never_mutates(self):
         self.api.tag = TRIGGER
@@ -846,6 +1500,37 @@ class PublicationTests(TemporaryTest):
         self.assertTrue(self.api.release['draft'])
 
 
+class SourcePublicationTests(PublicationTests):
+    def setUp(self):
+        super().setUp()
+        path = self.work / release.CORRESPONDING_SOURCE
+        path.write_bytes(b'unit fixture corresponding-source archive')
+        self.files[path.name] = path
+
+    def test_source_is_uploaded_and_read_back_before_any_binary(self):
+        original = self.api.download
+        sequence = []
+        def download(path, destination, expected_hash, expected_size):
+            name = next(asset['name'] for asset in self.api.assets if str(asset['id']) == path.rsplit('/', 1)[-1])
+            sequence.append(('readback', name))
+            return original(path, destination, expected_hash, expected_size)
+        upload = self.api.upload
+        def recorded_upload(release_id, path):
+            sequence.append(('upload', path.name))
+            return upload(release_id, path)
+        with mock.patch.object(self.api, 'download', side_effect=download), mock.patch.object(self.api, 'upload', side_effect=recorded_upload):
+            self.publish()
+        self.assertEqual(sequence[:2], [('upload', release.CORRESPONDING_SOURCE), ('readback', release.CORRESPONDING_SOURCE)])
+
+    def test_failed_source_readback_prevents_binary_uploads_and_publication(self):
+        with mock.patch.object(self.api, 'download', side_effect=release.ReleaseError('Source readback failed')):
+            with self.assertRaisesRegex(release.ReleaseError, 'Source readback'):
+                self.publish()
+        self.assertEqual([write[1] for write in self.api.writes if write[0] == 'UPLOAD'], [release.CORRESPONDING_SOURCE])
+        self.assertTrue(self.api.release['draft'])
+        self.assertFalse(any(write[0] == 'PATCH' for write in self.api.writes))
+
+
 class WorkflowTests(unittest.TestCase):
     def test_workflow_has_no_pr_or_broad_branch_publish_trigger(self):
         workflow = (ROOT / '.github/workflows/release.yml').read_text()
@@ -863,8 +1548,11 @@ class WorkflowTests(unittest.TestCase):
 
     def test_notes_disclose_all_unverified_boundaries(self):
         notes = (ROOT / f'docs/releases/{release.TAG}.md').read_text()
-        for phrase in ('unsigned', '1809', 'UAC', 'Internet', 'Clean-machine', 'future-version', 'manual checksum'):
+        for phrase in ('unsigned', '1809', 'app-local', '14.51.36247.0', 'does not download',
+                       'Clean-machine', 'future-version', 'manual checksum'):
             self.assertIn(phrase, notes)
+        self.assertIn(f'https://github.com/{release.REPOSITORY}/releases/download/{release.TAG}/{release.CORRESPONDING_SOURCE}', notes)
+        self.assertRegex(notes, r'SHA256SUMS[^\n]*all three downloads')
 
 
 if __name__ == '__main__':

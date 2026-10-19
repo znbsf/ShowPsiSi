@@ -205,7 +205,7 @@ Dialog {
         contentItem: ColumnLayout {
             Label {
                 Layout.fillWidth: true
-                text: "Install ShowPsiSi " + appUpdater.latestVersion + "?\n\nSave or export any work you want to keep first. Choosing Install and quit starts the visible installer and closes this workbench. Unsaved previews and the current workspace will close.\n\nFollow the installer prompts. A runtime prerequisite may ask for Windows administrator approval."
+                text: "Install ShowPsiSi " + appUpdater.latestVersion + "?\n\nSave or export any work you want to keep first. Choosing Install and quit starts the visible installer and closes this workbench. Unsaved previews and the current workspace will close.\n\nFollow the installer prompts."
                 textFormat: Text.PlainText; wrapMode: Text.Wrap
             }
             RowLayout {

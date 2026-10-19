@@ -147,6 +147,7 @@ class InstallerPackageTests(unittest.TestCase):
         self.fixture = fixture
         (self.package / 'build-information.json').write_text(json.dumps({
             'source_commit': 'a' * 40, 'application_version': '0.1.0', 'crt_mode': 'Prerequisite',
+            'static_dependencies': portable.static_dependencies.DEPENDENCIES,
             'crt_minimum_version': installer.MINIMUM_RUNTIME}))
         fixture.approve_fixture()
         self.prerequisite = self.root / 'vc-runtime.json'
@@ -178,6 +179,12 @@ class InstallerPackageTests(unittest.TestCase):
         self.assertNotIn('vc_redist.x64.exe', files)
         self.assertNotIn('*', files)
         self.assertEqual(len(files.splitlines()), len(portable.inventory(self.package)) + 2)
+
+    def test_omitted_static_notice_blocks_installer_even_with_refreshed_inventory(self):
+        (self.package / 'licenses/expat/COPYING.txt').unlink()
+        self.fixture.approve_fixture()
+        with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
+            self.prepare()
 
     def test_old_version_fixture_cannot_have_release_asset_name(self):
         result = self.prepare(upgrade_fixture=True)
@@ -213,7 +220,7 @@ class InstallerPackageTests(unittest.TestCase):
         (self.package / 'SOURCE_INFORMATION.txt').write_text('changed')
         portable.manifest(self.package)
         self.fixture.validation()
-        with self.assertRaisesRegex(RuntimeError, 'redistribution review'):
+        with self.assertRaisesRegex(RuntimeError, 'Static dependency notice'):
             self.prepare()
 
     def test_new_manifest_without_matching_runtime_validation_is_rejected(self):
@@ -303,6 +310,44 @@ class InstallerPackageTests(unittest.TestCase):
         self.assertNotIn('x64compatible', code)
         self.assertIn('CloseApplications=no', code)
         self.assertIn('AppMutex=Local\\ShowPsiSi.ApplicationLifetime', code)
+
+    def test_applocal_conditional_has_no_shared_runtime_install_path(self):
+        # Static branch contract only. Actual ISCC compilation and Windows smoke
+        # remain native CI gates; this does not emulate the Inno compiler.
+        code = (ROOT / 'scripts/installer/ShowPsiSi.iss').read_text()
+        for mode in ('AppLocal', 'Prerequisite'):
+            enabled, stack, selected = True, [], []
+            for line in code.splitlines():
+                if line.startswith('#if '):
+                    self.assertIn(line, ('#if CrtMode == "AppLocal"', '#if CrtMode == "Prerequisite"'))
+                    stack.append((enabled, line == f'#if CrtMode == "{mode}"'))
+                    enabled = all(stack[-1])
+                elif line == '#else':
+                    parent, condition = stack[-1]
+                    enabled = parent and not condition
+                elif line == '#endif':
+                    enabled = stack.pop()[0]
+                elif enabled:
+                    selected.append(line)
+            self.assertFalse(stack)
+            selected = '\n'.join(selected)
+            for guard in ('if IsUpdate', 'DirectoryHasFiles', 'Downgrades are blocked',
+                          'PrivilegesRequired=lowest', 'AppMutex=Local\\ShowPsiSi.ApplicationLifetime'):
+                self.assertIn(guard, selected)
+            if mode == 'AppLocal':
+                for forbidden in ('ShellExec(', 'DownloadPage', 'RuntimeReady', "ExpandConstant('{sys}\\')"):
+                    self.assertNotIn(forbidden, selected)
+                self.assertIn('licenses\\microsoft\\NOTICE.txt', selected)
+            else:
+                self.assertIn("ShellExec('runas'", selected)
+                self.assertIn("RuntimeFileReady('msvcp140_2.dll')", selected)
+
+    def test_declared_source_sidecar_is_required_before_installer_preparation(self):
+        build = json.loads((self.package / 'build-information.json').read_text())
+        build['corresponding_source'] = {'delivery': 'same-release-asset'}
+        (self.package / 'build-information.json').write_text(json.dumps(build))
+        with self.assertRaisesRegex(RuntimeError, 'paired corresponding-source archive is required'):
+            portable.verify_corresponding_source(self.package, None)
 
     def test_work_and_output_cannot_modify_reviewed_payload(self):
         for generated, output in ((self.package / 'generated', self.root / 'out'),

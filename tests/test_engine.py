@@ -45,7 +45,11 @@ class EngineTests(unittest.TestCase):
             def call(i,method,params):
                 p.stdin.write(json.dumps({'jsonrpc':'2.0','id':i,'method':method,'params':params})+'\n');p.stdin.flush();return json.loads(p.stdout.readline())['result']
             self.assertEqual(call(1,'initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'test','version':'1'}})['serverInfo']['name'],'ShowPsiSi')
-            tools=call(2,'tools/list',{})['tools'];self.assertEqual(len(tools),12);self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
+            tools=call(2,'tools/list',{})['tools']
+            catalog=json.loads((ROOT/'api/tools.json').read_text(encoding='utf-8'))['tools']
+            self.assertEqual(len(tools),len(catalog))
+            self.assertEqual({t['name'] for t in tools},{t['name'] for t in catalog})
+            self.assertTrue(next(t for t in tools if t['name']=='diff_snapshots')['annotations']['readOnlyHint'])
             self.assertTrue(next(t for t in tools if t['name']=='lookup_identifier')['annotations']['readOnlyHint'])
             r=call(3,'tools/call',{'name':'analyze','arguments':{'path':str(ROOT/'samples/generated/lab.ts')}});self.assertFalse(r['isError']);self.assertEqual(len(r['structuredContent']['services']),6)
             service=r['structuredContent']['services'][0]

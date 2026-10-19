@@ -8,7 +8,9 @@ param(
     [Parameter(Mandatory)][string]$LicenseBundle,
     [Parameter(Mandatory)][string]$SourceCommit,
     [Parameter(Mandatory)][string]$Python,
-    [ValidateSet('Prerequisite', 'AppLocal')][string]$CrtMode = 'Prerequisite'
+    [ValidateSet('AppLocal')][string]$CrtMode = 'AppLocal',
+    [string]$RuntimeDirectory,
+    [Parameter(Mandatory)][string]$CorrespondingSourcesDirectory
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -31,6 +33,7 @@ $Bin = Join-Path $Output 'bin'
 foreach ($File in @('showpsisi-core.exe', 'showpsisi-qt.exe')) { Require-File (Join-Path $BuildBin $File) }
 Require-File (Join-Path $BuildBin 'showpsisi-build.json')
 $Record = Get-Content -LiteralPath (Join-Path $BuildBin 'showpsisi-build.json') -Raw | ConvertFrom-Json
+Checked $Python @((Join-Path $PSScriptRoot 'ci/static_dependencies.py'), '--root', $Root, '--record', (Join-Path $BuildBin 'showpsisi-build.json'))
 if ($Record.source_commit -ne $SourceCommit -or $Record.source_root -ne $Root) { throw 'Production build record does not match source checkout.' }
 foreach ($File in @('showpsisi-core.exe', 'showpsisi-qt.exe')) {
     if ((Get-FileHash -LiteralPath (Join-Path $BuildBin $File) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Record.production.$File) { throw "Production input changed after build: $File" }
@@ -49,18 +52,21 @@ Require-File (Join-Path $Bin 'platforms/qwindows.dll')
 # Some kit scanners include offscreen by default; it belongs only in the test copy.
 $Offscreen = Join-Path $Bin 'platforms/qoffscreen.dll'
 if (Test-Path -LiteralPath $Offscreen) { Remove-Item -LiteralPath $Offscreen }
-# The default avoids redistributing Microsoft's runtime until distributor rights
-# are reviewed. The user installs the official x64 VC Redistributable separately.
-$CrtIdentity = 'Microsoft Visual C++ 2015-2022 x64 Redistributable prerequisite'
+# Only exact staged official release DLLs; never select a VS directory by name,
+# copy System32, or permit an older locally installed toolset to supply the CRT.
+$CrtIdentity = 'Microsoft Visual C++ x64 Redistributable prerequisite'
+$CrtProvenance = $null
 if ($CrtMode -eq 'AppLocal') {
-    $VsWhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
-    Require-File $VsWhere
-    $Vs = (& $VsWhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
-    $Crt = Get-ChildItem -Path "$Vs/VC/Redist/MSVC/*/x64/Microsoft.VC143.CRT" -Directory | Sort-Object FullName | Select-Object -Last 1
-    if (-not $Crt) { throw 'VS 2022 release x64 CRT redistributables unavailable.' }
-    Copy-Item -Path "$($Crt.FullName)/*.dll" -Destination $Bin
-    foreach ($Name in @('MSVCP140.dll', 'MSVCP140_1.dll', 'VCRUNTIME140.dll', 'VCRUNTIME140_1.dll')) { Require-File (Join-Path $Bin $Name) }
-    $CrtIdentity = "$($Crt.Parent.Parent.Name)/x64/$($Crt.Name)"
+    if (-not $RuntimeDirectory) { throw 'AppLocal requires the verified pinned runtime stage.' }
+    $RuntimeMetadata = Join-Path $RuntimeDirectory 'showpsisi-vc-runtime.json'
+    Require-File $RuntimeMetadata
+    $CrtProvenance = Get-Content -LiteralPath $RuntimeMetadata -Raw | ConvertFrom-Json
+    foreach ($Name in @('msvcp140.dll', 'msvcp140_1.dll', 'msvcp140_2.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')) {
+        Require-File (Join-Path $RuntimeDirectory $Name)
+        Copy-Item -LiteralPath (Join-Path $RuntimeDirectory $Name) -Destination $Bin
+    }
+    Copy-Item -LiteralPath $RuntimeMetadata -Destination $Bin
+    $CrtIdentity = 'Microsoft official release x64 CRT 14.51.36247.0; app-local'
 }
 '{"schema_version":1,"resource_root":"..","scope":"qt-core"}' | Set-Content -LiteralPath (Join-Path $Bin 'showpsisi-portable.json') -Encoding utf8NoBOM
 @'
@@ -83,8 +89,9 @@ foreach ($File in @('THIRD_PARTY_NOTICES.txt', 'SOURCE_INFORMATION.txt', 'redist
 if (-not (Test-Path -LiteralPath (Join-Path $LicenseBundle 'licenses') -PathType Container)) { throw 'License texts directory missing.' }
 Copy-Item -LiteralPath (Join-Path $LicenseBundle 'licenses') -Destination $Output -Recurse
 if (Test-Path -LiteralPath (Join-Path $LicenseBundle 'source-index.json') -PathType Leaf) { Copy-Item -LiteralPath (Join-Path $LicenseBundle 'source-index.json') -Destination $Output }
-if (Test-Path -LiteralPath (Join-Path $LicenseBundle 'sources') -PathType Container) { Copy-Item -LiteralPath (Join-Path $LicenseBundle 'sources') -Destination $Output -Recurse }
-& (Join-Path $PSScriptRoot 'prepare-portable-sources.ps1') -LicenseBundle $LicenseBundle -Cache (Join-Path $Root '.deps/portable-sources') -Output (Join-Path $Output 'sources')
+if (Test-Path -LiteralPath $CorrespondingSourcesDirectory) { throw 'Refusing stale corresponding-source stage.' }
+if ([IO.Path]::GetFullPath($CorrespondingSourcesDirectory).StartsWith($Output + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Corresponding sources must be outside the small application payload.' }
+& (Join-Path $PSScriptRoot 'prepare-portable-sources.ps1') -LicenseBundle $LicenseBundle -Cache (Join-Path $Root '.deps/portable-sources') -Output $CorrespondingSourcesDirectory
 $SourceIndex = Get-Content -LiteralPath (Join-Path $LicenseBundle 'source-index.json') -Raw | ConvertFrom-Json
 $QtArchives = @()
 foreach ($Archive in @(Get-ChildItem -LiteralPath (Join-Path $Root '.deps/qt-archives') -File)) {
@@ -107,12 +114,14 @@ $QtCoreRelocation = @{
 $Metadata = @{
     source_commit = $SourceCommit
     application_version = $Record.application_version
+    static_dependencies = $Record.static_dependencies
     qt_version = '6.7.3'; qt_kit = 'win64_msvc2019_64'
     qt_origin = 'https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_673/'
     tsduck_version = '3.45-4798'
     tsduck_origin = 'https://github.com/tsduck/tsduck/releases/download/v3.45-4798/TSDuck-Win64-3.45-4798.exe'
     tsduck_archive_sha256 = 'd1d1dae29e82d9c9dde8380fd562d2995e6cb702706031fa9574ebc06092bc57'
     crt_mode = $CrtMode; crt_identity = $CrtIdentity
+    crt_provenance = $CrtProvenance
     crt_minimum_version = '14.51.36231.0'
     crt_minimum_evidence = 'https://github.com/tsduck/tsduck/actions/runs/34712521690/job/103603758775'
     cmake_version = ((& cmake --version) | Select-Object -First 1)
@@ -128,5 +137,6 @@ $Metadata = @{
     native_windows_desktop_verified = $false
 }
 $Metadata | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Output 'build-information.json') -Encoding utf8NoBOM
+Checked $Python @((Join-Path $PSScriptRoot 'ci/corresponding_source.py'), 'stamp', '--package', $Output)
 Checked $Python @((Join-Path $PSScriptRoot 'ci/portable_checks.py'), 'manifest', '--package', $Output)
 Write-Host "Staged candidate: $Output. Validation and license review must pass before archive upload."

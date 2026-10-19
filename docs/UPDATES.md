@@ -28,7 +28,8 @@ record for platform-specific acceptance.
 5. SHA-256 is recomputed from the staged file immediately before the visible
    installer is launched with `/UPDATE`, `/DIR=<installed package root>` and
    `/NORESTART`. Only successful process launch closes Qt. The user completes the
-   wizard; a runtime prerequisite can require separate Windows administrator
+   wizard. The current app-local package includes the matching runtime DLLs;
+   older prerequisite-mode installers can ask separately for Windows administrator
    approval. Process launch alone does not establish installation success.
 
 In-app installation requires both the package marker in `bin/` and the fixed

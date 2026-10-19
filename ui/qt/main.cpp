@@ -62,7 +62,7 @@ class Bridge:public QObject {
     QVariantMap m_state,m_detail;
     QString m_root,m_sample,m_error,stderrTail,m_availability="starting";
     bool m_busy=false,m_cancelling=false,m_inspecting=false,m_comparing=false;
-    int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0,latestTopology=0;
+    int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0,latestTopology=0,latestDvbiImport=0,latestDvbiQuery=0,latestDvbiInspect=0;
     quint64 generation=0;
     QHash<int,Request> methods;
     QSet<int> pendingExports;
@@ -71,6 +71,8 @@ class Bridge:public QObject {
     bool dataFrame=false,completeFrame=false;
     QQuickWindow* window=nullptr;
 
+    static bool documentMethod(const QString& method){return method=="import_dvbi"||method=="query_dvbi"||method=="inspect_dvbi";}
+    void clearTsRequests(){for(auto i=methods.begin();i!=methods.end();)if(!documentMethod(i->method))i=methods.erase(i);else ++i;}
     void clearIntentions(){
         latestInspect=latestQuery=latestPreview=latestComparison=latestTopology=0;
         m_detail.clear();m_inspecting=false;m_comparing=false;
@@ -99,10 +101,12 @@ class Bridge:public QObject {
         recentResponses.append(QJsonObject{{"id",id},{"method",method},{"ok",!msg.contains("error")},
             {"error",msg["error"].toObject().value("message")},{"at",QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs)}});
         if(recentResponses.size()>40)recentResponses.removeFirst();
-        if(request.generation!=generation)return;
+        if(request.generation!=generation&&!documentMethod(method))return;
         if((method=="analyze"&&id!=activeAnalysis)||(method=="inspect"&&id!=latestInspect)||
            (method=="query"&&id!=latestQuery)||(method=="preview_rename"&&id!=latestPreview)||
-           (method=="diff_snapshots"&&id!=latestComparison)||(method=="query_topology"&&id!=latestTopology))return;
+           (method=="diff_snapshots"&&id!=latestComparison)||(method=="query_topology"&&id!=latestTopology)||
+           (method=="import_dvbi"&&id!=latestDvbiImport)||(method=="query_dvbi"&&id!=latestDvbiQuery)||
+           (method=="inspect_dvbi"&&id!=latestDvbiInspect))return;
         if(method=="inspect"){m_inspecting=false;emit inspectingChanged();}
         if(method=="diff_snapshots"){m_comparing=false;emit comparingChanged();}
         const bool cancelRequested=method=="analyze"&&m_cancelling;
@@ -239,7 +243,7 @@ public:
         m_cancelling=true;
         // Invalidate every outstanding evidence/edit intention, retaining only
         // the original scan whose terminal response must still be observed.
-        const auto analyze=methods.value(activeAnalysis);methods.clear();methods.insert(activeAnalysis,analyze);
+        const auto analyze=methods.value(activeAnalysis);clearTsRequests();methods.insert(activeAnalysis,analyze);
         clearIntentions();emit cancellingChanged();mark("cancel_requested");
         send("cancel_analysis",{{"request_id",activeAnalysis}});
     }
@@ -252,13 +256,16 @@ public:
         if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
         int id=++sequence;
         if(method=="analyze"){
-            ++generation;methods.clear();activeAnalysis=id;
+            ++generation;clearTsRequests();activeAnalysis=id;
             m_busy=true;m_cancelling=false;m_state.clear();clearIntentions();
             dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();emit stateChanged();mark("analyze_requested");
         }
         if(method=="inspect"){latestInspect=id;m_detail.clear();m_inspecting=true;emit detailChanged();emit inspectingChanged();}
         if(method=="query"){latestQuery=id;latestInspect=latestPreview=latestTopology=0;m_detail.clear();m_inspecting=false;emit detailChanged();emit inspectingChanged();}
         if(method=="query_topology")latestTopology=id;
+        if(method=="import_dvbi"){latestDvbiImport=id;latestDvbiQuery=latestDvbiInspect=0;}
+        if(method=="query_dvbi")latestDvbiQuery=id;
+        if(method=="inspect_dvbi")latestDvbiInspect=id;
         if(method=="preview_rename")latestPreview=id;
         if(method=="diff_snapshots"){latestComparison=id;m_comparing=true;emit comparingChanged();}
         methods.insert(id,{method,generation});

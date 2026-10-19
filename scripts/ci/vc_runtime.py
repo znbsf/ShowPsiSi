@@ -83,7 +83,9 @@ def stage(extracted, output):
         verify_file(source, expected)
         verify_pe(source, expected)
         (output / name).write_bytes(source.read_bytes())
-    (output / 'showpsisi-vc-runtime.json').write_text(json.dumps(metadata, indent=2) + '\n', encoding='utf-8')
+    # These exact metadata bytes are redistribution-reviewed across platforms.
+    # Text-mode writes translate LF to CRLF on Windows and break that identity.
+    (output / 'showpsisi-vc-runtime.json').write_bytes((json.dumps(metadata, indent=2) + '\n').encode('utf-8'))
     return metadata
 
 

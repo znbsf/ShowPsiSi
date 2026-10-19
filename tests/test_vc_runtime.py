@@ -38,6 +38,36 @@ class RuntimePinTests(unittest.TestCase):
     def write_metadata(self, value):
         (self.package / 'bin/showpsisi-vc-runtime.json').write_text(json.dumps(value))
 
+    def test_stage_metadata_survives_windows_text_newline_translation(self):
+        extracted = self.package / 'extracted'
+        extracted.mkdir()
+        for name in self.metadata['files']:
+            (extracted / (name + '_amd64')).write_bytes((self.package / 'bin' / name).read_bytes())
+
+        def windows_write_text(path, text, encoding=None, **kwargs):
+            return path.write_bytes(text.replace('\n', '\r\n').encode(encoding or 'utf-8'))
+
+        output = self.package / 'staged'
+        with mock.patch.object(Path, 'write_text', windows_write_text), \
+                mock.patch.object(runtime, 'verify_pe'):
+            # The control proves the test actually exercises CRLF translation.
+            control = self.package / 'text-control.txt'
+            control.write_text('control\n', encoding='utf-8')
+            self.assertEqual(control.read_bytes(), b'control\r\n')
+            runtime.stage(extracted, output)
+        expected = (json.dumps(self.metadata, indent=2) + '\n').encode('utf-8')
+        self.assertEqual((output / 'showpsisi-vc-runtime.json').read_bytes(), expected)
+        for name in self.metadata['files']:
+            self.assertEqual((output / name).read_bytes(), (extracted / (name + '_amd64')).read_bytes())
+
+    def test_canonical_real_metadata_matches_unchanged_review_pin(self):
+        metadata = runtime.read_json(runtime.PIN_PATH)['package_metadata']
+        data = (json.dumps(metadata, indent=2) + '\n').encode('utf-8')
+        review = runtime.read_json(ROOT / 'scripts/portable-licenses/redistribution-review.json')
+        self.assertEqual(hashlib.sha256(data).hexdigest(),
+                         review['reviewed_files']['bin/showpsisi-vc-runtime.json'])
+        self.assertNotIn(b'\r\n', data)
+
     def test_exact_five_file_identity(self):
         self.assertEqual(len(runtime.verify_package(self.package, self.record)['files']), 5)
         self.assertIn('msvcp140_2.dll', self.metadata['files'])

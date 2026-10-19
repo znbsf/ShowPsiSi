@@ -112,14 +112,20 @@ input[type="search"]::-webkit-search-cancel-button {
   cursor: pointer;
 }
 .titlebar {
-  height: 42px;
+  min-height: 42px;
   flex-shrink: 0;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 0 16px;
+  gap: 6px 12px;
+  padding: 4px 16px;
   border-bottom: 1px solid var(--border);
   background: #20252e;
+}
+/* Keep the selected input kind readable; wrap controls instead of shrinking
+   the selector to its arrow or overflowing with wider system fonts. */
+.titlebar > :not(.spacer):not(.layout-status) {
+  flex-shrink: 0;
 }
 .app-mark {
   font-size: 26px;
@@ -1063,7 +1069,7 @@ dialog .actions {
     flex-basis: 100%;
   }
   .titlebar {
-    padding: 0 9px;
+    padding: 4px 9px;
     gap: 7px;
   }
   .runtime {
@@ -1389,7 +1395,7 @@ dialog label { color: var(--muted); }
   .service-head { min-width: 425px; }
   #service-head { overflow-x: auto; }
   .table-controls { flex-basis: 100%; padding-bottom: 5px; justify-content: flex-end; }
-  .titlebar { gap: 7px; padding: 0 9px; }
+  .titlebar { gap: 7px; padding: 4px 9px; }
   .titlebar .btn { padding: 5px; font-size: 10px; }
 }
 @media (max-width: 520px) {

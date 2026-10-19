@@ -2008,6 +2008,55 @@ class BrowserTests(unittest.TestCase):
                     self.assertIn('generic_descriptor',self.page.locator('#tree-area').inner_text())
                     self.page.screenshot(path=str(self.artifacts/'tsduck345-dsmcc-guarded-inspector.png'),full_page=True)
 
+    def test_titlebar_controls_fit_and_input_label_remains_readable(self):
+        self.analyze()
+        p=self.page
+        # DejaVu Sans reproduces the 527px title bar from Linux CI at a
+        # 520px viewport. The default font can hide the selector label while
+        # still passing a page-overflow check, so verify intrinsic width too.
+        for font in ('system-ui','DejaVu Sans, sans-serif'):
+            p.locator('.titlebar').evaluate('(element,font)=>element.style.fontFamily=font',font)
+            for theme in ('dark','light'):
+                if p.locator('html').get_attribute('data-theme')!=theme:
+                    p.locator('#theme-toggle').click()
+                for kind in ('ts','dvbi'):
+                    p.locator('#input-kind').select_option(kind)
+                    self.assertEqual(p.locator('#app').get_attribute('data-input-kind'),kind)
+                    for width in (520,521,760,761,900,1100,1440):
+                        with self.subTest(font=font,theme=theme,kind=kind,width=width):
+                            p.set_viewport_size({'width':width,'height':1000})
+                            self.assertLessEqual(p.evaluate('document.documentElement.scrollWidth'),width)
+                            geometry=p.locator('.titlebar').evaluate('''header=>{
+                              const bounds=header.getBoundingClientRect();
+                              const controls=[...header.querySelectorAll('button,select')]
+                                .filter(e=>e.getClientRects().length).map(e=>{
+                                  const r=e.getBoundingClientRect();
+                                  return {id:e.id,left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+                                    reachable:e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))};
+                                });
+                              const select=header.querySelector('#input-kind'),natural=select.cloneNode(true);
+                              natural.removeAttribute('id');
+                              natural.style.cssText='position:fixed;visibility:hidden;width:max-content;max-width:none';
+                              natural.style.font=getComputedStyle(select).font;
+                              document.body.append(natural);
+                              const naturalWidth=natural.getBoundingClientRect().width;natural.remove();
+                              return {bounds:bounds.toJSON(),controls,naturalWidth,
+                                selectWidth:select.getBoundingClientRect().width};
+                            }''')
+                            self.assertGreaterEqual(geometry['selectWidth'],geometry['naturalWidth']-1,geometry)
+                            for control in geometry['controls']:
+                                self.assertGreaterEqual(control['left'],0,control)
+                                self.assertLessEqual(control['right'],width,control)
+                                self.assertGreaterEqual(control['top'],geometry['bounds']['top'],control)
+                                self.assertLessEqual(control['bottom'],geometry['bounds']['bottom'],control)
+                                self.assertTrue(control['reachable'],control)
+                            if width==520:
+                                p.screenshot(path=str(self.artifacts/f'titlebar-{kind}-{theme}-{font.split(",")[0]}.png'),full_page=True)
+        p.locator('#input-kind').select_option('ts')
+        p.set_viewport_size({'width':520,'height':1000})
+        p.locator('#reset-layout').click()
+        self.assertIsNone(p.evaluate('localStorage.getItem("showpsisi.workbench.layout.v1")'))
+
     def test_references_and_responsive_tree(self):
         self.page.locator('#standards').select_option('dvb')
         self.analyze()

@@ -55,6 +55,28 @@ class WindowsAcceptanceHostTests(unittest.TestCase):
         self.assertNotIn('username', record['token'])
         self.assertNotIn('ip_address', str(record['network_interfaces']))
 
+    def test_hashing_does_not_depend_on_get_file_hash_module(self):
+        # Actual Windows PowerShell child with a deliberately unusable cmdlet.
+        # The collector must use inbox .NET and retain the exact bytes' digest.
+        def quote(value):
+            return "'" + str(value).replace("'", "''") + "'"
+
+        command = (
+            "function Get-FileHash { throw 'Get-FileHash must not be used' }; "
+            f"& {quote(SCRIPT)} -Output {quote(self.output)} "
+            f"-Profile Observe -Artifact {quote(self.artifact)}"
+        )
+        result = subprocess.run(
+            [str(self.powershell), '-NoLogo', '-NoProfile', '-NonInteractive',
+             '-Command', command], capture_output=True, timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, (result.stdout, result.stderr))
+        record = self.read_record()
+        self.assertTrue(record['collection_complete'])
+        self.assertEqual(record['errors'], [])
+        self.assertEqual(record['artifact_sha256'][0]['sha256'],
+                         hashlib.sha256(self.artifact.read_bytes()).hexdigest())
+
     def test_existing_evidence_is_not_overwritten(self):
         self.output.write_bytes(b'previous evidence must survive\n')
         original = self.output.read_bytes()

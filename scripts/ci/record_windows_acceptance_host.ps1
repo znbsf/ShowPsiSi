@@ -89,6 +89,18 @@ namespace ShowPsiSiAcceptanceHost {
         system_account = $Identity.IsSystem
         standard_user = ($Interactive -and -not $Identity.IsSystem -and -not $AdminGroup -and -not $AdminEffective)
     }
+    function Get-Sha256([string]$Path) {
+        # Use inbox .NET directly. A PowerShell 5.1 child may inherit a module
+        # search path from pwsh where the Get-FileHash script cmdlet is absent.
+        # Hash/read errors still fail collection and retain the failure record.
+        $Hasher = [Security.Cryptography.SHA256]::Create()
+        try {
+            $InputStream = [IO.File]::OpenRead($Path)
+            try { $Digest = $Hasher.ComputeHash($InputStream) }
+            finally { $InputStream.Dispose() }
+            return [BitConverter]::ToString($Digest).Replace('-', '').ToLowerInvariant()
+        } finally { $Hasher.Dispose() }
+    }
     function Get-FileEvidence([string]$Path) {
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
             return [ordered]@{ path = $Path; exists = $false }
@@ -99,7 +111,7 @@ namespace ShowPsiSiAcceptanceHost {
             path = $File.FullName
             exists = $true
             bytes = $File.Length
-            sha256 = (Get-FileHash -LiteralPath $File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            sha256 = Get-Sha256 $File.FullName
             file_version = ('{0}.{1}.{2}.{3}' -f $Info.FileMajorPart, $Info.FileMinorPart, $Info.FileBuildPart, $Info.FilePrivatePart)
         }
     }

@@ -288,11 +288,12 @@ class AppLocalValidationTests(unittest.TestCase):
         path = ROOT / 'scripts/portable/Launch Qt.cmd'
         text = path.read_text()
         script = launcher.command(path)
+        self.assertNotIn('Get-FileHash', script)
         self.assertEqual(script.count('$env:SHOWPSISI_PACKAGE_ROOT'), 1)
         self.assertNotIn('$env:SystemRoot', script)
         for name in runtime.RUNTIME_NAMES:
             self.assertIn(name, script)
-        for token in ('14.51.36231.0', '14.51.36247.0', '10.0.17763.0', 'Get-FileHash', 'ToUInt16', 'AMD64'):
+        for token in ('14.51.36231.0', '14.51.36247.0', '10.0.17763.0', '[Security.Cryptography.SHA256]::Create()', '$hasher.ComputeHash($data)', '$hasher.Dispose()', 'ToUInt16', 'AMD64'):
             self.assertIn(token, script)
         self.assertIn('Get-CimInstance -ClassName Win32_Processor -Property Architecture -OperationTimeoutSec 5', script)
         self.assertIn('$_.Architecture -ne 9', script)

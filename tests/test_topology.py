@@ -41,6 +41,21 @@ class TopologyTests(unittest.TestCase):
                     self.assertTrue(any(a.get('field_id')==locator['field_id'] and a.get('container_id')==locator['container_id'] and a['byte_range']==span for a in detail['evidence_anchors']))
                 else:self.assertEqual(locator['precision'],'section')
         self.assertEqual(hashlib.sha256(self.path.read_bytes()).hexdigest(),self.before)
+    def test_short_section_anchors_do_not_invent_long_header_fields(self):
+        from make_fixture import crc
+        tdt=bytes.fromhex('707005e190123456')
+        tot=bytearray.fromhex('73700be190123456f000')
+        tot+=crc(tot).to_bytes(4,'big')
+        for raw in (tdt,bytes(tot)):
+            with self.subTest(table_id=raw[0]):
+                state=self.scan([(0x14,raw)])
+                detail=self.core.call('inspect',{'id':state['tables'][0]['id']})
+                anchors=detail['evidence_anchors']
+                self.assertFalse(any(a['display_path']=='table_id_extension' for a in anchors))
+                header=next(a for a in anchors if a['display_path']=='section_header')
+                self.assertEqual(header['byte_range'],{'offset_scope':'section_bytes','offset':0,'length':3})
+                self.assertEqual(detail['raw_hex'],raw.hex().upper())
+
     def test_all_three_real_adapters_and_every_evidence_anchor(self):
         for profile in ['dvb','atsc','isdb-japan']:
             with self.subTest(profile=profile):

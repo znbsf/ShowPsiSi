@@ -37,8 +37,12 @@ inline J anchors(const Record& r,const std::string& profile) {
             p=next;
         }
     };
-    if(b.size()>=8){add("table_id_extension",3,2,0);add("section_header",0,8,0,"container");}
-    if(!r.valid)return out;
+    const bool longHeader=b.size()>=8&&(b[1]&0x80)!=0;
+    if(longHeader){add("table_id_extension",3,2,0);add("section_header",0,8,0,"container");}
+    else if(b.size()>=3)add("section_header",0,3,0,"container");
+    // Short sections (including TDT/TOT and cable OOB SI) do not carry the
+    // MPEG long-header extension/version/section fields at these byte offsets.
+    if(!r.valid||!longHeader)return out;
     if(r.tid==0&&end>=8){for(size_t p=8;p+4<=end;p+=4){add("program_number",p,2,p);add("pmt_pid",p+2,2,p);add("pat_mapping",p,4,p,"container");}}
     if(r.tid==2&&end>=12){add("pcr_pid",8,2,0);size_t n=u16(b,10)&4095;descriptors(12,12+n);for(size_t p=12+n;p+5<=end;){size_t next=p+5+(u16(b,p+3)&4095);if(next>end)break;add("component",p,next-p,p,"container");add("stream_type",p,1,p);add("elementary_pid",p+1,2,p);descriptors(p+5,next);p=next;}}
     if((r.tid==0x42||r.tid==0x46)&&end>=11){add("original_network_id",8,2,0);for(size_t p=11;p+5<=end;){size_t next=p+5+(u16(b,p+3)&4095);if(next>end)break;add("service_id",p,2,p);add("service",p,next-p,p,"container");descriptors(p+5,next);p=next;}}

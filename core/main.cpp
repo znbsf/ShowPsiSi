@@ -318,7 +318,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         J result=J::object(); uint32_t pds=0;bool pdsOnWire=false;
         ts::DuckContext descriptorDuck(&NULLREP);descriptorDuck.resetStandards(duck.standards());descriptorDuck.setDefaultCharsetIn(duck.charsetIn());descriptorDuck.setDefaultCharsetOut(duck.charsetOut());descriptorDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
         ts::REGIDVector registrations=inheritedRegistrations;
-        if(end>r.raw.size()-4) { issue(r,"descriptor_loop_overrun",begin,"Descriptor loop exceeds section payload"); return result; }
+        if(r.raw.size()<4||end>r.raw.size()-4) { issue(r,"descriptor_loop_overrun",begin,"Descriptor loop exceeds section payload"); return result; }
         for(size_t p=begin;p<end;) {
             if(p+2>end) { issue(r,"descriptor_header_truncated",p,"Missing descriptor length"); break; }
             size_t n=r.raw[p+1],next=p+2+n; int tag=r.raw[p];
@@ -339,8 +339,15 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             d["decode_status"]=namespaceConflict?"context_guarded":d.value("native_decoded",false)?"decoded":descriptorClass.factory?"parse_failure":"unknown_or_unsupported";
             d["decode_scope"]="SDK registry in observed descriptor context; unknown private syntax cannot be distinguished from unsupported specification without external evidence";
             if(tag==0x05&&n>=4)registrations.push_back((uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4));
-            if(tag==0x5f&&n==4) { pdsOnWire=true;pds=(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4); d["name"]="private_data_specifier_descriptor"; d["fields"]["private_data_specifier"]=pds; }
-            else if(tag==0x48) {
+            // ETSI TS 101 211 4.2.7.1: either namespace descriptor ends the
+            // previous PDS scope. Malformed replacements cannot inherit it.
+            if(tag==0x5f) {
+                pdsOnWire=n==4;pds=pdsOnWire?(uint32_t(u16(r.raw,p+2))<<16)|u16(r.raw,p+4):0;
+                if(pdsOnWire){d["name"]="private_data_specifier_descriptor";d["fields"]["private_data_specifier"]=pds;}
+            }
+            else if(tag==0x0f){pds=0;pdsOnWire=false;}
+            if(tag==0x0f||(tag==0x5f&&n!=4))d["native_decode_warning"]="Private namespace scope ends here; unanchored SDK section text may retain stale private meanings and is withheld. Original bytes and contextual descriptors remain available.";
+            if(tag==0x48) {
                 ts::ServiceDescriptor native(duck,bin); d["name"]="service_descriptor";
                 if(native.isValid()) { result["name"]=native.service_name.toUTF8(); result["provider"]=native.provider_name.toUTF8(); result["type"]=native.service_type; d["fields"]=result; }
                 else issue(r,"service_descriptor_invalid",p,"TSDuck rejected service descriptor");
@@ -385,6 +392,14 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     void decode(Record& r) {
         const auto& b=r.raw; size_t end=b.size()>=4?b.size()-4:0;
         if(!r.valid)return;
+        // All manually decoded long-table loops below use offsets after the
+        // eight-byte header. A short envelope must not invent those identities.
+        const size_t longMinimum=r.tid==0||r.tid==1?12:r.tid==2?16:
+            r.tid==0x42||r.tid==0x46?15:r.tid==0x40||r.tid==0x41||r.tid==0x4a?16:
+            r.tid>=0x4e&&r.tid<=0x6f?18:0;
+        if(longMinimum&&(b.size()<longMinimum||(b[1]&0x80)==0)){
+            issue(r,"long_section_required",1,"This table requires a complete MPEG long-section header and fixed payload; raw evidence retained");return;
+        }
         if((r.tid==0x42||r.tid==0x46)&&b.size()>=15) {
             r.fields["transport_stream_id"]=r.ext; r.fields["original_network_id"]=u16(b,8);
             for(size_t p=11;p<end;) {
@@ -660,12 +675,12 @@ public:
     explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension; }
     void handleSection(ts::SectionDemux& demux,const ts::Section& s) override {
         // Discover dependent signalling PIDs before later packets in this block.
-        if(s.tableId()==0&&s.sourcePID()==0) { const auto* b=s.content(); for(size_t p=8;p+4<=s.size()-4;p+=4)demux.addPID(((b[p+2]&31)<<8)|b[p+3]); }
+        if(s.tableId()==0&&s.sourcePID()==0&&s.isLongSection()&&s.size()>=12) { const auto* b=s.content(); for(size_t p=8;p+4<=s.size()-4;p+=4)demux.addPID(((b[p+2]&31)<<8)|b[p+3]); }
         if(s.tableId()==0xc7&&(standardsContext=="auto"||standardsContext=="atsc")&&s.sectionNumber()==0&&s.lastSectionNumber()==0){
             ts::BinaryTable binary;binary.addNewSection(s.content(),s.size(),s.sourcePID(),ts::CRC32::CHECK);ts::MGT mgt(duck,binary);
             if(mgt.isValid())for(const auto& entry:mgt.tables)demux.addPID(entry.second.table_type_PID);
         }
-        if(s.tableId()==2&&s.size()>=16){
+        if(s.tableId()==2&&s.isLongSection()&&s.size()>=16){
             const auto* b=s.content();size_t end=s.size()-4,p=12+(((b[10]&15)<<8)|b[11]);
             while(p+5<=end){size_t len=((b[p+3]&15)<<8)|b[p+4];if(p+5+len>end)break;
                 if(b[p]==0x05||b[p]==0x0b||b[p]==0x0d||b[p]==0x13||b[p]==0x14||b[p]==0x86)demux.addPID(((b[p+1]&31)<<8)|b[p+2]);p+=5+len;
@@ -982,6 +997,13 @@ public:
                             out["native_decode_warnings"]=J::array({"DSM-CC DII module descriptor namespace is not established; generic bytes retained. Select DVB only when independently known."});
                         }
                     }
+                }
+                bool namespaceBarrier=false;
+                for(const auto& [number,part]:group)for(const auto& d:part->descriptors)
+                    namespaceBarrier=namespaceBarrier||d.value("tag",-1)==0x0f||(d.value("tag",-1)==0x5f&&d.value("length",0)!=4);
+                if(namespaceBarrier){
+                    if(!out.contains("native_decode_warnings"))out["native_decode_warnings"]=J::array();
+                    out["native_decode_warnings"].push_back("SDK merged XML is preserved as rendered. Private descriptor names are not validated namespace evidence across PDI or malformed PDS barriers; use the original contextual descriptor results and raw bytes.");
                 }
                 if(native){out["native_table"]=xmlTree(native);const auto name=native->name();out["native_decode_status"]=(name==u"generic_long_table"||name==u"generic_short_table")?"generic raw fallback":"native TSDuck decoder";}
                 out["tsduck_xml"]=document.toString().toUTF8();

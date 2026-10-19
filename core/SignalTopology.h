@@ -117,8 +117,8 @@ class Builder {
     std::string transport(unsigned onid,unsigned tsid){return family+":ts:"+num(onid)+":"+num(tsid);}
     std::string service(unsigned onid,unsigned tsid,unsigned sid){return family+":service:"+num(onid)+":"+num(tsid)+":"+num(sid);}
     void indexPrograms(){
-        for(auto* r:sections){if(r->tid==0&&r->pid==0)for(size_t p=8;p+4<=r->raw.size()-4;p+=4)if(u16(r->raw,p))pats[{r->ext,u16(r->raw,p)}].push_back({r,p,u16(r->raw,p+2)&8191});
-            if(r->tid==2)pmts[{r->pid,r->ext}].push_back(r);}
+        for(auto* r:sections){if(r->tid==0&&r->pid==0&&r->raw.size()>=12&&(r->raw[1]&0x80))for(size_t p=8;p+4<=r->raw.size()-4;p+=4)if(u16(r->raw,p))pats[{r->ext,u16(r->raw,p)}].push_back({r,p,u16(r->raw,p+2)&8191});
+            if(r->tid==2&&r->raw.size()>=16&&(r->raw[1]&0x80))pmts[{r->pid,r->ext}].push_back(r);}
     }
     void components(const std::string& id,unsigned tsid,unsigned sid){
         auto& n=nodes.at(id);auto mapping=pats.find({tsid,sid});

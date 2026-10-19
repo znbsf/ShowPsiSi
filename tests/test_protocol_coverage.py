@@ -1149,6 +1149,39 @@ class ProtocolCoverageTests(unittest.TestCase):
         self.assertEqual(flat['native']['name'], 'generic_descriptor')
         self.assertFalse(self.tree_nodes(details[0]['native_table'], 'reference_descriptor'))
 
+    def test_namespace_barriers_clear_private_context_and_valid_pds_restores_it(self):
+        # ETSI TS 101 211 V1.13.1 4.2.7.1: PDS scope ends at the next PDS
+        # or private_data_indicator_descriptor, even if the new value is unusable.
+        pds = descriptor(0x5f, b'\x00\x00\x00\x29')
+        v1 = descriptor(0x83, word(100) + word(0xc007))
+        v2 = descriptor(0x87, b'\x01\x00SWE\x04' + word(100) + word(0xfc07))
+        barriers = [descriptor(0x0f, value) for value in
+                    (b'\x12\x34\x56\x78', b'\x00\x00\x00\x29', b'', b'\x29')]
+        barriers += [descriptor(0x5f, value) for value in (b'\x00\x00\x29', b'\x00\x00\x00\x00\x29')]
+        for barrier in barriers:
+            with self.subTest(barrier=barrier.hex()):
+                desc = pds + barrier + v1 + v2 + pds + v1 + v2
+                transport = word(1) + word(2) + word(0xf000 | len(desc)) + desc
+                raw = section(0x40, 10, 1, word(0xf000) + word(0xf000 | len(transport)) + transport)
+                _, details = self.analyze_packets(self.packetize(0x10, raw), 'dvb')
+                detail, = details
+                self.assertEqual(detail['raw_hex'], raw.hex().upper())
+                private = [d for d in detail['descriptors'] if d['tag'] in (0x83, 0x87)]
+                self.assertEqual(len(private), 4)
+                self.assertTrue(any('Private descriptor names are not validated namespace evidence' in warning for warning in detail.get('native_decode_warnings', [])))
+                self.assertIsNone(detail['section_native_text'])
+                self.assertIn('namespace is guarded', detail['section_decode_scope'])
+                for item in private[:2]:
+                    self.assertEqual(item['pds'], 0)
+                    self.assertEqual(item['native']['name'], 'generic_descriptor')
+                    self.assertFalse(item['native_decoded'])
+                    self.assertNotIn('lcn_entries', item)
+                    self.assertNotIn('lcn_lists', item)
+                    self.assertEqual(item['references'], [])
+                self.assertEqual([d['native']['name'] for d in private[2:]],
+                                 ['nordig_logical_channel_descriptor_v1', 'nordig_logical_channel_descriptor_v2'])
+                self.assertTrue(all(d['pds'] == 0x29 for d in private[2:]))
+
     def test_standards_choice_is_validated(self):
         with self.assertRaises(RuntimeError):
             self.analyze(['BIT'], 'invented-standard')

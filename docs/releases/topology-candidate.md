@@ -38,7 +38,7 @@ synthetic screenshot is UI evidence only, not reception or satellite validation.
       source semantics. Resolve conflicts without dropping tests or evidence.
 - [x] Bump all application/package version authorities together and add actual
       version-specific notes. Keep protocol-extension work out of this release.
-- [ ] Fresh engine/helper/Qt build, strict engine and native Qt tests, sandboxed
+- [x] Fresh engine/helper/Qt build, strict engine and native Qt tests, sandboxed
       browser regression, Tauri/packaging/updater/publisher tests on merged source.
 - [ ] Hosted five-job CI passes for the exact final main commit.
 - [ ] Audit that run's installer and portable ZIP, inventories, hashes and actual
@@ -67,3 +67,30 @@ small backport and is not labelled as its final-source full regression.
 First release v0.1.0 published and public assets verified on 2026-10-19.
 The next candidate is v0.2.0; all four version authorities were updated together.
 Fresh exact-source gates and Windows artifact acceptance remain required.
+
+## Combined safety recovery, 2026-10-19 10:50 UTC
+
+The first v0.2 candidate (`e24ff587`, CI run `39236912182`, #75) passed all
+five hosted jobs. It was held before merge after adversarial tests reproduced
+baseline defects: short PAT/PMT envelopes could crash discovery or suggest
+forged PIDs; short SDT and sibling long-table envelopes could fabricate semantic
+records; private descriptor context survived PDI/malformed PDS barriers.
+
+Applied only the reviewed generic fixes (`08b683a`, `a63a456d`, `a0432485`) to
+this candidate. No NorDig aggregation, J.94, DVB-I or DSM-CC feature code was
+imported. Invalid table bytes remain inspectable, genuine short TDT/TOT/RST
+formats remain accepted, and contextual descriptors are distinguished from
+unvalidated SDK merged display meanings.
+
+Fresh combined code snapshot `9f80da4a916a20cb9953a8a54a7d19b97e9562eb` passed:
+
+- 265 strict engine/helper tests, zero skips.
+- 89 Qt tests, zero skips, plus retained native offscreen smoke.
+- 46 sandbox-enabled Chromium/native-core tests, exit 0.
+- 77 publisher, 29 installer helper and 6 contrast regressions.
+- 45 compiled updater checks; 9 locked Rust tests and optimized Tauri build.
+
+These are cloud Linux gates. The following documentation-only checkpoint does
+not change the tested code. Fresh exact-head hosted CI, post-merge main CI and
+Windows artifact acceptance remain required before v0.2 publication. Earlier
+#75 success is retained as pre-fix evidence, not substituted for those gates.

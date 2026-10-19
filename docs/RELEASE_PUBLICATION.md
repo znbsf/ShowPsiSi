@@ -64,7 +64,10 @@ Before any write, the publisher verifies:
 - Downloads start at constructed fixed-repository GitHub API endpoints. Redirect
   destinations allow only GitHub release CDNs and the Actions
   `productionresultssa<number>.blob.core.windows.net` artifact namespace. Every
-  redirected request drops Authorization. HTTP, userinfo, arbitrary Azure hosts,
+  redirected request drops Authorization. The initial Actions archive request
+  uses `application/vnd.github+json` to obtain its redirect; release-asset byte
+  requests and CDN downloads use `application/octet-stream`. Only the validated
+  redirect hostname is logged, never its signed URL/query. HTTP, userinfo, arbitrary Azure hosts,
   nonstandard ports, host changes between CDNs and excessive redirects fail.
   No signed download URL or token is logged or persisted. API writes do not follow
   redirects and are never automatically retried after an uncertain result.
@@ -98,6 +101,22 @@ redownloaded to compare actual bytes. Main/CI/tag/metadata are checked again
 before clearing draft status. A final read verifies public release metadata,
 tag target and every asset's downloaded bytes. A green compile or successful
 upload alone is not reported as publication.
+
+## Live transport regression
+
+The Linux engine CI job has only `contents: read` and `actions: read`. On main
+pushes and same-repository PR heads it uploads one tiny known-text probe and then exercises the publisher's actual GitHub API
+client against that same run's artifact: metadata identity, API/archive media
+negotiation, credential-free validated redirect, exact upload/API/download
+SHA-256 and size, bounded extraction, and exact text. This is a real hosted
+network gate, separate from offline mocks and connector downloads. It never
+creates a tag/release, executes downloaded code, or persists credentials/signed
+URLs. The disposable probe expires after one day; every CI run creates its own,
+so no future run depends on an old retained artifact. Fork PRs skip only these
+three transport steps; ordinary regression suites still run. The publisher
+requires this preflight to have actually passed on its exact main-push run.
+Publication still repeats
+the complete verification against the exact installer/portable artifact bundle.
 
 ## Interrupted attempts and conflicts
 

@@ -175,7 +175,7 @@ class CITests(unittest.TestCase):
                     'head_branch': 'main', 'event': 'push', 'status': 'completed', 'conclusion': 'success', 'run_attempt': 1,
                     'repository': {'id': release.REPOSITORY_ID}, 'head_repository': {'id': release.REPOSITORY_ID}}
         self.jobs = [{'name': name, 'run_id': 123, 'head_sha': SOURCE, 'status': 'completed', 'conclusion': 'success',
-                      'steps': [{'name': step, 'conclusion': 'success'} for step in release.WINDOWS_STEPS]} for name in release.JOBS]
+                      'steps': [{'name': step, 'conclusion': 'success'} for step in (release.WINDOWS_STEPS if name == 'Windows MSVC engine and Qt' else ['Verify live read-only publisher artifact transport'] if name == 'engine-web' else [])]} for name in release.JOBS]
 
     def api(self):
         def get(path):
@@ -190,6 +190,16 @@ class CITests(unittest.TestCase):
 
     def test_exact_main_push_all_jobs_and_acceptance_pass(self):
         self.assertEqual(release.validate_ci(self.api(), REQUEST), self.run)
+
+    def test_missing_skipped_or_failed_live_transport_blocks_publication(self):
+        engine = next(job for job in self.jobs if job['name'] == 'engine-web')
+        for conclusion in ('skipped', 'failure', None):
+            engine['steps'][0]['conclusion'] = conclusion
+            with self.subTest(conclusion=conclusion), self.assertRaisesRegex(release.ReleaseError, 'transport preflight'):
+                release.validate_ci(self.api(), REQUEST)
+        engine['steps'] = []
+        with self.assertRaisesRegex(release.ReleaseError, 'transport preflight'):
+            release.validate_ci(self.api(), REQUEST)
 
     def test_pr_wrong_source_pending_failed_or_invalid_attempt_rejected(self):
         original = copy.deepcopy(self.run)
@@ -286,7 +296,34 @@ class DownloadTests(TemporaryTest):
             api.download(release.PREFIX + '/actions/artifacts/1/zip', self.work / 'file', hashlib.sha256(payload).hexdigest(), len(payload))
         self.assertEqual(requests[0].get_header('Authorization'), 'Bearer unit-test-secret')
         self.assertIsNone(requests[1].get_header('Authorization'))
+        self.assertEqual(requests[0].get_header('Accept'), 'application/vnd.github+json')
+        self.assertEqual(requests[1].get_header('Accept'), 'application/octet-stream')
         self.assertEqual((self.work / 'file').read_bytes(), payload)
+
+    def test_release_asset_binary_accept_and_redirect_credential_removal(self):
+        api = release.GitHub('unit-test-secret')
+        payload = b'release-asset-bytes'
+        responses = [self.response(302, headers={'Location': 'https://release-assets.githubusercontent.com/file?signature=private'}),
+                     self.response(200, payload)]
+        requests = []
+        def opened(request):
+            requests.append(request)
+            return responses.pop(0)
+        with mock.patch.object(api, '_open', side_effect=opened), mock.patch('builtins.print') as logged:
+            api.download(release.PREFIX + '/releases/assets/1', self.work / 'asset', hashlib.sha256(payload).hexdigest(), len(payload))
+        self.assertEqual([r.get_header('Accept') for r in requests], ['application/octet-stream'] * 2)
+        self.assertEqual(requests[0].get_header('Authorization'), 'Bearer unit-test-secret')
+        self.assertIsNone(requests[1].get_header('Authorization'))
+        logged.assert_called_once_with('Verified download redirect host: release-assets.githubusercontent.com')
+        self.assertEqual((self.work / 'asset').read_bytes(), payload)
+
+    def test_artifact_media_type_error_fails_without_fallback_retry(self):
+        api = release.GitHub('unit-test-secret')
+        with mock.patch.object(api, '_open', return_value=self.response(415)) as opened:
+            with self.assertRaisesRegex(release.ReleaseError, 'HTTP 415'):
+                api.download(release.PREFIX + '/actions/artifacts/1/zip', self.work / 'file', 'a' * 64, 8)
+        self.assertEqual(opened.call_count, 1)
+        self.assertFalse((self.work / 'file').exists())
 
     def test_unrecognized_http_userinfo_port_and_spoofed_hosts_rejected(self):
         for url in ('http://api.github.com/x', 'https://api.github.com:444/x', 'https://token@api.github.com/x',
@@ -313,6 +350,83 @@ class DownloadTests(TemporaryTest):
         with mock.patch.object(api, '_open', return_value=self.response(302)) as opened, self.assertRaises(release.ReleaseError):
             api.api(release.PREFIX + '/releases', 'POST', {})
         self.assertEqual(opened.call_count, 1)
+
+
+class LiveTransportProbeTests(TemporaryTest):
+    def setUp(self):
+        super().setUp()
+        import release_transport_probe as probe
+        self.probe = probe
+        self.archive = self.work / 'fixture.zip'
+        with zipfile.ZipFile(self.archive, 'w') as archive:
+            archive.writestr('probe.txt', probe.PROBE)
+        self.digest = release.sha256(self.archive)
+        self.run = {'id': 123, 'run_attempt': 1, 'head_sha': SOURCE,
+                    'repository': {'id': release.REPOSITORY_ID}, 'head_repository': {'id': release.REPOSITORY_ID}}
+        self.artifact = {'id': 456, 'expired': False, 'name': 'release-transport-probe-1',
+            'workflow_run': {'id': 123, 'head_sha': SOURCE, 'repository_id': release.REPOSITORY_ID,
+                             'head_repository_id': release.REPOSITORY_ID},
+            'size_in_bytes': self.archive.stat().st_size, 'digest': 'sha256:' + self.digest,
+            'archive_download_url': release.API + release.PREFIX + '/actions/artifacts/456/zip'}
+        self.api = mock.Mock()
+        def get(path):
+            return {release.PREFIX + '/actions/runs/123': self.run,
+                    release.PREFIX + '/actions/artifacts/456': self.artifact}[path]
+        self.api.api.side_effect = get
+        self.api.download.side_effect = lambda path, destination, digest, size: shutil.copyfile(self.archive, destination)
+
+    def verify(self):
+        return self.probe.verify(self.api, 456, 123, 1, self.digest, self.work)
+
+    def test_probe_reads_only_same_run_metadata_and_exact_known_bytes(self):
+        with mock.patch.object(release, 'publish', side_effect=AssertionError('No publication')):
+            result = self.verify()
+        self.assertTrue(result['passed'])
+        self.assertEqual(result['source_sha'], SOURCE)
+        self.assertEqual(self.api.api.call_args_list, [mock.call(release.PREFIX + '/actions/runs/123'),
+                         mock.call(release.PREFIX + '/actions/artifacts/456')])
+        self.api.download.assert_called_once_with(release.PREFIX + '/actions/artifacts/456/zip',
+                                                  self.work / 'probe.zip', self.digest, self.archive.stat().st_size)
+
+    def test_probe_foreign_artifact_is_rejected_before_download(self):
+        self.artifact['workflow_run']['id'] = 124
+        with self.assertRaisesRegex(release.ReleaseError, 'identity mismatch'):
+            self.verify()
+        self.api.download.assert_not_called()
+
+    def test_probe_changed_run_or_attempt_is_rejected(self):
+        self.run['run_attempt'] = 2
+        with self.assertRaisesRegex(release.ReleaseError, 'run identity'):
+            self.verify()
+        self.api.download.assert_not_called()
+
+    def test_probe_wrong_digest_or_excessive_size_is_rejected(self):
+        for key, value in (('digest', 'sha256:' + 'f' * 64), ('size_in_bytes', self.probe.MAX_PROBE + 1)):
+            original = self.artifact[key]
+            self.artifact[key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(release.ReleaseError, 'hash/size/origin'):
+                self.verify()
+            self.artifact[key] = original
+        self.api.download.assert_not_called()
+
+    def test_probe_extra_or_changed_payload_is_rejected(self):
+        with zipfile.ZipFile(self.archive, 'w') as archive:
+            archive.writestr('probe.txt', b'changed')
+            archive.writestr('unexpected.txt', b'extra')
+        self.digest = release.sha256(self.archive)
+        self.artifact.update(digest='sha256:' + self.digest, size_in_bytes=self.archive.stat().st_size)
+        with self.assertRaisesRegex(release.ReleaseError, 'exact expected text'):
+            self.verify()
+
+    def test_ci_live_probe_has_no_repository_write_permission(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        engine = workflow.split('  engine-web:', 1)[1].split('  qt-native:', 1)[0]
+        self.assertIn('permissions:\n      contents: read\n      actions: read', engine)
+        self.assertNotIn('contents: write', engine)
+        self.assertIn('release_transport_probe.py --prepare', engine)
+        self.assertIn('steps.transport-probe.outputs.artifact-digest', engine)
+        self.assertIn('Verify live read-only publisher artifact transport', engine)
+        self.assertEqual(engine.count("if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository"), 3)
 
 
 class PrerequisiteTimestampTests(unittest.TestCase):

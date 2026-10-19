@@ -172,7 +172,12 @@ class GitHub:
             part = check_url(url, download=True)
             # The API credential is sent only on the initial fixed API request.
             headers = self.headers() if hop == 0 else {'User-Agent': 'ShowPsiSi-verified-publisher'}
-            headers['Accept'] = 'application/octet-stream'
+            # Actions archives return a redirect using the JSON API media type;
+            # release assets negotiate binary content with octet-stream instead.
+            # Redirected CDN requests carry no API credential or API media type.
+            headers['Accept'] = ('application/vnd.github+json'
+                                 if hop == 0 and path.startswith(PREFIX + '/actions/artifacts/')
+                                 else 'application/octet-stream')
             with self._open(urllib.request.Request(url, headers=headers)) as response:
                 if response.status in (301, 302, 303, 307, 308):
                     location = response.headers.get('Location', '')
@@ -181,6 +186,7 @@ class GitHub:
                     require(target.hostname != 'api.github.com', 'Download redirect back to API refused')
                     require(hop == 0 or target.hostname == part.hostname,
                             'Download redirect changed CDN host')
+                    print('Verified download redirect host: ' + target.hostname)
                     url = next_url
                     continue
                 require(response.status == 200, f'GitHub download failed (HTTP {response.status})')
@@ -344,6 +350,10 @@ def validate_ci(api, request):
     for job in jobs:
         require(job.get('run_id') == run_id and job.get('head_sha') == source
                 and job.get('status') == 'completed' and job.get('conclusion') == 'success', 'A required CI job did not pass')
+        if job['name'] == 'engine-web':
+            require(sum(step.get('name') == 'Verify live read-only publisher artifact transport'
+                        and step.get('conclusion') == 'success' for step in job.get('steps', [])) == 1,
+                    'Live publisher artifact transport preflight did not pass')
         if job['name'] == 'Windows MSVC engine and Qt':
             steps = job.get('steps', [])
             require(all(sum(s.get('name') == name and s.get('conclusion') == 'success' for s in steps) == 1

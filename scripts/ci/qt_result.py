@@ -6,6 +6,8 @@ import time
 def wait_for_qt_result(path, process, timeout, on_running=None):
     # QFile creates the path before its buffered JSON is flushed. Existence alone
     # is not publication: terminating the writer at that point can truncate it.
+    # Windows may also briefly deny reads during publication. Keep polling only
+    # this result path under the same deadline; persistent denial still fails.
     deadline = time.monotonic() + timeout
     content = None
     while True:
@@ -14,7 +16,7 @@ def wait_for_qt_result(path, process, timeout, on_running=None):
             report = json.loads(content)
             assert isinstance(report, dict), f"Qt result must be an object: {content!r}"
             return report
-        except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        except (FileNotFoundError, PermissionError, UnicodeDecodeError, json.JSONDecodeError) as error:
             last_error = error
         exit_code = process.poll()
         if exit_code is not None:
@@ -24,7 +26,7 @@ def wait_for_qt_result(path, process, timeout, on_running=None):
                 report = json.loads(content)
                 assert isinstance(report, dict), f"Qt result must be an object: {content!r}"
                 return report
-            except (FileNotFoundError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            except (FileNotFoundError, PermissionError, UnicodeDecodeError, json.JSONDecodeError) as error:
                 last_error = error
         if exit_code is not None or time.monotonic() >= deadline:
             raise AssertionError(

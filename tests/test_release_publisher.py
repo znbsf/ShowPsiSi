@@ -971,11 +971,17 @@ class AppLocalPayloadTests(PayloadTests):
         paths = [root + '\\bin\\' + name for name in [executable, *sorted(self.metadata['files'])]]
         identities = {name: dict(identity, path=root + '\\bin\\' + name)
                       for name, identity in self.metadata['files'].items()}
-        return {'schema_version': 1, 'passed': True, 'pid': 123, 'platform': 'Windows',
+        path_identities = {}
+        for path in paths:
+            local = self.fixture.package / 'bin' / path.rsplit('\\', 1)[1]
+            path_identities[path] = {'raw_path': path, 'resolved_path': path,
+                                     'file_id': {'device': 7, 'inode': local.stat().st_ino},
+                                     'bytes': local.stat().st_size, 'sha256': release.sha256(local)}
+        return {'schema_version': 2, 'passed': True, 'pid': 123, 'platform': 'Windows',
                 'package_root': root, 'executable': paths[0], 'executable_name': executable,
                 'executable_sha256': release.sha256(self.fixture.package / 'bin' / executable),
                 'sampled_at_utc': '2026-10-19T09:00:00+00:00', 'process_created_unix': 100,
-                'command_line': [paths[0]],
+                'command_line': [paths[0]], 'path_identities': path_identities,
                 'module_paths': paths, 'raw_modules': [{'path': path} for path in paths],
                 'runtime': {'passed': True, 'mode': 'AppLocal',
                             'required_modules': sorted(self.metadata['files']), 'modules': identities}}
@@ -1116,6 +1122,7 @@ class AppLocalPayloadTests(PayloadTests):
             report['module_paths'] = [wrong if path == old else path for path in report['module_paths']]
             report['raw_modules'] = [{'path': path} for path in report['module_paths']]
             report['runtime']['modules']['msvcp140.dll']['path'] = wrong
+            report['path_identities'][wrong] = dict(report['path_identities'].pop(old), raw_path=wrong, resolved_path=wrong)
         self.change_validation(change)
         with self.assertRaisesRegex(RuntimeError, 'outside package bin'):
             self.validate()

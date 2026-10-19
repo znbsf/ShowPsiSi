@@ -189,19 +189,39 @@ class AppLocalValidationTests(unittest.TestCase):
             runtime.required_crt_modules(self.package, self.bindir / 'showpsisi-core.exe')
 
     def report(self):
-        root = r'C:\relocated package 测试'
+        root = r'C:\Users\runneradmin\relocated package 测试'
         name = 'showpsisi-core.exe'
         exe = ntpath.join(root, 'bin', name)
         names = ['msvcp140.dll', 'vcruntime140.dll']
         paths = [exe, r'C:\Windows\System32\ntdll.dll'] + [ntpath.join(root, 'bin', name) for name in names]
         modules = {name: dict(self.metadata['files'][name], path=ntpath.join(root, 'bin', name)) for name in names}
-        return {'schema_version': 1, 'passed': True, 'pid': 1234, 'platform': 'Windows',
+        identities = {path: self.identity(path, path) for path in paths if ntpath.basename(path).lower() == name
+                      or ntpath.basename(path).lower() in names}
+        return {'schema_version': 2, 'passed': True, 'pid': 1234, 'platform': 'Windows',
                 'package_root': root, 'executable': exe, 'executable_name': name,
-                'executable_sha256': runtime.sha256(self.bindir / name),
+                'executable_sha256': runtime.sha256(self.bindir / name), 'path_identities': identities,
                 'sampled_at_utc': datetime.now(timezone.utc).isoformat(),
                 'process_created_unix': 1.0, 'command_line': [exe, '--root', root],
                 'module_paths': paths, 'raw_modules': [{'path': path, 'rss': 1} for path in paths],
                 'runtime': {'passed': True, 'mode': 'AppLocal', 'required_modules': names, 'modules': modules}}
+
+    def identity(self, raw_path, resolved_path):
+        path = self.bindir / ntpath.basename(resolved_path).lower()
+        return {'raw_path': raw_path, 'resolved_path': resolved_path,
+                'file_id': {'device': 7, 'inode': path.stat().st_ino},
+                'bytes': path.stat().st_size, 'sha256': runtime.sha256(path)}
+
+    def alias_report(self):
+        report = self.report()
+        def alias(path):
+            return path.replace('runneradmin', 'RUNNER~1')
+        report['executable'] = alias(report['executable'])
+        report['command_line'][0] = alias(report['command_line'][0])
+        report['module_paths'] = [alias(path) for path in report['module_paths']]
+        report['raw_modules'] = [dict(item, path=alias(item['path'])) for item in report['raw_modules']]
+        report['path_identities'] = {alias(path): dict(identity, raw_path=alias(path))
+                                     for path, identity in report['path_identities'].items()}
+        return report
 
     def verify_report(self, report):
         with mock.patch.object(runtime, 'required_crt_modules', return_value=['msvcp140.dll', 'vcruntime140.dll']):
@@ -219,8 +239,10 @@ class AppLocalValidationTests(unittest.TestCase):
     def test_offline_capture_rejects_system_runtime_even_if_claimed_local(self):
         report = self.report()
         path = r'C:\Windows\System32\msvcp140.dll'
+        old = report['module_paths'][2]
         report['module_paths'][2] = path
         report['raw_modules'][2]['path'] = path
+        report['path_identities'][path] = dict(report['path_identities'].pop(old), raw_path=path, resolved_path=path)
         with self.assertRaisesRegex(RuntimeError, 'outside package bin'):
             self.verify_report(report)
 
@@ -256,6 +278,173 @@ class AppLocalValidationTests(unittest.TestCase):
             report[key] = value
             with self.subTest(key=key, value=value), self.assertRaisesRegex(RuntimeError, 'process/time'):
                 self.verify_report(report)
+
+    def test_offline_capture_accepts_captured_short_directory_aliases(self):
+        report = self.alias_report()
+        original = copy.deepcopy(report)
+        self.assertTrue(self.verify_report(report)['passed'])
+        self.assertEqual(report, original, 'Offline validation must not rewrite raw evidence')
+        self.assertIn('RUNNER~1', report['executable'])
+        self.assertTrue(all('runneradmin' in identity['resolved_path']
+                            for identity in report['path_identities'].values()))
+
+    def test_offline_capture_accepts_distinct_proven_executable_argv_and_map_spellings(self):
+        report = self.alias_report()
+        short = report['executable']
+        long = report['path_identities'][short]['resolved_path']
+        report['command_line'][0] = long
+        report['path_identities'][long] = dict(report['path_identities'][short], raw_path=long)
+        self.assertTrue(self.verify_report(report)['passed'])
+
+    def test_offline_capture_rejects_legacy_schema_even_with_new_fields(self):
+        report = self.report()
+        report['schema_version'] = 1
+        with self.assertRaisesRegex(RuntimeError, 'unsuccessful Windows runtime'):
+            self.verify_report(report)
+
+    def test_offline_capture_rejects_missing_extra_and_unproved_alias_identities(self):
+        for change in ('missing_all', 'missing_exe', 'missing_crt', 'extra', 'unproved_alias'):
+            report = self.report()
+            identities = report['path_identities']
+            if change == 'missing_all':
+                report.pop('path_identities')
+            elif change == 'missing_exe':
+                identities.pop(report['executable'])
+            elif change == 'missing_crt':
+                identities.pop(report['module_paths'][2])
+            elif change == 'extra':
+                identities[r'C:\unobserved\showpsisi-core.exe'] = identities[report['executable']]
+            else:
+                report['executable'] = report['executable'].replace('runneradmin', 'RUNNER~1')
+            with self.subTest(change=change), self.assertRaisesRegex(RuntimeError, 'raw-path identities'):
+                self.verify_report(report)
+
+    def test_offline_capture_rejects_forged_raw_or_canonical_identity_binding(self):
+        for key, value, error in [('raw_path', r'C:\elsewhere\showpsisi-core.exe', 'binding mismatch'),
+                                  ('resolved_path', r'C:\elsewhere\showpsisi-core.exe', 'outside package bin'),
+                                  ('sha256', '0' * 64, 'hash-bound'), ('bytes', True, 'hash-bound'),
+                                  ('bytes', 1, 'hash-bound'), ('file_id', {'device': 7, 'inode': True}, 'filesystem'),
+                                  ('file_id', {'device': -1, 'inode': 12}, 'filesystem'),
+                                  ('file_id', {'device': 7, 'inode': 0}, 'filesystem')]:
+            report = self.alias_report()
+            report['path_identities'][report['executable']][key] = value
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(RuntimeError, error):
+                self.verify_report(report)
+
+    def test_offline_capture_rejects_different_argv_file_identity_despite_matching_bytes(self):
+        report = self.alias_report()
+        short = report['executable']
+        long = report['path_identities'][short]['resolved_path']
+        report['command_line'][0] = long
+        report['path_identities'][long] = dict(report['path_identities'][short], raw_path=long,
+                                              file_id={'device': 7, 'inode': 999999})
+        with self.assertRaisesRegex(RuntimeError, 'filesystem identities differ'):
+            self.verify_report(report)
+
+    def test_offline_capture_rejects_crt_identity_unbound_to_raw_map_or_package(self):
+        for key, value, error in [('raw_path', r'C:\elsewhere\msvcp140.dll', 'binding mismatch'),
+                                  ('resolved_path', r'C:\Windows\System32\msvcp140.dll', 'outside package bin'),
+                                  ('sha256', 'f' * 64, 'hash-bound')]:
+            report = self.alias_report()
+            report['path_identities'][report['module_paths'][2]][key] = value
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, error):
+                self.verify_report(report)
+
+    def test_offline_capture_keeps_raw_module_set_equality_with_aliases(self):
+        report = self.alias_report()
+        report['raw_modules'][0]['path'] = report['path_identities'][report['executable']]['resolved_path']
+        with self.assertRaisesRegex(RuntimeError, 'differ from raw'):
+            self.verify_report(report)
+
+    def test_live_path_identity_accepts_os_resolved_alias_and_records_raw_string(self):
+        # An OS-resolved spelling works without Windows symlink privileges.
+        # Actual 8.3 resolution remains a native CI gate, not a fixture claim.
+        alias = self.package / '..' / self.package.name
+        expected = self.bindir / 'showpsisi-core.exe'
+        raw = str(alias / 'bin' / expected.name)
+        identity = runtime._capture_path_identity(raw, expected)
+        self.assertEqual(identity['raw_path'], raw)
+        self.assertEqual(identity['resolved_path'], str(expected))
+        self.assertEqual(identity['sha256'], runtime.sha256(expected))
+        self.assertEqual(identity['file_id']['inode'], expected.stat().st_ino)
+
+    def test_live_path_identity_rejects_equal_bytes_outside_bin(self):
+        for name in ('showpsisi-core.exe', 'msvcp140.dll'):
+            expected = self.bindir / name
+            outside = self.root / name
+            outside.write_bytes(expected.read_bytes())
+            self.assertEqual(runtime.sha256(outside), runtime.sha256(expected))
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, 'outside package bin'):
+                runtime._capture_path_identity(str(outside), expected)
+
+    def test_live_path_identity_rejects_outside_hardlink_even_when_samefile(self):
+        for name in ('showpsisi-core.exe', 'msvcp140.dll'):
+            expected = self.bindir / name
+            outside = self.root / name
+            outside.hardlink_to(expected)
+            self.assertTrue(outside.samefile(expected))
+            with self.subTest(name=name), self.assertRaisesRegex(RuntimeError, 'outside package bin'):
+                runtime._capture_path_identity(str(outside), expected)
+
+    def test_live_path_identity_requires_samefile_and_strict_resolution(self):
+        expected = self.bindir / 'showpsisi-core.exe'
+        with mock.patch.object(Path, 'samefile', return_value=False), self.assertRaisesRegex(RuntimeError, 'outside package bin'):
+            runtime._capture_path_identity(str(expected), expected)
+        with self.assertRaises(FileNotFoundError):
+            runtime._capture_path_identity(str(self.root / 'missing.exe'), expected)
+
+    def test_live_capture_checkpoints_raw_maps_before_identity_failure(self):
+        outside = self.root / 'showpsisi-core.exe'
+        outside.write_bytes((self.bindir / outside.name).read_bytes())
+        exe = str(outside)
+        target = SimpleNamespace(exe=lambda: exe, create_time=lambda: 1.0, cmdline=lambda: [exe],
+                                 memory_maps=lambda grouped: [SimpleNamespace(path=exe, _asdict=lambda: {'path': exe, 'rss': 123})])
+        destination = self.root / 'outside capture.json'
+        with mock.patch.object(runtime, '_windows_host', return_value=True), mock.patch.dict(sys.modules, {'psutil': SimpleNamespace(Process=lambda pid: target)}):
+            with self.assertRaisesRegex(RuntimeError, 'outside package bin'):
+                runtime.capture_loaded_modules(SimpleNamespace(pid=1), self.package, destination)
+        report = json.loads(destination.read_text())
+        self.assertFalse(report['passed'])
+        self.assertEqual(report['raw_modules'], [{'path': exe, 'rss': 123}])
+        self.assertEqual(report['module_paths'], [exe])
+        self.assertIn('outside package bin', report['error'])
+
+    def test_live_capture_cannot_rebind_argv_to_an_observed_runtime_module(self):
+        exe = str(self.bindir / 'showpsisi-core.exe')
+        wrong = str(self.bindir / 'msvcp140.dll')
+        maps = [SimpleNamespace(path=path, _asdict=lambda path=path: {'path': path}) for path in (exe, wrong)]
+        target = SimpleNamespace(exe=lambda: exe, create_time=lambda: 1.0, cmdline=lambda: [wrong],
+                                 memory_maps=lambda grouped: maps)
+        destination = self.root / 'wrong argv capture.json'
+        with mock.patch.object(runtime, '_windows_host', return_value=True), mock.patch.dict(sys.modules, {'psutil': SimpleNamespace(Process=lambda pid: target)}):
+            with self.assertRaisesRegex(RuntimeError, 'outside package bin'):
+                runtime.capture_loaded_modules(SimpleNamespace(pid=1), self.package, destination)
+        report = json.loads(destination.read_text())
+        self.assertFalse(report['passed'])
+        self.assertEqual(report['command_line'], [wrong])
+        self.assertEqual(report['raw_modules'], [{'path': exe}, {'path': wrong}])
+
+    def test_live_capture_records_alias_identities_without_changing_raw_maps(self):
+        alias = self.package / '..' / self.package.name
+        paths = [str(alias / 'bin' / name) for name in ('showpsisi-core.exe', 'msvcp140.dll', 'vcruntime140.dll')]
+        raw = [{'path': path, 'rss': 123} for path in paths]
+        maps = [SimpleNamespace(path=item['path'], _asdict=lambda item=item: dict(item)) for item in raw]
+        target = SimpleNamespace(exe=lambda: paths[0], create_time=lambda: 1.0,
+                                 cmdline=lambda: [str(self.bindir / 'showpsisi-core.exe')],
+                                 memory_maps=lambda grouped: maps)
+        destination = self.root / 'alias capture.json'
+        with mock.patch.object(runtime, '_windows_host', return_value=True), mock.patch.dict(sys.modules, {'psutil': SimpleNamespace(Process=lambda pid: target)}), mock.patch.object(runtime, 'required_crt_modules', return_value=['msvcp140.dll', 'vcruntime140.dll']):
+            report = runtime.capture_loaded_modules(SimpleNamespace(pid=1), self.package, destination)
+        self.assertTrue(report['passed'])
+        self.assertEqual(report['schema_version'], 2)
+        self.assertEqual(report['executable'], paths[0])
+        self.assertEqual(report['raw_modules'], raw)
+        self.assertEqual(report['module_paths'], sorted(paths))
+        self.assertEqual(len(report['path_identities']), 4)
+        for path, identity in report['path_identities'].items():
+            self.assertEqual(identity['raw_path'], path)
+            self.assertEqual(identity['resolved_path'], str(self.bindir / Path(path).name))
+        self.assertEqual(report, json.loads(destination.read_text()))
 
     def test_capture_rejects_non_windows_before_touching_output(self):
         destination = self.root / 'should not exist.json'

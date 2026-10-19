@@ -191,6 +191,25 @@ def verify_loaded_modules(paths, package, executable=None, required_names=None):
             'modules': observed, 'scope': 'observed process module paths and package file identities'}
 
 
+def _capture_path_identity(raw_path, expected):
+    """Resolve an observed path on the capture host, never by alias spelling.
+
+    File identity alone is insufficient: an outside-bin hard link is the same
+    file but violates the deployment contract. Both checks precede hashing.
+    """
+    path, expected = Path(raw_path), Path(expected)
+    resolved = path.resolve(strict=True)
+    if (not path.is_absolute() or expected.resolve(strict=True) != expected
+            or resolved != expected or not path.samefile(expected)):
+        raise RuntimeError(f'Captured file resolves outside package bin: {raw_path}; expected {expected}')
+    info = path.stat()
+    if not path.is_file() or info.st_size <= 0 or info.st_ino <= 0:
+        raise RuntimeError(f'Captured file has no usable filesystem identity: {raw_path}')
+    return {'raw_path': raw_path, 'resolved_path': str(resolved),
+            'file_id': {'device': info.st_dev, 'inode': info.st_ino},
+            'bytes': info.st_size, 'sha256': sha256(path)}
+
+
 def capture_loaded_modules(process, package, evidence_path):
     """Write raw Windows memory-map evidence before applying any acceptance gate."""
     if not _windows_host():
@@ -199,7 +218,7 @@ def capture_loaded_modules(process, package, evidence_path):
     if evidence_path.exists():
         raise RuntimeError(f'Refusing stale Windows module evidence: {evidence_path}')
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    record = {'schema_version': 1, 'passed': False, 'pid': process.pid,
+    record = {'schema_version': 2, 'passed': False, 'pid': process.pid,
               'platform': 'Windows', 'package_root': str(Path(package).resolve()), 'raw_modules': []}
     def checkpoint():
         temporary = evidence_path.with_name(evidence_path.name + '.tmp')
@@ -211,7 +230,6 @@ def capture_loaded_modules(process, package, evidence_path):
         target = psutil.Process(process.pid)
         record['executable'] = target.exe()
         record['executable_name'] = Path(record['executable']).name.lower()
-        record['executable_sha256'] = sha256(Path(record['executable']))
         record['process_created_unix'] = target.create_time()
         record['command_line'] = target.cmdline()
         record['sampled_at_utc'] = datetime.now(timezone.utc).isoformat()
@@ -220,6 +238,31 @@ def capture_loaded_modules(process, package, evidence_path):
         paths = sorted({item.path for item in maps if item.path.lower().endswith(('.dll', '.exe'))})
         record['module_paths'] = paths
         checkpoint()
+        # Preserve every raw string above. Windows can report a short directory
+        # alias in exe(), argv[0], and memory maps while package_root is long.
+        # Retain the OS's resolution and file identity only for the application
+        # executable and reviewed CRT paths; never rewrite raw memory maps.
+        name = record['executable_name']
+        if name not in ('showpsisi-core.exe', 'showpsisi-qt.exe'):
+            raise RuntimeError('Windows runtime module capture executable mismatch')
+        command = record['command_line']
+        if not isinstance(command, list) or not command or any(not isinstance(arg, str) for arg in command):
+            raise RuntimeError('Windows capture is missing valid process/time identity')
+        bindir = Path(package).resolve(strict=True) / 'bin'
+        expected_exe = bindir / name
+        expected_paths = {record['executable']: expected_exe, command[0]: expected_exe}
+        for path in paths:
+            basename = Path(path).name.lower()
+            if basename == name or CRT_NAME.fullmatch(basename):
+                if basename != name and basename not in RUNTIME_NAMES:
+                    raise RuntimeError(f'Loaded unreviewed VC runtime module: {path}')
+                # argv[0] must retain its executable expectation even when a
+                # malformed command line names another observed module.
+                expected_paths.setdefault(path, bindir / basename)
+        record['path_identities'] = {}
+        for raw_path, expected in expected_paths.items():
+            record['path_identities'][raw_path] = _capture_path_identity(raw_path, expected)
+        record['executable_sha256'] = record['path_identities'][record['executable']]['sha256']
         record['runtime'] = verify_loaded_modules(paths, package, record['executable'])
         record['passed'] = True
         checkpoint()
@@ -240,6 +283,31 @@ def _windows_path(value):
     return ntpath.normcase(ntpath.normpath(value))
 
 
+def _verify_path_identity(identity, raw_path, expected_path, package_file):
+    """Check capture-host identity bindings without re-resolving remote paths.
+
+    These records are evidence from the trusted live capture, not signatures.
+    An unsigned report cannot authenticate a wholly fabricated capture. Offline
+    checks reject missing/inconsistent bindings and bind bytes to this package;
+    they never infer that an arbitrary ~1 spelling is an alias of another path.
+    """
+    _windows_path(raw_path)
+    if not isinstance(identity, dict) or identity.get('raw_path') != raw_path:
+        raise RuntimeError('Windows capture raw-path identity binding mismatch')
+    if _windows_path(identity.get('resolved_path')) != expected_path:
+        raise RuntimeError(f'Captured file resolves outside package bin: {raw_path}')
+    file_id = identity.get('file_id')
+    if (not isinstance(file_id, dict) or set(file_id) != {'device', 'inode'}
+            or type(file_id['device']) is not int or file_id['device'] < 0
+            or type(file_id['inode']) is not int or file_id['inode'] <= 0):
+        raise RuntimeError('Windows capture is missing valid filesystem identity')
+    if (type(identity.get('bytes')) is not int or identity['bytes'] <= 0
+            or identity['bytes'] != package_file.stat().st_size
+            or identity.get('sha256') != sha256(package_file)):
+        raise RuntimeError('Windows captured file identity differs from the hash-bound package')
+    return identity
+
+
 def verify_capture(report, package, executable):
     """Recheck retained Windows evidence offline, without opening recorded paths.
 
@@ -247,7 +315,7 @@ def verify_capture(report, package, executable):
     a relocated Windows directory is interpreted with Windows path semantics
     even when publication/archive verification runs on Linux.
     """
-    if (not isinstance(report, dict) or type(report.get('schema_version')) is not int or report['schema_version'] != 1
+    if (not isinstance(report, dict) or type(report.get('schema_version')) is not int or report['schema_version'] != 2
             or report.get('passed') is not True or report.get('platform') != 'Windows'
             or type(report.get('pid')) is not int or report['pid'] <= 0):
         raise RuntimeError('Missing or unsuccessful Windows runtime module capture')
@@ -257,8 +325,7 @@ def verify_capture(report, package, executable):
         raise RuntimeError('Windows runtime module capture executable mismatch')
     root = _windows_path(report.get('package_root'))
     expected_exe = ntpath.join(root, 'bin', name)
-    if _windows_path(report.get('executable')) != expected_exe:
-        raise RuntimeError('Captured executable is outside the relocated package bin')
+    _windows_path(report.get('executable'))
     if report.get('executable_sha256') != sha256(package / 'bin' / name):
         raise RuntimeError('Captured executable differs from the hash-bound package')
     try:
@@ -267,8 +334,7 @@ def verify_capture(report, package, executable):
         if (sampled.tzinfo is None or sampled.utcoffset() != timezone.utc.utcoffset(sampled)
                 or type(created) not in (int, float) or not 0 < created <= sampled.timestamp()
                 or not isinstance(report.get('command_line'), list) or not report['command_line']
-                or any(not isinstance(arg, str) for arg in report['command_line'])
-                or _windows_path(report['command_line'][0]) != expected_exe):
+                or any(not isinstance(arg, str) for arg in report['command_line'])):
             raise ValueError('Invalid capture time/process identity')
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError('Windows capture is missing valid process/time identity') from error
@@ -278,12 +344,24 @@ def verify_capture(report, package, executable):
             or any(not isinstance(item, dict) or not isinstance(item.get('path'), str) for item in raw)):
         raise RuntimeError('Windows capture is missing raw memory-map evidence')
     path_set = {_windows_path(path) for path in paths}
-    if len(path_set) != len(paths) or expected_exe not in path_set:
+    executable_paths = [path for path in paths if ntpath.basename(path).lower() == name]
+    if len(path_set) != len(paths) or len(executable_paths) != 1:
         raise RuntimeError('Windows module paths are duplicate or omit the executable')
     raw_paths = {_windows_path(item['path']) for item in raw
                  if item['path'].lower().endswith(('.dll', '.exe'))}
     if raw_paths != path_set:
         raise RuntimeError('Windows module paths differ from raw memory-map evidence')
+    identities = report.get('path_identities')
+    identity_paths = {report['executable'], report['command_line'][0], *executable_paths}
+    identity_paths.update(path for path in paths if CRT_NAME.fullmatch(ntpath.basename(path)))
+    if not isinstance(identities, dict) or set(identities) != identity_paths:
+        raise RuntimeError('Windows capture is missing exact raw-path identities')
+    executable_identity = None
+    for path in (report['executable'], report['command_line'][0], *executable_paths):
+        identity = _verify_path_identity(identities[path], path, expected_exe, package / 'bin' / name)
+        if executable_identity is not None and identity['file_id'] != executable_identity['file_id']:
+            raise RuntimeError('Windows capture executable/argv/module filesystem identities differ')
+        executable_identity = identity
     runtime = inspect_runtime(package)
     required = required_crt_modules(package, package / 'bin' / name)
     proof = report.get('runtime')
@@ -298,8 +376,8 @@ def verify_capture(report, package, executable):
             continue
         if basename not in RUNTIME_NAMES:
             raise RuntimeError(f'Captured unreviewed VC runtime module: {path}')
-        if _windows_path(path) != ntpath.join(root, 'bin', basename):
-            raise RuntimeError(f'Captured VC runtime loaded outside package bin: {path}')
+        _verify_path_identity(identities[path], path, ntpath.join(root, 'bin', basename),
+                              package / 'bin' / basename)
         if basename in observed:
             raise RuntimeError(f'Duplicate captured VC runtime module: {basename}')
         observed[basename] = path
@@ -307,7 +385,8 @@ def verify_capture(report, package, executable):
         raise RuntimeError('Windows capture is missing required or reported VC runtime modules')
     for basename, path in observed.items():
         entry = proof['modules'][basename]
-        if not isinstance(entry, dict) or _windows_path(entry.get('path')) != _windows_path(path):
+        if (not isinstance(entry, dict)
+                or _windows_path(entry.get('path')) != _windows_path(identities[path]['resolved_path'])):
             raise RuntimeError(f'Windows runtime identity path mismatch: {basename}')
         expected = runtime['files'][basename]
         if any(entry.get(key) != expected[key] for key in ('sha256', 'bytes', 'version', 'machine')):

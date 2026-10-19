@@ -25,6 +25,8 @@ jobs:
           python-version: '3.12'
       - name: Installer packaging contract regressions
         run: python -m unittest discover -s tests -p test_installer_package.py -v
+      - name: Verified release publisher security regressions
+        run: python -m unittest discover -s tests -p test_release_publisher.py -v
       - name: Workbench text and control contrast regression
         run: python -m unittest discover -s tests -p test_ui_contrast.py -v
       - name: Install pinned official TSDuck SDK

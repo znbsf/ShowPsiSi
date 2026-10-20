@@ -1388,7 +1388,7 @@ function changeTab(next) {
     detailError = "";
     aggregateDiagnostic = null;
     comparisonEvidence = "";
-    if (comparison.from === null && data.complete) {
+    if (comparison.from === null && comparison.to === null && data.complete) {
       comparison.to = data.selected_packet ?? Math.max(0, data.packets - 1);
       comparison.from = data.history?.find((entry) => entry.last_packet < comparison.to)?.last_packet ?? 0;
     }
@@ -1417,6 +1417,8 @@ function invalidateComparison() {
   comparison.result = null;
   comparison.error = "";
   comparison.filters = [];
+  updateComparisonMarkers();
+  if (tab !== "Changes") return;
   ++inspectEpoch;
   detail = {};
   detailError = "";
@@ -1474,6 +1476,7 @@ function comparisonSide(side, label, change, index) {
   return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><button class="btn primary small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure || !side.evidence?.length ? "disabled" : ""} aria-label="Use snapshot ${label[0]} at packet ${side.at_packet}" title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button><div class="comparison-evidence" role="group" aria-label="Source actions for snapshot ${label[0]}"><span class="meta">Source</span><button class="btn small" data-comparison-topology="${index}:${label[0]}" ${busy || backendFailure?'disabled':''}>Topology at ${label[0]}</button>${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="PID: Packet Identifier · inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · ${esc(workbench.wireVersionText(evidence))} · ${esc(workbench.wireSectionText(evidence))}</button>`).join("")}</div></div>`;
 }
 function renderComparisonResults() {
+  updateComparisonMarkers();
   const result = comparison.result;
   $("#prev").disabled = !result || result.offset === 0 || comparison.loading || !!backendFailure;
   $("#next").disabled = !result || result.next_offset == null || comparison.loading || !!backendFailure;
@@ -1549,6 +1552,7 @@ async function runComparison(offset = 0) {
   } finally {
     if (epoch === comparison.epoch) {
       comparison.loading = false;
+      updateComparisonMarkers();
       if (tab === "Changes") renderComparisonResults();
     }
   }
@@ -2106,6 +2110,78 @@ function snapshotAtBin(bin, bins, packets, immediate) {
     snapshot(target);
   }, 140);
 }
+function comparisonPacket(side) {
+  const packet = comparison[side];
+  return Number.isSafeInteger(packet) && packet >= 0 && packet < data.packets ? packet : null;
+}
+function updateComparisonMarkers() {
+  const interactive = data.complete && !busy && !backendFailure && !comparison.loading;
+  for (const side of ["from", "to"]) {
+    const marker = $(`[data-comparison-marker="${side}"]`), packet = comparisonPacket(side);
+    if (!marker) continue;
+    marker.hidden = !data.complete || packet === null;
+    marker.tabIndex = interactive && !marker.hidden ? 0 : -1;
+    marker.setAttribute("aria-disabled", String(!interactive));
+    marker.setAttribute("aria-valuemax", Math.max(0, (data.packets || 1) - 1));
+    if (packet === null) continue;
+    marker.style.left = (data.packets > 1 ? packet / (data.packets - 1) * 100 : 0) + "%";
+    marker.setAttribute("aria-valuenow", packet);
+    marker.setAttribute("aria-valuetext", "Packet " + packet);
+    marker.title = `${side === "from" ? "A" : "B"} · packet ${packet} · drag to change the comparison ${side === "from" ? "start" : "end"}`;
+  }
+}
+function moveComparisonMarker(side, packet) {
+  if (!data.complete || busy || backendFailure || comparison.loading) return;
+  const other = comparisonPacket(side === "from" ? "to" : "from");
+  const lower = side === "to" && other !== null ? other : 0;
+  const upper = side === "from" && other !== null ? other : data.packets - 1;
+  packet = Math.max(lower, Math.min(upper, Math.round(packet)));
+  if (comparison[side] === packet) return;
+  comparison[side] = packet;
+  const input = $("#compare-" + side);
+  if (input) input.value = packet;
+  invalidateComparison();
+}
+function bindComparisonMarkers() {
+  $("#density").querySelectorAll("[data-comparison-marker]").forEach(marker => {
+    const side = marker.dataset.comparisonMarker;
+    let pointer = null, grabOffset = 0;
+    const move = event => {
+      const box = $("#density").getBoundingClientRect();
+      if (box.width) moveComparisonMarker(side, (event.clientX - box.left - grabOffset) / box.width * (data.packets - 1));
+    };
+    marker.onclick = event => { event.preventDefault(); event.stopPropagation(); };
+    marker.onpointerdown = event => {
+      event.stopPropagation();
+      if (pointer !== null || event.button !== 0 || marker.getAttribute("aria-disabled") === "true") return;
+      event.preventDefault();
+      const box = $("#density").getBoundingClientRect();
+      grabOffset = event.clientX - box.left - comparisonPacket(side) / Math.max(1, data.packets - 1) * box.width;
+      pointer = event.pointerId;
+      marker.setPointerCapture(pointer);
+      marker.focus({ preventScroll: true });
+    };
+    marker.onpointermove = event => { if (event.pointerId === pointer) move(event); };
+    marker.onpointerup = event => {
+      if (event.pointerId !== pointer) return;
+      event.preventDefault(); event.stopPropagation();
+      move(event);
+      marker.releasePointerCapture(pointer);
+      pointer = null;
+      if (tab !== "Changes") { changeTab("Changes"); render(); }
+      $("#run-comparison")?.focus({ preventScroll: true });
+    };
+    marker.onpointercancel = marker.onlostpointercapture = () => { pointer = null; };
+    marker.onkeydown = event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const step = event.shiftKey ? 1 : Math.max(1, Math.round((data.packets - 1) / Math.max(1, (data.density || []).length - 1)));
+      const packet = comparisonPacket(side);
+      if (packet !== null) moveComparisonMarker(side, event.key === "Home" ? 0 : event.key === "End" ? data.packets - 1 : packet + (event.key === "ArrowRight" ? step : -step));
+    };
+  });
+  updateComparisonMarkers();
+}
 function renderTimeline() {
   const history=workbench.history(data,detail,allTableHistory);
   historyPage=Math.min(historyPage,Math.max(0,Math.ceil(history.length/40)-1));
@@ -2113,14 +2189,14 @@ function renderTimeline() {
   const packets = Number(data.packets || 0);
   // A query response re-renders the strip and replaces the focused slider, so
   // remember whether the user was operating it and restore focus afterwards.
-  const sliderHadFocus = document.activeElement?.id === "density";
+  const timelineFocus = $("#density")?.contains(document.activeElement) ? document.activeElement.id : "";
   const dense = data.density || Array.from({ length: bins }, () => ({ count: 0, bad: 0 }));
   const at = data.selected_packet === null || data.selected_packet === undefined ? null : Number(data.selected_packet);
   const cursorPercent = at === null ? null : packets > 1 ? Math.min(100, (at / (packets - 1)) * 100) : 100;
   const interactive = data.complete && !busy && !backendFailure;
   const middle = packets > 1 ? Math.round((packets - 1) / 2) : 0;
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1), data.timing, true)}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
+    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}${[["from", "a", "A"], ["to", "b", "B"]].map(([side, key, label]) => `<span id="comparison-marker-${key}" class="comparison-marker" data-comparison-marker="${side}" role="slider" tabindex="-1" aria-label="Comparison ${label} packet" aria-valuemin="0" aria-valuemax="0" hidden><span aria-hidden="true">${label}</span></span>`).join("")}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1), data.timing, true)}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
       .slice(historyPage * 40, (historyPage + 1) * 40)
       .map(
         (h, i) =>
@@ -2148,7 +2224,8 @@ function renderTimeline() {
     if (element && element.offsetWidth)
       cursor.style.left = element.offsetLeft + element.offsetWidth / 2 + "px";
   }
-  if (sliderHadFocus) $("#density")?.focus({ preventScroll: true });
+  bindComparisonMarkers();
+  if (timelineFocus) document.getElementById(timelineFocus)?.focus({ preventScroll: true });
   $("#compare-snapshots").onclick = () => { changeTab("Changes"); render(); $("#compare-from").focus(); };
   $("#density").addEventListener("click", (event) => {
     const bin = event.target.closest("[data-bin]");
@@ -2156,7 +2233,7 @@ function renderTimeline() {
     snapshotAtBin(Number(bin.dataset.bin), bins, packets, true);
   });
   $("#density").addEventListener("keydown", (event) => {
-    if (!interactive) return;
+    if (!interactive || event.target !== event.currentTarget) return;
     const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
     if (!keys.includes(event.key)) return;
     event.preventDefault();

@@ -9,6 +9,7 @@ fabricated; foreign/malformed event tests intentionally inject invalid envelopes
 """
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -2454,6 +2455,94 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(self.page.locator('#status-warning').is_visible())
         self.page.locator('#dismiss-warning').click()
         self.assertFalse(self.page.locator('#status-warning').is_visible())
+
+    def test_comparison_timeline_markers_input_drag_and_keyboard(self):
+        p=self.page
+        self.assertEqual(p.locator('[data-comparison-marker]:visible').count(),0)
+        self.analyze();p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertEqual(p.locator('[data-comparison-marker]:visible').count(),0)
+        p.locator('#compare-snapshots').click()
+        maximum=p.evaluate('window.showpsisi.getState().packets-1')
+        bins=p.locator('#density .bin').count();step=max(1,int(maximum/(bins-1)+0.5))
+        snapshot=p.evaluate('window.showpsisi.getState().selected_packet')
+        def inputs(a,b):
+            p.locator('#compare-from').fill(str(a));p.locator('#compare-to').fill(str(b))
+        def marker(side):
+            return p.locator('[data-comparison-marker="'+side+'"]')
+        def synced(side,packet):
+            handle=marker(side)
+            self.assertEqual(handle.get_attribute('role'),'slider')
+            self.assertEqual(handle.get_attribute('aria-label'),'Comparison '+('A' if side=='from' else 'B')+' packet')
+            self.assertEqual(handle.get_attribute('aria-valuenow'),str(packet))
+            self.assertEqual(handle.get_attribute('aria-valuetext'),'Packet '+str(packet))
+            self.assertAlmostEqual(handle.evaluate('(el)=>parseFloat(el.style.left)'),packet/maximum*100,places=3)
+            box=handle.bounding_box();bar=p.locator('#density').bounding_box()
+            self.assertAlmostEqual(box['x']+box['width']/2,bar['x']+bar['width']*packet/maximum,delta=1)
+        def drag(side,ratio,expected):
+            box=marker(side).bounding_box();bar=p.locator('#density').bounding_box()
+            p.mouse.move(box['x']+box['width']/2,box['y']+box['height']/2);p.mouse.down()
+            p.mouse.move(bar['x']+bar['width']*ratio,box['y']+box['height']/2,steps=8)
+            # A pointer resolves to whole pixels; one pixel may span several packets.
+            tolerance=math.ceil(maximum/bar['width'])
+            # Changes mounts the inputs; check live values before release there.
+            live=int(marker(side).get_attribute('aria-valuenow'))
+            self.assertLessEqual(abs(live-expected),tolerance)
+            if p.locator('#compare-'+side).count():
+                self.assertEqual(int(p.locator('#compare-'+side).input_value()),live)
+            synced(side,live)
+            self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),snapshot)
+            p.mouse.up()
+            self.assertEqual(int(p.locator('#compare-'+side).input_value()),live)
+            self.assertEqual(p.evaluate('document.activeElement.id'),'run-comparison')
+            self.assertIsNone(p.evaluate('window.showpsisi.getComparison()'))
+        inputs(maximum//5,maximum*4//5)
+        synced('from',maximum//5);synced('to',maximum*4//5)
+        drag('from',0.3,int(maximum*0.3+0.5));drag('to',0.7,int(maximum*0.7+0.5))
+        # Only the dragged endpoint clamps when crossing; handles remain distinct at equality.
+        bound=int(p.locator('#compare-to').input_value())
+        drag('from',0.9,bound);drag('to',0.1,bound)
+        self.assertEqual(p.locator('#compare-from').input_value(),p.locator('#compare-to').input_value())
+        inputs(step*2,maximum-step*2)
+        p.locator('#density').focus();p.keyboard.press('Tab')
+        self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-a')
+        p.keyboard.press('Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-b')
+        p.keyboard.press('Shift+Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-a')
+        p.keyboard.press('Shift+Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'density')
+        a=marker('from');b=marker('to');a.focus()
+        for key,expected in [('ArrowRight',step*3),('Shift+ArrowLeft',step*3-1),('ArrowLeft',step*2-1),('Home',0),('End',maximum-step*2)]:
+            a.press(key);self.assertEqual(int(p.locator('#compare-from').input_value()),expected);synced('from',expected)
+        b.focus()
+        for key,expected in [('Shift+ArrowRight',maximum-step*2+1),('ArrowRight',maximum-step+1),('End',maximum),('Home',maximum-step*2),('ArrowLeft',maximum-step*2)]:
+            b.press(key);self.assertEqual(int(p.locator('#compare-to').input_value()),expected);synced('to',expected)
+        self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-b')
+        self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),snapshot)
+        self.assertIsNone(p.evaluate('window.showpsisi.getComparison()'))
+        for invalid in ('1.5','-1',str(maximum+1),''):
+            p.locator('#compare-from').fill(invalid);self.assertFalse(marker('from').is_visible())
+        p.locator('#density').focus();p.keyboard.press('Tab')
+        self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-b')
+        p.keyboard.press('Shift+Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'density')
+        p.locator('#compare-to').fill('');self.assertFalse(marker('to').is_visible())
+        p.locator('#density').focus();p.keyboard.press('Tab')
+        self.assertNotEqual(p.evaluate('document.activeElement.id'),'density')
+        inputs(maximum//5,maximum*4//5)
+        p.locator('[data-tab="Services"]').click()
+        self.assertTrue(marker('from').is_visible());self.assertTrue(marker('to').is_visible())
+        # Operating a retained marker returns to Changes and focuses Compare.
+        drag('from',0.3,int(maximum*0.3+0.5))
+        self.assertEqual(p.locator('[data-tab="Changes"]').get_attribute('aria-selected'),'true')
+        for theme in ('light','dark'):
+            if p.locator('html').get_attribute('data-theme')!=theme:p.locator('#theme-toggle').click()
+            synced('from',int(maximum*0.3+0.5));synced('to',maximum*4//5)
+            self.assertIn('drag to change the comparison start',marker('from').get_attribute('title'))
+            self.assertIn('drag to change the comparison end',marker('to').get_attribute('title'))
+        # A plain bin click still loads a snapshot through the real engine.
+        index=bins//2;expected=int(index*maximum/(bins-1)+0.5)
+        p.locator('#density .bin').nth(index).click()
+        p.wait_for_function('(packet)=>window.showpsisi.getState().selected_packet===packet',arg=expected)
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertTrue(p.locator('#density .bin-cursor').is_visible())
+        synced('from',int(maximum*0.3+0.5));synced('to',maximum*4//5)
 
     def test_comparison_history_evidence_and_restored_snapshot(self):
         self.analyze()

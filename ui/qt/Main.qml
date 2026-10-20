@@ -982,6 +982,10 @@ ApplicationWindow {
     function validPacket(text) {
         return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) < Number(analysisState.packets || 0);
     }
+    function focusComparisonAction() {
+        tab = "Changes";
+        Qt.callLater(function() { comparisonRun.highlighted = true; if (comparisonRun.enabled) comparisonRun.forceActiveFocus(); });
+    }
     function compareSnapshots(offset) {
         if (!backendReady || core.comparing || !analysisState.complete || !validPacket(fromPacket.text) || !validPacket(toPacket.text))
             return;
@@ -1454,6 +1458,59 @@ ApplicationWindow {
             border.color: control.activeFocus ? blue : controlBorder
             border.width: control.activeFocus ? focusWidth : 1
         }
+    }
+    component ComparisonMarker: Slider {
+        id: marker
+        property bool startMarker: true
+        readonly property bool packetValid: validPacket(startMarker ? fromPacket.text : toPacket.text)
+        objectName: startMarker ? "comparisonMarkerA" : "comparisonMarkerB"
+        from: 0
+        to: Math.max(0, Number(analysisState.packets || 1) - 1)
+        stepSize: 1
+        value: packetValid ? Number(startMarker ? fromPacket.text : toPacket.text) : 0
+        visible: !!analysisState.complete && packetValid
+        enabled: densityStrip.interactive && !core.comparing
+        focusPolicy: Qt.StrongFocus
+        activeFocusOnTab: enabled && visible
+        width: 20; height: 14; padding: 0; z: 2
+        x: (to > 0 ? value / to * densityStrip.width : 0) - width / 2
+        y: startMarker ? 0 : 14
+        Accessible.role: Accessible.Slider
+        Accessible.name: "Comparison " + (startMarker ? "A" : "B") + " packet"
+        Accessible.description: "Packet " + value + ". Drag to change the comparison " + (startMarker ? "start" : "end")
+        onMoved: densityStrip.moveComparisonMarker(startMarker, value)
+        Keys.onPressed: function(event) {
+            // Explicit order: density strip, A, B; the strip is the markers' parent.
+            const back = event.key === Qt.Key_Backtab || event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier);
+            if (back) { (!startMarker && comparisonMarkerA.visible && comparisonMarkerA.enabled ? comparisonMarkerA : densityStrip).forceActiveFocus(Qt.BacktabFocusReason); event.accepted = true; return; }
+            if (event.key === Qt.Key_Tab && startMarker && comparisonMarkerB.visible && comparisonMarkerB.enabled) { comparisonMarkerB.forceActiveFocus(Qt.TabFocusReason); event.accepted = true; return; }
+            if ([Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End].indexOf(event.key) < 0) return;
+            let step = event.modifiers & Qt.ShiftModifier ? 1 : Math.max(1, Math.round(to / Math.max(1, densityStrip.binCount - 1)));
+            densityStrip.moveComparisonMarker(startMarker, event.key === Qt.Key_Home ? 0 : event.key === Qt.Key_End ? to : value + (event.key === Qt.Key_Right ? step : -step));
+            event.accepted = true;
+        }
+        handle: null
+        background: Rectangle { color: surface; radius: 2; border.color: marker.startMarker ? removedColor : addedColor }
+        contentItem: PlainLabel { text: marker.startMarker ? "A" : "B"; color: marker.startMarker ? removedColor : addedColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+        Rectangle { x: marker.width / 2 - 1; y: marker.startMarker ? 0 : -14; width: 2; height: densityStrip.height; z: -1; color: marker.startMarker ? removedColor : addedColor }
+        Rectangle { anchors.fill: parent; anchors.margins: -2; visible: marker.activeFocus; color: "transparent"; border.color: blue; border.width: focusWidth; radius: 2 }
+        MouseArea {
+            id: markerMouse
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton
+            hoverEnabled: true
+            preventStealing: true
+            cursorShape: Qt.SizeHorCursor
+            property real grabOffset: 0
+            function moveTo(mouse) {
+                let point = mapToItem(densityStrip, mouse.x, mouse.y);
+                densityStrip.moveComparisonMarker(marker.startMarker, (point.x - grabOffset) / Math.max(1, densityStrip.width) * marker.to);
+            }
+            onPressed: function(mouse) { marker.forceActiveFocus(Qt.MouseFocusReason); grabOffset = mapToItem(densityStrip, mouse.x, mouse.y).x - marker.x - marker.width / 2; }
+            onPositionChanged: function(mouse) { if (pressed) moveTo(mouse); }
+            onReleased: function(mouse) { moveTo(mouse); focusComparisonAction(); }
+        }
+        SafeTip { visible: markerMouse.containsMouse; text: (marker.startMarker ? "A" : "B") + " · packet " + marker.value + " · drag to change the comparison " + (marker.startMarker ? "start" : "end") }
     }
     component RecentMenuItem: MenuItem {
         id: entry
@@ -2472,6 +2529,117 @@ ApplicationWindow {
             stop();
         }
     }
+    Timer {
+        id: comparisonMarkersTimer
+        interval: 100
+        repeat: true
+        property int phase: 0
+        property int marked: -1
+        property int waited: 0
+        property var checks: ({})
+        property var initialPacket: null
+        property real expectedA: 0
+        property real expectedB: 0
+        property real targetPacket: -1
+        // A pointer drag resolves to whole pixels; one pixel spans several packets in long captures.
+        function nearPacket(text, expected) { return Math.abs(Number(text) - expected) <= Math.ceil((Number(analysisState.packets) - 1) / Math.max(1, densityStrip.width)); }
+        function synced() {
+            let maximum = Number(analysisState.packets) - 1;
+            return comparisonMarkerA.visible && comparisonMarkerB.visible
+                && comparisonMarkerA.value === Number(fromPacket.text) && comparisonMarkerB.value === Number(toPacket.text)
+                && Math.abs(comparisonMarkerA.x + comparisonMarkerA.width / 2 - densityStrip.width * Number(fromPacket.text) / maximum) < 1
+                && Math.abs(comparisonMarkerB.x + comparisonMarkerB.width / 2 - densityStrip.width * Number(toPacket.text) / maximum) < 1;
+        }
+        function finish() {
+            stop();
+            core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(key){return checks[key];}),checks:checks,phase:phase}));
+        }
+        onTriggered: {
+            if (marked !== phase) { marked = phase; waited = 0; }
+            else if (++waited > 80) { checks["timeout_phase_" + phase] = false; finish(); return; }
+            if (!analysisState.complete || core.busy || core.inspecting || core.comparing) return;
+            let maximum = Number(analysisState.packets) - 1;
+            let step = Math.max(1, Math.round(maximum / Math.max(1, densityStrip.binCount - 1)));
+            if (phase === 0) {
+                checks.initial_hidden = !comparisonMarkerA.visible && !comparisonMarkerB.visible;
+                initialPacket = analysisState.selected_packet;
+                openComparison(); fromPacket.text = String(Math.floor(maximum / 5)); toPacket.text = String(Math.floor(maximum * 4 / 5));
+                phase = 1; return;
+            }
+            if (phase === 1) {
+                checks.input_sync = synced();
+                expectedA = Math.round(maximum * 0.3);
+                checks.drag_a = core.drag("comparisonMarkerA", densityStrip.width * (expectedA - Number(fromPacket.text)) / maximum, 0);
+                phase = 2; return;
+            }
+            if (phase === 2) {
+                checks.drag_a = checks.drag_a && nearPacket(fromPacket.text, expectedA) && synced();
+                checks.compare_focus_a = comparisonRun.activeFocus;
+                expectedB = Math.round(maximum * 0.7);
+                checks.drag_b = core.drag("comparisonMarkerB", densityStrip.width * (expectedB - Number(toPacket.text)) / maximum, 0);
+                phase = 3; return;
+            }
+            if (phase === 3) {
+                checks.drag_b = checks.drag_b && nearPacket(toPacket.text, expectedB) && synced();
+                expectedB = Number(toPacket.text);
+                checks.compare_focus_b = comparisonRun.activeFocus;
+                checks.clamp_a = core.drag("comparisonMarkerA", densityStrip.width * 0.6, 0) && Number(fromPacket.text) === expectedB && Number(toPacket.text) === expectedB;
+                checks.clamp_b = core.drag("comparisonMarkerB", -densityStrip.width * 0.6, 0) && Number(toPacket.text) === expectedB && Number(fromPacket.text) === expectedB;
+                phase = 4; return;
+            }
+            if (phase === 4) {
+                fromPacket.text = String(step * 2); toPacket.text = String(maximum - step * 2);
+                densityStrip.forceActiveFocus(); core.key("Tab"); let aTab = comparisonMarkerA.activeFocus;
+                core.key("Tab"); let bTab = comparisonMarkerB.activeFocus;
+                core.key("Shift+Tab"); let aBack = comparisonMarkerA.activeFocus;
+                core.key("Shift+Tab"); checks.tab_order = aTab && bTab && aBack && densityStrip.activeFocus;
+                comparisonMarkerA.forceActiveFocus();
+                core.key("Right"); let aBin = Number(fromPacket.text) === step * 3;
+                core.key("Shift+Left"); let aPacket = Number(fromPacket.text) === step * 3 - 1;
+                core.key("Left"); let aLeft = Number(fromPacket.text) === step * 2 - 1;
+                core.key("Home"); let aHome = fromPacket.text === "0";
+                core.key("End"); checks.keyboard_a = aBin && aPacket && aLeft && aHome && fromPacket.text === toPacket.text && synced() && comparisonMarkerA.activeFocus;
+                comparisonMarkerB.forceActiveFocus();
+                core.key("Shift+Right"); let bPacket = Number(toPacket.text) === maximum - step * 2 + 1;
+                core.key("Right"); let bBin = Number(toPacket.text) === maximum - step + 1;
+                core.key("End"); let bEnd = Number(toPacket.text) === maximum;
+                core.key("Home"); core.key("Left");
+                checks.keyboard_b = bPacket && bBin && bEnd && toPacket.text === fromPacket.text && synced() && comparisonMarkerB.activeFocus;
+                phase = 5; return;
+            }
+            if (phase === 5) {
+                fromPacket.text = "1.5"; let fractional = !comparisonMarkerA.visible;
+                fromPacket.text = "-1"; let negative = !comparisonMarkerA.visible;
+                fromPacket.text = String(maximum + 1); let overflow = !comparisonMarkerA.visible;
+                fromPacket.clear(); densityStrip.forceActiveFocus(); core.key("Tab"); let onlyB = comparisonMarkerB.activeFocus;
+                core.key("Shift+Tab"); let fromB = densityStrip.activeFocus;
+                toPacket.clear(); densityStrip.forceActiveFocus(); core.key("Tab");
+                checks.partial_tab_order = onlyB && fromB && !densityStrip.activeFocus;
+                checks.invalid_hidden = fractional && negative && overflow && !comparisonMarkerA.visible && !comparisonMarkerB.visible;
+                fromPacket.text = String(Math.floor(maximum / 5)); toPacket.text = String(Math.floor(maximum * 4 / 5)); tab = "Services";
+                phase = 6; return;
+            }
+            if (phase === 6) {
+                checks.retained_markers = synced();
+                expectedA = Math.round(maximum * 0.3);
+                checks.retained_drag = core.drag("comparisonMarkerA", densityStrip.width * (expectedA - Number(fromPacket.text)) / maximum, 0);
+                phase = 7; return;
+            }
+            if (phase === 7) {
+                checks.retained_drag = checks.retained_drag && nearPacket(fromPacket.text, expectedA) && synced() && tab === "Changes" && comparisonRun.activeFocus;
+                checks.no_auto_requests = analysisState.selected_packet === initialPacket && !comparison.source && !core.comparing;
+                let bin = Math.floor(densityStrip.binCount / 2); targetPacket = densityStrip.packetAtBin(bin);
+                checks.density_snapshot = core.click("densityBin" + bin);
+                phase = 8; return;
+            }
+            if (phase === 8) {
+                if (analysisState.selected_packet !== targetPacket) return;
+                checks.density_snapshot = checks.density_snapshot && densityCursor.visible;
+                checks.snapshot_sync = synced();
+                finish();
+            }
+        }
+    }
     // UI/UX refresh self-check: family order, record column headers and the
     // density cursor / bin selection, exercised through the real application.
     Timer {
@@ -3175,6 +3343,7 @@ ApplicationWindow {
             operationsParityTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "comparison")
             comparisonTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "comparison-markers") comparisonMarkersTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
             lifecycleTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refresh")
@@ -4084,7 +4253,7 @@ ApplicationWindow {
                                 placeholderText: "Packet cutoff"
                                 enabled: backendReady && !core.comparing
                                 selectByMouse: true
-                                onTextChanged: { comparison = {}; comparisonFilters = []; }
+                                onTextChanged: { comparison = {}; comparisonFilters = []; comparisonRun.highlighted = false; }
                                 Accessible.name: "Snapshot A inclusive packet cutoff"
                                 onAccepted: compareSnapshots(0)
                                 Keys.onEscapePressed: recordList.forceActiveFocus()
@@ -4108,7 +4277,7 @@ ApplicationWindow {
                                 placeholderText: "Packet cutoff"
                                 enabled: backendReady && !core.comparing
                                 selectByMouse: true
-                                onTextChanged: { comparison = {}; comparisonFilters = []; }
+                                onTextChanged: { comparison = {}; comparisonFilters = []; comparisonRun.highlighted = false; }
                                 Accessible.name: "Snapshot B inclusive packet cutoff"
                                 onAccepted: compareSnapshots(0)
                                 Keys.onEscapePressed: recordList.forceActiveFocus()
@@ -4168,11 +4337,14 @@ ApplicationWindow {
                                 onClicked: { let before = fromPacket.text; fromPacket.text = toPacket.text; toPacket.text = before; }
                             }
                             Action {
+                                id: comparisonRun
                                 objectName: "runComparison"
                                 text: core.comparing ? "Comparing…" : "Compare"
                                 primary: true
                                 enabled: backendReady && !core.comparing && !!analysisState.complete && validPacket(fromPacket.text) && validPacket(toPacket.text)
-                                onClicked: compareSnapshots(0)
+                                onClicked: { highlighted = false; compareSnapshots(0); }
+                                onActiveFocusChanged: if (activeFocus) highlighted = false
+                                Rectangle { anchors.fill: parent; anchors.margins: -2; visible: comparisonRun.highlighted; color: "transparent"; border.color: blue; border.width: focusWidth; radius: 2 }
                             }
                         }
                         PlainLabel {
@@ -5349,7 +5521,9 @@ ApplicationWindow {
                 Item {
                     id: densityStrip
                     Layout.fillWidth: true
-                    height: 20
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 8
+                    height: 28
                     readonly property int binCount: (analysisState.density || []).length
                     readonly property real binWidth: Math.max(1, (width - Math.max(0, binCount - 1) * 2) / Math.max(1, binCount))
                     readonly property bool interactive: backendReady && !!analysisState.complete
@@ -5357,6 +5531,7 @@ ApplicationWindow {
                     // Page keys step a tenth, Home/End jump to the ends.
                     objectName: "densityStrip"
                     activeFocusOnTab: interactive
+                    KeyNavigation.tab: comparisonMarkerA.visible && comparisonMarkerA.enabled ? comparisonMarkerA : comparisonMarkerB.visible && comparisonMarkerB.enabled ? comparisonMarkerB : null
                     Accessible.role: Accessible.Slider
                     Accessible.name: "Section occurrence density; arrow keys load a packet position"
                     function stepBin(delta) {
@@ -5392,6 +5567,14 @@ ApplicationWindow {
                         if (packet === null || packet === undefined || packets <= 1) return binCount - 1;
                         return Math.max(0, Math.min(binCount - 1, Math.round(packet / (packets - 1) * (binCount - 1))));
                     }
+                    function moveComparisonMarker(start, packet) {
+                        if (!interactive || core.comparing) return;
+                        let other = start ? toPacket.text : fromPacket.text;
+                        let lower = !start && validPacket(other) ? Number(other) : 0;
+                        let upper = start && validPacket(other) ? Number(other) : Number(analysisState.packets) - 1;
+                        let input = start ? fromPacket : toPacket;
+                        input.text = String(Math.max(lower, Math.min(upper, Math.round(packet))));
+                    }
                     Row {
                         anchors.fill: parent
                         spacing: 2
@@ -5402,7 +5585,7 @@ ApplicationWindow {
                                 required property int index
                                 objectName: "densityBin" + index
                                 width: densityStrip.binWidth
-                                height: 20
+                                height: densityStrip.height
                                 color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : blue
                                 opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
                                 // Partially invalid bins keep the section colour and
@@ -5446,6 +5629,8 @@ ApplicationWindow {
                             return Math.max(0, index * (densityStrip.binWidth + 2) + densityStrip.binWidth / 2 - 1);
                         }
                     }
+                    ComparisonMarker { id: comparisonMarkerA; startMarker: true; KeyNavigation.tab: comparisonMarkerB.visible && comparisonMarkerB.enabled ? comparisonMarkerB : null; KeyNavigation.backtab: densityStrip }
+                    ComparisonMarker { id: comparisonMarkerB; startMarker: false; KeyNavigation.backtab: comparisonMarkerA.visible && comparisonMarkerA.enabled ? comparisonMarkerA : densityStrip }
                 }
                 RowLayout {
                     objectName: "arrivalAxis"

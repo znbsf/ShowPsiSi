@@ -372,6 +372,14 @@ for line in sys.stdin:
                     self.assertTrue(report['checks'][check], report)
                 self.assertEqual((Path(directory)/'operations-parity.png.edit.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
 
+    def test_comparison_timeline_markers_input_drag_and_keyboard(self):
+        for theme in ('dark','light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-markers-') as directory:
+                report=self.run_script('comparison-markers',directory,overrides={'SHOWPSISI_THEME':theme})
+                self.assertEqual(report['phase'],8,report)
+                for check in ('initial_hidden','input_sync','drag_a','drag_b','clamp_a','clamp_b','compare_focus_a','compare_focus_b','tab_order','partial_tab_order','keyboard_a','keyboard_b','invalid_hidden','retained_markers','retained_drag','no_auto_requests','density_snapshot','snapshot_sync'):
+                    self.assertTrue(report['checks'][check],report)
+
     def test_snapshot_comparison_and_evidence_cutoffs(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-comparison-') as directory:
             report = self.run_script('comparison', directory)

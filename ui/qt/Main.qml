@@ -2806,6 +2806,10 @@ ApplicationWindow {
                 checks.arrivals = detail.distribution?.observation_count >= 2 && detail.distribution?.first_packet === 0 && detail.distribution?.last_packet > 0;
                 checks.merged_sources = detail.merged?.complete === true && detail.native_table_sources.length === 2 && selectedGroup.validity === "mixed";
                 checks.sources_visible = siblingSections.length === 2;
+                // The section choice becomes visible with this detail; check exposure after its layout pass.
+                phase=11; return;
+            }
+            if (phase === 11) {
                 checks.scope_control = core.isExposed("evidenceScope") && core.isExposed("sectionChoice");
                 checks.toggle_click = core.click("toggleInvalidSections"); phase=2; return;
             }

@@ -417,6 +417,14 @@ input[type="search"]::-webkit-search-cancel-button {
 .searchbar:focus-within {
   border-color: var(--accent);
 }
+.searchbar { position: relative; }
+#command-palette { position: absolute; z-index: 30; top: 100%; left: -1px; right: -1px; max-height: 258px; overflow: auto; padding: 0; background: var(--surface); border: 1px solid var(--control-border); border-radius: 3px; }
+.palette-option { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; color: var(--text); cursor: pointer; }
+.palette-option > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-option kbd { flex: none; color: var(--muted); font: 11px var(--mono); }
+.palette-option[aria-selected="true"] { background: var(--selected); outline: var(--focus-width) solid var(--accent); outline-offset: -2px; }
+.palette-option[aria-disabled="true"] { color: var(--muted); cursor: default; }
+#palette-empty { margin: 0; padding: 8px; }
 #result-count {
   font: 10px var(--mono);
   color: var(--muted);

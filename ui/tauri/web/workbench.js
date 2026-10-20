@@ -1,6 +1,31 @@
 // Shared presentation contract. No DOM, Qt, parser or filesystem dependencies.
 var workbench = {
   hex: function(n, width) { return '0x' + Number(n || 0).toString(16).padStart(width || 4, '0'); },
+  commandMatches: function(label, query) {
+    var words=label.toLowerCase().split(/\s+/);
+    return query.toLowerCase().trim().split(/\s+/).filter(Boolean).every(function(term) {return words.some(function(word) {return word.indexOf(term)>=0;});});
+  },
+  // Resolve only identifiers already supplied by the engine in this snapshot.
+  paletteIdentifier: function(query, state) {
+    var match=/^#\s*(?:(pid|sid|table)\s+)?(0x[0-9a-f]+|[0-9]+)\s*$/i.exec(query);
+    if(!match)return {message:'Enter a PID, SID or table ID in decimal or 0x hexadecimal'};
+    var kind=(match[1] || 'pid').toLowerCase(),number=Number(match[2]),width=kind==='table'?2:4;
+    var name=kind==='table'?'Table':kind.toUpperCase(),maximum=kind==='pid'?8191:kind==='sid'?65535:255;
+    if(!Number.isInteger(number) || number>maximum)return {message:name+' must be between 0 and '+maximum};
+    var id=workbench.hex(number,width).toUpperCase().replace('0X','0x'),label=name+' '+id+' ('+number+')';
+    var help=kind==='pid'?'PID: Packet Identifier · 13 bits':kind==='sid'?'SID: Service Identifier · 16 bits':'Table ID: Table Identifier · 8 bits';
+    var tables=state.tables || [],target=null;
+    if(kind==='sid') {
+      var service=(state.services || []).find(function(s) {return s.id===number && tables.some(function(r) {return r.id===s.source_id;});});
+      if(service)target={kind:'service',id:service.source_id,sid:service.id,key:service.key};
+    } else {
+      var selected={};
+      (state.table_groups || []).forEach(function(g) {(g.selected_section_ids || []).forEach(function(id) {selected[id]=true;});});
+      var rows=tables.filter(function(r) {return kind==='pid'?r.pid===number:r.table_id===number;}).sort(function(a,b) {return Number(!!selected[b.id])-Number(!!selected[a.id]) || workbench.sort(a,b);});
+      if(rows.length)target={kind:'section',id:rows[0].id,sid:-1,pid:rows[0].pid,name:rows[0].name || 'Private / other'};
+    }
+    return {label:label,help:help,target:target,message:target?'':'No '+name+' '+id+' in this stream'};
+  },
   matches: function(row, query) {
     var values = JSON.stringify(row).toLowerCase();
     Object.keys(row).forEach(function(k) { if (typeof row[k] === 'number') values += ' ' + workbench.hex(row[k]) + ' ' + workbench.hex(row[k], 2); });

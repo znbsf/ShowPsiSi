@@ -56,24 +56,56 @@ ApplicationWindow {
     property color changedColor: lightTheme ? "#806000" : "#dcdcaa"
     property var savedLayout: core.loadLayout()
     property var recentFiles: normalizeRecentFiles(Array.from(core.loadRecentFiles()))
+    readonly property var recordTabs: ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
+    readonly property var commandTable: [
+        {id:"analyze",description:"Analyze",keys:"Ctrl+Return",reason:function(){return paletteBackendReason() || (!source.text.trim()?"Choose a source first":"");},run:function(){analyzeButton.clicked();}},
+        {id:"open",description:"Open…",keys:"Ctrl+O",reason:paletteBackendReason,run:function(){fileDialog.open();}},
+        {id:"export",description:"Export…",keys:"",reason:function(){return !analysisState.complete?"Analyze a source before exporting":paletteBackendReason() || editBlockReason() || (selectedChange?"Return to the workbench selection before exporting":"");},run:function(){renameButton.clicked();}},
+        {id:"compare",description:"Compare snapshots",keys:"",reason:function(){return paletteBackendReason() || (!analysisState.complete?"Analyze a source before comparing snapshots":"");},run:openComparison},
+        {id:"latest",description:"Latest state",keys:"",reason:function(){return paletteBackendReason() || (!analysisState.complete?"Analyze a source to view its latest state":"");},run:function(){snapshot(-1);}},
+        {id:"theme",description:"Toggle theme",keys:"",run:function(){themeToggle.clicked();}},
+        {id:"layout",description:"Reset layout",keys:"",run:resetLayout},
+        {id:"help",description:"Shortcut help",keys:"? / Ctrl+/",run:showShortcutHelp}
+    ].concat(recordTabs.map(function(name){return {id:"tab-"+name.toLowerCase(),description:name,keys:"",run:function(){tab=name;Qt.callLater(function(){(tab==="Topology"?topologyList:recordList).forceActiveFocus();});}};}))
     readonly property var shortcutTable: [
         {keys:"↑ ↓ Home End",description:"Move focus in lists and trees"},
         {keys:"Enter / Space",description:"Select the focused item"},
         {keys:"Ctrl+K",description:"Search records"},
         {keys:"Ctrl+Shift+K",description:"Search inspector structure"},
-        {keys:"Ctrl+O",description:"Open file"},
-        {keys:"Ctrl+Return",description:"Analyze source"},
+        commandTable.find(function(row){return row.id==="open";}),
+        commandTable.find(function(row){return row.id==="analyze";}),
         {keys:"Ctrl+.",description:"Cancel active scan"},
         {keys:"Alt+Left",description:"Back"},
         {keys:"Ctrl+Enter (Structure)",description:"Go to the focused field's reference"},
         {keys:"Ctrl+Alt+← / →",description:"Resize inspector width"},
         {keys:"Ctrl+Alt+↑ / ↓",description:"Resize timeline height"},
         {keys:"F6 / Shift+F6",description:"Next / previous region"},
-        {keys:"? / Ctrl+/",description:"Show shortcut help (? outside text inputs)"},
+        commandTable.find(function(row){return row.id==="help";}),
         {keys:"Esc",description:"Close shortcut help"}
     ]
     property var shortcutReturnFocus: null
     property int shortcutReturnRecent: -1
+    property var paletteInput: null
+    property var paletteReturnFocus: null
+    property var searchPreviousFocus: null
+    onActiveFocusItemChanged: {let item=win.activeFocusItem;if(item && item!==recordSearch && item!==topologySearch)searchPreviousFocus=item;}
+    property int paletteIndex: 0
+    readonly property string paletteMode: paletteInput ? paletteInput.text.replace(/^\s+/,"").charAt(0) : ""
+    readonly property var paletteTarget: paletteMode==="#" ? Shared.workbench.paletteIdentifier(paletteInput.text.replace(/^\s+/,""),analysisState) : ({})
+    readonly property var paletteRows: paletteMode===">" ? commandTable.filter(function(row){return Shared.workbench.commandMatches(row.description,paletteInput.text.replace(/^\s+/,"").slice(1));}).map(function(row){return {id:row.id,description:row.description,keys:row.keys,reason:row.reason?row.reason():"",run:row.run};}) :
+        paletteMode==="#" && paletteTarget.target ? [{id:"identifier",description:paletteTarget.label,keys:"Return",help:paletteTarget.help,target:paletteTarget.target,reason:paletteBackendReason() || (core.inspecting?"Wait for the current inspection to finish":"")}] : []
+    readonly property string paletteStatus: paletteRows.length+" "+(paletteMode===">"?"commands":"identifier targets")+(paletteRows.length?" available":". "+(paletteMode==="#"?paletteTarget.message:"No matching commands"))
+    function paletteBackendReason() {return !core.available?"Backend unavailable":!backendReady?"Wait for the analysis to finish":exporting?"Wait for the export to finish":"";}
+    function closePalette(restoreFocus) {
+        let input=paletteInput,previous=paletteReturnFocus;paletteInput=null;commandPalette.close();
+        if(input)input.text=input.query;
+        if(restoreFocus){paletteReturnFocus=null;if(previous && previous.visible && previous.enabled)previous.forceActiveFocus();else (tab==="Topology"?topologyList:recordList).forceActiveFocus();}
+    }
+    function executePalette() {
+        let row=paletteRows[paletteIndex];if(!row || row.reason)return;
+        closePalette(true);
+        if(row.target)jumpReference({reference:row.target,path:"",palette:true});else row.run();
+    }
     function recentPathKey(path) {
         let key=path.replace(/\\/g,"/");
         return /^(?:[a-z]:\/|\/\/)/i.test(key) ? key.toLowerCase() : key;
@@ -153,7 +185,7 @@ ApplicationWindow {
     property var topologyNode: (topologyData.nodes || []).concat(topologyData.context_nodes || []).find(function(n) { return n.node_id === topologySelection; }) || null
     property var topologyRelations: (topologyData.edges || []).filter(function(e) { return e.from === topologySelection || e.to === topologySelection; })
     property var topologySources: topologyNode ? Shared.workbench.topologyEvidence(topologyNode, topologyData.edges || []) : []
-    property var topologyRowModel: Shared.workbench.topologyRows ? Shared.workbench.topologyRows(topologyData, topologyFamily, topologySearch.text, topologyExpanded, topologyLimits) : ({rows:[]})
+    property var topologyRowModel: Shared.workbench.topologyRows ? Shared.workbench.topologyRows(topologyData, topologyFamily, topologySearch.query, topologyExpanded, topologyLimits) : ({rows:[]})
     property var topologyRows: (topologyRowModel.rows || []).map(function(r){return r.more ? r : Object.assign({},r,{node_id:r.node.node_id,branch:r.has_children,open:r.expanded});})
     property bool topologySummary: tab === "Topology" && !topologyEvidenceRef && !protocolSourceRef
     property bool topologyStale: topologyFailed || !!topologyData.analysis_revision && (topologyData.analysis_revision !== analysisState.analysis_revision || topologyData.at_packet !== (topologyCutoff === null ? currentPacket() : topologyCutoff))
@@ -209,7 +241,7 @@ ApplicationWindow {
         if(topologySelection && !topologyNode && !(result.page || {}).has_more)topologyError="The previous object is not observed at this cutoff. Choose an available object.";
     }
     function topologyNavigationPoint() {
-        return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,family:topologyFamily,
+        return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.query,family:topologyFamily,
             evidence:topologyEvidenceRef,sectionContext:topologySectionContext,resolution:topologyResolution,view:inspectorView,scope:evidenceScope,tab:tab,
             scroll:topologyList.contentY,revision:analysisState.analysis_revision,cutoff:topologyData.at_packet};
     }
@@ -240,16 +272,16 @@ ApplicationWindow {
         if(!row || !row.reference || !backendReady || core.inspecting)return;
         let target=row.reference;
         let saved={kind:"selection",id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,packet:currentPacket(),service:selectedService,
-            tab:tab,view:inspectorView,scope:evidenceScope,filter:filter,pid:pidFilter,query:recordSearch.text,page:tablePage,grouped:groupedTables,invalid:showInvalidSections,
+            tab:tab,view:inspectorView,scope:evidenceScope,filter:filter,pid:pidFilter,query:recordSearch.query,page:tablePage,grouped:groupedTables,invalid:showInvalidSections,
             expanded:expandedTables,explorer:explorerFocusKey,recordIndex:recordList.currentIndex,recordScroll:recordList.contentY,
             collapsed:collapsed,search:treeSearch.text,path:row.path,treeScroll:tree.contentY,change:selectedChange,workspace:comparisonWorkspace,
             topologyRef:topologyEvidenceRef,topologyResolution:topologyResolution,sectionContext:topologySectionContext,revealed:topologyTablesReveal,
-            protocolRef:protocolSourceRef,protocolOrigin:protocolSourceOrigin,protocolResolution:protocolSourceResolution,offset:protocolCardOffset};
+            protocolRef:protocolSourceRef,protocolOrigin:protocolSourceOrigin,protocolResolution:protocolSourceResolution,offset:protocolCardOffset,palette:!!row.palette};
         topologyBackStack=topologyBackStack.concat([saved]).slice(-100);
         topologyTransition=true;topologyEvidenceRef=null;topologyResolution={};topologyTablesReveal=false;selectedChange=null;
         recordSearch.clear();treeSearch.clear();inspectorView="Structure";evidenceScope="Section";
         if(target.kind==="service")tab="Services";
-        else {selectExplorer({pid:target.pid,name:target.name});groupedTables=false;}
+        else {selectExplorer({pid:target.pid,name:target.name});groupedTables=false;if((analysisState.tables || []).some(function(r){return r.id===target.id && r.crc?.status==="invalid";}))showInvalidSections=true;}
         let rowIndex=target.kind==="service" ? rows.findIndex(function(r){return r.id===target.sid && r.source_id===target.id;}) : rawTableRows.findIndex(function(r){return r.id===target.id;});
         if(target.kind!=="service")tablePage=Math.max(0,Math.floor(rowIndex/100));
         topologyTransition=false;
@@ -276,6 +308,7 @@ ApplicationWindow {
         inspectorView=saved.view;evidenceScope=saved.scope;collapsed=saved.collapsed;treeSearch.text=saved.search;protocolRestoring=false;
         Qt.callLater(function(){
             recordList.currentIndex=saved.recordIndex;recordList.contentY=saved.recordScroll;
+            if(saved.palette)(tab==="Topology"?topologyList:recordList).forceActiveFocus();
             let index=treeRows.findIndex(function(r){return r.path===saved.path;});
             if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Contain);tree.forceActiveFocus();tree.contentY=saved.treeScroll;}
         });
@@ -303,7 +336,7 @@ ApplicationWindow {
         selectTopologyNode(target,true);topologySearch.clear();Qt.callLater(function(){focusTopologyRow(target);});
     }
     function toggleTopologyRow(row) {
-        if(!row || !row.branch || topologySearch.text.trim())return;
+        if(!row || !row.branch || topologySearch.query.trim())return;
         let expanded=Object.assign({},topologyExpanded);expanded[row.node_id]=!row.open;topologyExpanded=expanded;
     }
     function openTopologyEvidence(ref, remember) {
@@ -560,7 +593,7 @@ ApplicationWindow {
             history: {all:allTableHistory,entries:historyRows,page:historyPage}, evidence_scope:evidenceScope.toLowerCase(), tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
             focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
             tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
-            topology: {data:topologyData,family:topologyFamily,selected_node:topologySelection,focused_node:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,rows:topologyRows,loading:topologyLoading,stale:topologyStale,error:topologyError,summary:topologySummary,sources:topologySources,active_evidence:topologyEvidenceRef,section_context:topologySectionContext,resolution:topologyResolution,back_depth:topologyBackStack.length,scope:topologyScopeLabel,can_reveal:topologyCanReveal},
+            topology: {data:topologyData,family:topologyFamily,selected_node:topologySelection,focused_node:topologyFocus,expanded:topologyExpanded,search:topologySearch.query,rows:topologyRows,loading:topologyLoading,stale:topologyStale,error:topologyError,summary:topologySummary,sources:topologySources,active_evidence:topologyEvidenceRef,section_context:topologySectionContext,resolution:topologyResolution,back_depth:topologyBackStack.length,scope:topologyScopeLabel,can_reveal:topologyCanReveal},
             protocol: {scroll:metadataScroll.contentItem.contentY,cards:protocolCardModel,sources:protocolCardModel.cards.map(function(c){return Shared.workbench.protocolCardSources(c);}),active_evidence:protocolSourceRef,resolution:protocolSourceResolution,can_back:!!protocolSourceOrigin},
             comparison_context: {data:comparison,selected:selectedChange,side:comparisonSide,origin:topologyOrigin},
             inspection: {id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,anchors:detail.evidence_anchors || [],hex_selection:hexEvidence.selectedText},
@@ -636,9 +669,9 @@ ApplicationWindow {
     property var serviceRows: analysisState.services || []
     property bool groupedTables: true
     property int tablePage: 0
-    property string tableQuery: recordSearch.text
+    property string tableQuery: recordSearch.query
     onTableQueryChanged: tablePage=0
-    property var tableModel: Shared.workbench.tables(analysisState, pidFilter, filter, showInvalidSections, recordSearch.text)
+    property var tableModel: Shared.workbench.tables(analysisState, pidFilter, filter, showInvalidSections, recordSearch.query)
     property var rawTableRows: tableModel.sections
     property int logicalTableCount: tableModel.groups.length
     property var tableRows: logicalTableRows()
@@ -738,7 +771,7 @@ ApplicationWindow {
     property var issueCounts: Shared.workbench.issueCounts(issues)
     property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
-        return tab === "Tables" ? true : tab === "Changes" ? Shared.workbench.comparisonMatches(row,comparisonFilters) && searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
+        return tab === "Tables" ? true : tab === "Changes" ? Shared.workbench.comparisonMatches(row,comparisonFilters) && searchTerms(recordSearch.query).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.query);
     })
     property bool selectionHidden: !!selected && !(tab === "Tables" ? rawTableRows : rows).some(function (row) {
         if (tab === "Changes")
@@ -1390,6 +1423,35 @@ ApplicationWindow {
             border.color: dividerColor
             radius: 2
         }
+    }
+    component PaletteInput: FieldInput {
+        id: paletteField
+        // Prefixes leave the normal record/topology filter unchanged.
+        property string query: ""
+        Accessible.role: Accessible.ComboBox
+        Accessible.description: "Search records · > commands · # PID: Packet Identifier / SID: Service Identifier. " + (paletteInput===paletteField ? paletteStatus + ". " + (paletteRows[paletteIndex] ? paletteRows[paletteIndex].description + ". " + paletteRows[paletteIndex].reason : "") : "")
+        onTextChanged: {
+            if(/^[>#]/.test(text.replace(/^\s+/,""))){
+                paletteInput=paletteField;paletteIndex=0;
+                Qt.callLater(function(){if(paletteField.activeFocus && paletteInput===paletteField)commandPalette.open();});
+            }else {query=text;if(paletteInput===paletteField)closePalette(false);}
+        }
+        onActiveFocusChanged: {
+            if(activeFocus){paletteReturnFocus=searchPreviousFocus;if(/^[>#]/.test(text.replace(/^\s+/,""))){paletteInput=paletteField;commandPalette.open();}}
+            else if(paletteInput===paletteField)closePalette(false);
+        }
+        Keys.onPressed: function(event) {
+            if(paletteInput!==paletteField || event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))return;
+            if(event.key===Qt.Key_Up || event.key===Qt.Key_Down){
+                event.accepted=true;if(paletteRows.length){paletteIndex=(paletteIndex+(event.key===Qt.Key_Up?-1:1)+paletteRows.length)%paletteRows.length;paletteList.positionViewAtIndex(paletteIndex,ListView.Contain);}
+            }else if(event.key===Qt.Key_Return || event.key===Qt.Key_Enter){event.accepted=true;executePalette();}
+        }
+        Keys.onEscapePressed: function(event) {event.accepted=true;if(paletteInput===paletteField)closePalette(true);else clear();}
+        onAccepted: {
+            let list=paletteField===topologySearch?topologyList:recordList;
+            list.forceActiveFocus();if(list.count)list.currentIndex=0;
+        }
+        SafeTip { visible:anchorHovered; text:"Search records · > commands · # PID: Packet Identifier / SID: Service Identifier · #table: Table Identifier" }
     }
     component FieldInput: TextField {
         id: fieldInput
@@ -2809,6 +2871,51 @@ ApplicationWindow {
             if(phase===87){checks.service_back=tab==="EPG" && detail.id===origin && selected===origin && selectedService===-1 && treeSearch.text==="service_id";phase=9;finish();}
         }
     }
+    Timer {
+        id: commandPaletteTimer
+        interval: 100
+        repeat: true
+        property int phase: 0
+        property int ticks: 0
+        property bool oldTheme: false
+        property string origin: ""
+        property int originService: -1
+        property var checks: ({})
+        function finish() {stop();core.testResult(JSON.stringify({passed:phase===10 && Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks}));}
+        onTriggered: {
+            if(++ticks>180){checks.timeout=false;finish();return;}
+            if(!backendReady || core.inspecting || protocolRestoring)return;
+            if(phase===0){source.forceActiveFocus();core.key("Ctrl+K");recordSearch.text=">export";phase=1;return;}
+            if(phase===1){
+                checks.export_disabled=commandPalette.visible && paletteRows.length===1 && !!paletteRows[0].reason;
+                core.key("Return");checks.export_guard=!renameDialog.visible && !core.busy;
+                core.key("Escape");checks.export_escape=source.activeFocus && recordSearch.text==="";
+                scan();phase=2;return;
+            }
+            if(!analysisState.complete)return;
+            if(phase===2){
+                origin=detail.id;originService=selectedService;oldTheme=lightTheme;
+                source.forceActiveFocus();core.key("Ctrl+K");checks.search_focus=recordSearch.activeFocus;
+                recordSearch.text="Sports UHD";checks.plain_filter=rows.length===1 && rows[0].id===103;
+                recordSearch.text=">ThEmE";phase=3;return;
+            }
+            if(phase===3){checks.theme_suggestion=commandPalette.visible && paletteRows.length===1 && paletteRows[0].id==="theme" && rows.length===1;core.key("Return");phase=4;return;}
+            if(phase===4){
+                checks.theme_command=lightTheme!==oldTheme && recordSearch.text==="Sports UHD" && source.activeFocus;
+                core.key("Ctrl+K");recordSearch.text="#0x0000";phase=5;return;
+            }
+            if(phase===5){checks.pid_suggestion=commandPalette.visible && paletteRows.length===1 && paletteRows[0].description==="PID 0x0000 (0)";core.key("Return");phase=6;return;}
+            if(phase===6){checks.pid_jump=detail.name==="PAT" && detail.pid===0 && tab==="Tables" && pidFilter===0 && selected===detail.id;core.key("Alt+Left");phase=7;return;}
+            if(phase===7){checks.pid_back=tab==="Services" && detail.id===origin && selectedService===originService && recordSearch.text==="Sports UHD";core.key("Ctrl+K");recordSearch.text="#pid 8190";phase=8;return;}
+            if(phase===8){
+                checks.unknown_pid=commandPalette.visible && !paletteRows.length && paletteTarget.message==="No PID 0x1FFE in this stream";
+                core.key("Return");checks.unknown_unchanged=selected===origin && detail.id===origin;
+                core.key("Escape");checks.escape_focus=!commandPalette.visible && recordList.activeFocus && recordSearch.text==="Sports UHD";
+                core.key("Ctrl+K");recordSearch.text="Sports UHD";core.key("Return");phase=9;return;
+            }
+            if(phase===9){checks.plain_search=recordList.activeFocus && recordList.currentIndex===0 && rows.length===1 && rows[0].id===103;phase=10;finish();}
+        }
+    }
     // Real shared-PID wire fixture, actual mouse/key delivery, no fabricated state.
     Timer {
         id: explorerParityTimer
@@ -3350,6 +3457,7 @@ ApplicationWindow {
             refreshTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "workbench-paging") workbenchPagingTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "reference-jumps") referenceJumpsTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "command-palette") commandPaletteTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "explorer-parity")
             explorerParityTimer.start();
     }
@@ -3368,6 +3476,63 @@ ApplicationWindow {
         lightTheme: win.lightTheme
     }
 
+    Popup {
+        id: commandPalette
+        objectName: "commandPalette"
+        parent: paletteInput || recordPane
+        y: parent ? parent.height : 0
+        width: parent ? parent.width : 300
+        padding: 1
+        focus: false
+        closePolicy: Popup.NoAutoClose
+        background: Rectangle { color:panel; border.color:controlBorder; radius:3 }
+        contentItem: Column {
+            ListView {
+                id: paletteList
+                objectName: "paletteList"
+                width: parent.width
+                height: Math.min(8,paletteRows.length)*32
+                clip: true
+                model: paletteRows
+                currentIndex: paletteIndex
+                boundsBehavior: Flickable.StopAtBounds
+                Accessible.role: Accessible.List
+                Accessible.name: "Commands and identifier targets · " + paletteStatus
+                ScrollBar.vertical: ScrollBar {}
+                delegate: ItemDelegate {
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    height: 32
+                    padding: 8
+                    focusPolicy: Qt.NoFocus
+                    enabled: !modelData.reason
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: modelData.description + (modelData.keys ? " · " + modelData.keys : "")
+                    Accessible.description: modelData.reason || modelData.help || "Execute command"
+                    Accessible.selectable: true
+                    Accessible.selected: index===paletteIndex
+                    contentItem: RowLayout {
+                        PlainLabel { text:modelData.description; color:modelData.reason?muted:ink; elide:Text.ElideRight; Layout.fillWidth:true }
+                        PlainLabel { text:modelData.keys || "—"; color:muted; font.pixelSize:11; Layout.alignment:Qt.AlignRight }
+                    }
+                    background: Rectangle { color:index===paletteIndex?selectionSurface:panel; border.color:blue; border.width:index===paletteIndex?focusWidth:0 }
+                    onClicked: {paletteIndex=index;executePalette();}
+                    SafeTip { visible:anchorHovered || !!modelData.reason && index===paletteIndex && commandPalette.visible; text:modelData.reason || modelData.help || (modelData.id==="export"?"Open the SDT (Service Description Table) preview and export workflow":modelData.description) }
+                }
+            }
+            PlainLabel {
+                objectName: "paletteStatus"
+                width: parent.width
+                padding: 8
+                text: paletteStatus
+                wrapMode: Text.Wrap
+                color: muted
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
+            }
+        }
+    }
     Shortcut { sequence:"?"; enabled:!shortcutDialog.visible && !textInputFocused(); onActivated:showShortcutHelp() }
     Shortcut { sequence:"Ctrl+/"; enabled:!shortcutDialog.visible; onActivated:showShortcutHelp() }
     Shortcut {
@@ -3375,8 +3540,9 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
-            if(tab === "Topology"){topologySearch.forceActiveFocus();topologySearch.selectAll();}
-            else {recordSearch.forceActiveFocus();recordSearch.selectAll();}
+            let field=tab==="Topology"?topologySearch:recordSearch;
+            if(win.activeFocusItem!==field)paletteReturnFocus=win.activeFocusItem;
+            field.forceActiveFocus();field.selectAll();
         }
     }
     Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
@@ -3515,6 +3681,7 @@ ApplicationWindow {
                 font.pixelSize: 11
             }
             Action {
+                id: themeToggle
                 objectName: "themeToggle"
                 text: lightTheme ? "Dark" : "Light"
                 Accessible.name: "Switch to " + (lightTheme ? "dark" : "light") + " theme"
@@ -3992,7 +4159,7 @@ ApplicationWindow {
                         Layout.preferredHeight: implicitHeight
                         spacing: 0
                         Repeater {
-                            model: ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
+                            model: recordTabs
                             NavItem {
                                 required property string modelData
                                 objectName: "tab_" + modelData
@@ -4055,19 +4222,17 @@ ApplicationWindow {
                             }
                             Action { objectName:"topologyRetry"; text:topologyLoading ? "Loading…" : "Reload"; enabled:backendReady && !!analysisState.complete && !topologyLoading; onClicked:loadTopology(false) }
                         }
-                        FieldInput {
+                        PaletteInput {
                             id: topologySearch
                             objectName: "topologySearch"
                             Layout.fillWidth: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
                             implicitHeight: 30
-                            placeholderText: "Find objects, IDs, types or states… Ctrl+K"
+                            placeholderText: "Search records · > commands · # PID/SID"
                             placeholderTextColor: muted
-                            Accessible.name: "Search loaded topology objects, names, decimal or hexadecimal identities, types and states"
+                            Accessible.name: "Search loaded topology objects" + (paletteInput===topologySearch ? " · " + paletteStatus : "")
                             selectByMouse: true
-                            Keys.onEscapePressed: clear()
-                            onAccepted: {topologyList.forceActiveFocus();if(topologyRows.length)topologyList.currentIndex=0;}
                         }
                         PlainLabel {
                             objectName: "topologyContext"
@@ -4077,7 +4242,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                             wrapMode: Text.Wrap
                             color: muted
-                            text: topologyScopeLabel + " · observed through packet #" + num(topologyData.at_packet === undefined ? currentPacket() : topologyData.at_packet) + "\n" + (topologyData.nodes || []).length + " / " + ((topologyData.page || {}).total || 0) + " objects loaded" + (topologySearch.text.trim() ? " · search covers loaded objects only" : "") + " · ↑ ↓ focus · Enter select"
+                            text: topologyScopeLabel + " · observed through packet #" + num(topologyData.at_packet === undefined ? currentPacket() : topologyData.at_packet) + "\n" + (topologyData.nodes || []).length + " / " + ((topologyData.page || {}).total || 0) + " objects loaded" + (topologySearch.query.trim() ? " · search covers loaded objects only" : "") + " · ↑ ↓ focus · Enter select"
                         }
                         PlainLabel {
                             objectName:"topologyStatus"
@@ -4132,7 +4297,7 @@ ApplicationWindow {
                             }
                             Keys.onLeftPressed: {
                                 let row=topologyRows[currentIndex];if(!row)return;
-                                if(row.branch && row.open && !topologySearch.text.trim())toggleTopologyRow(row);
+                                if(row.branch && row.open && !topologySearch.query.trim())toggleTopologyRow(row);
                                 else for(let i=currentIndex-1;i>=0;--i)if(topologyRows[i].depth<row.depth){currentIndex=i;break;}
                             }
                             Keys.onPressed: function(event){if(event.key===Qt.Key_Home || event.key===Qt.Key_End){if(count)currentIndex=event.key===Qt.Key_Home?0:count-1;event.accepted=true;}}
@@ -4184,7 +4349,7 @@ ApplicationWindow {
                                 horizontalAlignment: Text.AlignHCenter
                                 wrapMode: Text.Wrap
                                 visible: !topologyRows.length && !topologyLoading
-                                text: !analysisState.complete ? "Analyze a source to derive semantic objects." : topologyError ? "Topology is unavailable. Raw evidence remains in Tables." : topologySearch.text.trim() ? "No loaded objects match. Clear search or load more objects." : "Retained " + ((topologyData.counts || {}).raw_sections || (analysisState.tables || []).length) + " raw sections. No semantic relationships can be established in this context. Open Tables for the original evidence."
+                                text: !analysisState.complete ? "Analyze a source to derive semantic objects." : topologyError ? "Topology is unavailable. Raw evidence remains in Tables." : topologySearch.query.trim() ? "No loaded objects match. Clear search or load more objects." : "Retained " + ((topologyData.counts || {}).raw_sections || (analysisState.tables || []).length) + " raw sections. No semantic relationships can be established in this context. Open Tables for the original evidence."
                                 color:muted
                             }
                         }
@@ -4198,7 +4363,7 @@ ApplicationWindow {
                             onClicked:loadTopology(true)
                         }
                     }
-                    FieldInput {
+                    PaletteInput {
                         id: recordSearch
                         visible: tab !== "Topology"
                         objectName: "recordSearch"
@@ -4207,16 +4372,10 @@ ApplicationWindow {
                         Layout.rightMargin: 8
                         Layout.topMargin: 8
                         implicitHeight: 30
-                        placeholderText: tab === "Changes" ? "Search this change page…  Ctrl+K" : "Search names, PID or SID…  Ctrl+K"
+                        placeholderText: "Search records · > commands · # PID/SID"
                         placeholderTextColor: muted
                         selectByMouse: true
-                        Accessible.name: "Search records by name, packet identifier or service identifier"
-                        Keys.onEscapePressed: clear()
-                        onAccepted: {
-                            recordList.forceActiveFocus();
-                            if (rows.length)
-                                recordList.currentIndex = 0;
-                        }
+                        Accessible.name: "Search records by name, packet identifier or service identifier" + (paletteInput===recordSearch ? " · " + paletteStatus : "")
                     }
                     RowLayout {
                         visible: tab === "Tables"
@@ -4427,7 +4586,7 @@ ApplicationWindow {
                         PlainLabel {
                             id: recordCountLabel
                             visible: tab !== "Topology"
-                            text: tab === "Tables" ? tableModel.count_text : tab + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
+                            text: tab === "Tables" ? tableModel.count_text : tab + " · " + rows.length + (recordSearch.query.trim() ? " / " + unfilteredRows.length : "")
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             elide: Text.ElideRight
@@ -4453,7 +4612,7 @@ ApplicationWindow {
                         Action { objectName:"tableNext"; text:"Next"; enabled:(tablePage+1)*100<parent.total; onClicked:tablePage++ }
                     }
                     PlainLabel {
-                        visible: tab !== "Topology" && selectionHidden && (tab === "Tables" || !!recordSearch.text.trim())
+                        visible: tab !== "Topology" && selectionHidden && (tab === "Tables" || !!recordSearch.query.trim())
                         text: "Selected evidence is retained; its record is hidden by this filter."
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
@@ -4580,7 +4739,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparisonFilters.length ? "No matching changes on this page. Toggle the filters or use Previous / Next." : comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.query.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparisonFilters.length ? "No matching changes on this page. Toggle the filters or use Previous / Next." : comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
@@ -5451,6 +5610,7 @@ ApplicationWindow {
                             onClicked: specificationDialog.open()
                         }
                         Action {
+                            id: renameButton
                             objectName: "rename"
                             visible: !selectedChange
                             text: "Rename service…"

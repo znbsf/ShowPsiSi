@@ -281,14 +281,14 @@ function selectionBack() {
   restoreInspectionState(saved.inspection);$('#search').value=search;render();
   $('#list').scrollTop=saved.listScroll;$('#inspector').scrollTop=saved.inspectorScroll;
   const row=[...$('#tree-area')?.querySelectorAll('[role="treeitem"]') || []].find(el=>el.dataset.nodePath===saved.path);
-  if(row)focusTreeItem(row);if($('#tree-area'))$('#tree-area').scrollTop=saved.treeScroll;
+  if(row)focusTreeItem(row);else if(!saved.path)$('#list [tabindex="0"]')?.focus({preventScroll:true});if($('#tree-area'))$('#tree-area').scrollTop=saved.treeScroll;
 }
 async function jumpReference(target,path) {
   if(!target || busy || loadingDetail || backendFailure)return;
   const saved={kind:'selection',inspection:inspectionState(),tab,filter,pidFilter,search,page,groupedTables,showBadCrc,explorerFocusKey,historyPage,historyIdentity,
     workspace:savedWorkspace,protocolResolution,protocolDepth:protocolSourceHistory.length,
     topology:{active:topology.active,resolution:topology.resolution,revealed:topology.revealed,sourceWorkspace:topology.sourceWorkspace},
-    listScroll:$('#list').scrollTop,inspectorScroll:$('#inspector').scrollTop,treeScroll:$('#tree-area').scrollTop,path};
+    listScroll:$('#list').scrollTop,inspectorScroll:$('#inspector').scrollTop,treeScroll:$('#tree-area')?.scrollTop || 0,path};
   changeTab(target.kind==='service'?'Services':'Tables');
   topology.history.push(saved);if(topology.history.length>100)topology.history.shift();
   topology.active=null;topology.resolution=null;topology.revealed=false;
@@ -299,6 +299,7 @@ async function jumpReference(target,path) {
     key=rowIdentity(service);page=Math.max(0,Math.floor(recordRows().findIndex(s=>rowIdentity(s)===key)/PAGE_SIZE));
   } else {
     selectExplorer({pid:target.pid,name:target.name});groupedTables=false;
+    if(data.tables?.find(row=>row.id===target.id)?.crc?.status==='invalid')showBadCrc=true;
     page=Math.max(0,Math.floor(recordRows().findIndex(r=>r.id===target.id)/PAGE_SIZE));
   }
   await inspect(target.id,target.sid,key);
@@ -412,18 +413,30 @@ function openComparisonTopology(side,label) {
 }
 
 const PAGE_SIZE = 100;
+const recordTabs = ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"];
+const commandTable = [
+  {id:"analyze",description:"Analyze",keys:"Ctrl Enter",reason:()=>paletteBackendReason() || (!$("#source").value.trim()?"Choose a source first":""),run:()=>$("#scan").click()},
+  {id:"open",description:"Open…",keys:"Ctrl O",reason:()=>paletteBackendReason(),run:()=>$("#browse").click()},
+  {id:"export",description:"Export…",keys:"",reason:()=>!data.complete?"Analyze a source before exporting":paletteBackendReason() || editBlockReason(),run:()=>$("#edit")?.click()},
+  {id:"compare",description:"Compare snapshots",keys:"",reason:()=>paletteBackendReason() || (!data.complete?"Analyze a source before comparing snapshots":""),run:()=>$("#compare-snapshots")?.click()},
+  {id:"latest",description:"Latest state",keys:"",reason:()=>paletteBackendReason() || (!data.complete?"Analyze a source to view its latest state":""),run:()=>snapshot(-1)},
+  {id:"theme",description:"Toggle theme",keys:"",run:()=>$("#theme-toggle").click()},
+  {id:"layout",description:"Reset layout",keys:"",run:()=>$("#reset-layout").click()},
+  {id:"help",description:"Shortcut help",keys:"? / Ctrl+/",run:showShortcutHelp},
+  ...recordTabs.map(next=>({id:"tab-"+next.toLowerCase(),description:next,keys:"",run:()=>{$('#tabs [data-tab="'+next+'"]').click();}}))
+];
 const shortcutTable = [
   {keys:"↑ ↓ Home End",description:"Move focus in lists and trees"},
   {keys:"Enter / Space",description:"Select the focused item"},
   {keys:"Ctrl K",description:"Search records"},
-  {keys:"Ctrl O",description:"Open file"},
-  {keys:"Ctrl Enter",description:"Analyze (source bar)"},
+  commandTable.find(row=>row.id==="open"),
+  commandTable.find(row=>row.id==="analyze"),
   {keys:"Ctrl+.",description:"Cancel active scan"},
   {keys:"F6 / Shift+F6",description:"Next / previous region"},
   {keys:"Alt ←",description:"Back"},
   {keys:"Ctrl+Enter (Structure)",description:"Go to the focused field's reference"},
   {keys:"← → on divider",description:"Resize focused pane"},
-  {keys:"? / Ctrl+/",description:"Show shortcut help (? outside text inputs)"},
+  commandTable.find(row=>row.id==="help"),
   {keys:"Esc",description:"Close shortcut help"}
 ];
 const shortcutRows = () => shortcutTable.map(row => `<div class="shortcut-row"><kbd>${esc(row.keys)}</kbd><span>${esc(row.description)}</span></div>`).join("");
@@ -443,7 +456,7 @@ $("#app").innerHTML = `
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
 <div id="error-banner" role="region" aria-label="Error message" hidden><span id="error-message" tabindex="0" aria-label="Error details"></span><button class="btn small" id="dismiss-error" aria-label="Dismiss error message">Dismiss</button></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary title="Show shortcut help with ? or Ctrl+/">Keyboard shortcuts</summary>${shortcutRows()}</details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary title="Show shortcut help with ? or Ctrl+/">Keyboard shortcuts</summary>${shortcutRows()}</details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search records · &gt; commands · # PID/SID" aria-label="Search records" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="palette-list" title="Search records · &gt; commands · # PID: Packet Identifier / SID: Service Identifier"><div id="command-palette" hidden><div id="palette-list" role="listbox" aria-label="Commands and identifier targets"></div><p id="palette-empty" class="muted"></p></div><span id="palette-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot" aria-hidden="true"></span><span id="notice" role="status" aria-live="polite" aria-atomic="true">Open a stream to begin</span><span id="status-warning" hidden><span id="warning-message"></span><button class="btn small" id="dismiss-warning" aria-label="Dismiss warning message">Dismiss</button></span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span><button class="btn small" id="messages" aria-label="Messages" aria-haspopup="dialog" aria-controls="messages-dialog" aria-expanded="false">Messages</button></footer>
 <dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title"><h2 id="shortcuts-title">Keyboard shortcuts</h2><div class="shortcut-list">${shortcutRows()}</div><div class="actions"><button class="btn" id="close-shortcuts" aria-label="Close shortcut help">Close</button></div></dialog>
@@ -1134,7 +1147,7 @@ function render() {
   renderExplorer();
   $("#extension").innerHTML =
     `<div class="panel-title">DESCRIPTOR EXTENSION</div><strong>${esc(data.extension_id || "No extension reported")}</strong><p>Schema extensions use their declared scope. Native decoding follows the table context; raw evidence is retained.</p>`;
-  $("#tabs").innerHTML = ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
+  $("#tabs").innerHTML = recordTabs
     .map(
       (t) =>
         `<button role="tab" aria-selected="${tab === t}" tabindex="${tab === t ? 0 : -1}" class="${tab === t ? "active" : ""}" data-tab="${t}" ${tip(t)}>${t}${t === "Issues" && data.diagnostics?.length ? ` <span class="tab-count">${num(data.diagnostics.length)}</span>` : ""}</button>`,
@@ -1164,16 +1177,7 @@ function render() {
         }
       };
     });
-  $("#search").placeholder =
-    tab === "Services"
-      ? "Search services, providers, SID…"
-      : tab === "Topology"
-        ? "Search loaded objects, IDs, types, states…"
-        : tab === "Tables"
-        ? "Search table, PID, version…"
-        : tab === "EPG"
-          ? "Search programmes, SID, start time…"
-          : "Search issue code or evidence…";
+  $("#search").placeholder = "Search records · > commands · # PID/SID";
   $("#snapshot-state").textContent =
     data.analysis_status === "cancelled"
       ? "CANCELLED · SOURCE UNCHANGED"
@@ -1922,6 +1926,7 @@ function editBlockReason() {
   return "";
 }
 function renderInspector() {
+  if(palette.mode)renderPalette();
   const panel = $("#inspector");
   if (!panel) return;
   rememberLookupState(panel);
@@ -2424,20 +2429,71 @@ $("#edit-dialog").addEventListener("close", () => {
   editTarget = null;
   invalidatePreview();
 });
+const palette={mode:"",rows:[],index:0,returnFocus:null};
+function paletteBackendReason() {
+  return backendFailure || (!native?"Backend unavailable":busy?"Wait for the analysis to finish":exportPending?"Wait for the export to finish":"");
+}
+function closePalette(restoreFocus=false) {
+  palette.mode="";palette.rows=[];palette.index=0;
+  $("#command-palette").hidden=true;$("#search").value=search;
+  $("#search").setAttribute("aria-expanded","false");$("#search").removeAttribute("aria-activedescendant");$("#palette-status").textContent="";
+  if(restoreFocus){
+    const previous=palette.returnFocus;palette.returnFocus=null;
+    const target=previous?.isConnected?previous:previous?.id?document.getElementById(previous.id):[...$('#list').querySelectorAll('[data-key]')].find(row=>row.dataset.key===previous?.dataset?.key);
+    (target && target!==document.body && !target.disabled?target:$(".center")).focus({preventScroll:true});
+  }
+}
+function renderPalette(reset=false) {
+  const input=$("#search"),mode=input.value.trimStart()[0];
+  if(mode!==">" && mode!=="#"){closePalette();return;}
+  palette.mode=mode;
+  let message="";
+  if(mode===">") {
+    palette.rows=commandTable.filter(row=>workbench.commandMatches(row.description,input.value.trimStart().slice(1))).map(row=>({...row,reason:row.reason?.() || ""}));
+    message="No matching commands";
+  } else {
+    const result=workbench.paletteIdentifier(input.value.trimStart(),data);
+    palette.rows=result.target?[{id:"identifier",description:result.label,keys:"Return",help:result.help,target:result.target,reason:paletteBackendReason() || (loadingDetail?"Wait for the current inspection to finish":"")}]:[];
+    message=result.message;
+  }
+  palette.index=reset?0:Math.min(palette.index,Math.max(0,palette.rows.length-1));
+  $("#palette-list").innerHTML=palette.rows.map((row,index)=>`<div class="palette-option" id="palette-option-${index}" role="option" aria-selected="${index===palette.index}" aria-disabled="${!!row.reason}" data-palette-index="${index}" data-command="${esc(row.id)}" title="${esc(row.reason || row.help || (row.id==='export'?'Open the SDT (Service Description Table) preview and export workflow':row.description))}"><span>${esc(row.description)}</span><kbd>${esc(row.keys || '—')}</kbd></div>`).join("");
+  $("#palette-empty").textContent=palette.rows.length?"":message;$("#palette-empty").hidden=!!palette.rows.length;
+  $("#command-palette").hidden=false;input.setAttribute("aria-expanded","true");
+  if(palette.rows.length){input.setAttribute("aria-activedescendant","palette-option-"+palette.index);$("#palette-option-"+palette.index).scrollIntoView({block:"nearest"});}
+  else input.removeAttribute("aria-activedescendant");
+  $("#palette-status").textContent=palette.rows.length+" "+(mode===">"?"commands":"identifier targets")+(palette.rows.length?" available":". "+message);
+}
+function executePalette() {
+  renderPalette();
+  const row=palette.rows[palette.index];if(!row || row.reason)return;
+  closePalette(true);
+  if(row.target)jumpReference(row.target,"");else row.run();
+}
+$("#command-palette").onmousedown=event=>event.preventDefault();
+$("#command-palette").onclick=event=>{const row=event.target.closest('[data-palette-index]');if(row){palette.index=Number(row.dataset.paletteIndex);executePalette();}};
+$("#search").addEventListener("focus",event=>{if(event.relatedTarget && !$("#command-palette").contains(event.relatedTarget))palette.returnFocus=event.relatedTarget;});
+$("#search").addEventListener("blur",()=>{if(palette.mode)closePalette();});
 $("#search").oninput = (e) => {
-  search = e.target.value;
+  if(/^[>#]/.test(e.target.value.trimStart())){renderPalette(true);return;}
+  const value=e.target.value;closePalette();search=value;$("#search").value=search;
   if(tab === "Topology") topology.search=search;
-  page = 0;
-  renderList();
+  page = 0;renderList();
 };
 $("#search").onkeydown = (event) => {
-  if (event.key === "Escape") {
+  if(event.isComposing)return;
+  if(palette.mode && ["ArrowUp","ArrowDown","Enter"].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();event.stopPropagation();
+    if(event.key==="Enter")executePalette();
+    else if(palette.rows.length){palette.index=(palette.index+(event.key==="ArrowUp"?-1:1)+palette.rows.length)%palette.rows.length;renderPalette();}
+  } else if (event.key === "Escape") {
+    event.preventDefault();event.stopPropagation();
+    if(palette.mode){closePalette(true);return;}
+    search = "";if(tab === "Topology")topology.search="";
+    event.target.value = "";page = 0;renderList();
+  } else if(event.key==="Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
-    search = "";
-    if(tab === "Topology")topology.search="";
-    event.target.value = "";
-    page = 0;
-    renderList();
+    [...$('#list').querySelectorAll('[tabindex="0"], summary, [role="option"]')].find(row=>row.getClientRects().length)?.focus();
   }
 };
 $("#prev").onclick = () => {

@@ -43,6 +43,15 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_command_palette_commands_and_pid_jump(self):
+        for theme in ('dark','light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-palette-') as directory:
+                report=self.run_script('command-palette',directory,auto=False,overrides={'SHOWPSISI_THEME':theme,'SHOWPSISI_STANDARDS':'dvb'})
+                self.assertEqual(report['phase'],10,report)
+                self.assertTrue(all(report['checks'].values()),report)
+                for check in ('export_disabled','theme_command','pid_suggestion','pid_jump','pid_back','unknown_pid','unknown_unchanged','escape_focus','plain_search'):
+                    self.assertTrue(report['checks'][check],report)
+
     def test_structure_reference_jump_and_back(self):
         for theme in ('dark','light'):
             with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-reference-') as directory:

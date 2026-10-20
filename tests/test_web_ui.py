@@ -1150,6 +1150,10 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#scan').click()
         self.wait_checkpoint()
         self.page.wait_for_function('() => window.testGate.progress.length > 0')
+        # Native receipt precedes the coalesced animation-frame publication.
+        # The engine is held at after_progress: use that applied checkpoint,
+        # not an empty pre-frame state, as the ignored-envelope baseline.
+        self.page.wait_for_function('() => window.showpsisi.getState().packets > 0')
         before_cancel=self.page.evaluate('window.showpsisi.getState()')
         self.page.evaluate('''() => {
           const id=window.testGate.progress[0].payload.request_id;
@@ -1157,6 +1161,9 @@ class BrowserTests(unittest.TestCase):
           window.testGate.listener({payload:{event:'progress',request_id:id,state:['malformed-state']}});
           window.testGate.listener({payload:{event:'progress',request_id:'another-request',state:{source:'foreign-request'}}});
         }''')
+        # A malformed envelope must not become visible on a later frame either.
+        self.page.evaluate('() => { window.ignoredProgressFrameDone=false; requestAnimationFrame(()=>window.ignoredProgressFrameDone=true); }')
+        self.page.wait_for_function('() => window.ignoredProgressFrameDone')
         self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),before_cancel)
         cancel=self.page.locator('#cancel-scan')
         self.assertTrue(cancel.is_visible())
@@ -1460,9 +1467,39 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(p.locator('#recent-menu [data-recent]').first.get_attribute('title'),str(self.sample))
         self.assertIn('session only',p.locator('#warning-message').inner_text())
 
+    def test_shortcut_close_event_is_the_focus_completion_boundary(self):
+        p=self.page
+        p.locator('#source').focus();p.keyboard.press('Control+/')
+        self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+        p.evaluate('''() => {
+          window.shortcutCloseObservation=null;
+          const dialog=document.querySelector('#shortcuts-dialog');
+          let closed=false;
+          dialog.addEventListener('close',()=>{
+            closed=true;
+            window.shortcutCloseObservation={beforeEvent,afterEvent:{closed,focus:document.activeElement.id}};
+          },{once:true});
+          dialog.close();
+          // Native restoration is synchronous, application close processing is not.
+          const beforeEvent={closed,focus:document.activeElement.id};
+        }''')
+        p.wait_for_function('()=>window.shortcutCloseObservation!==null')
+        observed=p.evaluate('window.shortcutCloseObservation')
+        self.assertEqual(observed['beforeEvent'],{'closed':False,'focus':'source'})
+        self.assertEqual(observed['afterEvent'],{'closed':True,'focus':'source'})
+        p.locator('#browse').focus();p.keyboard.press('?')
+        self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+
     def test_shortcut_help_uses_sidebar_table_and_restores_focus(self):
         p=self.page
-        for theme in ('dark','light'):
+        # Browser-native focus restoration occurs before the queued close event.
+        # Observe the application close listener's completion before moving focus
+        # for the next shortcut, rather than treating native focus as completion.
+        p.evaluate('''() => {
+          window.shortcutCloseCount=0;
+          document.querySelector('#shortcuts-dialog').addEventListener('close',()=>window.shortcutCloseCount++);
+        }''')
+        for theme_index,theme in enumerate(('dark','light')):
             if p.evaluate('document.documentElement.dataset.theme')!=theme:p.locator('#theme-toggle').click()
             source=p.locator('#source').input_value()
             p.locator('#source').focus();p.keyboard.press('End');p.keyboard.type('?')
@@ -1473,12 +1510,16 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(p.locator('#shortcuts-dialog .shortcut-row').all_text_contents(),p.locator('.sidebar-help .shortcut-row').all_text_contents())
             p.keyboard.press('Control+k')
             self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
-            p.keyboard.press('Escape');p.wait_for_function('()=>document.activeElement.id==="source"')
+            p.keyboard.press('Escape')
+            p.wait_for_function('(count)=>window.shortcutCloseCount===count',arg=theme_index*2+1)
+            p.wait_for_function('()=>document.activeElement.id==="source"')
             p.locator('#browse').focus();p.keyboard.press('?')
             self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
             p.keyboard.press('Tab')
             self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
-            p.locator('#close-shortcuts').click();p.wait_for_function('()=>document.activeElement.id==="browse"')
+            p.locator('#close-shortcuts').click()
+            p.wait_for_function('(count)=>window.shortcutCloseCount===count',arg=theme_index*2+2)
+            p.wait_for_function('()=>document.activeElement.id==="browse"')
             self.assertEqual(p.locator('#source').input_value(),source)
 
     def test_browser_file_drop_reports_desktop_only_without_changing_source(self):

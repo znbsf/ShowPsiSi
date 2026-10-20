@@ -159,3 +159,21 @@ records the command diagnostics and accepts code 128 only with an immediately
 verified successful exit of the same owned Qt process; still-live, nonzero-exit
 and other command failures remain failures. The earlier event's cause remains
 unproven. Dedicated contracts cover each branch without changing UI deadlines.
+
+## Browser progress and dialog completion boundaries
+
+PR #28 run `39423049118` passed Windows native and packaging gates but failed
+two browser assertions. The cancellation screenshot contained genuine native
+one-packet progress: the harness had recorded an empty baseline after transport
+receipt but before the animation-frame publication. The test now awaits that
+applied checkpoint while the engine's after-progress gate prevents further real
+updates, then retains ignored-envelope equality across a rendered frame.
+
+The shortcut screenshot showed a question mark appended to the source field.
+Chromium restores the original focus synchronously when a dialog closes, before
+its queued close event invokes application focus restoration. A focused browser
+reproduction confirmed this ordering. Repeated shortcut checks now await the
+actual close-event handler before moving focus for the next opening; a separate
+regression verifies that boundary. Original ignored-frame, focus, content and
+modal-keyboard assertions and deadlines remain unchanged. No production handler
+was changed to manufacture these test results.

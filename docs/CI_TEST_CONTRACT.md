@@ -150,3 +150,12 @@ The regression starts a real Windows parent/descendant sharing a log, then requi
 immediate file deletion after teardown. Mocked contracts also check ownership,
 ordering and visible failure. Do not suppress PermissionError, retry deletion with
 a fixed sleep, kill by image name or terminate unrelated processes to pass it.
+
+The next Windows run (`39420939788`) passed that inherited-log regression but
+exposed harness integration failures: evidence tests' mocked `Popen` intercepted
+nested `taskkill`, and one normal-close flow returned taskkill code 128 without
+retained stderr. Evidence tests now isolate their fake launch cleanup. Teardown
+records the command diagnostics and accepts code 128 only with an immediately
+verified successful exit of the same owned Qt process; still-live, nonzero-exit
+and other command failures remain failures. The earlier event's cause remains
+unproven. Dedicated contracts cover each branch without changing UI deadlines.

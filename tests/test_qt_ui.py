@@ -821,6 +821,7 @@ class QtEvidenceRetentionTests(unittest.TestCase):
                 return {'passed': True}
             with mock.patch.dict(os.environ, SHOWPSISI_QT=str(binary), SHOWPSISI_QT_TEST_ARTIFACTS=str(evidence)), \
                  mock.patch('subprocess.Popen', return_value=process), \
+                 mock.patch(__name__ + '.stop_qt_process') as cleanup, \
                  mock.patch(__name__ + '.wait_for_qt_result', side_effect=publish):
                 with self.assertRaisesRegex(AssertionError, 'ReferenceError' if complete else 'injected incomplete-result failure'):
                     NativeQtTests().run_script(script, run)
@@ -829,7 +830,7 @@ class QtEvidenceRetentionTests(unittest.TestCase):
             self.assertIn('injected', (retained / (script + '.log')).read_text())
             if oversize:
                 self.assertFalse((retained / (script + '.png')).exists())
-            process.terminate.assert_called_once()
+            cleanup.assert_called_once_with(process)
 
     def test_partial_result_retains_original_failure_and_logs(self):
         self.exercise()
@@ -884,10 +885,31 @@ class QtProcessCleanupTests(unittest.TestCase):
         process.poll.return_value = None
         with mock.patch('qt_process.os.name', 'nt'), mock.patch('qt_process.subprocess.run',
                 side_effect=subprocess.CalledProcessError(1, 'taskkill')):
-            with self.assertRaises(subprocess.CalledProcessError):
+            with self.assertRaisesRegex(RuntimeError, "taskkill=1"):
                 stop_qt_process(process)
         process.terminate.assert_not_called()
         process.kill.assert_not_called()
+
+    def test_windows_missing_pid_requires_verified_successful_exit(self):
+        for taskkill_code, exit_code, accepted in ((128, 0, True), (128, None, False),
+                                                  (128, 1, False), (1, 0, False)):
+            with self.subTest(taskkill_code=taskkill_code, exit_code=exit_code):
+                process = mock.Mock(pid=12345)
+                process.poll.side_effect = [None, exit_code]
+                error = subprocess.CalledProcessError(taskkill_code, 'taskkill',
+                                                      output='owned output', stderr='owned error')
+                with mock.patch('qt_process.os.name', 'nt'), mock.patch('qt_process.subprocess.run', side_effect=error), \
+                     mock.patch('qt_process.sys.stderr') as diagnostics:
+                    if accepted:
+                        stop_qt_process(process)
+                        process.wait.assert_called_once_with(timeout=5)
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'owned error'):
+                            stop_qt_process(process)
+                        process.wait.assert_not_called()
+                self.assertTrue(diagnostics.write.called)
+                process.kill.assert_not_called()
+                process.terminate.assert_not_called()
 
     def test_exited_process_preserves_graceful_close(self):
         process = mock.Mock()

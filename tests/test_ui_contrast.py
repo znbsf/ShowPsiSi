@@ -113,7 +113,8 @@ class WorkbenchContrastTests(unittest.TestCase):
                     with self.subTest(theme=theme, foreground=foreground, background=background):
                         self.assert_ratio(tokens[foreground], tokens[background], 4.5, 'Web text')
             # Paired role surfaces: badges and search matches carry their own fill.
-            self.assert_ratio(tokens['danger-text'], tokens['danger-bg'], 4.5, f'{theme} danger badge')
+            self.assert_ratio(tokens['danger-text'], tokens['danger-bg'], 4.5, f'{theme} error banner and badge')
+            self.assert_ratio(tokens['accent'], tokens['danger-bg'], 3, f'{theme} error detail focus')
             self.assert_ratio(tokens['changed-strong'], tokens['match-bg'], 4.5, f'{theme} search match')
             for background in ('bg', 'surface', 'raised', 'selected', 'hover', 'input'):
                 for foreground in ('accent', 'control-border', 'control-border-hover'):

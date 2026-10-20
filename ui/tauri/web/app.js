@@ -187,6 +187,8 @@ let selected = "",
   cancelling = false,
   activeAnalyze = null;
 const recentResponses = [];
+const messages = [];
+let messageTimer = null, activeWarning = null;
 const frontendErrors = [];
 function recordFrontendError(error) {
   frontendErrors.push({at:new Date().toISOString(),message:String(error?.stack || error).slice(0,2048)});
@@ -384,18 +386,26 @@ const invoke = (...args) =>
         ),
       );
 $("#app").innerHTML = `
-<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><span class="toolbar-group" role="group" aria-label="View"><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button></span><span class="toolbar-group tertiary" role="group" aria-label="Help and diagnostics"><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api" title="Show the local JSONL agent API description">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></span></header>
+<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><span class="toolbar-group" role="group" aria-label="View"><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="reset-layout" title="Restore default pane widths. Focus a divider and use arrow keys to resize; Alt+Left navigates back.">Reset layout</button></span><span class="toolbar-group tertiary" role="group" aria-label="Help and diagnostics"><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api" title="Show the local JSONL agent API description">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></span></header>
 <div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary>Keyboard shortcuts</summary><kbd>↑ ↓ Home End</kbd> <span>Move focus</span><br><kbd>Enter / Space</kbd> <span>Select</span><br><kbd>Ctrl K</kbd> <span>Search records</span><br><kbd>Ctrl O</kbd> <span>Open file</span><br><kbd>Ctrl Enter</kbd> <span>Analyze</span><br><kbd>Ctrl+.</kbd> <span>Cancel active scan</span><br><kbd>F6 / Shift+F6</kbd> <span>Next / previous region</span><br><kbd>Alt ←</kbd> <span>Back</span></details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
+<div id="error-banner" role="region" aria-label="Error message" hidden><span id="error-message" tabindex="0" aria-label="Error details"></span><button class="btn small" id="dismiss-error" aria-label="Dismiss error message">Dismiss</button></div>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary>Keyboard shortcuts</summary><kbd>↑ ↓ Home End</kbd> <span>Move focus</span><br><kbd>Enter / Space</kbd> <span>Select</span><br><kbd>Ctrl K</kbd> <span>Search records</span><br><kbd>Ctrl O</kbd> <span>Open file</span><br><kbd>Ctrl Enter</kbd> <span>Analyze</span><br><kbd>Ctrl+.</kbd> <span>Cancel active scan</span><br><kbd>F6 / Shift+F6</kbd> <span>Next / previous region</span><br><kbd>Alt ←</kbd> <span>Back</span><br><kbd>← → on divider</kbd> <span>Resize focused pane</span></details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
-<footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
+<footer><span class="status-dot" id="status-dot" aria-hidden="true"></span><span id="notice" role="status" aria-live="polite" aria-atomic="true">Open a stream to begin</span><span id="status-warning" hidden><span id="warning-message"></span><button class="btn small" id="dismiss-warning" aria-label="Dismiss warning message">Dismiss</button></span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span><button class="btn small" id="messages" aria-label="Messages" aria-haspopup="dialog" aria-controls="messages-dialog" aria-expanded="false">Messages</button></footer>
+<dialog id="messages-dialog" aria-labelledby="messages-title"><h2 id="messages-title">Messages</h2><p id="messages-empty">No messages yet.</p><ol id="message-list" tabindex="0" aria-label="Last 50 messages, newest first"></ol><div class="actions"><button class="btn" id="close-messages" aria-label="Close message history">Close</button></div></dialog>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only TS or raw-section BIN and manifest. TS has no media or PCR; BIN needs its adjacent manifest for PID and source evidence.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><label for="export-format">Export format</label><select id="export-format"><option value="ts">TS · SI-only transport stream (.ts)</option><option value="bin">BIN · raw SI sections (.bin)</option></select><div class="actions"><button class="btn" id="export" disabled>Save SI-only TS + manifest…</button><button class="btn" id="close-edit">Close</button></div></dialog>
 <dialog id="about-dialog" aria-labelledby="about-title"><h2 id="about-title">About ShowPsiSi</h2><p>Qt and Tauri workbenches share the C++ / TSDuck signal engine.</p><p>Windows installer updates are available in the Qt edition; this frontend opens the official release page.</p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi" target="_blank" rel="noopener noreferrer">Official source repository</a></p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi/releases" target="_blank" rel="noopener noreferrer">Official releases and downloads</a></p><p id="about-feedback" role="status"></p><button class="btn" id="close-about">Close</button></dialog>
 <dialog id="api-dialog" aria-labelledby="api-title"><h2 id="api-title">Native agent API</h2><pre id="api-text"></pre><button class="btn" id="close-api">Close</button></dialog>`;
-const dvbiWorkspace=createDvbiWorkspace({call,invoke,status:()=>({busy:busy || exportPending,error:backendFailure}),changed:()=>{if(!dvbiWorkspace.getState().active)applyLayout();}});
+let lastDvbiMessage = "";
+const dvbiWorkspace=createDvbiWorkspace({call,invoke,status:()=>({busy:busy || exportPending,error:backendFailure}),changed:()=>{
+  const state=dvbiWorkspace.getState(), error=state.error || state.inspectError;
+  const text=error || (state.importing ? "Loading local document…" : state.loading ? "Loading document objects…" : state.metadata ? "Local document imported · original file unchanged" : "Choose a local XML document");
+  if(state.active && text!==lastDvbiMessage){lastDvbiMessage=text;notice(text,error ? "error" : "info");}
+  if(!state.active)applyLayout();
+}});
 $('#input-kind').onchange=e=>dvbiWorkspace.activate(e.target.value==='dvbi');
 let theme = "dark";
 try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
@@ -411,17 +421,56 @@ $("#theme-toggle").onclick = () => {
   try { localStorage.setItem("showpsisi.theme", theme); } catch (_) {}
   applyTheme();
 };
-function notice(text, error = false) {
-  if (backendFailure) {
-    text = backendFailure;
-    error = true;
-  }
-  $("#notice").textContent = text;
-  $("#notice").title = text;
-  $("#notice").setAttribute("aria-live", error ? "assertive" : "polite");
-  $("#status-dot").classList.toggle("error", error);
-  $("#notice").classList.toggle("error", error);
+function renderMessages() {
+  if (!$("#messages-dialog").open) return;
+  const list = $("#message-list"), scroll = list.scrollTop;
+  $("#messages-empty").hidden = !!messages.length;
+  list.innerHTML = messages.slice().reverse().map(message => `<li><span class="message-level ${message.level}">${message.level}</span><time datetime="${message.at}" title="${message.at}">${esc(new Date(message.at).toLocaleTimeString())}</time><span>${esc(message.text)}</span></li>`).join("");
+  list.scrollTop = scroll;
 }
+function renderWarning() {
+  $("#status-warning").hidden = !activeWarning;
+  if (!activeWarning) return;
+  const text = "⚠ " + activeWarning.text + " ×" + activeWarning.count;
+  $("#warning-message").textContent = $("#notice").textContent === activeWarning.text ? "⚠ ×" + activeWarning.count : text;
+  $("#warning-message").title = text;
+  $("#warning-message").setAttribute("aria-label", text);
+}
+function notice(text, level = "info") {
+  // Retain boolean callers while giving persistent notices an explicit level.
+  level = level === true ? "error" : level === false ? "info" : level;
+  text = String(text || "");
+  if (!text) return;
+  clearTimeout(messageTimer);
+  messages.push({level, at:new Date().toISOString(), text});
+  if (messages.length > 50) messages.shift();
+  if (level === "warning") activeWarning = {text, count:activeWarning?.text === text ? activeWarning.count + 1 : 1};
+  if (level === "error") {
+    activeWarning = null;
+    $("#error-message").textContent = text;
+    $("#error-banner").hidden = false;
+  }
+  const line = $("#notice"), dot = $("#status-dot");
+  line.setAttribute("aria-live", level === "error" ? "assertive" : "polite");
+  line.classList.remove("info-expired");
+  line.classList.toggle("error", level === "error");
+  line.classList.toggle("warning", level === "warning");
+  line.textContent = line.title = text;
+  dot.hidden = false;
+  dot.classList.toggle("error", level === "error");
+  dot.classList.toggle("warning", level === "warning");
+  if (level === "info") messageTimer = setTimeout(() => {line.classList.add("info-expired");dot.hidden = true;}, 4000);
+  renderWarning();
+  renderMessages();
+}
+$("#dismiss-error").onclick = () => {$("#error-banner").hidden = true;if(document.activeElement === $("#dismiss-error"))$("#messages").focus();};
+$("#dismiss-warning").onclick = () => {
+  if($("#notice").textContent===activeWarning?.text){$("#notice").classList.add("info-expired");$("#notice").classList.remove("warning");$("#status-dot").hidden=true;}
+  activeWarning=null;renderWarning();$("#messages").focus();
+};
+$("#messages").onclick = () => {$("#messages-dialog").showModal();$("#messages").setAttribute("aria-expanded", "true");renderMessages();$("#close-messages").focus();};
+$("#close-messages").onclick = () => $("#messages-dialog").close();
+$("#messages-dialog").addEventListener("close", () => {$("#messages").setAttribute("aria-expanded", "false");$("#messages").focus();});
 // Field-scoped validation feedback. The footer live region still carries the
 // announcement; this element keeps the reason next to the control that failed.
 function setExtraPidsError(message) {
@@ -645,14 +694,15 @@ async function scan() {
     notice(
       (cancelling ? "Analysis completed before cancellation took effect · " : "Analysis complete · ") +
         num(data.packets) +
-        " packets · source unchanged",
+        " packets · source unchanged" + (data.demux?.truncated_sections ? " · " + num(data.demux.truncated_sections) + " truncated section(s)" : ""),
+      data.demux?.truncated_sections ? "warning" : "info",
     );
   } catch (error) {
     if (epoch !== scanEpoch) return;
     if (error.code === "analysis_cancelled") {
       resetAnalysisViews();
       data = error.data?.state || { analysis_status: "cancelled", complete: false };
-      notice("Analysis cancelled · source unchanged · ready to analyze again");
+      notice("Analysis cancelled · source unchanged · ready to analyze again", "warning");
     } else {
       resetAnalysisViews();
       data = { source: path, analysis_status: "failed", complete: false };
@@ -1928,6 +1978,7 @@ function openEdit() {
 function invalidatePreview() {
   preview = {};
   $("#export").disabled = true;
+  $("#diff").setAttribute("aria-live", "polite");
   $("#diff").textContent = "";
 }
 $("#rename").oninput = invalidatePreview;
@@ -1955,7 +2006,7 @@ $("#preview").onclick = async () => {
       `${result.before} → ${result.after} · version ${result.old_version} → ${result.new_version}`;
     $("#export").disabled = !!backendFailure || exportPending;
   } catch (error) {
-    if (target === editTarget) $("#diff").textContent = String(error);
+    if (target === editTarget) {$("#diff").setAttribute("aria-live", "assertive");$("#diff").textContent = String(error);notice(String(error), "error");}
   } finally {
     if (target === editTarget) $("#preview").disabled = !!backendFailure;
   }
@@ -2000,7 +2051,7 @@ $("#export").onclick = async () => {
     notice("Exported " + num(result.bytes) + " bytes + manifest · " + result.path);
     $("#edit-dialog").close();
   } catch (error) {
-    if (target === editTarget) $("#diff").textContent = String(error);
+    if (target === editTarget) {$("#diff").setAttribute("aria-live", "assertive");$("#diff").textContent = String(error);notice(String(error), "error");}
   } finally {
     exportPending = false;
     $("#export-format").disabled = false;
@@ -2114,10 +2165,11 @@ document.addEventListener("keydown", (e) => {
     focusNextRegion(e.shiftKey);
     return;
   }
-  if(e.altKey && e.key === "ArrowLeft") {
+  if(e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !document.querySelector("dialog[open]") && e.key === "ArrowLeft") {
     if(dvbiWorkspace.getState().active){e.preventDefault();$('#dvbi-back')?.click();return;}
     if(inspectionEvidence?.kind==='protocol'){e.preventDefault();$('#protocol-back')?.click();return;}
     if(tab === "Topology" || topology.revealed){e.preventDefault();topologyBack();return;}
+    e.preventDefault(); // No back entry: keep navigation inside the workbench.
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     if(dvbiWorkspace.getState().active){e.preventDefault();$("#dvbi-search").focus();return;}
@@ -2148,6 +2200,7 @@ let preferredLayout = {}, layoutStorageAvailable = true;
 function layoutStorageWarning(message) {
   $("#layout-status").textContent = message;
   $("#layout-status").title = message;
+  if (message) notice(message, "warning");
 }
 function readLayout() {
   try {
@@ -2255,6 +2308,7 @@ function splitter(id, name, direction) {
     saveLayout();
   };
   el.onkeydown = (event) => {
+    if (event.altKey) return;
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const step = event.shiftKey ? 64 : 16;
@@ -2341,7 +2395,7 @@ async function captureUi() {
 }
 $("#save-diagnostics").onclick=async()=>{
   try { const result=await captureUi(); notice("Diagnostics saved: " + result.directory); }
-  catch(error) { notice("Diagnostics failed: " + String(error)); }
+  catch(error) { notice("Diagnostics failed: " + String(error), "error"); }
 };
 async function pollUiAgent() {
   try {
@@ -2393,7 +2447,7 @@ async function boot() {
   });
   env = await invoke("environment");
   if (env.runtime !== "cloud-browser") await native.event.listen("core-close-blocked", () => {
-    notice("An export is still running. Wait for it to finish before closing.", true);
+    notice("An export is still running. Wait for it to finish before closing.", "warning");
   });
   if (env.agent_enabled) pollUiAgent();
   if (env.backend_alive === false)

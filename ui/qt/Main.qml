@@ -168,7 +168,7 @@ ApplicationWindow {
     function topologyBack() {
         if(topologyBackStack.length){
             let stack=topologyBackStack.slice(), saved=stack.pop();topologyBackStack=stack;
-            if(saved.revision!==analysisState.analysis_revision || saved.cutoff!==topologyData.at_packet){notice="The saved object belongs to an older observation. Reload Topology.";return;}
+            if(saved.revision!==analysisState.analysis_revision || saved.cutoff!==topologyData.at_packet){showMessage("The saved object belongs to an older observation. Reload Topology.","warning");return;}
             topologySelection=saved.selection;topologyFocus=saved.focus;topologyExpanded=saved.expanded;topologySearch.text=saved.search;topologyFamily=saved.family;
             topologyTablesReveal=false;topologyTransition=true;tab=saved.tab;topologyTransition=false;topologyEvidenceRef=null;topologyResolution={};
             if(saved.evidence){if(saved.sectionContext){topologyEvidenceRef=saved.evidence;openTopologySibling(saved.sectionContext,false);}else openTopologyEvidence(saved.evidence,false);}
@@ -319,7 +319,7 @@ ApplicationWindow {
     function openProtocolSource(source, remember, cardIndex, sourceIndex) {
         if(!source || !source.available || !backendReady || core.inspecting)return;
         let ref=source.ref;
-        if(ref.analysis_revision!==analysisState.analysis_revision){notice="This metadata source belongs to an older analysis.";return;}
+        if(ref.analysis_revision!==analysisState.analysis_revision){showMessage("This metadata source belongs to an older analysis.","warning");return;}
         if(remember!==false)protocolSourceOrigin={id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,service:selectedService,tab:tab,view:inspectorView,scope:evidenceScope,offset:protocolCardOffset,scroll:metadataScroll.contentItem.contentY,search:treeSearch.text,collapsed:collapsed,card:cardIndex,source:sourceIndex};
         protocolSourceRef=ref;protocolSourceResolution={};selected=ref.section_id;selectedService=-1;preview={};
         treeSearch.clear();collapsed={};evidenceScope="Section";inspectorView="Structure";
@@ -328,7 +328,7 @@ ApplicationWindow {
     function protocolSourceBack() {
         let origin=protocolSourceOrigin;
         if(!origin || !backendReady || core.inspecting)return;
-        if(origin.revision!==analysisState.analysis_revision){clearProtocolSource();notice="The originating metadata belongs to an older analysis.";return;}
+        if(origin.revision!==analysisState.analysis_revision){clearProtocolSource();showMessage("The originating metadata belongs to an older analysis.","warning");return;}
         clearProtocolSource();protocolRestoring=true;protocolRestorePending=origin;selected=origin.id;selectedService=origin.service;
         core.send("inspect",{id:origin.id,analysis_revision:origin.revision,at_packet:origin.cutoff});
     }
@@ -413,6 +413,25 @@ ApplicationWindow {
     property var expandedTables: ({})
     property var preview: ({})
     property string notice: ""
+    property string messageLevel: "info"
+    property bool messageExpired: false
+    property bool updatingMessage: false
+    property string warningMessage: ""
+    property int warningRepeat: 0
+    property string errorMessage: ""
+    onNoticeChanged: if (!updatingMessage && notice) showMessage(notice)
+    ListModel { id: messagesModel }
+    Timer { id: messageTimer; interval: 4000; onTriggered: messageExpired = true }
+    function showMessage(text, level) {
+        text=String(text || "");if(!text)return;
+        level=level || "info";messageTimer.stop();messageExpired=false;messageLevel=level;
+        updatingMessage=true;notice=text;updatingMessage=false;
+        messagesModel.insert(0,{messageLevel:level,messageTime:Qt.formatTime(new Date(),"HH:mm:ss"),messageText:text});
+        if(messagesModel.count>50)messagesModel.remove(50);
+        if(level==="warning"){warningRepeat=warningMessage===text ? warningRepeat+1 : 1;warningMessage=text;}
+        if(level==="error"){warningMessage="";warningRepeat=0;errorMessage=text;}
+        if(level==="info")messageTimer.restart();
+    }
     function agentState() {
         let diagnostics = core.diagnostics();
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
@@ -798,7 +817,7 @@ ApplicationWindow {
             inspector: pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width,
             timeline: pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height };
         if (!core.saveLayout(value)) {
-            notice = "Layout could not be saved. The current layout remains usable.";
+            showMessage("Layout could not be saved. The current layout remains usable.", "warning");
         } else {
             pendingInspectorSize = -1;
             pendingTimelineSize = -1;
@@ -811,7 +830,8 @@ ApplicationWindow {
         explorerPane.SplitView.preferredWidth = 180;
         inspectorPane.SplitView.preferredWidth = 520;
         timelinePane.SplitView.preferredHeight = 105;
-        notice = core.resetLayout() ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.";
+        let saved=core.resetLayout();
+        showMessage(saved ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.", saved ? "info" : "warning");
     }
     function resizeInspector(delta) {
         pendingInspectorSize = Math.max(330, Math.min(workspace.width - explorerPane.width - 322,
@@ -957,6 +977,7 @@ ApplicationWindow {
         let destination = core.exportDestination(url, intent.format);
         if (destination.error) {
             exportFeedback = destination.error;
+            showMessage(exportFeedback, "error");
             exportButton.forceActiveFocus();
             return;
         }
@@ -1233,7 +1254,16 @@ ApplicationWindow {
         Keys.onEnterPressed: clicked()
     }
     Connections {
+        target: dvbiWorkspace
+        function onErrorChanged() { if(dvbiWorkspace.error && !core.error)showMessage(dvbiWorkspace.error,"error"); }
+        function onBusyChanged() {
+            if(metadataMode && !dvbiWorkspace.error && !core.error)
+                showMessage(dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document");
+        }
+    }
+    Connections {
         target: core
+        function onErrorChanged() { if(core.error)showMessage(core.error, "error"); }
         function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
         function onAvailabilityChanged() {
             if (core.availability === "disconnected") {
@@ -1242,7 +1272,6 @@ ApplicationWindow {
                 protocolRestoreTimer.stop();protocolRestoring=false;protocolRestorePending=null;
                 fileDialog.close();
                 topologyLoading=false;topologyError="Backend disconnected. Restart the application to continue.";
-                notice = "Backend disconnected. Restart the application to continue.";
             }
         }
         function onResponse(method, result) {
@@ -1259,7 +1288,7 @@ ApplicationWindow {
                     if(!result.message && result.id===origin.id && result.analysis_revision===origin.revision && result.native_table_at_packet===origin.cutoff){
                         topologyTransition=true;tab=origin.tab;topologyTransition=false;inspectorView=origin.view;evidenceScope=origin.scope;collapsed=origin.collapsed;treeSearch.text=origin.search;
                         protocolCardOffset=origin.offset;protocolRestoreTimer.origin=origin;protocolRestoreTimer.restart();
-                    }else {protocolRestoring=false;notice=result.message || "The originating metadata context could not be restored.";}
+                    }else {protocolRestoring=false;let message=result.message || "The originating metadata context could not be restored.";if(notice!==message || messageLevel!=="error")showMessage(message,"error");}
                 }
             }
             if (method === "lookup_identifier") identifierResult=result;
@@ -1274,7 +1303,7 @@ ApplicationWindow {
             }
             if (method === "fixture_late_frames") { lifecycleTestTimer.lateFramesAcknowledged = true; return; }
             if (method === "analyze" && result.code === "analysis_cancelled") {
-                notice = "Scan cancelled · source unchanged · analyze again when ready";
+                showMessage("Scan cancelled · source unchanged · analyze again when ready", "warning");
                 return;
             }
             if (result.message) {
@@ -1283,7 +1312,7 @@ ApplicationWindow {
                     exportFeedback = result.message;
                     exportButton.forceActiveFocus();
                 }
-                notice = result.message;
+                if(notice!==result.message || messageLevel!=="error")showMessage(result.message, "error");
                 if (method === "diff_snapshots")
                     comparisonError = result.message;
                 return;
@@ -1295,7 +1324,8 @@ ApplicationWindow {
                 }
                 defaultInspect();
                 inspected = true;
-                notice = "Scan complete · source unchanged";
+                let truncated=(result.demux || {}).truncated_sections || 0;
+                showMessage("Scan complete · source unchanged" + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
             }
             if (method === "query") {
                 if (snapshotTarget)
@@ -1768,6 +1798,7 @@ ApplicationWindow {
         property real originalInspector: 0
         property real originalTimeline: 0
         property bool dragged: false
+        property bool navigationKeysDidNotResize: true
         property int acknowledgementAttempts: 0
         onTriggered: {
             let mode = core.env("SHOWPSISI_SCRIPT");
@@ -1777,10 +1808,10 @@ ApplicationWindow {
                 if (mode === "layout-close") {
                     let expectedInspector = inspectorPane.width + 48;
                     let expectedTimeline = timelinePane.height + 48;
-                    core.key("Alt+Left");
-                    core.key("Alt+Left");
-                    core.key("Alt+Up");
-                    core.key("Alt+Up");
+                    core.key("Ctrl+Alt+Left");
+                    core.key("Ctrl+Alt+Left");
+                    core.key("Ctrl+Alt+Up");
+                    core.key("Ctrl+Alt+Up");
                     win.close();
                     let saved = core.loadLayout();
                     core.testResult(JSON.stringify({passed: saved.inspector === expectedInspector && saved.timeline === expectedTimeline,
@@ -1789,8 +1820,8 @@ ApplicationWindow {
                     return;
                 }
                 if (mode === "layout-key-drag" || mode === "layout-key-reset") {
-                    core.key("Alt+Left");
-                    core.key("Alt+Up");
+                    core.key("Ctrl+Alt+Left");
+                    core.key("Ctrl+Alt+Up");
                     if (mode === "layout-key-drag") {
                         core.drag("inspectorDivider", -40, 0);
                         core.drag("timelineDivider", 0, -30);
@@ -1799,6 +1830,9 @@ ApplicationWindow {
                     win.width = 1000;
                     win.height = 680;
                 } else if (mode === "layout-set") {
+                    core.key("Alt+Left");core.key("Alt+Right");core.key("Alt+Up");core.key("Alt+Down");
+                    navigationKeysDidNotResize = pendingInspectorSize < 0 && pendingTimelineSize < 0
+                        && inspectorPane.width === originalInspector && timelinePane.height === originalTimeline;
                     core.drag("inspectorDivider", -60, 0);
                     core.drag("timelineDivider", 0, -40);
                 } else if (mode === "layout-reset") {
@@ -1817,7 +1851,7 @@ ApplicationWindow {
                 if (mode === "layout-key-constrained") {
                     expectedInspector = Math.max(330, workspace.width - explorerPane.width - 322);
                     expectedTimeline = Math.max(105, Math.min(350, verticalWorkspace.height - 306));
-                    for (let index = 0; index < 40; ++index) { core.key("Alt+Left"); core.key("Alt+Up"); }
+                    for (let index = 0; index < 40; ++index) { core.key("Ctrl+Alt+Left"); core.key("Ctrl+Alt+Up"); }
                     cleared = true;
                 }
                 win.close();
@@ -1829,8 +1863,8 @@ ApplicationWindow {
             }
             if (phase === 1 && mode === "layout-set") {
                 dragged = inspectorPane.width > originalInspector + 30 && timelinePane.height > originalTimeline + 20;
-                core.key("Alt+Left");
-                core.key("Alt+Up");
+                core.key("Ctrl+Alt+Left");
+                core.key("Ctrl+Alt+Up");
                 phase++;
                 return;
             }
@@ -1840,7 +1874,8 @@ ApplicationWindow {
             if (mode === "layout-set" && !acknowledged && ++acknowledgementAttempts < 20) return;
             if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             core.testResult(JSON.stringify({
-                passed: (mode !== "layout-set" || acknowledged) && recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                passed: navigationKeysDidNotResize && (mode !== "layout-set" || acknowledged) && recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                navigationKeysDidNotResize: navigationKeysDidNotResize,
                 explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height,
                 records: recordPane.width, workspace: workspace.width, dragged: dragged,
                 windowWidth: win.width, windowHeight: win.height, savePending: layoutSaveTimer.running,
@@ -2736,6 +2771,7 @@ ApplicationWindow {
         }
     }
     Component.onCompleted: {
+        if(core.error)showMessage(core.error,"error");
         core.mark("ui_ready");
         if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
             width = 1000;
@@ -2783,10 +2819,10 @@ ApplicationWindow {
             explorerParityTimer.start();
     }
     onClosing: function(close) {
-        if (dvbiWorkspace.busy) {close.accepted=false;notice="A bounded metadata operation is still finishing. Wait before closing.";return;}
+        if (dvbiWorkspace.busy) {close.accepted=false;showMessage("A bounded metadata operation is still finishing. Wait before closing.", "warning");return;}
         if (core.exportPending) {
             close.accepted = false;
-            notice = "An export is still writing. Wait for its result before closing ShowPsiSi.";
+            showMessage("An export is still writing. Wait for its result before closing ShowPsiSi.", "warning");
             return;
         }
         if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout();
@@ -2805,10 +2841,12 @@ ApplicationWindow {
             else {recordSearch.forceActiveFocus();recordSearch.selectAll();}
         }
     }
-    Shortcut { sequence: "Alt+Left"; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack();else resizeInspector(24); } }
-    Shortcut { sequence: "Alt+Right"; onActivated: resizeInspector(-24) }
-    Shortcut { sequence: "Alt+Up"; onActivated: resizeTimeline(24) }
-    Shortcut { sequence: "Alt+Down"; onActivated: resizeTimeline(-24) }
+    Shortcut { sequence: "Alt+Left"; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
+    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !metadataMode; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !metadataMode; onActivated: resizeInspector(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: !metadataMode; onActivated: resizeTimeline(24) }
+    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: !metadataMode; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
         onActivated: {
@@ -2947,7 +2985,7 @@ ApplicationWindow {
                 onClicked: resetLayout()
                 SafeTip {
                     visible: anchorHovered
-                    text: "Drag the dividers to resize. Alt+Left/Right resizes the inspector; Alt+Up/Down resizes the timeline. Changes are saved on this computer."
+                    text: "Drag the dividers to resize. Ctrl+Alt+Left/Right resizes the inspector; Ctrl+Alt+Up/Down resizes the timeline. Alt+Left navigates back. Changes are saved on this computer."
                 }
             }
             Action {
@@ -2965,7 +3003,7 @@ ApplicationWindow {
                 objectName: "saveDiagnostics"
                 text: "Save diagnostics"
                 enabled: !core.busy && !core.inspecting && !core.comparing
-                onClicked: notice = uiAgent.saveBundle()
+                onClicked: {let result=uiAgent.saveBundle();showMessage(result,result.indexOf("Diagnostics failed:")===0 ? "error" : "info");}
                 SafeTip { visible: anchorHovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
             }
         }
@@ -2973,6 +3011,37 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
+        Rectangle {
+            objectName: "errorBanner"
+            visible: !metadataMode && !!errorMessage
+            Layout.fillWidth: true
+            implicitHeight: errorBannerRow.implicitHeight + 12
+            color: errorSurface
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: "Error: " + errorMessage
+            RowLayout {
+                id: errorBannerRow
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 8
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: errorMessage
+                    color: errorInk
+                    wrapMode: Text.WrapAnywhere
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                    SafeTip { visible: errorHover.hovered; text: anchorText }
+                    HoverHandler { id: errorHover }
+                }
+                Action {
+                    objectName: "dismissError"
+                    text: "Dismiss"
+                    Accessible.name: "Dismiss error message"
+                    onClicked: {errorMessage="";messagesButton.forceActiveFocus();}
+                }
+            }
+        }
         ColumnLayout {
             id: sourceBar
             visible: !metadataMode
@@ -3300,7 +3369,7 @@ ApplicationWindow {
                     }
                     PlainLabel {
                         visible: keyboardShortcuts.checked
-                        text: "↑ ↓ Home End · focus\nEnter / Space · select\nCtrl+K · search records\nCtrl+O · open file\nCtrl+Return · analyze\nCtrl+. · cancel scan\nF6 / Shift+F6 · next / previous region\nSource → Explorer → Records → Inspector"
+                        text: "↑ ↓ Home End · focus\nEnter / Space · select\nCtrl+K · search records\nCtrl+O · open file\nCtrl+Return · analyze\nCtrl+. · cancel scan\nAlt+Left · back\nCtrl+Alt+←/→ · inspector width\nCtrl+Alt+↑/↓ · timeline height\nF6 / Shift+F6 · next / previous region\nSource → Explorer → Records → Inspector"
                         color: muted
                         font.pixelSize: 11
                         Layout.fillWidth: true
@@ -4837,16 +4906,21 @@ ApplicationWindow {
         }
         }
         Rectangle {
+            id: statusFooter
+            readonly property bool errorStatus: metadataMode ? !!dvbiWorkspace.error : messageLevel === "error"
             Layout.fillWidth: true
-            height: 26
-            color: core.error ? errorSurface : surface
+            height: 28
+            color: errorStatus ? errorSurface : surface
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 PlainLabel {
-                    text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : core.error || (core.availability === "starting" ? "Starting backend…" : notice) || "Ready · all processing stays on this machine"
-                    color: core.error ? errorInk : muted
+                    objectName: "statusMessage"
+                    text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : notice || (core.availability === "starting" ? "Starting backend…" : "Ready · all processing stays on this machine")
+                    color: statusFooter.errorStatus ? errorInk : !metadataMode && messageLevel === "warning" ? warningColor : muted
+                    opacity: !metadataMode && messageLevel === "info" && messageExpired ? 0 : 1
+                    Accessible.ignored: !metadataMode && messageLevel === "info" && messageExpired
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle
@@ -4859,12 +4933,97 @@ ApplicationWindow {
                         id: statusHover
                     }
                 }
+                RowLayout {
+                    visible: !metadataMode && !!warningMessage
+                    Layout.maximumWidth: win.width * 0.4
+                    PlainLabel {
+                        Layout.fillWidth: true
+                        text: "⚠ " + (notice === warningMessage ? "" : warningMessage + " ") + "×" + warningRepeat
+                        color: warningColor
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                        Accessible.name: "Warning: " + warningMessage + " · " + warningRepeat + " occurrences"
+                        SafeTip { visible: warningHover.hovered; text: win.warningMessage + " · " + warningRepeat + " occurrences" }
+                        HoverHandler { id: warningHover }
+                    }
+                    Action {
+                        objectName: "dismissWarning"
+                        text: "Dismiss"
+                        implicitHeight: 22
+                        Accessible.name: "Dismiss warning message"
+                        onClicked: {if(notice===warningMessage){messageLevel="info";messageExpired=true;}warningMessage="";warningRepeat=0;messagesButton.forceActiveFocus();}
+                    }
+                }
                 PlainLabel {
                     text: metadataMode ? "Independent document · C++ / Expat" : num(analysisState.packets) + " packets · C++ / TSDuck"
-                    color: muted
+                    color: statusFooter.errorStatus ? errorInk : muted
                     font.pixelSize: 11
                 }
+                Action {
+                    id: messagesButton
+                    objectName: "messagesButton"
+                    visible: !metadataMode
+                    text: "Messages"
+                    implicitHeight: 22
+                    Accessible.name: "Messages · " + messagesModel.count + " recent messages"
+                    onClicked: messagesDialog.open()
+                }
             }
+        }
+    }
+    Dialog {
+        id: messagesDialog
+        objectName: "messagesDialog"
+        title: "Messages"
+        anchors.centerIn: parent
+        width: Math.min(720, win.width - 80)
+        height: Math.min(460, win.height - 100)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        standardButtons: Dialog.Close
+        onClosed: messagesButton.forceActiveFocus()
+        ListView {
+            id: messageList
+            anchors.fill: parent
+            clip: true
+            model: messagesModel
+            focus: true
+            activeFocusOnTab: true
+            Accessible.role: Accessible.List
+            Accessible.name: "Last 50 messages, newest first"
+            ScrollBar.vertical: ScrollBar {}
+            delegate: Rectangle {
+                id: messageEntry
+                required property string messageLevel
+                required property string messageTime
+                required property string messageText
+                width: messageList.width
+                height: messageRow.implicitHeight + 16
+                color: panel
+                border.color: messageList.activeFocus && ListView.isCurrentItem ? blue : dividerColor
+                border.width: messageList.activeFocus && ListView.isCurrentItem ? focusWidth : 1
+                Accessible.role: Accessible.ListItem
+                Accessible.name: messageEntry.messageLevel + " · " + messageEntry.messageTime + " · " + messageEntry.messageText
+                RowLayout {
+                    id: messageRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 8
+                    spacing: 8
+                    PlainLabel {
+                        text: messageEntry.messageLevel
+                        color: messageEntry.messageLevel === "error" ? errorInk : messageEntry.messageLevel === "warning" ? warningColor : muted
+                        padding: 3
+                        background: Rectangle {color: messageEntry.messageLevel === "error" ? errorSurface : panel}
+                        Layout.alignment: Qt.AlignTop
+                    }
+                    PlainLabel {text: messageEntry.messageTime;color: muted;Layout.alignment: Qt.AlignTop}
+                    PlainLabel {text: messageEntry.messageText;color: ink;wrapMode: Text.WrapAnywhere;Layout.fillWidth: true}
+                }
+            }
+            PlainLabel {anchors.centerIn: parent;visible: messagesModel.count === 0;text: "No messages yet.";color: muted}
         }
     }
     Dialog {

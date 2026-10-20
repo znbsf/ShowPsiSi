@@ -418,6 +418,7 @@ for line in sys.stdin:
             configured = self.run_script('layout-set', directory, auto=False,
                                          overrides={'SHOWPSISI_TEST_LAYOUT_SAVE_DELAY': '700'})
             self.assertTrue(configured['persistedAcknowledged'])
+            self.assertTrue(configured['navigationKeysDidNotResize'], 'Alt+arrows must not resize; resizing uses Ctrl+Alt+arrows')
             self.assertGreater(configured['acknowledgementAttempts'], 0)
             self.assertTrue(configured['dragged'])
             self.assertTrue(configured['invalid_rejected'])

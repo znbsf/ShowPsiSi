@@ -1176,15 +1176,24 @@ ApplicationWindow {
         id: diff
         property var change: null
         property var expanded: ({})
+        // Compact lists cap each change at a few field lines so a whole row stays visible.
+        property int maxRows: 0
+        property bool showAll: false
+        // Capped lists also keep each field on one elided line; the tooltip carries the full text.
+        readonly property bool singleLine: maxRows > 0
+        readonly property var allRows: Shared.workbench.comparisonRows(diff.change,diff.expanded)
+        readonly property int hiddenRows: maxRows > 0 && !showAll ? Math.max(0, allRows.length - maxRows) : 0
+        // Toggling a nested field also selects its change, like the rest of the row.
+        signal fieldActivated()
         spacing: 2
-        onChangeChanged: expanded = ({})
+        onChangeChanged: { expanded = ({}); showAll = false; }
         function toggleField(path) {
             let next=Object.assign({},expanded);next[path]=!next[path];expanded=next;
             Qt.callLater(function(){for(let i=0;i<diffRows.count;i++){let item=diffRows.itemAt(i);if(item && item.modelData.path===path){item.focusBranch();break;}}});
         }
         Repeater {
             id: diffRows
-            model: Shared.workbench.comparisonRows(diff.change,diff.expanded)
+            model: diff.hiddenRows ? diff.allRows.slice(0, diff.maxRows) : diff.allRows
             delegate: Item {
                 required property var modelData
                 width: diff.width
@@ -1202,10 +1211,11 @@ ApplicationWindow {
                     text: (checked ? "▾ " : "▸ ") + Shared.workbench.comparisonFieldText(modelData)
                     Accessible.name: Shared.workbench.comparisonFieldText(modelData)
                     Accessible.description: Shared.workbench.comparisonHelp(modelData.key) + (checked ? ", expanded" : ", collapsed")
-                    contentItem: PlainLabel { text:branch.text; color:changeColor(modelData.change); wrapMode:Text.WrapAnywhere; font.family:"monospace"; font.pixelSize:11 }
+                    contentItem: PlainLabel { text:branch.text; color:changeColor(modelData.change); wrapMode:diff.singleLine ? Text.NoWrap : Text.WrapAnywhere; elide:diff.singleLine ? Text.ElideRight : Text.ElideNone; font.family:"monospace"; font.pixelSize:11 }
                     background: Rectangle { color:branch.hovered ? hoverSurface : "transparent"; border.color:branch.activeFocus ? blue : "transparent"; border.width:branch.activeFocus ? focusWidth : 0; radius:2 }
-                    onClicked: diff.toggleField(modelData.path)
-                    SafeTip { visible:anchorHovered; text:Shared.workbench.comparisonHelp(modelData.key) + " · Expand nested A / B fields; array labels are positions" }
+                    onClicked: { const owner=diff, path=modelData.path; owner.fieldActivated(); owner.toggleField(path); } // toggling rebuilds this delegate
+                    SafeTip { visible:anchorHovered; text:(diff.singleLine ? Shared.workbench.comparisonFieldText(modelData) + "
+" : "") + Shared.workbench.comparisonHelp(modelData.key) + " · Expand nested A / B fields; array labels are positions" }
                 }
                 PlainLabel {
                     id: scalar
@@ -1216,13 +1226,25 @@ ApplicationWindow {
                     bottomPadding: 3
                     text: Shared.workbench.comparisonFieldText(modelData)
                     color: changeColor(modelData.change)
-                    wrapMode: Text.WrapAnywhere
+                    wrapMode: diff.singleLine ? Text.NoWrap : Text.WrapAnywhere
+                    elide: diff.singleLine ? Text.ElideRight : Text.ElideNone
                     font.family: "monospace"
                     font.pixelSize: 11
                     HoverHandler { id: fieldHover }
-                    SafeTip { visible:fieldHover.hovered; text:Shared.workbench.comparisonHelp(modelData.key) }
+                    SafeTip { visible:fieldHover.hovered; text:(diff.singleLine ? scalar.text + "
+" : "") + Shared.workbench.comparisonHelp(modelData.key) }
                 }
             }
+        }
+        Action {
+            visible: diff.hiddenRows > 0
+            width: diff.width
+            implicitHeight: 22
+            leftPadding: 4
+            text: "+" + diff.hiddenRows + (diff.hiddenRows === 1 ? " more field" : " more fields")
+            Accessible.name: "Show " + diff.hiddenRows + " more changed fields"
+            contentItem: PlainLabel { text:parent.text; color:muted; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
+            onClicked: { const owner=diff; owner.fieldActivated(); owner.showAll=true; }
         }
     }
     component LookupTable: ColumnLayout {
@@ -1441,6 +1463,8 @@ ApplicationWindow {
         property string value: ""
         property string detailText: ""
         property var counts: null
+        // Narrow windows keep the value and counts; secondary detail stays in the accessible name.
+        property bool compact: false
         implicitHeight: 28
         topPadding: 3
         bottomPadding: 3
@@ -1454,7 +1478,7 @@ ApplicationWindow {
             PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity; text:stat.counts ? num(stat.counts.errors)+" errors" : ""; color:removedColor; font.pixelSize:11 }
             PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity; text:stat.counts ? num(stat.counts.warnings)+" warnings" : ""; color:warningColor; font.pixelSize:11 }
             PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity && stat.counts.other>0; text:stat.counts ? num(stat.counts.other)+" other" : ""; color:muted; font.pixelSize:11 }
-            PlainLabel { visible:!!stat.detailText; text:stat.detailText; color:muted; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.detailText && !stat.compact; text:stat.detailText; color:muted; font.pixelSize:11 }
         }
         background: Rectangle {
             color:stat.hovered ? hoverSurface : "transparent"
@@ -2257,6 +2281,10 @@ ApplicationWindow {
                 recordSearch.clear();
                 let index = comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
                 recordList.positionViewAtIndex(index, ListView.Contain);
+                phase = 3.25;
+            } else if (phase === 3.25) {
+                // Change rows size to their field diffs; position again once the rebuilt rows are laid out.
+                recordList.positionViewAtIndex(comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }), ListView.Contain);
                 phase = 3.5;
             } else if (phase === 3.5) {
                 let name = "record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
@@ -2825,7 +2853,11 @@ ApplicationWindow {
             }
             if (phase === 5) {
                 checks.section_scope = !treeRows.some(function(r) { return r.path.indexOf("native/")===0 || r.path === "provenance"; }) && !!detail.section_native_text;
-                inspectorView="XML"; checks.merged_scope_click=core.click("mergedScope"); phase=6; return;
+                // Show XML first; a newly visible view is laid out before the next scripted click.
+                inspectorView="XML"; phase=51; return;
+            }
+            if (phase === 51) {
+                checks.merged_scope_click=core.click("mergedScope"); phase=6; return;
             }
             if (phase === 6) {
                 checks.xml_plain = xmlEvidence.textFormat === TextEdit.PlainText && xmlEvidence.text === detail.tsduck_xml;
@@ -3484,9 +3516,12 @@ ApplicationWindow {
             Layout.leftMargin: 12
             Layout.rightMargin: 12
             Layout.bottomMargin: 8
-            spacing: 20
+            // The stats row must never set a minimum width wider than a compact window.
+            readonly property bool compactStats: win.width < 1180
+            spacing: compactStats ? 12 : 20
             StatBadge {
                 objectName: "statsServices"
+                compact: parent.compactStats
                 label: "SERVICES"
                 value: num(serviceRows.length)
                 Accessible.name: "Show Services · " + value + " services"
@@ -3494,6 +3529,7 @@ ApplicationWindow {
             }
             StatBadge {
                 objectName: "statsSections"
+                compact: parent.compactStats
                 label: "SECTIONS"
                 value: num(analysisState.observations)
                 detailText: num((analysisState.tables || []).length) + " distinct payloads"
@@ -3502,6 +3538,7 @@ ApplicationWindow {
             }
             StatBadge {
                 objectName: "statsIssues"
+                compact: parent.compactStats
                 label: "ISSUES"
                 value: num(issues.length)
                 counts: issueCounts
@@ -3515,6 +3552,8 @@ ApplicationWindow {
             }
             PlainLabel {
                 text: analysisState.metrics ? Number(analysisState.metrics.scan_ms).toFixed(1) + " ms scan" : "Awaiting source"
+                Layout.minimumWidth: 0
+                elide: Text.ElideRight
                 color: muted
                 font.pixelSize: 11
             }
@@ -4021,6 +4060,8 @@ ApplicationWindow {
                             }
                         }
                         PlainLabel {
+                            // Compact panes show the loaded A → B context inline with the filter chips.
+                            visible: !compactComparison || !!comparisonError || !comparison.summary
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
                             font.pixelSize: 11
@@ -4051,10 +4092,10 @@ ApplicationWindow {
                                     objectName: "comparisonFilter_" + modelData
                                     implicitHeight: 24
                                     disclosure: false
-                                    text: (modelData === "added" ? "+" : modelData === "removed" ? "−" : "~") + num(comparisonCounts[modelData]) + " " + modelData
+                                    text: (modelData === "added" ? "+" : modelData === "removed" ? "−" : "~") + num(comparisonCounts[modelData]) + (compactComparison ? "" : " " + modelData)
                                     checked: comparisonFilters.indexOf(modelData) >= 0
-                                    Accessible.name: text + " changes on this page"
-                                    help: "Toggle " + modelData + " changes on this page. No active filters shows all changes."
+                                    Accessible.name: num(comparisonCounts[modelData]) + " " + modelData + " changes on this page"
+                                    help: "A " + num(comparison.from_packet) + " → B " + num(comparison.to_packet) + " · toggle " + modelData + " changes on this page. No active filters shows all changes."
                                     contentItem: PlainLabel { text:changeFilter.text; color:changeColor(changeFilter.modelData); horizontalAlignment:Text.AlignHCenter; verticalAlignment:Text.AlignVCenter; font.pixelSize:11 }
                                     onClicked: {
                                         comparisonFilters = comparisonFilters.indexOf(modelData)>=0 ? comparisonFilters.filter(function(kind){return kind!==modelData;}) : comparisonFilters.concat([modelData]);
@@ -4090,6 +4131,8 @@ ApplicationWindow {
                         }
                     }
                     RowLayout {
+                        // Compact comparison chips already carry the counts; an empty row would take spare height.
+                        visible: !(tab === "Changes" && compactComparison && !!comparison.summary)
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
                         Layout.rightMargin: 8
@@ -4205,6 +4248,8 @@ ApplicationWindow {
                                             font.pixelSize: 12
                                         }
                                         PlainLabel {
+                                            // Field diffs below already name each changed field.
+                                            visible: tab !== "Changes" || !(modelData.changed_fields || []).length
                                             text: rowSubtitle(modelData)
                                             width: parent.width; color: muted; font.pixelSize: 11
                                             elide: Text.ElideRight
@@ -4223,6 +4268,11 @@ ApplicationWindow {
                                     visible: tab === "Changes"
                                     Layout.fillWidth: true
                                     change: visible ? recordDelegate.modelData : null
+                                    maxRows: compactComparison ? 3 : 0
+                                    onFieldActivated: {
+                                        recordList.currentIndex = recordDelegate.index;
+                                        if (!recordDelegate.highlighted) activate(recordDelegate.modelData);
+                                    }
                                 }
                             }
                             onClicked: {
@@ -4476,6 +4526,8 @@ ApplicationWindow {
                         visible: !!detail.id
                         Layout.fillWidth: true
                         Layout.preferredHeight: 32
+                        // The chip Flickable fills this row; never let the row take the field tree's height.
+                        Layout.maximumHeight: 32
                         spacing: 2
                         SummaryChip { objectName:"standardsProfileToggle"; text:inspectorSummary.profile; checked:identityOpen; help:inspectorSummary.profileHelp; onClicked:identityOpen=!identityOpen }
                         Flickable {

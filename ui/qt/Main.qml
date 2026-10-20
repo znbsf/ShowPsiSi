@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQml.Models
 import "qrc:/shared/workbench.js" as Shared
 
 ApplicationWindow {
@@ -54,6 +55,51 @@ ApplicationWindow {
     property color removedColor: lightTheme ? "#b42929" : "#f48771"
     property color changedColor: lightTheme ? "#806000" : "#dcdcaa"
     property var savedLayout: core.loadLayout()
+    property var recentFiles: normalizeRecentFiles(Array.from(core.loadRecentFiles()))
+    readonly property var shortcutTable: [
+        {keys:"↑ ↓ Home End",description:"Move focus in lists and trees"},
+        {keys:"Enter / Space",description:"Select the focused item"},
+        {keys:"Ctrl+K",description:"Search records"},
+        {keys:"Ctrl+Shift+K",description:"Search inspector structure"},
+        {keys:"Ctrl+O",description:"Open file"},
+        {keys:"Ctrl+Return",description:"Analyze source"},
+        {keys:"Ctrl+.",description:"Cancel active scan"},
+        {keys:"Alt+Left",description:"Back"},
+        {keys:"Ctrl+Alt+← / →",description:"Resize inspector width"},
+        {keys:"Ctrl+Alt+↑ / ↓",description:"Resize timeline height"},
+        {keys:"F6 / Shift+F6",description:"Next / previous region"},
+        {keys:"? / Ctrl+/",description:"Show shortcut help (? outside text inputs)"},
+        {keys:"Esc",description:"Close shortcut help"}
+    ]
+    property var shortcutReturnFocus: null
+    property int shortcutReturnRecent: -1
+    function recentPathKey(path) {
+        let key=path.replace(/\\/g,"/");
+        return /^(?:[a-z]:\/|\/\/)/i.test(key) ? key.toLowerCase() : key;
+    }
+    function normalizeRecentFiles(paths) {
+        let seen={}, result=[];
+        if(!Array.isArray(paths))return result;
+        paths.forEach(function(path){if(typeof path!=="string" || !path.trim())return;path=path.trim();let key=recentPathKey(path);if(!Object.prototype.hasOwnProperty.call(seen,key)){seen[key]=true;result.push(path);}});
+        return result.slice(0,10);
+    }
+    function saveRecentFiles() {
+        if(!core.saveRecentFiles(recentFiles))showMessage("Recent files saved for this session only.","warning");
+    }
+    function rememberSource(path) {recentFiles=normalizeRecentFiles([path].concat(recentFiles));saveRecentFiles();}
+    function chooseSource(path) {
+        if(!backendReady || exporting || saveDialog.visible || !path)return;
+        inputKind="ts";source.text=path;recentMenu.close();
+        Qt.callLater(function(){analyzeButton.forceActiveFocus();});
+    }
+    function textInputFocused() {
+        let item=win.activeFocusItem;
+        return !!item && (item instanceof TextInput || item instanceof TextEdit);
+    }
+    function showShortcutHelp() {
+        if(shortcutDialog.visible)return;
+        shortcutReturnFocus=win.activeFocusItem;shortcutReturnRecent=recentMenu.visible ? recentMenu.currentIndex : -1;recentMenu.close();shortcutDialog.open();
+    }
     property bool layoutReady: false
     // Keyboard requests precede SplitView polish; preserve intent until saved.
     property real pendingInspectorSize: -1
@@ -1031,6 +1077,7 @@ ApplicationWindow {
     function scan() {
         if (metadataMode || !backendReady || !source.text.trim() || extraPidsValue === null)
             return;
+        recentMenu.close();
         clearWorkspaceIntentions();
         filter = ""; pidFilter = -1; expandedTables = {};
         recordSearch.clear();
@@ -1038,6 +1085,7 @@ ApplicationWindow {
         tab = "Services";
         notice = "Scanning source…";
         pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
+        rememberSource(source.text.trim());
         core.send("analyze", {
             path: source.text.trim(),
             standards: pendingScanOptions.standards,
@@ -1334,6 +1382,15 @@ ApplicationWindow {
             border.color: control.activeFocus ? blue : controlBorder
             border.width: control.activeFocus ? focusWidth : 1
         }
+    }
+    component RecentMenuItem: MenuItem {
+        id: entry
+        implicitHeight: 28
+        leftPadding: 8
+        rightPadding: 8
+        Accessible.name: text
+        contentItem: PlainLabel {text:entry.text;color:entry.enabled?ink:muted;elide:Text.ElideMiddle;verticalAlignment:Text.AlignVCenter;font.pixelSize:11}
+        background: Rectangle {color:entry.highlighted?hoverSurface:panel;border.color:entry.activeFocus?blue:dividerColor;border.width:entry.activeFocus?focusWidth:0;radius:2}
     }
     component SummaryChip: Action {
         id: chip
@@ -2994,30 +3051,35 @@ ApplicationWindow {
         lightTheme: win.lightTheme
     }
 
+    Shortcut { sequence:"?"; enabled:!shortcutDialog.visible && !textInputFocused(); onActivated:showShortcutHelp() }
+    Shortcut { sequence:"Ctrl+/"; enabled:!shortcutDialog.visible; onActivated:showShortcutHelp() }
     Shortcut {
         sequence: "Ctrl+K"
+        enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
             if(tab === "Topology"){topologySearch.forceActiveFocus();topologySearch.selectAll();}
             else {recordSearch.forceActiveFocus();recordSearch.selectAll();}
         }
     }
-    Shortcut { sequence: "Alt+Left"; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
     // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
-    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !metadataMode; onActivated: resizeInspector(24) }
-    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !metadataMode; onActivated: resizeInspector(-24) }
-    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: !metadataMode; onActivated: resizeTimeline(24) }
-    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: !metadataMode; onActivated: resizeTimeline(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(24) }
+    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
+        enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode; onActivated:focusNextRegion(true) }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:focusNextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
+        enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
             inspectorView = "Structure";
@@ -3027,16 +3089,17 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+O"
-        enabled: backendReady
+        enabled: backendReady && !shortcutDialog.visible
         onActivated: metadataMode ? dvbiWorkspace.openDialog() : fileDialog.open()
     }
     Shortcut {
         sequence: "Ctrl+Return"
+        enabled: !shortcutDialog.visible
         onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : scan()
     }
     Shortcut {
         sequence: "Ctrl+."
-        enabled: core.available && core.busy && !core.cancelling
+        enabled: core.available && core.busy && !core.cancelling && !shortcutDialog.visible
         onActivated: cancelScan()
     }
     FileDialog {
@@ -3238,6 +3301,42 @@ ApplicationWindow {
                         text: "Open transport stream (Ctrl+O)"
                     }
                 }
+                Action {
+                    id: recentButton
+                    objectName: "recentFiles"
+                    text: "Recent ▾"
+                    enabled: backendReady
+                    Accessible.name: "Recent transport streams"
+                    Accessible.description: "Choose a recent source without analyzing it"
+                    onClicked: recentMenu.open()
+                    Menu {
+                        id: recentMenu
+                        y: recentButton.height
+                        width: 320
+                        padding: 4
+                        background: Rectangle {color:panel;border.color:dividerColor;radius:4}
+                        Instantiator {
+                            model: recentFiles
+                            delegate: RecentMenuItem {
+                                required property string modelData
+                                text: modelData.split(/[\\/]/).pop()
+                                Accessible.description: modelData
+                                onTriggered: chooseSource(modelData)
+                                SafeTip {visible:anchorHovered; text:anchorControl ? anchorControl.modelData : ""}
+                            }
+                            onObjectAdded: function(index, object) {recentMenu.insertItem(index,object);}
+                            onObjectRemoved: function(index, object) {recentMenu.removeItem(object);}
+                        }
+                        RecentMenuItem {text:"No recent files";enabled:false;visible:recentFiles.length===0;height:visible?implicitHeight:0}
+                        MenuSeparator {visible:recentFiles.length>0;contentItem:Rectangle {implicitHeight:1;color:dividerColor}}
+                        RecentMenuItem {
+                            text: "Clear recent"
+                            enabled: recentFiles.length>0
+                            onTriggered: {recentFiles=[];saveRecentFiles();recentButton.forceActiveFocus();}
+                        }
+                    }
+                    SafeTip {visible:anchorHovered;text:"Recently analyzed sources · choosing a file does not start analysis"}
+                }
                 FieldChoice {
                     id: standardChoice
                     objectName: "standards"
@@ -3301,6 +3400,7 @@ ApplicationWindow {
                     SafeTip { visible:anchorHovered; text:"Default charset and extra Packet Identifiers (PIDs) for the next scan" + (scanOptionsSummary ? " · " + scanOptionsSummary : "") }
                 }
                 Action {
+                    id: analyzeButton
                     objectName: "analyzeSource"
                     text: "Analyze"
                     Accessible.name: "Analyze transport stream"
@@ -3530,7 +3630,7 @@ ApplicationWindow {
                     }
                     PlainLabel {
                         visible: keyboardShortcuts.checked
-                        text: "↑ ↓ Home End · focus\nEnter / Space · select\nCtrl+K · search records\nCtrl+O · open file\nCtrl+Return · analyze\nCtrl+. · cancel scan\nAlt+Left · back\nCtrl+Alt+←/→ · inspector width\nCtrl+Alt+↑/↓ · timeline height\nF6 / Shift+F6 · next / previous region\nSource → Explorer → Records → Inspector"
+                        text: shortcutTable.map(function(row){return row.keys+" · "+row.description;}).join("\n") + "\nSource → Explorer → Records → Inspector"
                         color: muted
                         font.pixelSize: 11
                         Layout.fillWidth: true
@@ -5257,6 +5357,62 @@ ApplicationWindow {
                     onClicked: messagesDialog.open()
                 }
             }
+        }
+    }
+    DropArea {
+        objectName: "sourceDropArea"
+        anchors.fill: parent
+        z: 10
+        enabled: backendReady && !exporting && !saveDialog.visible && !renameDialog.visible && !apiDialog.visible && !specificationDialog.visible && !messagesDialog.visible && !shortcutDialog.visible && !updateDialog.visible
+        onEntered: function(drag) {drag.accepted=drag.hasUrls && drag.urls.length===1 && !!core.localPath(drag.urls[0]);if(drag.accepted)drag.action=Qt.CopyAction;}
+        onDropped: function(drop) {
+            let path=drop.hasUrls && drop.urls.length===1 ? core.localPath(drop.urls[0]) : "";
+            if(!path){drop.accepted=false;return;}
+            chooseSource(path);drop.accept(Qt.CopyAction);
+        }
+    }
+    Dialog {
+        id: shortcutDialog
+        objectName: "shortcutHelp"
+        title: "Keyboard shortcuts"
+        anchors.centerIn: parent
+        width: Math.min(640,win.width-80)
+        height: Math.min(540,win.height-100)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        Accessible.name: "Keyboard shortcuts"
+        background: Rectangle {color:panel;border.color:dividerColor;radius:4}
+        onOpened: closeShortcutHelp.forceActiveFocus()
+        onClosed: {
+            let item=shortcutReturnFocus;shortcutReturnFocus=null;
+            if(shortcutReturnRecent>=0){let index=shortcutReturnRecent;shortcutReturnRecent=-1;recentMenu.open();recentMenu.currentIndex=index;let entry=recentMenu.itemAt(index);if(entry)entry.forceActiveFocus();}
+            else if(item && item.visible && item.enabled)item.forceActiveFocus();
+            else if(analyzeButton.visible && analyzeButton.enabled)analyzeButton.forceActiveFocus();
+            else messagesButton.forceActiveFocus();
+        }
+        contentItem: ScrollView {
+            id: shortcutScroll
+            clip: true
+            contentWidth: availableWidth
+            ColumnLayout {
+                width: shortcutScroll.availableWidth
+                spacing: 0
+                Repeater {
+                    model: shortcutTable
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 12
+                        PlainLabel {text:modelData.keys;color:ink;font.family:"monospace";Layout.preferredWidth:210;Layout.topMargin:8;Layout.bottomMargin:8}
+                        PlainLabel {text:modelData.description;color:muted;wrapMode:Text.Wrap;Layout.fillWidth:true}
+                    }
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            background: Rectangle {color:panel}
+            Action {id:closeShortcutHelp;text:"Close";Accessible.name:"Close shortcut help";DialogButtonBox.buttonRole:DialogButtonBox.RejectRole;onClicked:shortcutDialog.close()}
         }
     }
     Dialog {

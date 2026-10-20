@@ -377,6 +377,20 @@ function openComparisonTopology(side,label) {
 }
 
 const PAGE_SIZE = 100;
+const shortcutTable = [
+  {keys:"↑ ↓ Home End",description:"Move focus in lists and trees"},
+  {keys:"Enter / Space",description:"Select the focused item"},
+  {keys:"Ctrl K",description:"Search records"},
+  {keys:"Ctrl O",description:"Open file"},
+  {keys:"Ctrl Enter",description:"Analyze (source bar)"},
+  {keys:"Ctrl+.",description:"Cancel active scan"},
+  {keys:"F6 / Shift+F6",description:"Next / previous region"},
+  {keys:"Alt ←",description:"Back"},
+  {keys:"← → on divider",description:"Resize focused pane"},
+  {keys:"? / Ctrl+/",description:"Show shortcut help (? outside text inputs)"},
+  {keys:"Esc",description:"Close shortcut help"}
+];
+const shortcutRows = () => shortcutTable.map(row => `<div class="shortcut-row"><kbd>${esc(row.keys)}</kbd><span>${esc(row.description)}</span></div>`).join("");
 const native = window.__TAURI__;
 const invoke = (...args) =>
   native?.core?.invoke
@@ -388,14 +402,15 @@ const invoke = (...args) =>
       );
 $("#app").innerHTML = `
 <header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><span class="toolbar-group" role="group" aria-label="View"><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="reset-layout" title="Restore default pane widths. Focus a divider and use arrow keys to resize; Alt+Left navigates back.">Reset layout</button></span><span class="toolbar-group tertiary" role="group" aria-label="Help and diagnostics"><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api" title="Show the local JSONL agent API description">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></span></header>
-<div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
+<div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button><div class="recent-files"><button class="btn" id="recent" aria-label="Recent transport streams" aria-haspopup="menu" aria-expanded="false" aria-controls="recent-menu" title="Choose a recently analyzed source without starting analysis">Recent ▾</button><div id="recent-menu" role="menu" aria-label="Recent transport streams" tabindex="-1" hidden></div></div></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
 <div id="error-banner" role="region" aria-label="Error message" hidden><span id="error-message" tabindex="0" aria-label="Error details"></span><button class="btn small" id="dismiss-error" aria-label="Dismiss error message">Dismiss</button></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary>Keyboard shortcuts</summary><kbd>↑ ↓ Home End</kbd> <span>Move focus</span><br><kbd>Enter / Space</kbd> <span>Select</span><br><kbd>Ctrl K</kbd> <span>Search records</span><br><kbd>Ctrl O</kbd> <span>Open file</span><br><kbd>Ctrl Enter</kbd> <span>Analyze</span><br><kbd>Ctrl+.</kbd> <span>Cancel active scan</span><br><kbd>F6 / Shift+F6</kbd> <span>Next / previous region</span><br><kbd>Alt ←</kbd> <span>Back</span><br><kbd>← → on divider</kbd> <span>Resize focused pane</span></details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary title="Show shortcut help with ? or Ctrl+/">Keyboard shortcuts</summary>${shortcutRows()}</details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot" aria-hidden="true"></span><span id="notice" role="status" aria-live="polite" aria-atomic="true">Open a stream to begin</span><span id="status-warning" hidden><span id="warning-message"></span><button class="btn small" id="dismiss-warning" aria-label="Dismiss warning message">Dismiss</button></span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span><button class="btn small" id="messages" aria-label="Messages" aria-haspopup="dialog" aria-controls="messages-dialog" aria-expanded="false">Messages</button></footer>
+<dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title"><h2 id="shortcuts-title">Keyboard shortcuts</h2><div class="shortcut-list">${shortcutRows()}</div><div class="actions"><button class="btn" id="close-shortcuts" aria-label="Close shortcut help">Close</button></div></dialog>
 <dialog id="messages-dialog" aria-labelledby="messages-title"><h2 id="messages-title">Messages</h2><p id="messages-empty">No messages yet.</p><ol id="message-list" tabindex="0" aria-label="Last 50 messages, newest first"></ol><div class="actions"><button class="btn" id="close-messages" aria-label="Close message history">Close</button></div></dialog>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only TS or raw-section BIN and manifest. TS has no media or PCR; BIN needs its adjacent manifest for PID and source evidence.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><label for="export-format">Export format</label><select id="export-format"><option value="ts">TS · SI-only transport stream (.ts)</option><option value="bin">BIN · raw SI sections (.bin)</option></select><div class="actions"><button class="btn" id="export" disabled>Save SI-only TS + manifest…</button><button class="btn" id="close-edit">Close</button></div></dialog>
 <dialog id="about-dialog" aria-labelledby="about-title"><h2 id="about-title">About ShowPsiSi</h2><p>Qt and Tauri workbenches share the C++ / TSDuck signal engine.</p><p>Windows installer updates are available in the Qt edition; this frontend opens the official release page.</p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi" target="_blank" rel="noopener noreferrer">Official source repository</a></p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi/releases" target="_blank" rel="noopener noreferrer">Official releases and downloads</a></p><p id="about-feedback" role="status"></p><button class="btn" id="close-about">Close</button></dialog>
@@ -408,6 +423,112 @@ const dvbiWorkspace=createDvbiWorkspace({call,invoke,status:()=>({busy:busy || e
   if(!state.active)applyLayout();
 }});
 $('#input-kind').onchange=e=>dvbiWorkspace.activate(e.target.value==='dvbi');
+const RECENT_FILES_KEY = "showpsisi.workbench.recent.v1";
+function recentPathKey(path) {
+  const key=path.replace(/\\/g,"/");
+  return /^(?:[a-z]:\/|\/\/)/i.test(key) ? key.toLowerCase() : key;
+}
+function normalizeRecentFiles(paths) {
+  const seen=new Set();
+  return (Array.isArray(paths)?paths:[]).filter(path=>typeof path==="string" && path.trim()).map(path=>path.trim()).filter(path=>{
+    const key=recentPathKey(path);if(seen.has(key))return false;seen.add(key);return true;
+  }).slice(0,10);
+}
+let recentFiles=[];
+try {recentFiles=normalizeRecentFiles(JSON.parse(localStorage.getItem(RECENT_FILES_KEY)));} catch (_) {}
+function saveRecentFiles() {
+  try {localStorage.setItem(RECENT_FILES_KEY,JSON.stringify(recentFiles));}
+  catch (_) {notice("Recent files saved for this session only.","warning");}
+}
+function renderRecentFiles() {
+  $("#recent-menu").innerHTML=recentFiles.map((path,index)=>`<button type="button" role="menuitem" tabindex="-1" data-recent="${index}" title="${esc(path)}" aria-label="${esc(path)}">${esc(path.split(/[\\/]/).pop())}</button>`).join("") +
+    (recentFiles.length?'':'<span class="recent-empty">No recent files</span>') + `<button type="button" role="menuitem" tabindex="-1" id="clear-recent" aria-label="Clear recent files" ${recentFiles.length?'':'disabled'}>Clear recent</button>`;
+}
+function closeRecentFiles(focus=false) {
+  $("#recent-menu").hidden=true;$("#recent").setAttribute("aria-expanded","false");
+  if(focus)$("#recent").focus();
+}
+function openRecentFiles(last=false) {
+  renderRecentFiles();$("#recent-menu").hidden=false;$("#recent").setAttribute("aria-expanded","true");
+  const items=[...$("#recent-menu").querySelectorAll('button:not(:disabled)')];
+  (items[last?items.length-1:0] || $("#recent-menu")).focus();
+}
+function chooseSource(path) {
+  if(busy || exportPending || backendFailure || dvbiWorkspace.getState().importing || document.querySelector("dialog[open]"))return;
+  $("#input-kind").value="ts";dvbiWorkspace.activate(false);$("#source").value=path;
+  closeRecentFiles();$("#scan").focus();
+}
+$("#recent").onclick=()=>$("#recent-menu").hidden?openRecentFiles():closeRecentFiles(true);
+$("#recent").onkeydown=event=>{if(event.key==='ArrowDown' || event.key==='ArrowUp'){event.preventDefault();openRecentFiles(event.key==='ArrowUp');}};
+$("#recent-menu").onclick=event=>{
+  const item=event.target.closest('button');if(!item || item.disabled)return;
+  if(item.id==='clear-recent'){recentFiles=[];saveRecentFiles();renderRecentFiles();closeRecentFiles(true);}
+  else if(item.dataset.recent!==undefined)chooseSource(recentFiles[Number(item.dataset.recent)]);
+};
+$("#recent-menu").onkeydown=event=>{
+  const items=[...$("#recent-menu").querySelectorAll('button:not(:disabled)')],index=items.indexOf(document.activeElement);
+  if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+    event.preventDefault();event.stopPropagation();
+    const next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowUp'?-1:1)+items.length)%items.length;
+    items[next]?.focus();
+  } else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeRecentFiles(true);}
+  else if(event.key==='Tab'){event.preventDefault();closeRecentFiles();$(event.shiftKey?'#browse':'#standards').focus();}
+};
+document.addEventListener("pointerdown",event=>{if(!event.target.closest('.recent-files'))closeRecentFiles();});
+document.addEventListener("focusin",event=>{if(!event.target.closest('.recent-files'))closeRecentFiles();});
+renderRecentFiles();
+let shortcutReturnFocus=null, shortcutReturnRecent=null;
+function showShortcutHelp() {
+  if(document.querySelector("dialog[open]"))return;
+  shortcutReturnFocus=document.activeElement;
+  shortcutReturnRecent=$("#recent-menu").contains(shortcutReturnFocus) ? shortcutReturnFocus.dataset.recent ?? shortcutReturnFocus.id : null;
+  closeRecentFiles();$("#shortcuts-dialog").showModal();$("#close-shortcuts").focus();
+}
+$("#close-shortcuts").onclick=()=>$("#shortcuts-dialog").close();
+$("#shortcuts-dialog").addEventListener("keydown",event=>{if(event.key==="Tab"){event.preventDefault();$("#close-shortcuts").focus();}});
+$("#shortcuts-dialog").addEventListener("close",()=>{
+  const previous=shortcutReturnFocus;shortcutReturnFocus=null;
+  if(shortcutReturnRecent!==null){
+    const item=shortcutReturnRecent;shortcutReturnRecent=null;openRecentFiles();
+    (item==="clear-recent"?$("#clear-recent"):$('[data-recent="'+item+'"]'))?.focus();
+  } else if(previous?.isConnected && !previous.disabled)previous.focus({preventScroll:true});
+  else ($("#scan").disabled?$("#messages"):$("#scan")).focus();
+});
+document.addEventListener("keydown",event=>{
+  if(event.isComposing || event.defaultPrevented || document.querySelector("dialog[open]"))return;
+  const textInput=event.target.isContentEditable || event.target.closest?.('textarea,[role="textbox"]') || event.target.matches?.('input') && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes(event.target.type);
+  const help=event.key==='?' && !event.ctrlKey && !event.metaKey && !event.altKey && !textInput;
+  const chord=(event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key==='/' || event.code==='Slash');
+  if(help || chord){event.preventDefault();event.stopPropagation();showShortcutHelp();}
+},true);
+let nativeFileDrop=false, stopFileDrop=null;
+function acceptDroppedPaths(paths) {
+  if(!Array.isArray(paths) || paths.length!==1){notice("Drop one local file at a time.");return;}
+  const path=paths[0];
+  if(typeof path!=="string" || !/^(?:[a-z]:[\\/]|\\\\|\/)/i.test(path)){notice("The platform did not provide a local file path. Use Open… to choose a source.");return;}
+  chooseSource(path);
+}
+document.addEventListener("dragover",event=>{
+  if(!event.dataTransfer || ![...event.dataTransfer.types].includes('Files'))return;
+  event.preventDefault();event.dataTransfer.dropEffect='copy';
+});
+document.addEventListener("drop",event=>{
+  if(!event.dataTransfer || ![...event.dataTransfer.types].includes('Files'))return;
+  event.preventDefault();
+  const files=[...event.dataTransfer.files];
+  if(env.runtime!=='cloud-browser' && files.length && files.every(file=>typeof file.path==='string' && file.path))acceptDroppedPaths(files.map(file=>file.path));
+  else if(!nativeFileDrop)notice("File drop is supported in the desktop app only. Use Open… or enter a local source path.");
+});
+async function listenForFileDrop() {
+  if(env.runtime==='cloud-browser')return;
+  try {
+    const current=native?.webviewWindow?.getCurrentWebviewWindow?.();
+    if(!current?.onDragDropEvent)return;
+    stopFileDrop=await current.onDragDropEvent(event=>{if(event.payload.type==='drop')acceptDroppedPaths(event.payload.paths);});
+    nativeFileDrop=true;
+  } catch (_) {notice("File drop is unavailable. Use Open… to choose a local source.");}
+}
+window.addEventListener("pagehide",()=>{stopFileDrop?.();stopFileDrop=null;nativeFileDrop=false;});
 let theme = "dark";
 try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
 function applyTheme() {
@@ -523,7 +644,7 @@ function disableBackendActions() {
   if (!backendFailure) return;
   document
     .querySelectorAll(
-      "#scan,#cancel-scan,#browse,#api,#source,#standards,#default-charset,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
+      "#scan,#cancel-scan,#browse,#recent,#api,#source,#standards,#default-charset,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
     )
     .forEach((element) => {
       element.disabled = true;
@@ -679,6 +800,7 @@ async function scan() {
   notice("Analyzing stream… incremental results appear below");
   let succeeded = false;
   try {
+    recentFiles=normalizeRecentFiles([path,...recentFiles]);saveRecentFiles();closeRecentFiles();renderRecentFiles();
     const operation = call("analyze", {
       path,
       standards: options.standards,
@@ -958,6 +1080,7 @@ function render() {
   });
   $("#scan").disabled = busy || !native || !!backendFailure;
   $("#browse").disabled = busy || !native || !!backendFailure;
+  $("#recent").disabled = busy || !native || !!backendFailure;
   $("#scan").textContent = busy ? "Analyzing…" : "Analyze";
   $("#cancel-scan").hidden = !busy;
   $("#cancel-scan").disabled = cancelling || activeAnalyze === null || !!backendFailure;
@@ -2217,6 +2340,7 @@ function focusNextRegion(backwards) {
   (candidates.find(el => el && !el.disabled && visible(el)) || region).focus();
 }
 document.addEventListener("keydown", (e) => {
+  if($("#shortcuts-dialog").open)return;
   const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
   if (workbenchKeys && e.key === "F6" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
@@ -2512,6 +2636,7 @@ async function boot() {
     else job.resolve(msg.result);
   });
   env = await invoke("environment");
+  await listenForFileDrop();
   if (env.runtime !== "cloud-browser") await native.event.listen("core-close-blocked", () => {
     notice("An export is still running. Wait for it to finish before closing.", "warning");
   });

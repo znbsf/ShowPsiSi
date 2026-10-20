@@ -1253,6 +1253,82 @@ class BrowserTests(unittest.TestCase):
         self.page.wait_for_function('() => document.querySelector("#notice").textContent.includes("Native file dialogs")')
         self.assertIn('local TS file path',self.page.locator('#notice').inner_text())
 
+    def test_recent_files_persist_deduplicate_and_select_without_analysis(self):
+        p=self.page;key='showpsisi.workbench.recent.v1'
+        paths=[str(self.output/('recent-'+str(i)+'.ts')) for i in range(12)]
+        p.evaluate('([key,paths])=>localStorage.setItem(key,JSON.stringify(paths))',[key,[None,'',paths[0],paths[0]]+paths[1:]])
+        p.reload();p.wait_for_function('()=>window.showpsisi && document.querySelector("#source").value.length>0')
+        p.locator('#recent').focus();p.keyboard.press('ArrowDown')
+        self.assertEqual(p.locator('#recent-menu [data-recent]').count(),10)
+        self.assertEqual(p.locator('#recent-menu [data-recent]').first.inner_text(),Path(paths[0]).name)
+        self.assertEqual(p.locator('#recent-menu [data-recent]').first.get_attribute('title'),paths[0])
+        p.keyboard.press('?');self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+        p.keyboard.press('Escape');p.wait_for_function('()=>document.activeElement.dataset.recent==="0"')
+        p.keyboard.press('Escape');self.assertEqual(p.evaluate('document.activeElement.id'),'recent')
+        self.analyze()
+        stored=p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key)
+        self.assertEqual(stored,[str(self.sample)]+paths[:9])
+        self.analyze();self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),stored)
+        p.reload();p.wait_for_function('()=>window.showpsisi && document.querySelector("#source").value.length>0')
+        before=p.evaluate('window.showpsisi.getState()')
+        p.locator('#recent').click();p.locator('#recent-menu [data-recent="2"]').click()
+        self.assertEqual(p.locator('#source').input_value(),paths[1])
+        self.assertEqual(p.evaluate('document.activeElement.id'),'scan')
+        self.assertEqual(p.evaluate('window.showpsisi.getState()'),before)
+        self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),stored)
+        p.locator('#reset-layout').click()
+        self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),stored)
+        p.locator('#recent').click();p.locator('#clear-recent').click()
+        self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),[])
+        self.assertEqual(p.evaluate('document.activeElement.id'),'recent')
+        p.reload();p.wait_for_function('()=>window.showpsisi && document.querySelector("#source").value.length>0')
+        p.locator('#recent').click()
+        self.assertEqual(p.locator('#recent-menu [data-recent]').count(),0)
+        self.assertTrue(p.locator('#clear-recent').is_disabled())
+        p.keyboard.press('Escape')
+        p.evaluate("Object.defineProperty(Storage.prototype,'setItem',{value:()=>{throw new Error('storage unavailable');},configurable:true})")
+        self.analyze()
+        p.locator('#recent').click()
+        self.assertEqual(p.locator('#recent-menu [data-recent]').first.get_attribute('title'),str(self.sample))
+        self.assertIn('session only',p.locator('#warning-message').inner_text())
+
+    def test_shortcut_help_uses_sidebar_table_and_restores_focus(self):
+        p=self.page
+        for theme in ('dark','light'):
+            if p.evaluate('document.documentElement.dataset.theme')!=theme:p.locator('#theme-toggle').click()
+            source=p.locator('#source').input_value()
+            p.locator('#source').focus();p.keyboard.press('End');p.keyboard.type('?')
+            self.assertFalse(p.locator('#shortcuts-dialog').is_visible())
+            self.assertEqual(p.locator('#source').input_value(),source+'?')
+            p.locator('#source').fill(source);p.keyboard.press('Control+/')
+            self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+            self.assertEqual(p.locator('#shortcuts-dialog .shortcut-row').all_text_contents(),p.locator('.sidebar-help .shortcut-row').all_text_contents())
+            p.keyboard.press('Control+k')
+            self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
+            p.keyboard.press('Escape');p.wait_for_function('()=>document.activeElement.id==="source"')
+            p.locator('#browse').focus();p.keyboard.press('?')
+            self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+            p.keyboard.press('Tab')
+            self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
+            p.locator('#close-shortcuts').click();p.wait_for_function('()=>document.activeElement.id==="browse"')
+            self.assertEqual(p.locator('#source').input_value(),source)
+
+    def test_browser_file_drop_reports_desktop_only_without_changing_source(self):
+        p=self.page;source=p.locator('#source').input_value();before=p.evaluate('window.showpsisi.getState()')
+        prevented=p.evaluate("""() => {
+          const transfer=new DataTransfer();transfer.items.add(new File(['local drop fixture'],'dropped.ts'));
+          const drag=new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:transfer});
+          const drop=new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer});
+          document.dispatchEvent(drag);document.dispatchEvent(drop);
+          return drag.defaultPrevented && drop.defaultPrevented;
+        }""")
+        self.assertTrue(prevented)
+        self.assertIn('desktop app only',p.locator('#notice').inner_text())
+        self.assertEqual(p.locator('#notice').get_attribute('aria-live'),'polite')
+        self.assertEqual(p.locator('#source').input_value(),source)
+        self.assertEqual(p.evaluate('window.showpsisi.getState()'),before)
+        p.locator('#recent').click();self.assertEqual(p.locator('#recent-menu [data-recent]').count(),0)
+
     def test_message_banner_history_expiry_and_keyboard_close(self):
         self.page.locator('#source').fill(str(self.output/'missing-message-source.ts'))
         self.page.locator('#scan').click()

@@ -1665,7 +1665,7 @@ details.sidebar-help summary::before { content: "▸ "; }
 details.sidebar-help[open] summary::before { content: "▾ "; }
 details.sidebar-help summary:hover { color: var(--text); }
 .sourcebar { flex-wrap: wrap; }
-.source-input { display: flex; flex: 1 1 280px; min-width: 0; gap: 8px; align-items: center; }
+.source-input { display: flex; flex: 1 1 360px; min-width: 0; gap: 8px; align-items: center; }
 .source-input label, .source-input .btn { flex-shrink: 0; }
 .sourcebar #source { flex: 1 1 120px; min-width: 0; }
 .sourcebar #standards { flex-shrink: 0; }
@@ -1714,3 +1714,16 @@ dialog h2 { font-size: 16px; font-weight: 600; }
 .inspector-warning::after { content: ' ▸'; }
 .inspector-warning[aria-expanded="true"]::after { content: ' ▾'; }
 #native-decode-warnings { color: var(--warn-text); }
+
+.recent-files { position: relative; flex-shrink: 0; }
+#recent-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; width: min(320px, 80vw); padding: 4px; background: var(--surface); border: 1px solid var(--control-border); border-radius: 4px; }
+#recent-menu button { display: block; width: 100%; padding: 6px 8px; border: 0; background: var(--surface); color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#recent-menu button:hover:not(:disabled), #recent-menu button:focus-visible { background: var(--hover); }
+#recent-menu #clear-recent { border-top: 1px solid var(--border); margin-top: 4px; }
+.recent-empty { display: block; padding: 6px 8px; color: var(--muted); }
+#shortcuts-dialog { width: 640px; max-height: 85vh; overflow: auto; }
+.shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 6px 0; }
+.shortcut-row > * { min-width: 0; overflow-wrap: anywhere; }
+.shortcut-row span { color: var(--muted); }
+.sidebar-help .shortcut-row { display: block; padding: 0; }
+.sidebar-help summary:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: 2px; }

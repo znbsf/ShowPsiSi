@@ -51,19 +51,28 @@ Binary SHA256:
 - A retained isolated Qt run passed 11 tests / 16 timed subflows, with GUI
   heartbeat gaps of 106–300 ms and complete 5,000-row collections. This is
   historical intermediate evidence, **not final Qt acceptance**.
-- The latest completed local strict Qt aggregate discovered 137 tests and
-  finished with **3 failures and 1 error, zero skips**. Two failures exposed
-  legacy-response projection ordering, corrected afterward with targeted
-  lifecycle regressions. One was a 952 ms GUI heartbeat gap; one protocol
-  navigation snapshot request timed out. That navigation test later passed
-  with improved diagnostics, but the original timeout's cause is not established.
+- The final local versioned Qt aggregate finished 137 tests: **135 passed,
+  2 failed, zero errors/skips**, with unchanged source/binary identities. Both
+  failures were 25-second missing-report timeouts in legacy backend-death and
+  graceful-close/layout flows. The 10 new analysis tests and the remaining
+  topology, DVB-I and protocol suites passed. An earlier aggregate also exposed
+  legacy-response projection ordering, corrected with targeted regressions.
+- PR #28 hosted CI run `39418321685` tested merge checkout
+  `ee598433734b2bcf77f1292cb28d0cd2d7d0629f` (tree
+  `46bd5386f6e1b74427710ecf272a32b795136838`). Linux Qt passed **137/137**.
+  Windows Qt had **136 passes and 1 cleanup error**: deleting
+  `analysis-responsive.log` raised WinError 32 after a completed test. The direct
+  Qt process was reaped, but an inherited log handle could still be held by a
+  descendant; the exact holder was not identified. A tests-only owned-tree
+  teardown correction and an inherited-log regression are pending fresh CI.
+  Windows packaging steps were skipped in that failed run, not passed.
 - A frozen 18-flow SDK comparison on the optimized source still failed timing
   in 4/9 Qt 6.7.3 flows and 3/9 Qt 6.8.3 flows. All non-timing semantic checks
   passed. Qt 6.7.3 remains pinned; a runtime upgrade is not represented as a fix.
 - Later diagnostic experiments also observed approximately 0.5–2.1 s GUI gaps.
   Native JavaScript page-conversion and lazy hidden-tooltip experiments were
   excluded from the delivery snapshot because neither established a full fix.
-- A fresh versioned delivery-snapshot Qt gate and final production-binary
+- Fresh hosted acceptance of the cleanup correction and final production-binary
   large-file desktop smoke are **pending**. No failed threshold is relaxed,
   skipped or converted into a success claim by this document.
 

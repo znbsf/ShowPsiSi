@@ -134,3 +134,19 @@ controls, and no page overflow at 520/521/760/761/900/1100/1440px, in both theme
 and both TS/DVB-I workspaces with default and DejaVu Sans fonts. The original
 cancellation, comparison, theme, layout-reset, tree and evidence tests retain
 their assertions. Browser evidence does not establish native WebView2 behavior.
+
+## Windows test-owned descendant log handles
+
+PR #28 run `39418321685` completed the responsive hydration assertions but
+failed temporary-directory cleanup with WinError 32 on `analysis-responsive.log`.
+The shared helper already closed its Python log handle and reaped the direct Qt
+process; the exact remaining holder was not identified. Forced termination of
+only Qt can leave a descendant holding inherited handles, so Windows test teardown
+now targets the still-live, test-owned process tree by PID and checks the outcome
+before reaping the direct child. Already-exited graceful-close flows remain
+unchanged. This is test cleanup, not proof of graceful application shutdown.
+
+The regression starts a real Windows parent/descendant sharing a log, then requires
+immediate file deletion after teardown. Mocked contracts also check ownership,
+ordering and visible failure. Do not suppress PermissionError, retry deletion with
+a fixed sleep, kill by image name or terminate unrelated processes to pass it.

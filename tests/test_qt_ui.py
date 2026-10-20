@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXE = '.exe' if os.name == 'nt' else ''
 sys.path.insert(0, str(ROOT / 'scripts' / 'ci'))
 from qt_result import wait_for_qt_result
+from qt_process import stop_qt_process
 from qt_evidence import retain_qt_evidence
 
 
@@ -139,13 +140,7 @@ class NativeQtTests(unittest.TestCase):
                     if after_report:
                         after_report()
                 finally:
-                    if process.poll() is None:
-                        process.terminate()  # Forced cleanup is not a graceful window-close test.
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait(timeout=5)
+                    stop_qt_process(process)  # Forced cleanup is not a graceful-close test.
                 log.seek(0)
                 diagnostics = log.read()
             self.assertTrue(result.exists(), diagnostics)
@@ -868,6 +863,68 @@ class QtEvidenceRetentionTests(unittest.TestCase):
                  mock.patch.object(checks, 'wait_for_qt_result', side_effect=publish):
                 checks.qt_smoke(root)
             self.assertEqual(launch.call_args.kwargs['env']['SHOWPSISI_SETTINGS_PATH'], str(root / 'qt-smoke/settings.ini'))
+
+
+
+
+class QtProcessCleanupTests(unittest.TestCase):
+    def test_windows_cleanup_targets_owned_live_tree_and_waits(self):
+        process = mock.Mock(pid=12345)
+        process.poll.return_value = None
+        with mock.patch('qt_process.os.name', 'nt'), mock.patch('qt_process.subprocess.run') as run:
+            stop_qt_process(process)
+        run.assert_called_once_with(['taskkill', '/PID', '12345', '/T', '/F'],
+                                    check=True, capture_output=True, text=True, timeout=10)
+        process.wait.assert_called_once_with(timeout=5)
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+    def test_windows_cleanup_failure_is_not_suppressed(self):
+        process = mock.Mock(pid=12345)
+        process.poll.return_value = None
+        with mock.patch('qt_process.os.name', 'nt'), mock.patch('qt_process.subprocess.run',
+                side_effect=subprocess.CalledProcessError(1, 'taskkill')):
+            with self.assertRaises(subprocess.CalledProcessError):
+                stop_qt_process(process)
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+    def test_exited_process_preserves_graceful_close(self):
+        process = mock.Mock()
+        process.poll.return_value = 0
+        with mock.patch('qt_process.subprocess.run') as run:
+            stop_qt_process(process)
+        run.assert_not_called()
+        process.terminate.assert_not_called()
+        process.wait.assert_called_once_with(timeout=5)
+
+    def test_owned_inherited_log_descendant_cleanup(self):
+        # Exercise the real inherited-file Windows failure, not a deletion retry.
+        # POSIX deliberately retains its existing direct-child cleanup contract.
+        if os.name != 'nt':
+            process = mock.Mock()
+            process.poll.return_value = None
+            stop_qt_process(process)
+            process.terminate.assert_called_once()
+            process.wait.assert_called_once_with(timeout=5)
+            return
+        with tempfile.TemporaryDirectory(prefix='qt-owned-log-tree-') as directory:
+            root = Path(directory)
+            ready = root / 'ready'
+            logfile = root / 'inherited.log'
+            child = "import pathlib,time;pathlib.Path(%r).write_text('ready');time.sleep(30)" % str(ready)
+            parent = "import subprocess,sys,time;subprocess.Popen([sys.executable,'-c',%r],stdout=sys.stdout,stderr=sys.stderr);time.sleep(30)" % child
+            with logfile.open('w') as log:
+                process = subprocess.Popen([sys.executable, '-c', parent], stdout=log, stderr=log)
+                try:
+                    deadline = time.monotonic() + 10
+                    while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                        time.sleep(.01)
+                    self.assertTrue(ready.exists(), 'Owned descendant did not acquire the inherited log')
+                finally:
+                    stop_qt_process(process)
+            logfile.unlink()  # Must succeed immediately; no PermissionError suppression.
+            self.assertFalse(logfile.exists())
 
 
 if __name__ == '__main__':

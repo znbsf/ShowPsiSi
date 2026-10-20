@@ -26,6 +26,7 @@
 #include "tsxmlElement.h"
 #include "nlohmann/json.hpp"
 #include <fstream>
+#include <array>
 #include <iostream>
 #include <filesystem>
 #include <chrono>
@@ -98,23 +99,44 @@ static void emit(const J& j) {
 // every TSDuck object stay on the owner thread, including final state cleanup.
 struct AnalysisControl {
     std::atomic<bool> cancelled{false};
+    std::atomic<bool> paused{false};
+    std::condition_variable changed;
+    std::function<void(bool)> onPause;
     std::mutex mutex;
     bool finished=false;
     bool requestCancellation() {
         std::lock_guard<std::mutex> lock(mutex);
         if(finished)return false;
-        cancelled.store(true);return true;
+        cancelled.store(true);changed.notify_all();return true;
     }
-    bool finish() {
+    bool requestPause(bool value) {
         std::lock_guard<std::mutex> lock(mutex);
-        finished=true;return cancelled.load();
+        if(finished||cancelled.load())return false;
+        paused.store(value);changed.notify_all();return true;
+    }
+    void checkpoint() {
+        std::unique_lock<std::mutex> lock(mutex);
+        if(paused.load()&&!cancelled.load()){
+            lock.unlock();if(onPause)onPause(true);lock.lock();
+            changed.wait(lock,[&]{return !paused.load()||cancelled.load();});
+            lock.unlock();if(onPause)onPause(false);
+        }
+    }
+    bool finish(const std::function<void()>& beforeCommit={}) {
+        for(;;){
+            std::unique_lock<std::mutex> lock(mutex);
+            if(finished)return cancelled.load();
+            if(paused.load()&&!cancelled.load()){lock.unlock();checkpoint();continue;}
+            if(beforeCommit&&!cancelled.load())beforeCommit();
+            finished=true;changed.notify_all();return cancelled.load();
+        }
     }
 };
 struct CancelledAnalysis : std::exception {
     const char* what() const noexcept override { return "Analysis cancelled"; }
 };
 static void checkCancelled(const std::shared_ptr<AnalysisControl>& control) {
-    if(control&&control->cancelled.load())throw CancelledAnalysis();
+    if(control){control->checkpoint();if(control->cancelled.load())throw CancelledAnalysis();}
 }
 #ifdef SHOWPSISI_TESTING
 // Supplied only by the separately built test executable. No runtime gate or
@@ -269,6 +291,9 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     double bitrate=0,firstMs=-1,totalMs=0; Clock::time_point began;
     std::string standardsContext="auto",analysisStatus="idle";
     J requestId; std::function<void()> onFirst; bool complete=false; size_t revision=0;
+    J coverage=J::object(),resultCache=J::object();uint64_t cacheCutoff=UINT64_MAX,scannedPackets=0,plannedPackets=0,demuxOffset=0;
+    std::array<uint64_t,80> densityCounts{},densityBad{};
+    bool compactResponse=false;
     J pending=J::object(), demuxStatus=J::object(); std::vector<std::pair<unsigned,Bytes>> patchSections;
     // A DVB table identity includes the network/transport identifiers in its
     // payload. table_id_extension alone is insufficient for SDT-other / EIT.
@@ -282,10 +307,12 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     static std::string sectionKey(const Record& r) { return tableGroup(r)+":"+std::to_string(r.number); }
     std::map<std::string,const Record*> latest(uint64_t at,bool current=true) const {
         struct Observation { const Record* record; uint64_t order; };
+        uint64_t segmentStart=0;
+        for(const auto& range:coverage.value("ranges",J::array())){const auto start=range["start_packet"].get<uint64_t>();if(start<=std::min(at,packets?packets-1:0))segmentStart=start;}
         std::vector<Observation> observed;
         std::map<std::string,Observation> generations;
         for(const auto& r:records)if(r.valid&&r.current==current){
-            auto end=std::upper_bound(r.ends.begin(),r.ends.end(),at);if(end==r.ends.begin())continue;
+            auto end=std::upper_bound(r.ends.begin(),r.ends.end(),at);if(end==r.ends.begin()||*(end-1)<segmentStart)continue;
             const auto group=tableGroup(r);Observation item{&r,r.orders.at(size_t(end-r.ends.begin())-1)};observed.push_back(item);
             auto found=generations.find(group);
             if(found==generations.end()||found->second.order<=item.order)generations.insert_or_assign(group,item);
@@ -514,6 +541,8 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     }
     void receive(const uint8_t* data,size_t size,unsigned pid,uint64_t first,uint64_t last,bool valid) {
         if(size<3)return;
+        first+=demuxOffset;last+=demuxOffset;
+        const size_t bucket=std::min<uint64_t>(79,first*80/std::max<uint64_t>(1,totalBytes/stride));++densityCounts[bucket];
         ++observations; Bytes b(data,data+size);
         unsigned tid=b[0],ext=size>=8&&(b[1]&0x80)?u16(b,3):0;
         unsigned ver=size>=8&&(b[1]&0x80)?(b[5]>>1)&31:0,num=size>=8&&(b[1]&0x80)?b[6]:0;
@@ -534,7 +563,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             else if(!valid)issue(r,"invalid_section",0,"Rejected by TSDuck section demux");
             decode(r); ids[id]=records.size();records.push_back(std::move(r));it=ids.find(id);
         }
-        Record& r=records[it->second];r.positions.push_back(first);r.ends.push_back(last);r.orders.push_back(observations);r.lastPacket=last;
+        Record& r=records[it->second];densityBad[bucket]+=!r.valid;r.positions.push_back(first);r.ends.push_back(last);r.orders.push_back(observations);r.lastPacket=last;
         // All captured table families, including short/private/invalid/next
         // evidence. Each entry is a content transition of an exact section slot,
         // not a claim that a multi-section generation was complete at arrival.
@@ -606,15 +635,15 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         if(count){out["first_packet"]=first;out["last_packet"]=last;if(bitrate>0){out["first_seconds"]=first*188.0*8/bitrate;out["last_seconds"]=last*188.0*8/bitrate;}if(count>1){out["min_gap_packets"]=low;out["max_gap_packets"]=high;out["mean_gap_packets"]=double(last-first)/(count-1);}}
         return out;
     }
-    J summary(const Record& r,uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) const {
+    J summary(const Record& r,uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr,bool includeDistribution=true) const {
         auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at); size_t count=size_t(stop-r.ends.begin());
         J out={{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
         if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){out["segment_last_section_number"]=r.raw[12];out["last_table_id"]=r.raw[13];}
         if(r.j94){for(const auto* key:{"extension","version","section","last_section","current"})out[key]=nullptr;out["versioning_supported"]=false;out["header_semantics"]="J.94 short envelope; no wire version/section numbering";}
-        out["identity"]=evidenceIdentity(r);out["crc"]=crcEvidence(r);out["distribution"]=distribution({&r},at,control);
+        out["identity"]=evidenceIdentity(r);out["crc"]=crcEvidence(r);if(includeDistribution)out["distribution"]=distribution({&r},at,control);
         return out;
     }
-    J tableGroups(uint64_t at,const std::shared_ptr<AnalysisControl>& control=nullptr) const {
+    J tableGroups(uint64_t at,const std::shared_ptr<AnalysisControl>& control=nullptr,bool includeDistribution=true) const {
         std::map<std::string,std::vector<const Record*>> groups;
         for(const auto& r:records)if(!r.ends.empty()&&r.ends.front()<=at)groups[tableGroup(r)+":v="+std::to_string(r.version)+":current="+std::to_string(r.current)+":last="+std::to_string(r.last)].push_back(&r);
         const auto current=latest(at),next=latest(at,false);J result=J::array();
@@ -632,8 +661,11 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             else for(unsigned n=0;n<=first.last;++n)expected.insert(n);
             for(unsigned n:expected){if(!seen.count(n))missing.push_back(n);if(!good.count(n))missingValid.push_back(n);}
             for(unsigned n=0;n<=first.last;++n)if(!selectedNumbers.count(n))selectedMissing.push_back(n);
+            J compactDistribution={{"observation_count",validCount+invalidCount},{"first_packet",nullptr},{"last_packet",nullptr},{"detail_available",true}};
+            uint64_t firstPosition=UINT64_MAX,lastPosition=0;for(const auto* r:parts){auto stop=std::upper_bound(r->ends.begin(),r->ends.end(),at);if(stop!=r->ends.begin()){firstPosition=std::min(firstPosition,r->positions.front());lastPosition=std::max(lastPosition,r->positions[size_t(stop-r->ends.begin())-1]);}}
+            if(firstPosition!=UINT64_MAX){compactDistribution["first_packet"]=firstPosition;compactDistribution["last_packet"]=lastPosition;}
             J groupIdentity=evidenceIdentity(first);groupIdentity.erase("section_number");
-            result.push_back({{"id",key},{"name",nativeTableName(first)},{"identity",groupIdentity},{"pid",first.pid},{"table_id",first.tid},{"extension",first.ext},{"version",first.version},{"current",first.current},{"last_section",first.last},{"section_ids",ids},{"observed_section_numbers",seen},{"valid_section_numbers",good},{"invalid_section_numbers",bad},{"missing_section_numbers",missing},{"missing_valid_section_numbers",missingValid},{"selected_section_ids",selectedIds},{"selected_missing_section_numbers",selectedMissing},{"selected_complete",selectedMissing.empty()&&!selectedIds.empty()},{"validity",validCount?(invalidCount?"mixed":"valid"):"all_invalid"},{"valid_observations",validCount},{"invalid_observations",invalidCount},{"distribution",distribution(parts,at,control)},{"coverage_model",schedule?"observed EIT schedule segment ranges only":"section_number 0 through last_section_number"},{"expected_section_numbers",expected},{"schedule_unobserved_segments_unknown",schedule},{"coverage_scope","observed version across capture cutoff; selected_* uses generation-safe snapshot; repetitions are not missing sections; EIT schedule segment completeness not inferred"}});
+            result.push_back({{"id",key},{"name",nativeTableName(first)},{"identity",groupIdentity},{"pid",first.pid},{"table_id",first.tid},{"extension",first.ext},{"version",first.version},{"current",first.current},{"last_section",first.last},{"section_ids",ids},{"observed_section_numbers",seen},{"valid_section_numbers",good},{"invalid_section_numbers",bad},{"missing_section_numbers",missing},{"missing_valid_section_numbers",missingValid},{"selected_section_ids",selectedIds},{"selected_missing_section_numbers",selectedMissing},{"selected_complete",selectedMissing.empty()&&!selectedIds.empty()},{"validity",validCount?(invalidCount?"mixed":"valid"):"all_invalid"},{"valid_observations",validCount},{"invalid_observations",invalidCount},{"distribution",includeDistribution?distribution(parts,at,control):compactDistribution},{"coverage_model",schedule?"observed EIT schedule segment ranges only":"section_number 0 through last_section_number"},{"expected_section_numbers",expected},{"schedule_unobserved_segments_unknown",schedule},{"coverage_scope","observed version across capture cutoff; selected_* uses generation-safe snapshot; repetitions are not missing sections; EIT schedule segment completeness not inferred"}});
         }
         std::sort(result.begin(),result.end(),[](const J& a,const J& b){return std::tuple(a["pid"].get<unsigned>(),a["table_id"].get<unsigned>(),a["extension"].get<unsigned>(),a["version"].get<unsigned>(),a["current"].get<bool>(),a["id"].get<std::string>())<std::tuple(b["pid"].get<unsigned>(),b["table_id"].get<unsigned>(),b["extension"].get<unsigned>(),b["version"].get<unsigned>(),b["current"].get<bool>(),b["id"].get<std::string>());});
         for(auto& group:result)if(group["identity"].value("versioning_supported",true)==false){
@@ -719,15 +751,20 @@ public:
         receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),true);
     }
     void handleInvalidSection(ts::SectionDemux&,const ts::DemuxedData& s,ts::Section::Status) override { receive(s.content(),s.size(),s.sourcePID(),s.firstTSPacketIndex(),s.lastTSPacketIndex(),false); }
-    J state(uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) {
-        checkCancelled(control);
-        J out={{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
-        out["analysis_revision"]=revision;out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["detected_standards"]=standardsNames(duck.standards());
+    void appendStandardsMetadata(J& out) const {
+        out["standards_context"]=standardsContext;
+        out["detected_standards"]=standardsNames(duck.standards());
         if(standardsContext=="j94-system-b"){
             out["sdk_inferred_standards"]=out["detected_standards"];
             out["detected_standards"]="MPEG (J.94 System B selected explicitly)";
             out["standards_inference_warning"]="SDK family inference from colliding private table IDs is not evidence of ATSC/ISDB in the explicit J.94 profile";
         }
+    }
+    J state(uint64_t at=UINT64_MAX,const std::shared_ptr<AnalysisControl>& control=nullptr) {
+        checkCancelled(control);
+        J out={{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"bitrate",bitrate},{"tables",J::array()},{"services",J::array()},{"events",J::array()},{"history",history},{"diagnostics",J::array()},{"density",J::array()},{"metrics",{{"first_section_ms",firstMs},{"scan_ms",analysisStatus=="analyzing"?ms(began):totalMs}}}};
+        out["analysis_revision"]=revision;out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();
+        appendStandardsMetadata(out);
         const auto selected=latest(at);
         for(const auto& r:records) {
             checkCancelled(control);
@@ -744,6 +781,62 @@ public:
         out["table_history"]=tableHistory;
         out["scope"]["table_history"]="entire scan; content transitions per PID/table/extension/section/current/validity; at_packet is first completed occurrence; not complete-generation transitions";
         if(demuxStatus.value("discontinuities",uint64_t(0))>0)out["diagnostics"].push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities on monitored PSI/SI PIDs (aggregate; packet locations not yet retained)"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
+        out["coverage"]=coverage;out["coverage"]["scanned_packets"]=scannedPackets;
+        return out;
+    }
+    // Compact transport never enumerates occurrences or copies transition logs.
+    J compactState(uint64_t at=UINT64_MAX) {
+        const size_t visibleTables=at==UINT64_MAX?records.size():size_t(std::count_if(records.begin(),records.end(),[&](const Record& r){return !r.ends.empty()&&r.ends.front()<=at;}));
+        J counts={{"tables",visibleTables},{"history",history.size()},{"table_history",tableHistory.size()},{"density",80},{"services",nullptr},{"events",nullptr},{"diagnostics",nullptr},{"table_groups",nullptr}};
+        if(cacheCutoff==at)for(auto it=resultCache.begin();it!=resultCache.end();++it)counts[it.key()]=it.value().size();
+        J cov=coverage;cov["scanned_packets"]=scannedPackets;
+        J out={{"response_mode","compact"},{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"analysis_revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"bitrate",bitrate},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"text_charset",duck.charsetIn()->name().toUTF8()},{"time_reference",duck.timeReferenceName().toUTF8()},{"selected_packet",at==UINT64_MAX?J():J(at)},{"coverage",cov},{"result_counts",counts},{"progress_fraction",plannedPackets?double(scannedPackets)/plannedPackets:0.0},{"demux",demuxStatus},{"timing",{{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false}}},{"metrics",{{"scan_ms_basis","Wall elapsed time including pauses and owner finalization; excludes client result hydration"},{"first_section_ms",firstMs},{"scan_ms",(analysisStatus=="analyzing"||analysisStatus=="paused"||analysisStatus=="finalizing")?ms(began):totalMs}}}};
+        appendStandardsMetadata(out);return out;
+    }
+    J queryResult(const J& args) {
+        if(!complete)throw std::runtime_error("Complete the requested scan before querying result pages");
+        if(args.at("analysis_revision")!=revision)throw std::runtime_error("Stale result analysis_revision");
+        const uint64_t at=args.value("at_packet",UINT64_MAX);
+        if(at!=UINT64_MAX&&at>=packets)throw std::runtime_error("Result cutoff is outside analyzed source extent");
+        if(at!=cacheCutoff){resultCache=J::object();cacheCutoff=at;}
+        const std::string collection=args.at("collection");
+        const J* rows=nullptr;
+        if(collection=="history")rows=&history;
+        else if(collection=="table_history")rows=&tableHistory;
+        else {
+            if(!resultCache.contains(collection)){
+                J items=J::array();
+                if(collection=="tables"){
+                    const auto chosen=latest(at),chosenNext=latest(at,false);for(const auto& r:records)if(!r.ends.empty()&&r.ends.front()<=at){auto item=summary(r,at,nullptr,false);item["table_group_id"]=tableGroup(r)+":v="+std::to_string(r.version)+":current="+std::to_string(r.current)+":last="+std::to_string(r.last);const auto& selection=r.current?chosen:chosenNext;const auto found=selection.find(sectionKey(r));item["selected_in_snapshot"]=found!=selection.end()&&found->second==&r;items.push_back(std::move(item));}
+                }else if(collection=="services"||collection=="events"){
+                    auto derived=derivedSnapshot(latest(at));resultCache["services"]=std::move(derived["services"]);resultCache["events"]=std::move(derived["events"]);
+                }else if(collection=="table_groups"){
+                    items=tableGroups(at,nullptr,false);
+                    for(auto& item:items){
+                        for(const char* field:{"section_ids","selected_section_ids"})if(item[field].size()>128){item[std::string(field)+"_total"]=item[field].size();item[field].erase(item[field].begin()+128,item[field].end());item["member_ids_truncated"]=true;}
+                    }
+                }else if(collection=="density"){
+                    for(size_t i=0;i<80;++i)items.push_back({{"count",densityCounts[i]},{"bad",densityBad[i]}});
+                }else if(collection=="diagnostics"){
+                    for(const auto& r:records){const auto stop=std::upper_bound(r.ends.begin(),r.ends.end(),at);if(stop==r.ends.begin())continue;for(auto d:r.issues){d["id"]=r.id;d["pid"]=r.pid;d["packet"]=r.positions.front();d["count"]=size_t(stop-r.ends.begin());items.push_back(std::move(d));}}
+                    if(demuxStatus.value("discontinuities",uint64_t(0)))items.push_back({{"code","transport_discontinuity"},{"detail","TSDuck continuity-counter discontinuities within observed contiguous windows"},{"count",demuxStatus["discontinuities"]},{"pid",0},{"packet",0},{"id",""},{"aggregate",true}});
+                }
+                if(!resultCache.contains(collection))resultCache[collection]=std::move(items);
+            }
+            rows=&resultCache.at(collection);
+        }
+        const size_t offset=args.value("offset",size_t(0)),limit=args.value("limit",size_t(200));
+        J items=J::array();size_t bytes=0;
+        for(size_t i=offset;i<rows->size()&&items.size()<limit;++i){const size_t size=(*rows)[i].dump(-1,' ',false,J::error_handler_t::replace).size();if(size>262144)throw std::runtime_error("Result item exceeds compact page byte limit; use specific section inspection");if(bytes+size>262144)break;items.push_back((*rows)[i]);bytes+=size;}
+        const size_t next=offset+items.size();
+        return {{"analysis_revision",revision},{"collection",collection},{"items",items},{"total",rows->size()},{"next_offset",next<rows->size()?J(next):J()},{"at_packet",at==UINT64_MAX?J():J(at)},{"item_payload_byte_limit",262144},{"coverage",coverage}};
+    }
+    // Semantic reconstruction must never use siblings or module blocks from an
+    // earlier disjoint window, even when their wire versions happen to match.
+    std::vector<Record> segmentRecords(uint64_t at) const {
+        uint64_t start=0;for(const auto& range:coverage.value("ranges",J::array()))if(range["start_packet"].get<uint64_t>()<=at)start=range["start_packet"].get<uint64_t>();
+        std::vector<Record> out;
+        for(const auto& original:records){auto first=std::lower_bound(original.positions.begin(),original.positions.end(),start),last=std::upper_bound(original.ends.begin(),original.ends.end(),at);const size_t a=first-original.positions.begin(),b=last-original.ends.begin();if(a>=b)continue;out.emplace_back();auto& r=out.back();r.id=original.id;r.key=original.key;r.raw=original.raw;r.pid=original.pid;r.tid=original.tid;r.ext=original.ext;r.version=original.version;r.number=original.number;r.last=original.last;r.valid=original.valid;r.current=original.current;r.j94=original.j94;r.descriptors=original.descriptors;r.services=original.services;r.events=original.events;r.issues=original.issues;r.fields=original.fields;r.positions.assign(original.positions.begin()+a,original.positions.begin()+b);r.ends.assign(original.ends.begin()+a,original.ends.begin()+b);r.orders.assign(original.orders.begin()+a,original.orders.begin()+b);r.lastPacket=r.ends.back();}
         return out;
     }
     J diffSnapshots(const J& args) const {
@@ -846,14 +939,16 @@ public:
     }
     void clearEvidence() {
         records.clear();ids.clear();history=J::array();previous.clear();tableHistory=J::array();historySlots.clear();pending=J::object();patchSections.clear();
-        observations=crcErrors=0;demuxStatus=J::object();
+        observations=crcErrors=0;demuxStatus=J::object();resultCache=J::object();cacheCutoff=UINT64_MAX;densityCounts.fill(0);densityBad.fill(0);
     }
     J analyze(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
         // A new scan owns a new revision even when opening or framing fails.
         // Never allow old evidence or preview tokens to acquire a new source label.
         clearEvidence();++revision;analysisStatus="analyzing";
-        source.clear();packets=totalBytes=0;complete=false;
+        source.clear();packets=totalBytes=0;complete=false;coverage=J::object();scannedPackets=plannedPackets=demuxOffset=0;compactResponse=args.value("response_mode",std::string("legacy"))=="compact";
         firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;began=Clock::now();requestId=rid;
+        std::string pausedPhase;
+        if(control)control->onPause=[&](bool paused){if(paused){pausedPhase=analysisStatus;analysisStatus="paused";}else analysisStatus=pausedPhase;if(!control->cancelled.load())emit({{"event","progress"},{"request_id",rid},{"state",compactState()}});};
         try {
         extension=configuredExtension;standardsContext=args.value("standards",std::string("auto"));
         ts::Standards standards=ts::Standards::MPEG;
@@ -882,12 +977,39 @@ public:
         std::error_code sourceError;
         if(!fs::is_regular_file(source,sourceError))throw std::runtime_error("Source must be a regular local file");
         std::ifstream in(source,std::ios::binary);
-        if(!in)throw std::runtime_error("Cannot read source file");totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
+        if(!in)throw std::runtime_error("Cannot read source file");const auto sourceStamp=fs::last_write_time(source);totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
         checkCancelled(control);
         std::vector<uint8_t> probe(5*204);in.read(reinterpret_cast<char*>(probe.data()),probe.size());size_t got=size_t(in.gcount());in.clear();in.seekg(0);
         bool framing=false;
         for(size_t width:{size_t(188),size_t(192),size_t(204)}) { size_t off=width==192?4:0;bool ok=true;for(size_t i=0;i<5&&off+i*width<got;i++)ok&=probe[off+i*width]==0x47;if(ok){stride=width;prefix=off;framing=true;break;} }
         if(!framing)throw std::runtime_error("No aligned 188/192/204-byte TS framing at file start");
+        const uint64_t sourcePackets=totalBytes/stride;
+        const std::string mode=args.value("scan_mode",std::string("full"));
+        std::vector<std::pair<uint64_t,uint64_t>> ranges;
+        if(args.contains("sample_percent")&&args.contains("max_packets"))throw std::runtime_error("Specify sample_percent or max_packets, not both");
+        if(args.contains("sample_percent")&&mode!="prefix"&&mode!="distributed")throw std::runtime_error("sample_percent is supported only for prefix or distributed scans");
+        const uint64_t percent=args.value("sample_percent",uint64_t(0));
+        const uint64_t budget=percent?std::max<uint64_t>(1,(sourcePackets/100)*percent+(sourcePackets%100)*percent/100):std::min(sourcePackets,args.value("max_packets",uint64_t(250000)));
+        if(mode=="full")ranges.emplace_back(0,sourcePackets);
+        else if(mode=="prefix")ranges.emplace_back(0,budget);
+        else if(mode=="range"){
+            const uint64_t start=args.value("start_packet",uint64_t(0)),end=args.value("end_packet",sourcePackets);
+            if(start>=end||end>sourcePackets)throw std::runtime_error("Range must satisfy 0 <= start_packet < end_packet <= source packets");
+            ranges.emplace_back(start,end);
+        }else if(mode=="distributed"){
+            const uint64_t count=std::min(budget,args.value("window_count",uint64_t(4)));
+            if(budget==sourcePackets)ranges.emplace_back(0,sourcePackets);
+            else for(uint64_t i=0,used=0;i<count;++i){
+                const uint64_t length=budget/count+(i<budget%count),start=used+(count>1?(sourcePackets-budget)*i/(count-1):0);
+                ranges.emplace_back(start,start+length);used+=length;
+            }
+        }
+        std::vector<std::pair<uint64_t,uint64_t>> merged;
+        for(const auto& range:ranges){if(!merged.empty()&&merged.back().second==range.first)merged.back().second=range.second;else merged.push_back(range);}
+        ranges=std::move(merged);
+        coverage={{"mode",mode},{"partial",false},{"source_packets",sourcePackets},{"scanned_packets",0},{"ranges",J::array()},{"range_end","exclusive"},{"ranges_scope","Requested windows; all are observed only when complete=true. scanned_packets counts processed packets."},{"evidence_scope","Only observed contiguous windows; gaps are unknown and never assembled across"}};
+        for(const auto& [start,end]:ranges){plannedPackets+=end-start;coverage["ranges"].push_back({{"start_packet",start},{"end_packet",end}});}
+        coverage["partial"]=plannedPackets!=sourcePackets;coverage["requested_sample_percent"]=percent?J(percent):J();
         ts::SectionDemux demux(duck,nullptr,this);for(unsigned pid:{0u,1u,2u,0x10u,0x11u,0x12u,0x13u,0x14u,0x16u,0x1bu,0x1cu,0x1eu,0x1fu})demux.addPID(pid);
         if(standardsContext=="auto"||standardsContext.rfind("isdb",0)==0){for(unsigned pid=0x20;pid<=0x29;pid++)demux.addPID(pid);demux.addPID(0x17);demux.addPID(0x2e);}
         if(standardsContext=="auto"||standardsContext=="atsc")for(unsigned pid:{0x1ff7u,0x1ff9u,0x1ffbu})demux.addPID(pid);
@@ -901,34 +1023,50 @@ public:
         demux.setInvalidSectionHandler(this);demux.setCurrentNext(true,true);demux.trackInvalidSectionVersions(true);
         auto progress=[&](){
             checkCancelled(control);TEST_CHECKPOINT("before_progress",control);checkCancelled(control);
-            J snapshot=state(UINT64_MAX,control);checkCancelled(control);
+            J snapshot=compactResponse?compactState():state(UINT64_MAX,control);checkCancelled(control);
             emit({{"event","progress"},{"request_id",rid},{"state",std::move(snapshot)}});
             TEST_CHECKPOINT("after_progress",control);checkCancelled(control);
         };
         onFirst=progress;
         std::vector<uint8_t> block(stride*8192);auto lastNotify=Clock::now();
-        while(in) {
-            checkCancelled(control);TEST_CHECKPOINT("before_read",control);checkCancelled(control);
-            in.read(reinterpret_cast<char*>(block.data()),block.size());size_t n=size_t(in.gcount());
-            for(size_t p=0;p+stride<=n;p+=stride){
-                // The file read is bounded to 8192 packets; SDK feed checkpoints
-                // every 256 packets bound additional work without a lock per feed.
-                if((p/stride)%256==0)checkCancelled(control);
-                ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);++packets;demux.feedPacket(packet);
+        uint64_t fed=0;
+        for(const auto& [start,end]:ranges){
+            // resetPID clears assemblers and CC expectations without altering the
+            // demux's running packet index or its dynamically discovered PID set.
+            for(unsigned pid=0;pid<8192;++pid)if(demux.hasPID(pid))demux.resetPID(pid);
+            demuxOffset=start-fed;packets=start;
+            in.clear();in.seekg(std::streamoff(start*stride));if(!in)throw std::runtime_error("Source seek failed");
+            while(packets<end) {
+                checkCancelled(control);TEST_CHECKPOINT("before_read",control);checkCancelled(control);
+                const size_t wanted=size_t(std::min<uint64_t>(8192,end-packets))*stride;
+                in.read(reinterpret_cast<char*>(block.data()),wanted);size_t n=size_t(in.gcount());
+                if(n!=wanted)throw std::runtime_error("Source changed or read failed; analysis is incomplete");
+                for(size_t p=0;p+stride<=n;p+=stride){
+                    if((p/stride)%256==0)checkCancelled(control);
+                    ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);++packets;++scannedPackets;++fed;demux.feedPacket(packet);
+                }
+                if(ms(lastNotify)>=100){progress();lastNotify=Clock::now();}
             }
-            if(ms(lastNotify)>=100){progress();lastNotify=Clock::now();}
         }
         onFirst=nullptr;checkCancelled(control);
-        if(in.bad())throw std::runtime_error("Source read failed; analysis is incomplete");
+        if(in.bad()||fs::file_size(source)!=totalBytes||fs::last_write_time(source)!=sourceStamp)throw std::runtime_error("Source changed during analysis; evidence discarded");
         ts::SectionDemux::Status status(demux);demuxStatus={{"wrong_crc",status.wrong_crc},{"discontinuities",status.discontinuities},{"invalid_ts",status.invalid_ts},{"invalid_length",status.inv_sect_length},{"truncated_sections",status.truncated_sect}};
+        coverage["scanned_packets"]=scannedPackets;
+        analysisStatus="finalizing";
+        if(compactResponse)emit({{"event","progress"},{"request_id",rid},{"state",compactState()}});
+        // Assemble only bounded metadata before the cancellation commit. Lazy
+        // collection pages and per-section inspection do the remaining work.
+        J out=compactResponse?compactState():state(UINT64_MAX,control);
         TEST_CHECKPOINT("before_complete",control);
         // This is the linearization point: a cancellation accepted before it
         // always wins, and one arriving afterwards must report not_running.
-        if(control&&control->finish())throw CancelledAnalysis();
+        if(control&&control->finish([&]{if(fs::file_size(source)!=totalBytes||fs::last_write_time(source)!=sourceStamp)throw std::runtime_error("Source changed during analysis; evidence discarded");}))throw CancelledAnalysis();
         complete=true;analysisStatus="complete";totalMs=ms(began);
         TEST_CHECKPOINT("after_complete",control);
-        J out=state();out["trailing_bytes"]=totalBytes%stride;return out;
+        if(control)control->onPause=nullptr;
+        out["complete"]=true;out["analysis_status"]="complete";out["progress_fraction"]=1.0;out["metrics"]["scan_ms"]=totalMs;out["trailing_bytes"]=totalBytes%stride;return out;
         } catch(...) {
+            if(control){control->onPause=nullptr;control->requestPause(false);}
             onFirst=nullptr;totalMs=ms(began);complete=false;
             const bool cancelled=control&&control->finish();
             clearEvidence();analysisStatus=cancelled?"cancelled":"failed";
@@ -950,7 +1088,7 @@ public:
         if(at>=packets)throw std::runtime_error("Cable at_packet must be within the completed analysis");
         if(offset>cableoob::MaxGroups||limit<1||limit>100)throw std::runtime_error("Cable offset/limit outside bounded page range");
         if(offset&&(!args.contains("analysis_revision")||!args.contains("at_packet")))throw std::runtime_error("Cable continuation page requires analysis_revision and at_packet");
-        return cableoob::snapshot(records,at,revision,size_t(offset),size_t(limit));
+        const auto windowRecords=coverage.value("partial",false)?segmentRecords(at):std::vector<Record>{};auto out=cableoob::snapshot(coverage.value("partial",false)?windowRecords:records,at,revision,size_t(offset),size_t(limit));out["coverage"]=coverage;out["semantic_scope"]="Only the contiguous window containing or preceding the cutoff; gaps remain unknown";return out;
     }
     J queryTopology(const J& args) {
         if(!complete||packets==0)throw std::runtime_error("Complete a successful analysis before querying topology");
@@ -968,7 +1106,7 @@ public:
         }
         size_t raw=0;for(const auto& r:records)if(!r.ends.empty()&&r.ends.front()<=at)raw++;
         ts::DuckContext topologyDuck(&NULLREP);topologyDuck.resetStandards(duck.standards());topologyDuck.setDefaultCharsetIn(duck.charsetIn());topologyDuck.setDefaultCharsetOut(duck.charsetOut());topologyDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
-        topology::Builder builder(full,topologyDuck,root,standardsContext,revision,at);return builder.build(args,raw,incomplete);
+        topology::Builder builder(full,topologyDuck,root,standardsContext,revision,at);auto out=builder.build(args,raw,incomplete);out["coverage"]=coverage;out["semantic_scope"]="Only the contiguous window containing or preceding the cutoff; gaps remain unknown";return out;
     }
     J inspect(const J& args) {
         if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale inspection analysis_revision");
@@ -985,7 +1123,9 @@ public:
         out["text_diagnostics"]=J::array();
         for(const auto& d:r.descriptors)for(const auto& t:d.value("text_diagnostics",J::array()))out["text_diagnostics"].push_back(t);
         out["text_diagnostic_scope"]="Selected section, supported DVB SI text fields only. ATSC multiple strings, native-only table loops and private text retain raw evidence without per-field diagnostics.";
-        out["occurrences"]=std::vector<uint64_t>(r.positions.begin(),r.positions.begin()+occurrenceCount);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin(),observed);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
+        const size_t occurrenceOffset=std::min(occurrenceCount,args.value("occurrence_offset",size_t(0))),occurrenceEnd=occurrenceOffset+std::min(occurrenceCount-occurrenceOffset,args.value("occurrence_limit",occurrenceCount));
+        out["semantic_scope"]="Only the contiguous window containing or preceding the cutoff; gaps remain unknown";out["occurrence_total"]=occurrenceCount;out["occurrence_next_offset"]=occurrenceEnd<occurrenceCount?J(occurrenceEnd):J();out["coverage"]=coverage;
+        out["occurrences"]=std::vector<uint64_t>(r.positions.begin()+occurrenceOffset,r.positions.begin()+occurrenceEnd);out["occurrence_end_packets"]=std::vector<uint64_t>(r.ends.begin()+occurrenceOffset,r.ends.begin()+occurrenceEnd);out["first_file_offset"]=r.positions.front()*stride+prefix;out["offset_note"]="TS packet offset, not section payload offset; a section may span packets";
         out["text_charset"]=duck.charsetIn()->name().toUTF8();out["time_reference"]=duck.timeReferenceName().toUTF8();out["standards_context"]=standardsContext;out["native_xml_guarded"]=false;out["native_table_complete"]=false;out["native_decode_status"]="invalid section; raw evidence retained";
         out["section_native_text"]=nullptr;out["section_decode_scope"]="Exact original section; no renumbering or synthetic table assembly";
         if(r.j94){
@@ -1093,7 +1233,8 @@ public:
             for(const auto& [key,part]:latest(cutoff,r.current)){if(r.tid==0x74&&applicationSnapshot.size()<=applicationcarriage::MaxSelected)applicationSnapshot.push_back(part);if(tableGroup(*part)==tableGroup(r))applicationSources.push_back(part);}
             std::sort(applicationSources.begin(),applicationSources.end(),[](auto* a,auto* b){return a->number<b->number;});
             ts::DuckContext applicationDuck(&NULLREP);applicationDuck.resetStandards(duck.standards());applicationDuck.setDefaultCharsetIn(duck.charsetIn());
-            applicationsignalling::Builder builder(applicationDuck,applicationSources,revision,cutoff,standardsContext,&records);
+            const auto windowRecords=coverage.value("partial",false)?segmentRecords(cutoff):std::vector<Record>{};
+            applicationsignalling::Builder builder(applicationDuck,applicationSources,revision,cutoff,standardsContext,coverage.value("partial",false)?&windowRecords:&records);
             out["application_signalling"]=builder.build(r,out["native_table_complete"],out["native_decode_status"]);
             if(r.tid==0x74)out["application_signalling"]=applicationcarriage::enrich(std::move(out["application_signalling"]),applicationDuck,r,applicationSnapshot,revision,cutoff,standardsContext);
             if(!out.contains("evidence_anchors"))out["evidence_anchors"]=J::array();
@@ -1151,6 +1292,7 @@ public:
     }
     J preview(const J& args) {
         if(!complete)throw std::runtime_error("Complete a successful analysis before editing");
+        if(coverage.value("partial",false))throw std::runtime_error("Partial analysis cannot be edited; run a full analysis first");
         pending=J::object();patchSections.clear();std::string id=args.at("id"),name=args.at("name");int sid=args.at("service_id");
         if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
         if(!r.valid||r.tid!=0x42||r.number!=0||r.last!=0)throw std::runtime_error("Prototype rename requires a valid complete single-section actual SDT");
@@ -1194,6 +1336,7 @@ public:
     J exportData(const J& args) {
         if(std::any_of(records.begin(),records.end(),[](const Record& r){return r.j94;}))throw std::runtime_error("J.94 snapshot export is unsupported until map/version selection is defined; original sections remain inspectable");
         if(!complete||records.empty())throw std::runtime_error("Complete a successful analysis before exporting");
+        if(coverage.value("partial",false))throw std::runtime_error("Partial analysis cannot be exported; run a full analysis first");
         const std::string format=args.value("format",std::string("ts"));if(format!="ts"&&format!="bin")throw std::runtime_error("format must be ts or bin");
         fs::path path=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
         if(fs::exists(path)||fs::exists(manifestPath(path)))throw std::runtime_error("Output already exists; choose a new path");
@@ -1253,7 +1396,8 @@ public:
         if(method=="query_dvbi")return dvbiDocuments.query(args);
         if(method=="inspect_dvbi")return dvbiDocuments.inspect(args);
         if(method=="analyze")return analyze(args,rid,control);
-        if(method=="query")return state(args.value("at_packet",UINT64_MAX));
+        if(method=="query")return args.value("response_mode",std::string("legacy"))=="compact"?compactState(args.value("at_packet",UINT64_MAX)):state(args.value("at_packet",UINT64_MAX));
+        if(method=="query_result")return queryResult(args);
         if(method=="query_cable_oob")return queryCableOob(args);
         if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
@@ -1350,13 +1494,17 @@ static int runCore(int argc,char**argv) {
                     const std::string method=request.at("method").get<std::string>();
                     J args=request.value("params",J::object());
                     validateArguments(catalog,method,args);
-                    if(method=="cancel_analysis"){
+                    if(method=="cancel_analysis"||method=="pause_analysis"||method=="resume_analysis"){
                         const J target=args.at("request_id");std::shared_ptr<AnalysisControl> control;
                         {std::lock_guard<std::mutex> lock(mutex);auto found=analyses.find(target.dump());if(found!=analyses.end())control=found->second;}
-                        const bool requested=control&&control->requestCancellation();
+                        const bool requested=control&&(method=="cancel_analysis"?control->requestCancellation():control->requestPause(method=="pause_analysis"));
                         J result={{"request_id",target},{"requested",requested}};
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
+                    }
+                    if(method=="query"||method=="query_result"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                        bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
+                        if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }
                     QueuedRequest work{id,std::move(args),method,"",nullptr};
                     std::string reject;
@@ -1381,7 +1529,7 @@ static int runCore(int argc,char**argv) {
                     else ready.notify_one();
                 } catch(const std::exception& e){emit({{"id",id},{"error",{{"code","request_failed"},{"message",e.what()}}}});}
             }
-            {std::lock_guard<std::mutex> lock(mutex);inputEnded=true;}
+            {std::lock_guard<std::mutex> lock(mutex);inputEnded=true;for(auto& [key,control]:analyses)control->requestPause(false);}
             ready.notify_one();
         });
         for(;;){

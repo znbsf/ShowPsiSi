@@ -39,18 +39,20 @@ class QtTopologyTests(unittest.TestCase):
             env.update(SHOWPSISI_SAMPLE=str(sample), SHOWPSISI_AGENT_DIR=str(session),
                        SHOWPSISI_STANDARDS=profile, SHOWPSISI_SCRIPT='', SHOWPSISI_THEME=theme,
                        SHOWPSISI_TEST_SIZE='compact' if compact else '',
-                       SHOWPSISI_SETTINGS_PATH=str(directory / 'settings.ini'))
+                       SHOWPSISI_SETTINGS_PATH=str(directory / 'settings.ini'),
+                       SHOWPSISI_TRACE=str(directory / 'trace.jsonl'))
             if proxy:
                 env.update(SHOWPSISI_REAL_CORE=env['SHOWPSISI_CORE'], SHOWPSISI_CORE=sys.executable,
                            SHOWPSISI_CORE_ARGS_JSON=json.dumps(['-u', str(ROOT / 'tests/fixtures/qt_topology_proxy.py')]),
                            SHOWPSISI_TOPOLOGY_PROXY=proxy, SHOWPSISI_TOPOLOGY_GATE=str(directory / 'held.json'))
             evidence = Path(os.environ.get('SHOWPSISI_QT_TEST_ARTIFACTS', ROOT / 'artifacts/qt-topology-tests'))
             target = evidence / self._testMethodName / (profile+'-'+theme+('-compact' if compact else ''))
-            retained = [logpath, sample, directory / 'state.json', directory / 'held.json', directory / 'screenshot.png', directory / 'capture-manifest.json', directory / 'captured-state.json']
+            retained = [directory / 'trace.jsonl', directory / 'last-state.json', directory / 'ipc-evidence.json', logpath, sample, directory / 'state.json', directory / 'held.json', directory / 'screenshot.png', directory / 'capture-manifest.json', directory / 'captured-state.json']
             with retain_qt_evidence(target, retained):
                 with logpath.open('w', encoding='utf-8') as log:
                     process = subprocess.Popen([str(binary)], env=env, cwd=ROOT, stdout=log, stderr=log)
                     self.session, self.process = session, process
+                    self.last_state = None
                     try:
                         self.wait(lambda s:s['settled'] and bool(s.get('inspection', {}).get('id')))
                         yield directory, sample
@@ -61,6 +63,35 @@ class QtTopologyTests(unittest.TestCase):
                         capture_dir = Path(capture['directory'])
                         for source_name, target_name in (('screenshot.png','screenshot.png'),('manifest.json','capture-manifest.json'),('state.json','captured-state.json')):
                             shutil.copyfile(capture_dir / source_name, directory / target_name)
+                    except BaseException:
+                        # Retain evidence already observed; never issue another RPC
+                        # after an RPC timeout or mask the original failure.
+                        try:
+                            (directory / 'last-state.json').write_text(json.dumps(self.last_state, indent=2), encoding='utf-8')
+                            envelopes = []
+                            files = []
+                            for path in session.glob('*.json'):
+                                try:
+                                    files.append((path.stat().st_mtime, path))
+                                except OSError as changed:
+                                    envelopes.append({'file':path.name, 'read_error':str(changed)})
+                            for _, path in sorted(files)[-40:]:
+                                try:
+                                    size = path.stat().st_size
+                                    if size <= 131072:
+                                        envelopes.append({'file':path.name, 'envelope':json.loads(path.read_text())})
+                                    else:
+                                        envelopes.append({'file':path.name, 'bytes':size, 'omitted':'bounded evidence limit'})
+                                except (OSError, ValueError) as changed:
+                                    envelopes.append({'file':path.name, 'read_error':str(changed)})
+                            payload = json.dumps(envelopes)
+                            while len(payload.encode('utf-8')) > 4 * 1024 * 1024:
+                                envelopes.pop(0)
+                                payload = json.dumps(envelopes)
+                            (directory / 'ipc-evidence.json').write_text(payload, encoding='utf-8')
+                        except Exception as evidence_error:
+                            print('Could not retain supplementary RPC evidence:', evidence_error, file=sys.stderr)
+                        raise
                     finally:
                         if process.poll() is None:
                             process.terminate()
@@ -78,6 +109,7 @@ class QtTopologyTests(unittest.TestCase):
             self.assertIsNone(self.process.poll(), 'Qt exited before state settled')
             if (self.session / 'session.json').exists():
                 state = request(self.session, 'snapshot')
+                self.last_state = state
                 if predicate(state):
                     return state
             time.sleep(.04)

@@ -148,9 +148,50 @@ ApplicationWindow {
     property string comparisonError: ""
     property bool compactComparison: recordPane.width < 420 || recordPane.height < 520
     property bool compactInspector: inspectorPane.height < 520
-    property var analysisState: core.state
-    property bool backendReady: core.available && !core.busy && !dvbiWorkspace.busy && !protocolRestoring
-    property var detail: core.detail
+    // Build native JS arrays from bounded pages. Repeated traversal of nested
+    // QVariant-backed lists otherwise re-converts rows for every derived binding.
+    property var analysisState: ({})
+    property var hydrationCollections: ({})
+    // Each stage retains the complete immutable revision, not a prefix of rows.
+    // Existing search/filter bindings stay reactive without publishing all view
+    // models in the same GUI event turn.
+    property var tableViewState: ({})
+    property var explorerViewState: ({})
+    property var historyViewState: ({})
+    property var recordViewState: ({})
+    property bool presentationPending: false
+    property int presentationToken: 0
+    signal presentationStageFinished(int stage)
+    function publishViewStage(state, token, epoch, stage) {
+        if(token!==presentationToken)return;
+        try {
+            core.mark("presentation_stage_"+stage+"_begin");
+            if(stage===0)tableViewState=state;
+            else if(stage===1)explorerViewState=state;
+            else if(stage===2)historyViewState=state;
+            else if(stage===3)recordViewState=state;
+            else {
+                recordList.forceLayout();tree.forceLayout();
+                presentationPending=false;
+                core.presentationReady(epoch);
+                core.mark("presentation_ready");return;
+            }
+            core.mark("presentation_stage_"+stage+"_end");
+            presentationStageFinished(stage);
+            Qt.callLater(function(){publishViewStage(state,token,epoch,stage+1);});
+        } catch(error) {
+            if(token!==presentationToken)return;
+            presentationPending=false;core.presentationFailed(epoch,String(error));
+        }
+    }
+    property var scanProgress: core.progress
+    readonly property string activeCollection: tab === "Services" ? "services" : tab === "EPG" ? "events" : tab === "Issues" ? "diagnostics" : tab === "Tables" ? "tables" : ""
+    readonly property double densitySourcePackets: Number(analysisState.coverage?.source_packets || analysisState.packets || 0)
+    readonly property bool partialResults: !!analysisState.coverage?.partial
+    readonly property string coverageText: analysisState.coverage ? (partialResults ? "PARTIAL · read-only · " : "Full coverage · ") + num(analysisState.coverage.scanned_packets) + " / " + num(analysisState.coverage.source_packets) + " packets · " + (analysisState.coverage.ranges || []).map(function(r){return "["+num(r.start_packet)+", "+num(r.end_packet)+")";}).join(", ") : ""
+    readonly property bool quickOptionsValid: scanMode.currentValue === "full" || (scanMode.currentValue === "range" ? /^\d+$/.test(scanStart.text) && /^\d+$/.test(scanEnd.text) && Number.isSafeInteger(Number(scanStart.text)) && Number.isSafeInteger(Number(scanEnd.text)) && Number(scanEnd.text)>Number(scanStart.text) : /^\d+$/.test(scanBudget.text) && Number.isSafeInteger(Number(scanBudget.text)) && Number(scanBudget.text)>0 && (scanBudgetUnit.currentIndex===1 || Number(scanBudget.text)<=100))
+    property bool backendReady: core.available && !presentationPending && !core.busy && !dvbiWorkspace.busy && !protocolRestoring
+    property var detail: JSON.parse(core.detailJson)
     property string tab: "Services"
     property string previousTab: "Services"
     onTabChanged: {
@@ -305,12 +346,14 @@ ApplicationWindow {
         expandedTables=saved.expanded;tablePage=saved.page;explorerFocusKey=saved.explorer;
         topologyEvidenceRef=saved.topologyRef;topologyResolution=saved.topologyResolution;topologySectionContext=saved.sectionContext;topologyTablesReveal=saved.revealed;
         protocolSourceRef=saved.protocolRef;protocolSourceOrigin=saved.protocolOrigin;protocolSourceResolution=saved.protocolResolution;protocolCardOffset=saved.offset;
-        inspectorView=saved.view;evidenceScope=saved.scope;collapsed=saved.collapsed;treeSearch.text=saved.search;protocolRestoring=false;
+        inspectorView=saved.view;evidenceScope=saved.scope;collapsed=saved.collapsed;treeSearch.text=saved.search;
         Qt.callLater(function(){
+            if(!protocolRestoring || detail.id!==saved.id || detail.analysis_revision!==saved.revision)return;
             recordList.currentIndex=saved.recordIndex;recordList.contentY=saved.recordScroll;
             if(saved.palette)(tab==="Topology"?topologyList:recordList).forceActiveFocus();
             let index=treeRows.findIndex(function(r){return r.path===saved.path;});
             if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Contain);tree.forceActiveFocus();tree.contentY=saved.treeScroll;}
+            protocolRestoring=false;
         });
     }
     function focusTopologyRow(id) {
@@ -377,7 +420,9 @@ ApplicationWindow {
     }
     // One reason per blocked rename state, in the order a user can resolve them.
     function editBlockReason() {
+        if (core.busy) return "Wait for the scan to finish; cached results remain available for browsing";
         if (!backendReady) return "Backend unavailable";
+        if (partialResults) return "Quick preview is read-only. Run a full scan before editing or exporting";
         if (!analysisState.complete || core.inspecting) return "Wait for the analysis to finish";
         if (detail.name !== "SDT") return "Rename needs an SDT (Service Description Table) section";
         if (!detail.valid) return "Rename needs a section with a valid CRC";
@@ -513,9 +558,9 @@ ApplicationWindow {
     readonly property var inspectorNotes: Shared.workbench.inspectorWarnings(detail,analysisState)
     property bool showInvalidSections: false
     property string evidenceScope: "Merged"
-    property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
-    property var siblingSections: (analysisState.tables || []).filter(function(r) { return (selectedGroup.section_ids || []).indexOf(r.id) >= 0 && (showInvalidSections || r.crc?.status !== "invalid"); })
-    property int hiddenInvalidCount: (analysisState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && tableMatches(r); }).length
+    property var selectedGroup: (tableViewState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
+    property var siblingSections: (tableViewState.tables || []).filter(function(r) { return (selectedGroup.section_ids || []).indexOf(r.id) >= 0 && (showInvalidSections || r.crc?.status !== "invalid"); })
+    property int hiddenInvalidCount: (tableViewState.tables || []).filter(function(r) { return r.crc?.status === "invalid" && tableMatches(r); }).length
     // Fixed table identities, shared with the Web frontend. Never hash unknown names.
     function tableCategory(name) {
         let fixed = {
@@ -584,7 +629,7 @@ ApplicationWindow {
     }
     function agentState() {
         let diagnostics = core.diagnostics();
-        return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
+        return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
@@ -600,6 +645,8 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(["select_snapshot","select_record","history_jump","compare_snapshots","rescan"].indexOf(action.name)>=0 && !backendReady)
+            return JSON.stringify({accepted:false,error:"Analysis or result presentation is still in progress"});
         if(action.name==="input_kind" && ["ts","dvbi"].indexOf(action.value)>=0 && !dvbiWorkspace.busy && !core.busy){inputKind=action.value;return JSON.stringify({accepted:true});}
         if(action.name.indexOf("dvbi_")===0){inputKind="dvbi";return JSON.stringify(dvbiWorkspace.action(action)?{accepted:true}:{error:"Unsupported DVB-I UI action"});}
         if (action.name === "select_tab" && ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;
@@ -656,7 +703,7 @@ ApplicationWindow {
     property url lastExportFolder: core.exportFolder()
     property bool allTableHistory: false
     property int historyPage: 0
-    property var historyRows: Shared.workbench.history(analysisState, detail, allTableHistory)
+    property var historyRows: Shared.workbench.history(historyViewState, detail, allTableHistory)
     property string historyIdentity: [detail.pid,detail.table_id,detail.extension].join(":")
     onHistoryIdentityChanged: historyPage=0
     onAllTableHistoryChanged: historyPage=0
@@ -666,12 +713,12 @@ ApplicationWindow {
             header: true
         })
     property var treeRows: treeSearch.text.trim() ? filterTree(makeTree(detail, selectedService, {}, true), treeSearch.text) : makeTree(detail, selectedService, collapsed, false)
-    property var serviceRows: analysisState.services || []
+    property var serviceRows: recordViewState.services || []
     property bool groupedTables: true
     property int tablePage: 0
     property string tableQuery: recordSearch.query
     onTableQueryChanged: tablePage=0
-    property var tableModel: Shared.workbench.tables(analysisState, pidFilter, filter, showInvalidSections, recordSearch.query)
+    property var tableModel: Shared.workbench.tables(tableViewState, pidFilter, filter, showInvalidSections, recordSearch.query)
     property var rawTableRows: tableModel.sections
     property int logicalTableCount: tableModel.groups.length
     property var tableRows: logicalTableRows()
@@ -685,12 +732,14 @@ ApplicationWindow {
     }
     function tableMatches(t) { return Shared.workbench.scope(t,pidFilter,filter); }
     function logicalTableRows() {
-        let total=groupedTables ? tableModel.groups.length : rawTableRows.length;
+        const model=tableModel,sections=model.sections;
+        const rowIndex=sections.reduce(function(index,row){index[row.id]=row;return index;},{});
+        let total=groupedTables ? model.groups.length : sections.length;
         let start=Math.min(tablePage,Math.max(0,Math.ceil(total/100)-1))*100;
-        if(!groupedTables) return rawTableRows.slice(start,start+100);
+        if(!groupedTables) return sections.slice(start,start+100);
         let out=[];
-        tableModel.groups.slice(start,start+100).forEach(function(g) {
-            let sections=rawTableRows.filter(function(r) {return g.section_ids.indexOf(r.id)>=0;});
+        model.groups.slice(start,start+100).forEach(function(g) {
+            let sections=(g.section_ids || []).map(function(id){return rowIndex[id];}).filter(Boolean).sort(Shared.workbench.sort);
             let first=Shared.workbench.representative(g,sections);
             out.push(Object.assign({},first || g,{group:g,logical:true,hiddenEvidence:!first,sectionRecords:sections}));
             if(expandedTables[g.id]) sections.forEach(function(r) {out.push(Object.assign({},r,{exact:true}));});
@@ -700,7 +749,7 @@ ApplicationWindow {
     function toggleTableGroup(row) {
         let next=Object.assign({},expandedTables); next[row.group.id]=!next[row.group.id]; expandedTables=next;
     }
-    property var explorerRows: [{pid:-1,name:"All tables",count:(analysisState.table_groups || []).length}].concat((analysisState.table_groups || []).reduce(function(out,g) {
+    property var explorerRows: [{pid:-1,name:"All tables",count:(explorerViewState.table_groups || []).length}].concat((explorerViewState.table_groups || []).reduce(function(out,g) {
         let name=g.name || "Private / other";
         let row=out.find(function(r) {return r.pid===g.pid && r.name===name;});
         if(row) row.count++; else out.push({pid:g.pid,name:name,count:1}); return out;
@@ -718,7 +767,7 @@ ApplicationWindow {
     onExplorerRowsChanged: {
         if (!explorerRows.some(function(row) {return explorerKey(row) === explorerFocusKey;})) explorerFocusKey = JSON.stringify([-1,"All tables"]);
     }
-    property var tableFamilies: ["All tables"].concat(["PAT","PMT","SDT","EIT","NIT","CAT","BAT","TDT","TOT"].concat((analysisState.tables || []).map(function (t) {
+    property var tableFamilies: ["All tables"].concat(["PAT","PMT","SDT","EIT","NIT","CAT","BAT","TDT","TOT"].concat((tableViewState.tables || []).map(function (t) {
         return t.name;
     })).filter(function (name, index, all) {
         return name && name !== "Private / other" && all.indexOf(name) === index;
@@ -726,9 +775,12 @@ ApplicationWindow {
     property var extraPidsValue: parseExtraPids(extraPids.text)
     property var pendingScanOptions: null
     property var completedScanOptions: null
+    property string requestedCoverageKey: JSON.stringify([scanMode.currentValue,scanMode.currentValue==="range" ? [scanStart.text,scanEnd.text] : scanMode.currentValue==="full" ? null : [scanBudgetUnit.currentIndex,scanBudget.text]])
+    property string pendingCoverageKey: ""
+    property string completedCoverageKey: ""
     property var sourceScanOptions: ({standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue})
     property string scanOptionsSummary: Shared.workbench.scanOptionsSummary(sourceScanOptions)
-    property bool scanOptionsChanged: !!analysisState.complete && completedScanOptions !== null && Shared.workbench.scanOptionsKey(sourceScanOptions) !== Shared.workbench.scanOptionsKey(completedScanOptions)
+    property bool scanOptionsChanged: !!analysisState.complete && completedScanOptions !== null && Shared.workbench.scanOptionsKey(sourceScanOptions) !== Shared.workbench.scanOptionsKey(completedScanOptions) || !!analysisState.complete && !!completedCoverageKey && requestedCoverageKey!==completedCoverageKey
     function parseExtraPids(text) {
         let values = text.trim() ? text.trim().split(/[\s,]+/) : [];
         let result = [];
@@ -766,8 +818,8 @@ ApplicationWindow {
         });
         return result;
     }
-    property var eventRows: analysisState.events || []
-    property var issues: analysisState.diagnostics || []
+    property var eventRows: recordViewState.events || []
+    property var issues: recordViewState.diagnostics || []
     property var issueCounts: Shared.workbench.issueCounts(issues)
     property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
@@ -930,7 +982,7 @@ ApplicationWindow {
     }
     function makeTree(section, sid, hidden, expandAll) {
         if(!section.id) return [];
-        let result=[];
+        core.mark("tree_model_begin");let result=[];
         function visit(node,parent,depth) {
             let canonical=parent ? parent+"/"+node.id : node.id;
             // Keep stable native diagnostic IDs while rendering the shared tree.
@@ -942,7 +994,7 @@ ApplicationWindow {
         }
         let referenceState=activeInspectionRef && activeInspectionRef.at_packet!==currentPacket() || selectedChange && selectedChange[comparisonSide] && selectedChange[comparisonSide].at_packet!==currentPacket() ? null : analysisState;
         visit(Shared.workbench.structure(section,evidenceScope.toLowerCase(),sid,referenceState),"",0);
-        return result;
+        core.mark("tree_model_end");return result;
     }
     function toggle(path) {
         if (treeSearch.text.trim())
@@ -1012,8 +1064,9 @@ ApplicationWindow {
         }
         fromPacket.forceActiveFocus();
     }
+    function packetCovered(packet) { return !partialResults || (analysisState.coverage.ranges || []).some(function(r){return packet>=r.start_packet && packet<r.end_packet;}); }
     function validPacket(text) {
-        return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) < Number(analysisState.packets || 0);
+        return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) < Number(analysisState.packets || 0) && packetCovered(Number(text));
     }
     function focusComparisonAction() {
         tab = "Changes";
@@ -1083,8 +1136,8 @@ ApplicationWindow {
             return;
         }
         if(topologyEvidenceRef && id!==topologyEvidenceRef.section_id){topologyEvidenceRef=null;topologyResolution={};}
-        selected = id;
-        selectedService = sid === undefined ? -1 : sid;
+        core.mark("inspect_selection_begin");selected = id;
+        selectedService = sid === undefined ? -1 : sid;core.mark("inspect_selection_end");
         preview = {};
         collapsed = {
             header: true
@@ -1096,7 +1149,7 @@ ApplicationWindow {
             params.at_packet = atPacket;
         else if (analysisState.selected_packet !== undefined && analysisState.selected_packet !== null)
             params.at_packet = analysisState.selected_packet;
-        core.send("inspect", params);
+        core.mark("inspect_send_begin");core.send("inspect", params);core.mark("inspect_send_end");
     }
     function openExportDialog() {
         if (!exportButton.enabled || saveDialog.visible) return;
@@ -1159,10 +1212,10 @@ ApplicationWindow {
     function cancelScan() {
         if (!core.available || !core.busy || core.cancelling) return;
         core.cancelAnalysis();
-        notice = "Cancelling scan… Waiting for the worker to stop.";
+        notice = core.busy ? "Cancelling scan… Waiting for the worker to stop." : "Result loading stopped. Analyze again to load a complete workspace.";
     }
     function scan() {
-        if (metadataMode || !backendReady || !source.text.trim() || extraPidsValue === null)
+        if (metadataMode || !backendReady || !source.text.trim() || extraPidsValue === null || !quickOptionsValid)
             return;
         recentMenu.close();
         clearWorkspaceIntentions();
@@ -1171,14 +1224,22 @@ ApplicationWindow {
         treeSearch.clear();
         tab = "Services";
         notice = "Scanning source…";
+        pendingCoverageKey=requestedCoverageKey;
         pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
         rememberSource(source.text.trim());
-        core.send("analyze", {
+        let params={
             path: source.text.trim(),
             standards: pendingScanOptions.standards,
             default_charset: pendingScanOptions.default_charset,
-            extra_pids: pendingScanOptions.extra_pids
-        });
+            extra_pids: pendingScanOptions.extra_pids,
+            scan_mode: scanMode.currentValue
+        };
+        if(scanMode.currentValue==="range"){params.start_packet=Number(scanStart.text);params.end_packet=Number(scanEnd.text);}
+        if(scanMode.currentValue==="prefix" || scanMode.currentValue==="distributed"){
+            params[scanBudgetUnit.currentIndex===0 ? "sample_percent" : "max_packets"]=Number(scanBudget.text);
+            if(scanMode.currentValue==="distributed")params.window_count=4;
+        }
+        core.send("analyze",params);
     }
     function focusNextRegion(backwards) {
         let regions=[sourceBar,explorerPane,recordPane,inspectorPane], current=-1;
@@ -1196,6 +1257,7 @@ ApplicationWindow {
         snapshot(entry.at_packet,entry.id);
     }
     function snapshot(packet, id, sid) {
+        if(packet>=0 && !packetCovered(packet)){showMessage("Unscanned interval: reception and table state are unknown here. Run a full scan to inspect it.","warning");return;}
         clearProtocolSource();
         if (!backendReady || !analysisState.complete) return;
         topologyEvidenceRef=null;topologyResolution={};topologyLoading=false;topologyOrigin=null;topologyBackStack=[];topologyCutoff=null;topologyScopeLabel="Current observation";
@@ -1254,7 +1316,7 @@ ApplicationWindow {
     function rowSubtitle(row) {
         if (tab === "Changes")
             return (row.changed_fields || []).join(", ") || "Presence changed · select to inspect source evidence";
-        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? Shared.workbench.groupText(row.group) + " · " + arrivalText(row.group) + (row.hiddenEvidence ? " · Bad-CRC evidence hidden" : "") : tab === "Tables" ? Shared.workbench.wireVersionText(row) + " · " + Shared.workbench.wireSectionText(row) + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : row.detail;
+        return tab === "Services" ? "SID " + hex(row.id) + " · PMT " + hex(row.pmt_pid) : tab === "Tables" && row.logical ? Shared.workbench.groupText(row.group) + " · " + arrivalText(row.group) + (row.hiddenEvidence ? " · Bad-CRC evidence hidden" : "") : tab === "Tables" ? Shared.workbench.wireVersionText(row) + " · " + Shared.workbench.wireSectionText(row) + " · " + row.bytes + " B · " + num(row.count) + " observations · " + crcText(row) : tab === "EPG" ? "SID " + hex(row.service_id) + " · " + row.start + " UTC · " + row.duration_seconds / 60 + " min" : (row.detail || "");
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
@@ -1659,6 +1721,51 @@ ApplicationWindow {
         Keys.onEnterPressed: clicked()
     }
     Connections {
+        target: inspectorReferences
+        function onModelChanged() { if(referencePersistenceTest.running)referencePersistenceTest.modelChanges++; }
+    }
+    Timer {
+        id: referencePersistenceTest
+        property int modelChanges: 0
+        property int delegateCreates: 0
+        property int delegateDestroys: 0
+        property var observations: []
+        function observe(label) {
+            observations.push({phase:label, modelChanges:modelChanges, delegateCreates:delegateCreates, delegateDestroys:delegateDestroys,
+                width:inspectorReferences.width,height:inspectorReferences.height,currentIndex:inspectorReferences.currentIndex,count:inspectorReferences.count,visible:inspectorReferences.visible,
+                loadedIdentity:inspectorReferences.loadedIdentity,currentIdentity:inspectorReferences.currentIdentity,
+                currentItem:!!inspectorReferences.currentItem,
+                selection:inspectorReferences.currentItem ? inspectorReferences.currentItem.urlField.selectedText : null});
+        }
+        interval: 40; repeat: true
+        running: core.env("SHOWPSISI_SCRIPT")==="reference-persistence"
+        property int phase: 0
+        property var checks: ({})
+        property string urlSelection: ""
+        property string dialogSelection: ""
+        property string hexSelection: ""
+        property real savedY: 0
+        property string previousId: ""
+        onTriggered: {
+            if(core.busy || core.inspecting || !analysisState.complete || !detail.id)return;
+            if(phase===0){checks.deferred=inspectorReferences.model.length===0 && dialogReferences.model.length===0;inspectorView="References";phase=1;return;}
+            if(phase===1){
+                if(!inspectorReferences.currentItem)return;
+                let field=inspectorReferences.currentItem.urlField;field.select(1,8);urlSelection=field.selectedText;
+                savedY=inspectorReferences.contentY;observe("before_hide");inspectorView="Structure";observe("after_hide");phase=2;return;
+            }
+            if(phase===2){observe("hidden_tick");checks.hidden_retained=!!inspectorReferences.currentItem && inspectorReferences.currentItem.urlField.selectedText===urlSelection;inspectorView="References";phase=3;return;}
+            if(phase===3){observe("shown_tick");checks.reference_model_stable=observations.every(function(row){return row.modelChanges===observations[0].modelChanges;});checks.reference_selection=!!urlSelection && !!inspectorReferences.currentItem && inspectorReferences.currentItem.urlField.selectedText===urlSelection;checks.reference_scroll=inspectorReferences.contentY===savedY;specificationDialog.open();phase=4;return;}
+            if(phase===4){if(!dialogReferences.currentItem)return;let field=dialogReferences.currentItem.urlField;field.select(1,9);dialogSelection=field.selectedText;specificationDialog.close();phase=5;return;}
+            if(phase===5){checks.dialog_hidden_retained=!!dialogReferences.currentItem && dialogReferences.currentItem.urlField.selectedText===dialogSelection;specificationDialog.open();phase=6;return;}
+            if(phase===6){checks.dialog_selection=!!dialogSelection && !!dialogReferences.currentItem && dialogReferences.currentItem.urlField.selectedText===dialogSelection;specificationDialog.close();inspectorView="Hex";phase=7;return;}
+            if(phase===7){hexEvidence.select(1,8);hexSelection=hexEvidence.selectedText;inspectorView="Structure";phase=8;return;}
+            if(phase===8){inspectorView="Hex";phase=9;return;}
+            if(phase===9){checks.hex_selection=!!hexSelection && hexEvidence.selectedText===hexSelection;inspectorView="Structure";previousId=detail.id;let row=(analysisState.tables || []).find(function(r){return r.id!==previousId;});checks.other_record=!!row;if(row)inspect(row.id);phase=10;return;}
+            if(phase===10){if(detail.id===previousId)return;checks.identity_invalidates=inspectorReferences.model.length===0 && dialogReferences.model.length===0;stop();core.capture(core.env("SHOWPSISI_SCREENSHOT"));core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks,observations:observations}));}
+        }
+    }
+    Connections {
         target: dvbiWorkspace
         function onErrorChanged() { if(dvbiWorkspace.error && !core.error)showMessage(dvbiWorkspace.error,"error"); }
         function onBusyChanged() {
@@ -1668,6 +1775,32 @@ ApplicationWindow {
     }
     Connections {
         target: core
+        function onResultLoading(){++presentationToken;presentationPending=false;hydrationCollections={};}
+        function onResultPage(collection,json){
+            core.mark("page_handler_enter_" + collection);
+            const result=JSON.parse(json);
+            core.mark("page_parsed_" + collection + "_bytes_" + json.length);
+            if(!hydrationCollections[collection])hydrationCollections[collection]=[];
+            const rows=hydrationCollections[collection];for(const row of result.items)rows.push(row);
+        }
+        function onStateChanged(){
+            core.mark("state_js_begin");const state=JSON.parse(core.stateJson);
+            if(state.response_mode==="compact" && state.complete){
+                for(const name of Object.keys(hydrationCollections))state[name]=hydrationCollections[name];
+                const truncated=(state.table_groups || []).filter(function(g){return g.member_ids_truncated;});
+                if(truncated.length){
+                    const members={},selected={},wanted={};for(const group of truncated)wanted[group.id]=true;
+                    for(const row of state.tables || []){const key=row.table_group_id;if(!wanted[key])continue;(members[key] || (members[key]=[])).push(row.id);if(row.selected_in_snapshot)(selected[key] || (selected[key]=[])).push(row.id);}
+                    for(const group of truncated){group.section_ids=members[group.id] || [];group.selected_section_ids=selected[group.id] || [];group.member_ids_truncated=false;}
+                }
+            }
+            const token=++presentationToken,epoch=core.resultEpoch();
+            const staged=state.response_mode==="compact" && !!state.complete;
+            presentationPending=staged;
+            core.mark("state_js_assembled");analysisState=state;core.mark("state_js_end");
+            if(staged)Qt.callLater(function(){publishViewStage(state,token,epoch,0);});
+            else {tableViewState=state;explorerViewState=state;historyViewState=state;recordViewState=state;}
+        }
         function onErrorChanged() { if(core.error)showMessage(core.error, "error"); }
         function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
         function onAvailabilityChanged() {
@@ -1680,8 +1813,9 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if(method==="capabilities" && analysisModesTestTimer.running){analysisModesTestTimer.barrier=true;return;}
             if(method === "analyze") {
-                if(result.complete && pendingScanOptions !== null)completedScanOptions=pendingScanOptions;
+                if(result.complete && pendingScanOptions !== null){completedScanOptions=pendingScanOptions;completedCoverageKey=pendingCoverageKey;}
                 pendingScanOptions=null;
             }
             if (method === "query_topology") { acceptTopology(result); return; }
@@ -1702,9 +1836,12 @@ ApplicationWindow {
             if (method === "lookup_identifier") identifierResult=result;
             if (method === "lookup_satellite") satelliteResult=result;
             if (method === "query") comparisonTestTimer.completedQueries++;
+            if (method === "pause_analysis" || method === "resume_analysis") {
+                core.mark(method + "_ack");return;
+            }
             if (method === "cancel_analysis") {
                 if (core.env("SHOWPSISI_SCRIPT") === "lifecycle-stale" || core.env("SHOWPSISI_SCRIPT") === "lifecycle-complete-race") {
-                    lifecycleTestTimer.checks.ack_did_not_settle = core.busy && core.cancelling && analysisState.source.indexOf("poison") < 0;
+                    lifecycleTestTimer.checks.ack_did_not_settle = core.busy && core.cancelling && scanProgress.source.indexOf("poison") < 0;
                     core.mark("cancel_ack_observed");
                 }
                 return;
@@ -1730,10 +1867,10 @@ ApplicationWindow {
                     notice = "Scan finished before cancellation took effect · source unchanged";
                     return;
                 }
-                defaultInspect();
+                core.mark("default_inspect_begin");defaultInspect();core.mark("default_inspect_end");
                 inspected = true;
                 let truncated=(result.demux || {}).truncated_sections || 0;
-                showMessage("Scan complete · source unchanged" + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
+                showMessage((partialResults ? "Quick preview complete · partial, read-only · source unchanged" : "Scan complete · source unchanged") + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
             }
             if (method === "query") {
                 if (snapshotTarget)
@@ -1812,6 +1949,11 @@ ApplicationWindow {
         interval: 250
         repeat: true
         onTriggered: {
+            // Metadata may already expose the requested cutoff while compact
+            // result pages and the default inspection are still in flight.
+            // Drive real controls only once that operation has settled.
+            if (!backendReady || core.inspecting)
+                return;
             if (testStep === 0) {
                 if (!analysisState.history.length)
                     return;
@@ -2416,6 +2558,7 @@ ApplicationWindow {
         property var changedService: null
         property var initialPacket: null
         onTriggered: {
+            core.mark("comparison_phase_" + phase + "_busy_" + core.busy + "_inspect_" + core.inspecting + "_compare_" + core.comparing + "_queries_" + completedQueries + "_expected_" + expectedQueryCompletion + "_change_" + !!selectedChange);
             if (!analysisState.complete || core.busy || core.inspecting || core.comparing)
                 return;
             if (phase === 0) {
@@ -2501,7 +2644,7 @@ ApplicationWindow {
                 toPacket.text = fromPacket.text;
                 toPacket.forceActiveFocus();
                 core.key("Return");
-                checks.cutoff_enter_compares = core.comparing;
+                checks.cutoff_enter_compares = core.comparing;core.mark("comparison_cutoff_enter_" + core.comparing);
                 phase++;
             } else if (phase === 6) {
                 if (!comparison.source) return;
@@ -2519,12 +2662,24 @@ ApplicationWindow {
                 recordList.positionViewAtIndex(comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }), ListView.Contain);
                 phase = 7.5;
             } else if (phase === 7.5) {
-                core.click("record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }));
-                phase = 8;
+                // Variable-height virtualized rows need a polished, exposed
+                // delegate, not merely an allocated/recycled objectName.
+                const index=comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
+                recordList.forceLayout();recordList.positionViewAtIndex(index,ListView.Contain);
+                const target="record_" + index;
+                if(!core.isExposed(target))return;
+                checks.reverse_row_click=core.click(target);
+                phase = 7.75;
+            } else if (phase === 7.75) {
+                checks.reverse_selection=!!selectedChange && selectedChange.kind===changedService.kind && selectedChange.key===changedService.key;
+                if(!checks.reverse_row_click || !checks.reverse_selection){core.testResult(JSON.stringify({passed:false,checks:checks}));stop();return;}
+                phase=8;
             } else if (phase === 8) {
+                if(!core.isExposed("useComparisonSnapshot"))return;
                 expectedQueryCompletion = completedQueries + 1;
                 core.mark("comparison_use_snapshot_requested");
-                core.click("useComparisonSnapshot");
+                checks.use_snapshot_click=core.click("useComparisonSnapshot");
+                if(!checks.use_snapshot_click){core.testResult(JSON.stringify({passed:false,checks:checks}));stop();return;}
                 phase++;
             } else if (phase === 9) {
                 if (completedQueries < expectedQueryCompletion) {
@@ -2777,6 +2932,7 @@ ApplicationWindow {
                 return;
             }
             if (phase === 4) {
+                if (!backendReady || core.inspecting) return;
                 if (Number(analysisState.selected_packet) !== targetPacket)
                     return;
                 checks.bin_click_snapshot = Number(analysisState.selected_packet) === targetPacket;
@@ -2908,6 +3064,7 @@ ApplicationWindow {
             if(phase===6){checks.pid_jump=detail.name==="PAT" && detail.pid===0 && tab==="Tables" && pidFilter===0 && selected===detail.id;core.key("Alt+Left");phase=7;return;}
             if(phase===7){checks.pid_back=tab==="Services" && detail.id===origin && selectedService===originService && recordSearch.text==="Sports UHD";core.key("Ctrl+K");recordSearch.text="#pid 8190";phase=8;return;}
             if(phase===8){
+                core.mark("palette_unknown_"+JSON.stringify({visible:commandPalette.visible,rows:paletteRows.length,target:paletteTarget,input:paletteInput ? paletteInput.text : null,search:recordSearch.text,origin:origin,selected:selected,detail:detail.id}));
                 checks.unknown_pid=commandPalette.visible && !paletteRows.length && paletteTarget.message==="No PID 0x1FFE in this stream";
                 core.key("Return");checks.unknown_unchanged=selected===origin && detail.id===origin;
                 core.key("Escape");checks.escape_focus=!commandPalette.visible && recordList.activeFocus && recordSearch.text==="Sports UHD";
@@ -3018,8 +3175,8 @@ ApplicationWindow {
                     core.mark("backend_death_ready");phase = 2;return;
                 }
                 if (phase === 0 && mode === "lifecycle-death-active") {
-                    if (!core.busy || !analysisState.observations) return;
-                    checks.was_scanning = !analysisState.complete;
+                    if (!core.busy || !scanProgress.observations) return;
+                    checks.was_scanning = !scanProgress.complete;
                     core.mark("backend_death_ready");phase = 2;return;
                 }
                 if (core.availability !== "disconnected") return;
@@ -3034,11 +3191,18 @@ ApplicationWindow {
             if (phase === 0 && (mode === "lifecycle-stale" || mode === "lifecycle-complete-race")) {
                 if (!analysisState.complete || !core.inspecting) return;
                 checks.pending_old_inspect = true;
+                checks.legacy_presentation_ready = !presentationPending;
+                checks.legacy_table_state_ready = tableViewState===analysisState;
+                checks.legacy_record_state_ready = recordViewState===analysisState;
+                checks.legacy_services_ready = serviceRows===analysisState.services;
+                // The adversarial legacy fixture intentionally omits table_groups.
+                checks.legacy_tables_ready = JSON.stringify(rawTableRows)===JSON.stringify(Shared.workbench.tables(analysisState,pidFilter,filter,showInvalidSections,recordSearch.query).sections);
+                core.mark("legacy_rows_" + rawTableRows.length + "_source_" + (analysisState.tables || []).length);
                 scan();phase = 1;return;
             }
             if (phase <= 1) {
-                if (!core.busy || !analysisState.observations) return;
-                checks.accepted_progress = analysisState.source.indexOf("poison") < 0 && !detail.id;
+                if (!core.busy || !scanProgress.observations) return;
+                checks.accepted_progress = scanProgress.source.indexOf("poison") < 0 && !detail.id;
                 if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT") + ".scanning.png");
                 // These pending UI intentions must not survive a cancellation.
                 snapshotTarget = "old-pending-section";snapshotTargetService = 101;
@@ -3410,6 +3574,152 @@ ApplicationWindow {
             }
         }
     }
+    Connections {
+        target: win
+        function onPresentationStageFinished(stage) {
+            const mode=core.env("SHOWPSISI_SCRIPT");
+            if(stage!==0 || !analysisModesTestTimer.running || analysisModesTestTimer.presentationIntercepted ||
+               (mode!=="analysis-presentation-cancel" && mode!=="analysis-presentation-error"))return;
+            analysisModesTestTimer.presentationIntercepted=true;
+            const token=presentationToken,epoch=core.resultEpoch();
+            Qt.callLater(function(){
+                if(token!==presentationToken)return;
+                const checks=analysisModesTestTimer.checks;
+                checks.pending_guard=presentationPending && core.busy && !backendReady && !JSON.parse(agentState()).settled;
+                checks.action_rejected=JSON.parse(agentAction({name:"rescan"})).accepted===false;
+                if(mode==="analysis-presentation-cancel")core.cancelAnalysis();
+                else core.presentationFailed(epoch,"Injected presentation failure");
+                core.mark("presentation_interrupted_checked");
+                analysisModesTestTimer.phase=2;
+            });
+        }
+    }
+    // Deterministic native integration harness. Positive evidence comes from the
+    // separately built real engine; the Python driver releases its file gate.
+    Timer {
+        id: analysisModesTestTimer
+        interval:10; repeat:true
+        property int phase:0
+        property int ticks:0
+        property int pausedTicks:0
+        property int progressUpdates:0
+        property bool barrier:false
+        property bool presentationIntercepted:false
+        property double previousTick:0
+        property double maxGap:0
+        property double frozenPackets:0
+        property var checks:({})
+        function finish(){
+            checks.responsive=maxGap<500;
+            core.capture(core.env("SHOWPSISI_SCREENSHOT"));
+            stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return !!checks[k];}),checks:checks,max_gui_gap_ms:maxGap,ticks:ticks,progress_updates:progressUpdates,state:{complete:analysisState.complete,analysis_status:analysisState.analysis_status,coverage:analysisState.coverage,result_counts:analysisState.result_counts,table_count:(analysisState.tables || []).length},progress:scanProgress,phase:phase}));
+        }
+        onTriggered: {core.mark("analysis_driver_begin");step();core.mark("analysis_driver_end");}
+        function step(){
+            const mode=core.env("SHOWPSISI_SCRIPT");
+            if(phase===0){
+                if(!backendReady)return;
+                if(mode==="analysis-preview"){
+                    scanOptionsToggle.checked=true;
+                    scanMode.currentIndex=Number(core.env("SHOWPSISI_QUICK_INDEX") || 1);
+                    scanBudgetUnit.currentIndex=core.env("SHOWPSISI_QUICK_PERCENT")==="1" ? 0 : 1;scanBudget.text=scanBudgetUnit.currentIndex===0 ? "10" : "20000";scanStart.text="1000";scanEnd.text="21000";
+                }
+                previousTick=Date.now();scan();phase=1;return;
+            }
+            const now=Date.now();if(now-previousTick>100)core.mark("ui_gap_phase_"+phase+"_ms_"+(now-previousTick));maxGap=Math.max(maxGap,now-previousTick);previousTick=now;ticks++;
+            if(mode==="analysis-invalid-page"){
+                if(phase===1){
+                    if(core.busy || !core.error)return;
+                    checks.invalid_page_rejected=(core.error.indexOf("Invalid result page")===0 || core.error==="Injected continuation page failure") && !analysisState.complete && !(analysisState.tables || []).length && core.available;
+                    checks.no_resurrection=Object.keys(core.remainingPages).length===0 && Object.keys(hydrationCollections).length===0;core.loadMore("tables");checks.no_resurrection=checks.no_resurrection && !analysisState.complete;
+                    checks.recoverable=core.click("analyzeSource");phase=2;return;
+                }
+                if(core.busy||core.inspecting||!analysisState.complete)return;
+                checks.rescan_complete=!!analysisState.tables.length;finish();return;
+            }
+            if(mode==="analysis-presentation-cancel" || mode==="analysis-presentation-error"){
+                if(phase===1)return;
+                if(phase===2){
+                    if(core.busy || presentationPending)return;
+                    checks.invalidated=!analysisState.complete && !(analysisState.tables || []).length && !tableViewState.complete && !recordViewState.complete;
+                    checks.outcome=mode==="analysis-presentation-cancel" ? analysisState.analysis_status==="loading_cancelled" : core.error.indexOf("Result presentation failed:")===0;
+                    checks.rescan=core.click("analyzeSource");phase=3;return;
+                }
+                if(core.busy || core.inspecting || presentationPending || !analysisState.complete)return;
+                checks.recovered=tableViewState===analysisState && explorerViewState===analysisState && historyViewState===analysisState && recordViewState===analysisState && !!analysisState.tables.length;
+                finish();return;
+            }
+            if(mode==="analysis-hydration-cancel"){
+                if(phase===1){
+                    if(!core.loadingResults)return;
+                    checks.stop_loading=core.click("cancelAnalysis") && !core.busy && analysisState.analysis_status==="loading_cancelled";
+                    core.mark("cancel_hydration_checked");core.send("capabilities");phase=2;return;
+                }
+                if(phase===2){
+                    if(!barrier)return;
+                    checks.no_late_resurrection=!core.busy && !analysisState.complete && !(analysisState.tables || []).length;
+                    checks.rescan=core.click("analyzeSource");phase=3;return;
+                }
+                if(core.busy||core.inspecting||!analysisState.complete)return;
+                checks.new_complete=!!analysisState.tables.length;finish();return;
+            }
+            if(mode==="analysis-pause-resume"||mode==="analysis-pause-cancel"){
+                if(phase===1){
+                    if(!core.busy||!scanProgress.observations)return;
+                    checks.pause_control=core.click("pauseAnalysis");
+                    checks.pause_pending=core.pausePending && core.busy && !core.cancelling;
+                    core.mark("pause_command_checked");phase=2;return;
+                }
+                if(phase===2){
+                    if(!core.paused)return;
+                    frozenPackets=Number(scanProgress.packets);checks.authoritative_paused=scanProgress.analysis_status==="paused" && core.busy;
+                    const old=lightTheme;lightTheme=!old;
+                    checks.local_theme=lightTheme!==old;tab="Tables";
+                    checks.no_inspection=!backendReady && editBlockReason().indexOf("Wait")===0;
+                    checks.action_rejected=JSON.parse(agentAction({name:"rescan"})).accepted===false;
+                    core.mark("paused_state_checked");phase=3;return;
+                }
+                if(phase===3){
+                    if(++pausedTicks<20)return;
+                    checks.frozen=Number(scanProgress.packets)===frozenPackets && core.paused && core.busy;
+                    if(mode==="analysis-pause-cancel")checks.cancel_control=core.click("cancelAnalysis");
+                    else checks.resume_control=core.click("pauseAnalysis");
+                    phase=4;return;
+                }
+                if(phase===4){
+                    if(core.busy)return;
+                    checks.settled=!core.paused && !core.cancelling;
+                    if(mode==="analysis-pause-cancel"){
+                        checks.cancelled=analysisState.analysis_status==="cancelled" && !(analysisState.tables || []).length;
+                        checks.rescan_control=core.click("analyzeSource");phase=5;return;
+                    }
+                    checks.resumed_complete=analysisState.complete && !!analysisState.tables.length;
+                    phase=6;
+                }
+                if(phase===5){if(core.busy||!analysisState.complete)return;checks.rescan_complete=!!analysisState.tables.length;phase=6;}
+                if(phase===6){if(core.inspecting)return;finish();}return;
+            }
+            if(core.busy||core.inspecting||!analysisState.complete)return;
+            checks.compact=analysisState.response_mode==="compact";
+            checks.full_hydration=Object.keys(analysisState.result_counts).every(function(k){return (analysisState[k] || []).length===analysisState.result_counts[k];});
+            if(mode==="analysis-preview"){
+                checks.partial=partialResults && analysisState.coverage.scanned_packets<analysisState.coverage.source_packets;
+                checks.readonly=editBlockReason().indexOf("read-only")>=0 && !core.click("rename");
+                checks.coverage=coverageText.indexOf("PARTIAL")===0 && coverageText.indexOf("[")>=0;
+                checks.inspection=!!detail.id && !!detail.raw_hex;
+                checks.full_density_extent=densityStrip.packetAtBin(densityStrip.binCount-1)===densitySourcePackets-1;
+                let gap=analysisState.coverage.ranges[0].end_packet;
+                let before=analysisState.selected_packet;snapshot(gap);
+                checks.unknown_gap_blocked=analysisState.selected_packet===before && !validPacket(String(gap)) && notice.indexOf("Unscanned interval")===0;
+            }else {
+                checks.all_records=(analysisState.tables || []).length===Number(core.env("SHOWPSISI_EXPECT_TABLES"));
+                checks.bounded_view=recordList.count<=100;
+            }
+            finish();
+        }
+    }
+    Connections {target:core;function onProgressChanged(){if(analysisModesTestTimer.running)analysisModesTestTimer.progressUpdates++;}}
+
     Component.onCompleted: {
         if(core.error)showMessage(core.error,"error");
         core.mark("ui_ready");
@@ -3451,6 +3761,7 @@ ApplicationWindow {
         if (core.env("SHOWPSISI_SCRIPT") === "comparison")
             comparisonTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "comparison-markers") comparisonMarkersTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT").indexOf("analysis-") === 0) analysisModesTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
             lifecycleTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refresh")
@@ -3891,13 +4202,23 @@ ApplicationWindow {
                     Accessible.description: scanOptionsChanged ? "Options changed — re-analyze to apply" : ""
                     primary: true
                     visible: !core.busy
-                    enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null
+                    enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null && quickOptionsValid
                     onClicked: scan()
+                }
+                Action {
+                    id: pauseButton
+                    objectName: "pauseAnalysis"
+                    text: core.pausePending ? "Waiting…" : core.paused ? "Resume" : "Pause"
+                    visible: core.busy && !core.loadingResults
+                    enabled: core.available && !core.cancelling && !core.pausePending
+                    onClicked: core.pauseAnalysis()
+                    Accessible.name: core.paused ? "Resume active scan" : "Pause active scan"
+                    SafeTip { visible:anchorHovered; text:"Pause keeps this scan in memory. Resume continues at the same position. Cancel discards it. Closing the app cannot resume this scan later." }
                 }
                 Action {
                     id: cancelButton
                     objectName: "cancelAnalysis"
-                    text: core.cancelling ? "Cancelling…" : "Cancel"
+                    text: core.loadingResults ? "Stop loading" : core.cancelling ? "Cancelling…" : "Cancel"
                     visible: core.busy
                     enabled: core.available && !core.cancelling
                     onClicked: cancelScan()
@@ -3949,6 +4270,26 @@ ApplicationWindow {
                     onAccepted: scan()
                 }
             }
+            Flow {
+                visible: scanOptionsToggle.checked
+                Layout.fillWidth: true
+                Layout.preferredHeight: visible ? implicitHeight : 0
+                spacing: 8
+                FieldChoice {
+                    id: scanMode; objectName:"scanMode"; width:205; enabled:backendReady
+                    textRole:"label"; valueRole:"value"
+                    model:[{label:"Full scan",value:"full"},{label:"Quick: prefix",value:"prefix"},{label:"Quick: packet interval",value:"range"},{label:"Quick: 4 large windows",value:"distributed"}]
+                    Accessible.name:"Scan coverage mode"
+                }
+                FieldChoice { id:scanBudgetUnit; objectName:"scanBudgetUnit"; width:135; model:["% of file","packets"]; enabled:backendReady; visible:scanMode.currentValue==="prefix" || scanMode.currentValue==="distributed"; onActivated:scanBudget.text=currentIndex===0 ? "10" : "250000"; Accessible.name:"Quick scan budget unit" }
+                FieldInput { id:scanBudget; objectName:"scanBudget"; width:100; text:"10"; enabled:backendReady; visible:scanMode.currentValue==="prefix" || scanMode.currentValue==="distributed"; placeholderText:"Packet budget"; Accessible.name:scanBudgetUnit.currentIndex===0 ? "Quick scan percent of file" : "Quick scan packet budget"; SafeTip { visible:anchorHovered; text:"Scan 10% for one tenth of the file, or set a packet budget. Distributed mode uses four contiguous windows, not many random HDD reads." } }
+                PlainLabel { text:"Start (inclusive)"; color:muted; visible:scanMode.currentValue==="range" }
+                FieldInput { id:scanStart; objectName:"scanStart"; width:125; text:"0"; enabled:backendReady; visible:scanMode.currentValue==="range"; placeholderText:"Start packet"; Accessible.name:"First packet, inclusive" }
+                PlainLabel { text:"End (exclusive)"; color:muted; visible:scanMode.currentValue==="range" }
+                FieldInput { id:scanEnd; objectName:"scanEnd"; width:125; text:"250000"; enabled:backendReady; visible:scanMode.currentValue==="range"; placeholderText:"End packet"; Accessible.name:"End packet, exclusive" }
+                PlainLabel { text:scanMode.currentValue==="full" ? "All packets; editing available after completion" : "Packet indexes · preview is read-only, not a complete recording"; color:muted; font.pixelSize:11 }
+            }
+            PlainLabel { visible:!quickOptionsValid; text:"Enter whole packet indexes; end must exceed start, and budget must be positive."; color:removedColor; font.pixelSize:11 }
             PlainLabel {
                 visible: extraPidsValue === null
                 text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
@@ -3960,7 +4301,15 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.preferredHeight: 2
             visible: core.busy
-            indeterminate: true
+            indeterminate: scanProgress.progress_fraction === undefined || core.loadingResults
+            value: Number(scanProgress.progress_fraction || 0)
+        }
+        PlainLabel {
+            objectName:"scanStatus"
+            visible:core.busy || !!coverageText
+            Layout.fillWidth:true; Layout.leftMargin:12; Layout.rightMargin:12
+            wrapMode:Text.Wrap; font.pixelSize:11; color:partialResults ? changedColor : muted
+            text:core.loadingResults ? "Scan 100% · loading result pages · " + num(scanProgress.loaded_items) + " records…" : core.busy ? (core.cancelling ? "Cancelling…" : core.paused ? "Paused · Resume continues this session" : scanProgress.analysis_status === "finalizing" ? "Scan 100% · finalizing evidence…" : "Scanning · "+Math.floor(Number(scanProgress.progress_fraction || 0)*100)+"%") + " · " + num(scanProgress.coverage?.scanned_packets || scanProgress.packets) + " packets · New inspection, comparison and export wait until completion. Cached records can still be browsed." : coverageText
         }
         RowLayout {
             visible: !metadataMode
@@ -4154,6 +4503,12 @@ ApplicationWindow {
                 ColumnLayout {
                     anchors.fill: parent
                     spacing: 0
+                    RowLayout {
+                        Layout.fillWidth:true
+                        visible:!!activeCollection && core.remainingPages[activeCollection] !== undefined
+                        PlainLabel { Layout.fillWidth:true; text:"Showing " + num((analysisState[activeCollection] || []).length) + " of " + num(analysisState.result_counts?.[activeCollection]) + " · search/filter applies to loaded records"; color:muted; font.pixelSize:11; wrapMode:Text.Wrap }
+                        Action { objectName:"loadMoreResults"; text:"Load next 50"; enabled:backendReady; onClicked:{core.loadMore(activeCollection);if(activeCollection==="tables")core.loadMore("table_groups");} }
+                    }
                     Flow {
                         Layout.fillWidth: true
                         Layout.preferredHeight: implicitHeight
@@ -4460,7 +4815,7 @@ ApplicationWindow {
                                     Layout.preferredWidth: 1
                                     implicitHeight: 28
                                     textRole: "label"
-                                    model: comparisonPresets()
+                                    model: tab === "Changes" ? comparisonPresets() : []
                                     enabled: backendReady && !!analysisState.complete && !core.comparing
                                     Accessible.name: "Snapshot " + modelData + " from history"
                                     displayText: modelData + " · History…"
@@ -4633,6 +4988,9 @@ ApplicationWindow {
                     }
                     ListView {
                         id: recordList
+                        // Keep publication work proportional to visible rows. The full
+                        // model remains available for search, paging and keyboard use.
+                        cacheBuffer: 0
                         visible: tab !== "Topology"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
@@ -5023,6 +5381,8 @@ ApplicationWindow {
                                     contentItem: PlainLabel { text:crcChip.text; color:detail.crc?.status==="invalid" ? removedColor : detail.crc?.status==="valid" ? addedColor : muted; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
                                 }
                                 SummaryChip { objectName:"arrivalToggle"; visible:!!detail.distribution; text:num(detail.distribution?.observation_count) + " arrivals"; checked:arrivalOpen; help:"Arrival distribution in packet positions; elapsed seconds only from a supplied bitrate"; scrollHost:summaryChips; onClicked:arrivalOpen=!arrivalOpen }
+                                SummaryChip { objectName:"previousOccurrences"; visible:Number(detail.occurrence_offset || 0)>0; text:"Previous arrivals"; help:"View the preceding 50 occurrence positions"; scrollHost:summaryChips; onClicked:core.inspectOccurrences(Math.max(0,Number(detail.occurrence_offset)-50)) }
+                                SummaryChip { objectName:"nextOccurrences"; visible:detail.occurrence_next_offset !== undefined && detail.occurrence_next_offset !== null; text:"Next arrivals · "+num(Number(detail.occurrence_offset || 0)+(detail.occurrences || []).length)+" / "+num(detail.occurrence_total); help:"View the next 50 occurrence positions. Distribution above covers all observed arrivals."; scrollHost:summaryChips; onClicked:core.inspectOccurrences(Number(detail.occurrence_next_offset)) }
                             }
                         }
                         Row {
@@ -5103,7 +5463,7 @@ ApplicationWindow {
                                 Layout.preferredHeight: 12
                                 spacing: 1
                                 Repeater {
-                                    model: detail.distribution?.bins || []
+                                    model: arrivalOpen ? (detail.distribution?.bins || []) : []
                                     Rectangle {
                                         required property var modelData
                                         width: Math.max(1, (inspectorDetailsColumn.width - 2) / Math.max(1, detail.distribution.bins.length) - 1)
@@ -5222,6 +5582,7 @@ ApplicationWindow {
                     }
                     ListView {
                         id: tree
+                        cacheBuffer: 0
                         objectName: "fieldTree"
                         Accessible.role: Accessible.List
                         Accessible.name: "Decoded PSI / SI fields"
@@ -5314,13 +5675,20 @@ ApplicationWindow {
                                     elide: Text.ElideRight
                                     Layout.maximumWidth: Math.max(90, tree.width * 0.48)
                                 }
-                                Action {
+                                Loader {
+                                    // A nonexistent reference must not allocate a
+                                    // hidden button, background, label and tooltip.
+                                    active: !!modelData.reference
+                                    visible: active
+                                    asynchronous: false
+                                    Layout.preferredWidth: 22
+                                    Layout.preferredHeight: 24
+                                    sourceComponent: Action {
                                     id: referenceJump
                                     objectName: "reference:" + modelData.path
                                     visible: !!modelData.reference
                                     enabled: backendReady && !core.inspecting
-                                    Layout.preferredWidth: 22
-                                    Layout.preferredHeight: 24
+                                    anchors.fill: parent
                                     leftPadding: 0; rightPadding: 0
                                     activeFocusOnTab: tree.currentIndex===index
                                     text: "→"
@@ -5333,6 +5701,7 @@ ApplicationWindow {
                                     contentItem: PlainLabel {text:referenceJump.text;color:referenceJump.hovered || referenceJump.activeFocus ? blue : muted;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
                                     background: Rectangle {color:"transparent";radius:2;border.color:referenceJump.activeFocus ? blue : "transparent";border.width:referenceJump.activeFocus ? focusWidth : 0}
                                     SafeTip {visible:anchorHovered;text:modelData.reference ? modelData.reference.label + " · " + modelData.reference.help + " · Ctrl+Enter" : ""}
+                                }
                                 }
                             }
                             onClicked: {
@@ -5389,7 +5758,7 @@ ApplicationWindow {
                         TextArea {
                             id: xmlEvidence
                             textFormat: TextEdit.PlainText
-                            text: (evidenceScope === "Section" ? detail.section_tsduck_xml : detail.merged?.tsduck_xml) || "No standalone native XML is available for this section. Exact section fields and bytes remain in Structure and Hex."
+                            text: inspectorView !== "XML" ? "" : (evidenceScope === "Section" ? detail.section_tsduck_xml : detail.merged?.tsduck_xml) || "No standalone native XML is available for this section. Exact section fields and bytes remain in Structure and Hex."
                             Component.onCompleted: core.highlightXml(textDocument, lightTheme)
                             readOnly: true
                             selectByMouse: true
@@ -5425,7 +5794,7 @@ ApplicationWindow {
                             }
                             Repeater {
                                 id: protocolCardRepeater
-                                model: protocolCardModel.cards
+                                model: inspectorView === "Metadata" ? protocolCardModel.cards : []
                                 ColumnLayout {
                                     id: protocolCard
                                     required property int index
@@ -5441,7 +5810,7 @@ ApplicationWindow {
                                         Action {required property var modelData;required property int index;objectName:"protocolSource_"+protocolCard.index+"_"+index;Layout.fillWidth:true;text:"Open source · "+modelData.label;enabled:modelData.available && backendReady && !core.inspecting;Accessible.name:text;onClicked:openProtocolSource(modelData,true,protocolCard.index,index);SafeTip {visible:anchorHovered;text:modelData.available?"Exact source context. Locator precision: "+modelData.precision:"Source identity, revision or cutoff is unavailable."}}
                                     }
                                     Action { id: protocolEvidenceToggle; text: checked ? "Hide original values and source" : "Original values and source"; checkable: true; Layout.fillWidth: true }
-                                    TextArea { visible: protocolEvidenceToggle.checked; text: JSON.stringify(modelData.evidence,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
+                                    TextArea { visible: protocolEvidenceToggle.checked; text: protocolEvidenceToggle.checked ? JSON.stringify(modelData.evidence,null,2) : ""; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
                             }
                             PlainLabel { text: "Multilingual EPG"; Layout.fillWidth: true; font.bold: true; color: ink }
@@ -5459,7 +5828,7 @@ ApplicationWindow {
                             }
                             PlainLabel { text: detail.text_diagnostic_scope || "Analyze a stream to inspect metadata."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
                             Repeater {
-                                model: metadataEntries()
+                                model: inspectorView === "Metadata" ? metadataEntries() : []
                                 ColumnLayout {
                                     required property var modelData
                                     Layout.fillWidth: true
@@ -5467,7 +5836,7 @@ ApplicationWindow {
                                     PlainLabel { text: modelData.title; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: blue }
                                     TextArea { text: modelData.text; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                     Action { id: evidenceToggle; text: checked ? "Hide original values and source" : "Original values and source"; checkable: true; Layout.fillWidth: true }
-                                    TextArea { visible: evidenceToggle.checked; text: modelData.evidence; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
+                                    TextArea { visible: evidenceToggle.checked; text: evidenceToggle.checked ? modelData.evidence : ""; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
                             }
                             Rectangle { Layout.fillWidth: true; Layout.topMargin: 12; Layout.bottomMargin: 8; implicitHeight: 1; color: dividerColor }
@@ -5557,11 +5926,21 @@ ApplicationWindow {
                         }
                     }
                     ListView {
+                        id: inspectorReferences
                         visible: inspectorView === "References"
                         Layout.fillWidth:true; Layout.fillHeight:true; clip:true
-                        model:specificationLinks; spacing:12; ScrollBar.vertical:ScrollBar {}
+                        property string currentIdentity: win.protocolCardKey
+                        property string loadedIdentity: ""
+                        onVisibleChanged: if(visible)loadedIdentity=currentIdentity
+                        onCurrentIdentityChanged: if(visible)loadedIdentity=currentIdentity
+                        // Expose only the latched evidence identity. Visibility must not
+                        // bypass activation or reassign the model on same-detail tab changes.
+                        model:loadedIdentity===currentIdentity ? specificationLinks : []; spacing:12; ScrollBar.vertical:ScrollBar {}
                         delegate:Column {
+                            Component.onCompleted: if(referencePersistenceTest.running)referencePersistenceTest.delegateCreates++
+                            Component.onDestruction: if(referencePersistenceTest && referencePersistenceTest.running)referencePersistenceTest.delegateDestroys++
                             required property var modelData
+                            property alias urlField: referenceUrl
                             width:ListView.view.width; spacing:6
                             PlainLabel { text:modelData.title || modelData.id; color:ink; width:parent.width; wrapMode:Text.Wrap; font.bold:true }
                             PlainLabel { text:[modelData.version,modelData.scope,modelData.access,modelData.notes].filter(Boolean).join(" · "); color:muted; width:parent.width; wrapMode:Text.Wrap }
@@ -5581,7 +5960,7 @@ ApplicationWindow {
                         TextArea {
                             objectName: "sectionNativeText"
                             textFormat: TextEdit.PlainText
-                            text: detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex."
+                            text: inspectorView !== "Decoded" ? "" : detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex."
                             readOnly: true
                             selectByMouse: true
                             wrapMode: TextEdit.NoWrap
@@ -5615,7 +5994,7 @@ ApplicationWindow {
                             visible: !selectedChange
                             text: "Rename service…"
                             Layout.fillWidth: true
-                            enabled: backendReady && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
+                            enabled: backendReady && !editBlockReason() && !selectedChange && !!analysisState.complete && !core.inspecting && detail.name === "SDT" && detail.valid && !!chosenService()
                             onClicked: {
                                 preview = {};
                                 editService.currentIndex = Math.max(0, (detail.services || []).findIndex(function(service) {return service.id === selectedService;}));
@@ -5656,6 +6035,7 @@ ApplicationWindow {
                     }
                     FieldChoice { objectName:"historyScope"; Layout.preferredWidth:180; Layout.minimumWidth:180; model:["Selected table history","All table history"]; currentIndex:allTableHistory?1:0; onActivated:allTableHistory=currentIndex===1; implicitHeight:24 }
                     PlainLabel { text:historyRows.length+" transitions"; color:muted; Layout.fillWidth:true; elide:Text.ElideRight }
+                    Action { objectName:"loadMoreHistory"; text:"Load history"; visible:core.remainingPages.table_history !== undefined; enabled:backendReady; onClicked:core.loadMore("table_history") }
                     Action { objectName:"historyPrevious"; text:"Previous"; enabled:historyPage>0; onClicked:historyPage-- }
                     Action { objectName:"historyNext"; text:"Next"; enabled:(historyPage+1)*40<historyRows.length; onClicked:historyPage++ }
                     PlainLabel {
@@ -5717,12 +6097,12 @@ ApplicationWindow {
                         radius: 2
                     }
                     function packetAtBin(index) {
-                        let packets = Number(analysisState.packets || 0);
+                        let packets = densitySourcePackets;
                         if (!packets) return 0;
                         return Math.max(0, Math.min(packets - 1, Math.round(index * (packets - 1) / Math.max(1, binCount - 1))));
                     }
                     function binForPacket(packet) {
-                        let packets = Number(analysisState.packets || 0);
+                        let packets = densitySourcePackets;
                         if (!binCount) return -1;
                         if (packet === null || packet === undefined || packets <= 1) return binCount - 1;
                         return Math.max(0, Math.min(binCount - 1, Math.round(packet / (packets - 1) * (binCount - 1))));
@@ -5739,32 +6119,36 @@ ApplicationWindow {
                         anchors.fill: parent
                         spacing: 2
                         Repeater {
-                            model: analysisState.density || []
+                            // Reuse the bounded density visuals across state replacements.
+                            // Hidden spare slots avoid rebuilding all 80 controls at scan completion.
+                            model: Math.max(80,(analysisState.density || []).length)
                             Rectangle {
-                                required property var modelData
+                                readonly property var binData: (analysisState.density || [])[index] || ({count:0,bad:0})
+                                visible: index < (analysisState.density || []).length
                                 required property int index
                                 objectName: "densityBin" + index
                                 width: densityStrip.binWidth
                                 height: densityStrip.height
-                                color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : blue
-                                opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
+                                readonly property bool unscanned: !packetCovered(densityStrip.packetAtBin(index))
+                                color: unscanned ? dividerColor : binData.bad && binData.count && binData.bad >= binData.count ? removedColor : blue
+                                opacity: unscanned ? 0.8 : binData.count ? 0.35 + Math.min(0.65, binData.count / 50) : 0.12
                                 // Partially invalid bins keep the section colour and
                                 // add the invalid share instead of hiding the count.
                                 Rectangle {
-                                    visible: modelData.bad > 0 && !(modelData.count && modelData.bad >= modelData.count)
+                                    visible: binData.bad > 0 && !(binData.count && binData.bad >= binData.count)
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.bottom: parent.bottom
                                     // A single invalid section in a dense bin is
                                     // unreadable as a true proportion, so the
                                     // share keeps a visible minimum height.
-                                    height: Math.max(3, parent.height * Math.min(1, modelData.bad / Math.max(1, modelData.count)))
+                                    height: Math.max(3, parent.height * Math.min(1, binData.bad / Math.max(1, binData.count)))
                                     color: removedColor
                                     opacity: 0.95
                                 }
                                 SafeTip {
                                     visible: binHover.hovered
-                                    text: "Bin " + (index + 1) + " · " + modelData.count + " sections / " + modelData.bad + " invalid" + (densityStrip.interactive ? " · click to load this position" : "")
+                                    text: unscanned ? "Unscanned interval · unknown, not zero reception" : "Bin " + (index + 1) + " · " + binData.count + " sections / " + binData.bad + " invalid" + (densityStrip.interactive ? " · click to load this position" : "")
                                 }
                                 HoverHandler {
                                     id: binHover
@@ -5801,7 +6185,7 @@ ApplicationWindow {
                             required property real modelData
                             Layout.fillWidth: true
                             horizontalAlignment: modelData === 0 ? Text.AlignLeft : modelData === 1 ? Text.AlignRight : Text.AlignHCenter
-                            text: axisLabel(Math.round(Math.max(0, Number(analysisState.packets || 1)-1) * modelData))
+                            text: axisLabel(Math.round(Math.max(0, densitySourcePackets-1) * modelData))
                             color: muted; font.family:"monospace"; font.pixelSize:10
                         }
                     }
@@ -6023,13 +6407,20 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
             }
             ListView {
+                id: dialogReferences
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 clip: true
                 spacing: 10
-                model: specificationLinks
+                property string currentIdentity: win.protocolCardKey
+                property string loadedIdentity: ""
+                property bool dialogOpen: specificationDialog.visible
+                onDialogOpenChanged: if(dialogOpen)loadedIdentity=currentIdentity
+                onCurrentIdentityChanged: if(dialogOpen)loadedIdentity=currentIdentity
+                model: loadedIdentity===currentIdentity ? specificationLinks : []
                 ScrollBar.vertical: ScrollBar {}
                 delegate: Column {
+                    property alias urlField: dialogReferenceUrl
                     required property var modelData
                     width: ListView.view.width - 14
                     spacing: 6
@@ -6061,6 +6452,7 @@ ApplicationWindow {
                         visible: !!text
                     }
                     TextArea {
+                        id: dialogReferenceUrl
                         textFormat: TextEdit.PlainText
                         text: modelData.url
                         readOnly: true

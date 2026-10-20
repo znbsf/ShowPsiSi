@@ -1,3 +1,4 @@
+#include <ctime>
 #include <QGuiApplication>
 #include <QQuickTextDocument>
 #include <QSyntaxHighlighter>
@@ -10,6 +11,7 @@
 #include <QQuickWindow>
 #include <QQuickStyle>
 #include <QProcess>
+#include <QThread>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -43,13 +45,96 @@
 #include <QIcon>
 #include <QLibrary>
 
+// The child process and every JSON decode/variant conversion live on this thread.
+// At most one progress delivery is queued to the GUI. Reliable replies never
+// share that lossy mailbox, including control ACKs and the original terminal.
+class BackendTransport : public QObject {
+    Q_OBJECT
+    QProcess* process=nullptr;
+    QTimer* progressTimer=nullptr;
+    QByteArray buffer, pendingWrites;
+    QJsonObject pendingProgress;
+    bool progressInFlight=false, drainScheduled=false;
+    void deliver(const QJsonObject& message) {
+        emit frame(message, message.value("state").toObject().toVariantMap(),
+                   message.value("result").toObject().toVariantMap(),
+                   message.value("error").toObject().toVariantMap(),
+                   QString::fromUtf8(QJsonDocument(message.value("result").toObject()).toJson(QJsonDocument::Compact)));
+    }
+    void drain() {
+        drainScheduled=false;
+        // Yield the worker event loop so pause/cancel writes cannot starve behind
+        // a flood of lines. Parsing never occupies the GUI event loop.
+        for(int count=0;count<32;++count){
+            const auto nl=buffer.indexOf('\n'); if(nl<0)return;
+            QJsonParseError error;
+            const auto doc=QJsonDocument::fromJson(buffer.left(nl),&error);
+            buffer.remove(0,nl+1);
+            if(error.error!=QJsonParseError::NoError||!doc.isObject()) {
+                emit protocolError("Invalid backend response: "+error.errorString());continue;
+            }
+            const auto message=doc.object();
+            if(message.value("event")=="progress") {
+                if(activeRequest.isUndefined() || message.value("request_id")!=activeRequest)continue;
+                // Paused/resumed status transitions are control evidence, not
+                // disposable telemetry. Deliver them reliably and in order.
+                const auto status=message.value("state").toObject().value("analysis_status").toString();
+                if(status=="paused"||lastStatus=="paused") {pendingProgress={};deliver(message);}
+                else pendingProgress=message;
+                lastStatus=status;
+            } else { deliver(message); }
+        }
+        if(buffer.contains('\n')&&!drainScheduled){drainScheduled=true;QTimer::singleShot(0,this,[this]{drain();});}
+    }
+    QString lastStatus;
+    QJsonValue activeRequest;
+public slots:
+    void start(QString binary,QStringList arguments) {
+        process=new QProcess(this);progressTimer=new QTimer(this);progressTimer->setInterval(50);
+        connect(progressTimer,&QTimer::timeout,this,[this]{
+            if(progressInFlight||pendingProgress.isEmpty())return;
+            progressInFlight=true;auto message=pendingProgress;pendingProgress={};deliver(message);
+        });progressTimer->start();
+        connect(process,&QProcess::readyReadStandardOutput,this,[this]{buffer+=process->readAllStandardOutput();if(!drainScheduled)drain();});
+        connect(process,&QProcess::readyReadStandardError,this,[this]{emit stderrRead(QString::fromUtf8(process->readAllStandardError()).right(4096));});
+        connect(process,&QProcess::started,this,[this]{emit started(process->processId());if(!pendingWrites.isEmpty()){process->write(pendingWrites);pendingWrites.clear();}});
+        connect(process,&QProcess::errorOccurred,this,[this]{emit stopped(process->errorString());});
+        connect(process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,[this](int code,QProcess::ExitStatus status){
+            // Preserve complete replies that arrived immediately before EOF.
+            buffer+=process->readAllStandardOutput();while(buffer.contains('\n'))drain();
+            emit stopped(QString("Backend stopped (%1, %2)").arg(code).arg(status==QProcess::CrashExit?"crash":"exit"));
+        });
+        process->start(binary,arguments);
+    }
+    void write(QByteArray wire){
+        const auto request=QJsonDocument::fromJson(wire).object();
+        if(request.value("method")=="analyze"){activeRequest=request.value("id");pendingProgress={};lastStatus.clear();}
+        if(!process||process->state()==QProcess::Starting)pendingWrites+=wire;else if(process->state()==QProcess::Running)process->write(wire);}
+    void acknowledgeProgress(){progressInFlight=false;}
+    void shutdown(bool drainExports){
+        if(!process)return;progressTimer->stop();process->closeWriteChannel();
+        if(drainExports){process->waitForFinished(-1);return;}
+        if(!process->waitForFinished(1000)){process->kill();process->waitForFinished(1000);}
+    }
+signals:
+    void frame(QJsonObject message,QVariantMap state,QVariantMap result,QVariantMap error,QString resultJson);
+    void protocolError(QString message);void stderrRead(QString text);void started(qint64 pid);void stopped(QString reason);
+};
+
 class Bridge:public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantMap state READ state NOTIFY stateChanged)
+    Q_PROPERTY(QString stateJson READ stateJson NOTIFY stateChanged)
+    Q_PROPERTY(QString detailJson READ detailJson NOTIFY detailChanged)
     Q_PROPERTY(QVariantMap detail READ detail NOTIFY detailChanged)
     Q_PROPERTY(QString root READ root CONSTANT)
     Q_PROPERTY(QString sample READ sample CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(QVariantMap progress READ progress NOTIFY progressChanged)
+    Q_PROPERTY(bool paused READ paused NOTIFY pauseChanged)
+    Q_PROPERTY(bool pausePending READ pausePending NOTIFY pauseChanged)
+    Q_PROPERTY(bool loadingResults READ loadingResults NOTIFY busyChanged)
+    Q_PROPERTY(QVariantMap remainingPages READ remainingPages NOTIFY stateChanged)
     Q_PROPERTY(bool exportPending READ exportPending NOTIFY exportPendingChanged)
     Q_PROPERTY(bool cancelling READ cancelling NOTIFY cancellingChanged)
     Q_PROPERTY(bool available READ available NOTIFY availabilityChanged)
@@ -57,10 +142,22 @@ class Bridge:public QObject {
     Q_PROPERTY(QString error READ error NOTIFY errorChanged)
     Q_PROPERTY(bool inspecting READ inspecting NOTIFY inspectingChanged)
     Q_PROPERTY(bool comparing READ comparing NOTIFY comparingChanged)
-    struct Request { QString method; quint64 generation; };
-    QProcess process;
-    QByteArray buffer,queuedWrites;
+    struct Request { QString method; quint64 generation; QVariantMap params; };
+    QThread transportThread;
+    BackendTransport* transport=nullptr;
+    qint64 backendPid=0;
+    QVariantMap m_progress;
+    bool m_paused=false,m_pausePending=false,m_pauseTarget=false,m_loadingResults=false;
+    QString hydrationMethod;
+    QStringList hydrationQueue;
+    QVariantMap hydrationState;
+    QHash<QString,QVariantList> hydrationCollections;
+    QHash<QString,int> pageOffsets;
+    QSet<QString> loadingPages;
+    int hydrationEpoch=0;
+    int awaitingPresentationEpoch=-1;
     QVariantMap m_state,m_detail;
+    QString m_detailJson="{}";
     QString m_root,m_sample,m_error,stderrTail,m_availability="starting";
     bool m_busy=false,m_cancelling=false,m_inspecting=false,m_comparing=false;
     int sequence=0,activeAnalysis=0,latestInspect=0,latestQuery=0,latestPreview=0,latestComparison=0,latestTopology=0,latestDvbiImport=0,latestDvbiQuery=0,latestDvbiInspect=0;
@@ -68,26 +165,32 @@ class Bridge:public QObject {
     QHash<int,Request> methods;
     QSet<int> pendingExports;
     QJsonArray recentResponses;
-    QElapsedTimer clock;
+    QElapsedTimer clock,hydrationProgressClock;
+    QThread traceThread;
+    QObject* traceWriter=nullptr;
+    QString tracePath;
     bool dataFrame=false,completeFrame=false;
     QQuickWindow* window=nullptr;
-
     static bool documentMethod(const QString& method){return method=="import_dvbi"||method=="query_dvbi"||method=="inspect_dvbi";}
     void clearTsRequests(){for(auto i=methods.begin();i!=methods.end();)if(!documentMethod(i->method))i=methods.erase(i);else ++i;}
     void clearIntentions(){
         latestInspect=latestQuery=latestPreview=latestComparison=latestTopology=0;
-        m_detail.clear();m_inspecting=false;m_comparing=false;
-        emit detailChanged();emit inspectingChanged();emit comparingChanged();
+        const bool hadDetail=!m_detail.isEmpty(),wasInspecting=m_inspecting,wasComparing=m_comparing;
+        m_detail.clear();m_detailJson="{}";m_inspecting=false;m_comparing=false;
+        if(hadDetail)emit detailChanged();if(wasInspecting)emit inspectingChanged();if(wasComparing)emit comparingChanged();
         emit workspaceInvalidated();
     }
-    void receive(const QJsonObject& msg){
+    void receive(const QJsonObject& msg,const QVariantMap& stateValue,const QVariantMap& resultValue,const QVariantMap& errorValue,const QString& resultJson){
         if(m_availability=="disconnected")return;
         if(msg.contains("event")){
             // Events from old scans, other operations and malformed request IDs
             // must never replace the active workspace.
             if(msg["event"]!="progress"||!m_busy||m_cancelling||
                msg["request_id"]!=QJsonValue(activeAnalysis)||!msg["state"].isObject())return;
-            m_state=msg["state"].toObject().toVariantMap();emit stateChanged();return;
+            m_progress=stateValue;emit progressChanged();
+            const bool paused=stateValue.value("analysis_status")=="paused";
+            if(paused!=m_paused || (m_pausePending && paused==m_pauseTarget)){m_paused=paused;m_pausePending=false;emit pauseChanged();}
+            return;
         }
         if(!msg["id"].isDouble())return;
         const int id=msg["id"].toInt();
@@ -110,40 +213,102 @@ class Bridge:public QObject {
            (method=="inspect_dvbi"&&id!=latestDvbiInspect))return;
         if(method=="inspect"){m_inspecting=false;emit inspectingChanged();}
         if(method=="diff_snapshots"){m_comparing=false;emit comparingChanged();}
+        if(method=="query_result") {
+            const QString collection=request.params.value("collection").toString();
+            loadingPages.remove(collection);
+            if(request.params.value("_epoch").toInt()!=hydrationEpoch)return;
+            if(msg.contains("error")){
+                const QString failedMethod=hydrationMethod.isEmpty()?"query_result":hydrationMethod;
+                ++hydrationEpoch;hydrationQueue.clear();loadingPages.clear();pageOffsets.clear();hydrationCollections.clear();hydrationState.clear();hydrationMethod.clear();
+                m_error=errorValue.value("message").toString();emit errorChanged();
+                m_loadingResults=false;m_busy=false;m_state.clear();clearIntentions();emit resultLoading();emit stateChanged();emit busyChanged();
+                emit response(failedMethod,errorValue);return;
+            }
+            const auto result=msg.value("result").toObject();
+            const auto offset=request.params.value("offset").toLongLong();
+            const auto items=result.value("items");const auto total=result.value("total");const auto next=result.value("next_offset");
+            const auto expectedCutoff=request.params.contains("at_packet")?QJsonValue::fromVariant(request.params.value("at_packet")):QJsonValue(QJsonValue::Null);
+            const double totalNumber=total.toDouble(-1),nextNumber=next.toDouble(-1);
+            const qint64 end=offset+(items.isArray()?items.toArray().size():0);
+            const bool valid=result.value("analysis_revision")==QJsonValue::fromVariant(hydrationState.value("analysis_revision")) &&
+                result.value("collection").toString()==collection && result.value("at_packet")==expectedCutoff &&
+                items.isArray() && items.toArray().size()<=request.params.value("limit").toInt() && resultJson.size()<=300000 &&
+                total.isDouble() && std::isfinite(totalNumber) && totalNumber>=end && std::floor(totalNumber)==totalNumber &&
+                (offset==0 || totalNumber==hydrationState.value("result_counts").toMap().value(collection,-1).toDouble()) &&
+                ((next.isNull() && end==totalNumber) || (next.isDouble() && nextNumber==end && nextNumber>offset && nextNumber<totalNumber));
+            if(!valid){
+                const QString method=hydrationMethod.isEmpty()?"query_result":hydrationMethod;
+                ++hydrationEpoch;hydrationQueue.clear();loadingPages.clear();pageOffsets.clear();hydrationCollections.clear();hydrationState.clear();hydrationMethod.clear();
+                m_loadingResults=false;m_busy=false;m_state.clear();clearIntentions();m_error="Invalid result page: revision, collection, cutoff, count or cursor mismatch.";
+                emit resultLoading();emit stateChanged();emit busyChanged();emit errorChanged();emit response(method,{{"code","invalid_result_page"},{"message",m_error}});return;
+            }
+            mark("page_rows_"+QString::number(items.toArray().size()));
+            mark("page_begin_"+collection);emit resultPage(collection,resultJson);mark("page_js_"+collection);
+            hydrationCollections[collection].append(resultValue.value("items").toList());
+            auto counts=hydrationState.value("result_counts").toMap();counts[collection]=resultValue.value("total");hydrationState["result_counts"]=counts;
+            if(resultValue.value("next_offset").isNull())pageOffsets.remove(collection);else pageOffsets[collection]=resultValue.value("next_offset").toInt();
+            if(m_loadingResults){
+                m_progress["loaded_items"]=m_progress.value("loaded_items").toInt()+resultValue.value("items").toList().size();
+                if(hydrationProgressClock.elapsed()>=50){hydrationProgressClock.restart();emit progressChanged();mark("hydration_progress_emitted");}
+                const int epoch=hydrationEpoch;
+                if(pageOffsets.contains(collection))QTimer::singleShot(0,this,[this,collection,epoch]{if(epoch==hydrationEpoch)loadResultPage(collection,pageOffsets.value(collection));});
+                else QTimer::singleShot(0,this,[this,epoch]{if(epoch==hydrationEpoch)loadHydrationPage();});
+            }else{hydrationState[collection]=hydrationCollections.value(collection);m_state=hydrationState;emit stateChanged();}
+            return;
+        }
+        if(method=="pause_analysis"||method=="resume_analysis"){
+            if(msg.contains("error")||!resultValue.value("requested").toBool()){m_pausePending=false;emit pauseChanged();}
+        }
         const bool cancelRequested=method=="analyze"&&m_cancelling;
         // Only the original analyze terminal settles the scan. A cancellation
         // acknowledgement merely says that the worker saw the request.
         if(method=="analyze"){
-            activeAnalysis=0;m_busy=false;m_cancelling=false;
-            emit busyChanged();emit cancellingChanged();mark("scan_response");
+            const bool compactSuccess=!msg.contains("error")&&resultValue.contains("result_counts");
+            activeAnalysis=0;m_cancelling=false;m_paused=false;m_pausePending=false;emit pauseChanged();
+            // A successful compact scan immediately enters hydration. Never expose
+            // an idle interval which enables conflicting source/inspection controls.
+            if(!compactSuccess){m_busy=false;emit busyChanged();}
+            else mark(m_busy ? "compact_terminal_busy" : "compact_terminal_idle_error");
+            emit cancellingChanged();mark("scan_response");
         }
         if(msg.contains("error")){
             const auto error=msg["error"].toObject();
             const bool cancelled=method=="analyze"&&error["code"]=="analysis_cancelled";
             if(method=="analyze"){
-                m_state=error["data"].toObject()["state"].toObject().toVariantMap();
+                m_state=errorValue.value("data").toMap().value("state").toMap();
                 clearIntentions();emit stateChanged();
             }
             m_error=cancelled?QString():error["message"].toString();emit errorChanged();
-            emit response(method,error.toVariantMap());
+            emit response(method,errorValue);
         }else{
             if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
-            QVariantMap result=msg["result"].toObject().toVariantMap();
+            QVariantMap result=resultValue;
+            if(cancelRequested)result["cancel_requested"]=true;
+            if((method=="analyze"||method=="query")&&result.contains("result_counts")){beginHydration(method,result);return;}
             if(method=="analyze"||method=="query"){m_state=result;emit stateChanged();}
-            if(method=="inspect"){m_detail=result;emit detailChanged();}
+            if(method=="inspect"){result["occurrence_offset"]=request.params.value("occurrence_offset",0);m_detail=result;m_detailJson=resultJson;
+                if(m_detailJson.endsWith('}')){m_detailJson.chop(1);m_detailJson+=QString(",\"occurrence_offset\":%1}").arg(request.params.value("occurrence_offset",0).toInt());}
+                mark("inspect_detail_begin");emit detailChanged();mark("inspect_detail_end");}
             if(cancelRequested)result["cancel_requested"]=true;
             emit response(method,result);
         }
     }
 public:
     bool exportPending() const { return !pendingExports.isEmpty(); }
-    bool hasPendingOperations() const { return exportPending() || !methods.isEmpty() || m_busy || !queuedWrites.isEmpty(); }
+    bool hasPendingOperations() const { return exportPending() || !methods.isEmpty() || m_busy; }
     Q_INVOKABLE QVariantMap diagnostics() const {
         return {{"pending",methods.size()},{"recent_responses",recentResponses.toVariantList()},
             {"backend",m_availability},{"error",m_error},{"stderr_tail",stderrTail}};
     }
     Bridge(){
         clock.start();
+        tracePath=qEnvironmentVariable("SHOWPSISI_TRACE");
+        if(!tracePath.isEmpty()){
+            traceWriter=new QObject;
+            traceWriter->moveToThread(&traceThread);
+            connect(&traceThread,&QThread::finished,traceWriter,&QObject::deleteLater);
+            traceThread.start();
+        }
         // Runtime discovery never trusts the working directory. Packaged resources
         // live one level above bin; source builds may use an explicit absolute root.
         const QDir executableDirectory(QCoreApplication::applicationDirPath());
@@ -164,23 +329,18 @@ public:
         }
         m_sample=qEnvironmentVariable("SHOWPSISI_SAMPLE",m_root+"/samples/generated/lab.ts");
         if(!QDir::isAbsolutePath(m_sample)){backendStopped("SHOWPSISI_SAMPLE must be an absolute path.");return;}
-        connect(&process,&QProcess::readyReadStandardOutput,this,[this]{
-            buffer+=process.readAllStandardOutput();int nl;
-            while((nl=buffer.indexOf('\n'))>=0){
-                QJsonParseError parseError;auto doc=QJsonDocument::fromJson(buffer.left(nl),&parseError);buffer.remove(0,nl+1);
-                if(parseError.error!=QJsonParseError::NoError||!doc.isObject()){m_error="Invalid backend response: "+parseError.errorString();emit errorChanged();continue;}
-                receive(doc.object());
-            }
+        transport=new BackendTransport;
+        transport->moveToThread(&transportThread);
+        connect(&transportThread,&QThread::finished,transport,&QObject::deleteLater);
+        connect(transport,&BackendTransport::frame,this,[this](QJsonObject message,QVariantMap state,QVariantMap result,QVariantMap error,QString resultJson){
+            mark("transport_frame_enter");receive(message,state,result,error,resultJson);mark("transport_frame_leave");
+            if(message.value("event")=="progress")QMetaObject::invokeMethod(transport,"acknowledgeProgress",Qt::QueuedConnection);
         });
-        connect(&process,&QProcess::started,this,[this]{
-            m_availability="ready";emit availabilityChanged();mark("backend_started");
-            if(!queuedWrites.isEmpty()){process.write(queuedWrites);queuedWrites.clear();}
-        });
-        connect(&process,&QProcess::readyReadStandardError,this,[this]{stderrTail=(stderrTail+QString::fromUtf8(process.readAllStandardError())).right(4096);});
-        connect(&process,&QProcess::errorOccurred,this,[this]{backendStopped(process.errorString());});
-        connect(&process,qOverload<int,QProcess::ExitStatus>(&QProcess::finished),this,[this](int code,QProcess::ExitStatus status){
-            backendStopped(QString("Backend stopped (%1, %2). %3").arg(code).arg(status==QProcess::CrashExit?"crash":"exit",stderrTail.trimmed()));
-        });
+        connect(transport,&BackendTransport::started,this,[this](qint64 pid){backendPid=pid;m_availability="ready";emit availabilityChanged();mark("backend_started");});
+        connect(transport,&BackendTransport::stderrRead,this,[this](QString text){stderrTail=(stderrTail+text).right(4096);});
+        connect(transport,&BackendTransport::protocolError,this,[this](QString text){m_error=text;emit errorChanged();});
+        connect(transport,&BackendTransport::stopped,this,[this](QString text){backendStopped(text+" "+stderrTail.trimmed());});
+        transportThread.start();
         QString binary=executableDirectory.filePath("showpsisi-core");
 #ifdef Q_OS_WIN
         binary+=".exe";
@@ -210,23 +370,106 @@ public:
         if(!QDir::isAbsolutePath(binary)||!QFileInfo(binary).isFile()){
             backendStopped("Backend executable is missing or SHOWPSISI_CORE is not an absolute file path: "+binary);return;
         }
-        process.start(binary,arguments);
+        QMetaObject::invokeMethod(transport,"start",Qt::QueuedConnection,Q_ARG(QString,binary),Q_ARG(QStringList,arguments));
         mark("native_setup");
     }
     ~Bridge(){
-        process.closeWriteChannel();
-        // Window close/update guards normally keep accepted writes alive. If an
-        // explicit application exit bypasses the window, drain those writes to
-        // EOF rather than killing the core halfway through its final output.
-        if(exportPending()){process.waitForFinished(-1);return;}
-        if(!process.waitForFinished(1000)){process.kill();process.waitForFinished(1000);}
+        if(traceThread.isRunning()){
+            // Drain ordered diagnostic writes before shutdown, never during GUI work.
+            QMetaObject::invokeMethod(traceWriter,[]{},Qt::BlockingQueuedConnection);
+            traceThread.quit();traceThread.wait();
+        }
+        if(transportThread.isRunning()){
+            QMetaObject::invokeMethod(transport,"shutdown",Qt::BlockingQueuedConnection,Q_ARG(bool,exportPending()));
+            transportThread.quit();transportThread.wait();
+        }
     }
+    QVariantMap progress()const{return m_progress;}
+    bool paused()const{return m_paused;} bool pausePending()const{return m_pausePending;}
+    bool loadingResults()const{return m_loadingResults;}
+    QVariantMap remainingPages()const{QVariantMap result;for(auto i=pageOffsets.cbegin();i!=pageOffsets.cend();++i)result[i.key()]=i.value();return result;}
+    Q_INVOKABLE void pauseAnalysis(){
+        if(!m_busy||!activeAnalysis||m_cancelling||m_pausePending)return;
+        m_pausePending=true;m_pauseTarget=!m_paused;emit pauseChanged();send(m_paused?"resume_analysis":"pause_analysis",{{"request_id",activeAnalysis}});
+    }
+    void beginHydration(QString method,QVariantMap result){
+        ++hydrationEpoch;hydrationProgressClock.restart();hydrationCollections.clear();emit resultLoading();hydrationState=result;hydrationMethod=method;pageOffsets.clear();loadingPages.clear();
+        hydrationQueue={"tables","services","events","history","table_history","diagnostics","density","table_groups"};
+        for(const auto& name:hydrationQueue)hydrationState[name]=QVariantList{};
+        m_loadingResults=true;m_busy=true;emit busyChanged();loadHydrationPage();
+    }
+    void finishHydration(){
+        if(!m_loadingResults)return;mark("hydrate_finalize_begin");
+        emit progressChanged();mark("hydration_progress_final");
+        QHash<QString,QVariantList> groupMembers,selectedMembers;
+        QSet<QString> truncatedGroups;
+        for(const auto& value:hydrationCollections.value("table_groups")){const auto group=value.toMap();if(group.value("member_ids_truncated").toBool())truncatedGroups.insert(group.value("id").toString());}
+        if(!truncatedGroups.isEmpty())for(const auto& rowValue:hydrationCollections.value("tables")){
+            const auto row=rowValue.toMap();const auto key=row.value("table_group_id").toString();
+            if(truncatedGroups.contains(key)){groupMembers[key].append(row.value("id"));if(row.value("selected_in_snapshot").toBool())selectedMembers[key].append(row.value("id"));}
+        }
+        auto& groups=hydrationCollections["table_groups"];
+        for(auto& groupValue:groups){auto group=groupValue.toMap();if(group.value("member_ids_truncated").toBool()){
+            const auto key=group.value("id").toString();group["section_ids"]=groupMembers.value(key);group["selected_section_ids"]=selectedMembers.value(key);group["member_ids_truncated"]=false;groupValue=group;
+        }}
+        for(auto it=hydrationCollections.cbegin();it!=hydrationCollections.cend();++it)hydrationState[it.key()]=it.value();
+        mark("hydrate_assembled");m_state=hydrationState;awaitingPresentationEpoch=hydrationEpoch;emit stateChanged();mark("hydrate_published");
+    }
+    Q_INVOKABLE int resultEpoch()const{return hydrationEpoch;}
+    Q_INVOKABLE void presentationReady(int epoch){
+        if(epoch!=hydrationEpoch || epoch!=awaitingPresentationEpoch || !m_loadingResults)return;
+        awaitingPresentationEpoch=-1;
+        // Publish the bounded visible model, then allow an input/render turn before
+        // enabling operations and starting the default inspection. Otherwise both
+        // model replacement and inspector construction consume one GUI frame.
+        QTimer::singleShot(50,this,[this,epoch]{
+            if(epoch!=hydrationEpoch || !m_loadingResults)return;
+            m_loadingResults=false;m_busy=false;mark("hydrate_enable_begin");emit busyChanged();mark("hydrate_enable_end");
+            const auto method=hydrationMethod;hydrationMethod.clear();auto summary=m_state;
+            for(const auto* key:{"tables","services","events","history","table_history","diagnostics","density","table_groups"})summary.remove(key);
+            mark("hydrate_response_begin");emit response(method,summary);mark("hydrate_ready");
+        });
+    }
+    Q_INVOKABLE void presentationFailed(int epoch,QString message){
+        if(epoch!=hydrationEpoch || !m_loadingResults)return;
+        const QString failedMethod=hydrationMethod.isEmpty()?"query_result":hydrationMethod;
+        ++hydrationEpoch;awaitingPresentationEpoch=-1;hydrationQueue.clear();loadingPages.clear();pageOffsets.clear();hydrationCollections.clear();hydrationState.clear();hydrationMethod.clear();
+        m_loadingResults=false;m_busy=false;m_state.clear();clearIntentions();emit resultLoading();emit stateChanged();emit busyChanged();
+        m_error="Result presentation failed: "+message;emit errorChanged();
+        emit response(failedMethod,{{"code","presentation_failed"},{"message",m_error}});
+    }
+    void loadHydrationPage(){
+        if(!m_loadingResults)return;
+        if(hydrationQueue.isEmpty()){finishHydration();return;}
+        const QString collection=hydrationQueue.takeFirst();loadResultPage(collection,0);
+    }
+    void loadResultPage(QString collection,int offset){
+        if(hydrationState.isEmpty())return;
+        if(loadingPages.contains(collection))return;loadingPages.insert(collection);
+        QVariantMap params={{"analysis_revision",hydrationState.value("analysis_revision")},{"collection",collection},{"offset",offset},{"limit",50},{"_epoch",hydrationEpoch}};
+        if(!hydrationState.value("selected_packet").isNull())params["at_packet"]=hydrationState.value("selected_packet");
+        mark("page_request_limit_"+QString::number(params.value("limit").toInt()));
+        send("query_result",params);
+    }
+    Q_INVOKABLE void inspectOccurrences(int offset){
+        if(m_busy||m_detail.isEmpty()||offset<0)return;
+        QVariantMap params={{"id",m_detail.value("id")},{"analysis_revision",m_detail.value("analysis_revision")},{"occurrence_offset",offset}};
+        if(!m_detail.value("native_table_at_packet").isNull())params["at_packet"]=m_detail.value("native_table_at_packet");
+        send("inspect",params);
+    }
+    Q_INVOKABLE void loadMore(QString collection){if(!m_busy&&pageOffsets.contains(collection))loadResultPage(collection,pageOffsets.value(collection));}
+    QString stateJson()const{
+        auto metadata=m_state;
+        if(metadata.value("response_mode")=="compact")for(const auto* key:{"tables","services","events","history","table_history","diagnostics","density","table_groups"})metadata.remove(key);
+        return QString::fromUtf8(QJsonDocument::fromVariant(metadata).toJson(QJsonDocument::Compact));
+    }
+    QString detailJson()const{return m_detailJson;}
     QVariantMap state()const{return m_state;} QVariantMap detail()const{return m_detail;}
     void backendStopped(const QString& reason){
         if(m_availability=="disconnected")return;
         m_availability="disconnected";m_error="Backend disconnected. Restart the application. "+reason;
-        ++generation;activeAnalysis=0;m_busy=false;m_cancelling=false;
-        methods.clear();queuedWrites.clear();pendingExports.clear();emit exportPendingChanged();m_state.clear();clearIntentions();
+        ++generation;activeAnalysis=0;m_busy=false;m_cancelling=false;m_paused=false;m_pausePending=false;emit pauseChanged();
+        methods.clear();m_loadingResults=false;hydrationState.clear();pageOffsets.clear();++hydrationEpoch;pendingExports.clear();emit exportPendingChanged();m_state.clear();clearIntentions();
         emit availabilityChanged();emit errorChanged();emit busyChanged();emit cancellingChanged();emit stateChanged();
     }
     bool inspecting()const{return m_inspecting;}
@@ -236,12 +479,19 @@ public:
     QString availability()const{return m_availability;}
     QString root()const{return m_root;} QString sample()const{return m_sample;}bool busy()const{return m_busy;}QString error()const{return m_error;}
     void attach(QQuickWindow*w){window=w;connect(w,&QQuickWindow::frameSwapped,this,[this]{
-        if(!dataFrame&&m_state.value("observations").toULongLong()>0){dataFrame=true;mark("first_paint");}
+        if(!dataFrame&&!m_busy&&m_state.value("observations").toULongLong()>0){dataFrame=true;mark("first_paint");}
         if(!completeFrame&&!m_busy&&!m_cancelling&&m_state.value("complete").toBool()){completeFrame=true;mark("complete_paint");emit completedPaint();}
     },Qt::QueuedConnection);}
     Q_INVOKABLE void cancelAnalysis(){
+        if(m_loadingResults){
+            ++generation;++hydrationEpoch;clearTsRequests();hydrationQueue.clear();loadingPages.clear();pageOffsets.clear();
+            const auto source=hydrationState.value("source");hydrationState.clear();hydrationCollections.clear();
+            m_loadingResults=false;m_busy=false;m_cancelling=false;m_state={{"analysis_status","loading_cancelled"},{"source",source},{"complete",false}};
+            clearIntentions();emit stateChanged();emit busyChanged();emit cancellingChanged();
+            emit response("cancel_result_loading",{{"message","Result loading stopped. Analyze again to load a complete workspace."}});return;
+        }
         if(!available()||!m_busy||m_cancelling||!activeAnalysis)return;
-        m_cancelling=true;
+        m_cancelling=true;m_state.clear();emit stateChanged();
         // Invalidate every outstanding evidence/edit intention, retaining only
         // the original scan whose terminal response must still be observed.
         const auto analyze=methods.value(activeAnalysis);clearTsRequests();methods.insert(activeAnalysis,analyze);
@@ -249,33 +499,47 @@ public:
         send("cancel_analysis",{{"request_id",activeAnalysis}});
     }
     Q_INVOKABLE void send(QString method,QVariantMap params={}){
-        if(m_availability=="disconnected"||process.state()==QProcess::NotRunning){
+        if(m_availability=="disconnected"||!transport){
             backendStopped("Backend is not running. Check SHOWPSISI_CORE.");return;
         }
-        if(m_busy&&method!="cancel_analysis")return;
+        if(m_busy&&method!="cancel_analysis"&&method!="pause_analysis"&&method!="resume_analysis"&&!(method=="query_result"&&m_loadingResults))return;
         if(method=="cancel_analysis"&&(!m_busy||!m_cancelling))return;
         if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
         int id=++sequence;
         if(method=="analyze"){
             ++generation;clearTsRequests();activeAnalysis=id;
-            m_busy=true;m_cancelling=false;m_state.clear();clearIntentions();
-            dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();emit stateChanged();mark("analyze_requested");
+            m_busy=true;m_cancelling=false;m_progress.clear();emit progressChanged();m_paused=false;m_pausePending=false;emit pauseChanged();clearIntentions();
+            dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();mark("analyze_requested");
         }
-        if(method=="inspect"){latestInspect=id;m_detail.clear();m_inspecting=true;emit detailChanged();emit inspectingChanged();}
-        if(method=="query"){latestQuery=id;latestInspect=latestPreview=latestTopology=0;m_detail.clear();m_inspecting=false;emit detailChanged();emit inspectingChanged();}
+        if(method=="inspect"){if(!params.contains("occurrence_offset"))params["occurrence_offset"]=0;params["occurrence_limit"]=50;latestInspect=id;const bool hadDetail=!m_detail.isEmpty(),wasInspecting=m_inspecting;m_detail.clear();m_detailJson="{}";m_inspecting=true;if(hadDetail)emit detailChanged();if(!wasInspecting)emit inspectingChanged();}
+        if(method=="query"){latestQuery=id;latestInspect=latestPreview=latestTopology=0;const bool hadDetail=!m_detail.isEmpty(),wasInspecting=m_inspecting;m_detail.clear();m_detailJson="{}";m_inspecting=false;if(hadDetail)emit detailChanged();if(wasInspecting)emit inspectingChanged();}
         if(method=="query_topology")latestTopology=id;
         if(method=="import_dvbi"){latestDvbiImport=id;latestDvbiQuery=latestDvbiInspect=0;}
         if(method=="query_dvbi")latestDvbiQuery=id;
         if(method=="inspect_dvbi")latestDvbiInspect=id;
         if(method=="preview_rename")latestPreview=id;
         if(method=="diff_snapshots"){latestComparison=id;m_comparing=true;emit comparingChanged();}
-        methods.insert(id,{method,generation});
+        if(method=="analyze"||method=="query")params["response_mode"]="compact";
+        methods.insert(id,{method,generation,params});
+        params.remove("_epoch");
         if(method=="export"){pendingExports.insert(id);emit exportPendingChanged();}
         QJsonObject request{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}};
         QByteArray wire=QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
-        if(process.state()==QProcess::Starting)queuedWrites+=wire;else if(process.write(wire)<0)backendStopped(process.errorString());
+        QMetaObject::invokeMethod(transport,"write",Qt::QueuedConnection,Q_ARG(QByteArray,wire));
     }
-    Q_INVOKABLE void mark(QString event){QString path=qEnvironmentVariable("SHOWPSISI_TRACE");if(path.isEmpty())return;QFile file(path);if(file.open(QIODevice::Append)){QJsonObject value{{"event",event},{"ms",clock.nsecsElapsed()/1e6},{"wall_ms",double(QDateTime::currentMSecsSinceEpoch())},{"backend_pid",double(process.processId())}};file.write(QJsonDocument(value).toJson(QJsonDocument::Compact)+'\n');}}
+    Q_INVOKABLE void mark(QString event){
+        if(!traceWriter)return;
+        QJsonObject value{{"event",event},{"ms",clock.nsecsElapsed()/1e6},{"wall_ms",double(QDateTime::currentMSecsSinceEpoch())},{"process_cpu_ms",1000.0*std::clock()/CLOCKS_PER_SEC},{"backend_pid",double(backendPid)}};
+#ifdef Q_OS_LINUX
+        timespec threadTime{};
+        if(clock_gettime(CLOCK_THREAD_CPUTIME_ID,&threadTime)==0)value["gui_thread_cpu_ms"]=threadTime.tv_sec*1000.0+threadTime.tv_nsec/1e6;
+#endif
+        const auto line=QJsonDocument(value).toJson(QJsonDocument::Compact)+'\n';
+        const auto path=tracePath;
+        QMetaObject::invokeMethod(traceWriter,[path,line]{
+            QFile file(path);if(file.open(QIODevice::Append))file.write(line);
+        },Qt::QueuedConnection);
+    }
     Q_INVOKABLE QString env(QString name){return qEnvironmentVariable(name.toUtf8().constData());}
     Q_INVOKABLE QString localPath(QUrl url){return url.toLocalFile();}
     Q_INVOKABLE QUrl fileUrl(QString path){return QUrl::fromLocalFile(path);}
@@ -427,9 +691,10 @@ public:
         QCoreApplication::sendEvent(window,&release);
         return true;
     }
-    Q_INVOKABLE void testResult(QString text){QSaveFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));const auto bytes=text.toUtf8();if(f.open(QIODevice::WriteOnly)&&f.write(bytes)==bytes.size()&&f.commit())mark("ui_test_done");else mark("ui_test_result_failed");}
+    Q_INVOKABLE void testResult(QString text){if(traceWriter)QMetaObject::invokeMethod(traceWriter,[]{},Qt::BlockingQueuedConnection);QSaveFile f(qEnvironmentVariable("SHOWPSISI_TEST_RESULT"));const auto bytes=text.toUtf8();if(f.open(QIODevice::WriteOnly)&&f.write(bytes)==bytes.size()&&f.commit())mark("ui_test_done");else mark("ui_test_result_failed");}
 signals:
-    void stateChanged();void detailChanged();void busyChanged();void exportPendingChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
+    void resultLoading();void resultPage(QString collection,QString json);
+    void progressChanged();void pauseChanged();void stateChanged();void detailChanged();void busyChanged();void exportPendingChanged();void cancellingChanged();void availabilityChanged();void workspaceInvalidated();void inspectingChanged();void comparingChanged();void errorChanged();void response(QString method,QVariantMap result);void completedPaint();
 };
 int main(int argc,char**argv){
 #ifdef Q_OS_WIN
@@ -480,6 +745,7 @@ int main(int argc,char**argv){
     engine.rootContext()->setContextProperty("appUpdater",&updater);
     engine.loadFromModule("ShowPsiSi","Main");if(engine.rootObjects().isEmpty())return 1;
     auto window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    uiAgent.setTrace([&bridge](const QString& value) { bridge.mark(value); });
     bridge.attach(window);uiAgent.attach(window);return app.exec();
 }
 #include "main.moc"

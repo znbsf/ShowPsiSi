@@ -26,6 +26,8 @@ class AgentDebug : public QObject {
     QQuickWindow* window = nullptr;
     QString session;
     QTimer poll;
+    std::function<void(const QString&)> tracer;
+    void trace(const QString& value) const { if (tracer) tracer(value); }
     static bool writeJson(const QString& path, const QJsonObject& value) {
         QSaveFile file(path);
         const auto bytes = QJsonDocument(value).toJson(QJsonDocument::Indented);
@@ -56,6 +58,7 @@ class AgentDebug : public QObject {
             const auto request = doc.object();
             QJsonObject result;
             const auto method = request.value("method").toString();
+            trace("agent_consumed_" + id + "_" + method);
             if (error.error != QJsonParseError::NoError || !doc.isObject() || request.value("id") != id)
                 result = {{"error", "Invalid request envelope"}};
             else if (method == "snapshot") result = snapshot();
@@ -64,11 +67,15 @@ class AgentDebug : public QObject {
                 const auto params = request.value("params").toObject();
                 result = qml("agentAction", &params);
             } else result = {{"error", "Unknown method; use snapshot, capture or action"}};
-            writeJson(session + "/" + id + ".response.json", {{"id", id}, {"ok", !result.contains("error")}, {"result", result}});
+            trace("agent_write_begin_" + id);
+            const bool written = writeJson(session + "/" + id + ".response.json", {{"id", id}, {"ok", !result.contains("error")}, {"result", result}});
+            trace(QString(written ? "agent_write_ok_" : "agent_write_failed_") + id);
+            if (!written) qWarning("Could not publish UI diagnostic response");
         }
     }
 public:
     explicit AgentDebug(QObject* parent = nullptr) : QObject(parent) {}
+    void setTrace(std::function<void(const QString&)> value) { tracer = std::move(value); }
     void attach(QQuickWindow* value) {
         window = value;
         const auto requested = qEnvironmentVariable("SHOWPSISI_AGENT_DIR");
@@ -88,7 +95,9 @@ public:
         poll.start(80);
     }
     QJsonObject snapshot() const {
+        trace("agent_state_begin");
         auto result = qml("agentState");
+        trace("agent_state_end");
         result["schema_version"] = 1;
         result["frontend"] = "qt";
         result["captured_at"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -108,7 +117,9 @@ public:
             }
             for (auto child : item->childItems()) visit(child);
         };
+        trace("agent_controls_begin");
         visit(window->contentItem());
+        trace("agent_controls_end");
         result["controls"] = controls;
         result["controls_limit"] = 1000;
         return result;

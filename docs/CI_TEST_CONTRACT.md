@@ -134,3 +134,54 @@ controls, and no page overflow at 520/521/760/761/900/1100/1440px, in both theme
 and both TS/DVB-I workspaces with default and DejaVu Sans fonts. The original
 cancellation, comparison, theme, layout-reset, tree and evidence tests retain
 their assertions. Browser evidence does not establish native WebView2 behavior.
+
+## Windows test-owned descendant log handles
+
+PR #28 run `39418321685` completed the responsive hydration assertions but
+failed temporary-directory cleanup with WinError 32 on `analysis-responsive.log`.
+The shared helper already closed its Python log handle and reaped the direct Qt
+process; the exact remaining holder was not identified. Forced termination of
+only Qt can leave a descendant holding inherited handles, so Windows test teardown
+now targets the still-live, test-owned process tree by PID and checks the outcome
+before reaping the direct child. Already-exited graceful-close flows remain
+unchanged. This is test cleanup, not proof of graceful application shutdown.
+
+The regression starts a real Windows parent/descendant sharing a log, then requires
+immediate file deletion after teardown. Mocked contracts also check ownership,
+ordering and visible failure. Do not suppress PermissionError, retry deletion with
+a fixed sleep, kill by image name or terminate unrelated processes to pass it.
+
+The next Windows run (`39420939788`) passed that inherited-log regression but
+exposed harness integration failures: evidence tests' mocked `Popen` intercepted
+nested `taskkill`, and one normal-close flow returned taskkill code 128 without
+retained stderr. Evidence tests now isolate their fake launch cleanup. Teardown
+records the command diagnostics and accepts code 128 only with an immediately
+verified successful exit of the same owned Qt process; still-live, nonzero-exit
+and other command failures remain failures. The earlier event's cause remains
+unproven. Dedicated contracts cover each branch without changing UI deadlines.
+
+## Browser progress and dialog completion boundaries
+
+PR #28 run `39423049118` passed Windows native and packaging gates but failed
+two browser assertions. The cancellation screenshot contained genuine native
+one-packet progress: the harness had recorded an empty baseline after transport
+receipt but before the animation-frame publication. The test now awaits that
+applied checkpoint while the engine's after-progress gate prevents further real
+updates, then retains ignored-envelope equality across a rendered frame.
+
+The shortcut screenshot showed a question mark appended to the source field.
+Chromium restores the original focus synchronously when a dialog closes, before
+its queued close event invokes application focus restoration. A focused browser
+reproduction confirmed this ordering. Repeated shortcut checks now await the
+actual close-event handler before moving focus for the next opening; a separate
+regression verifies that boundary. Original ignored-frame, focus, content and
+modal-keyboard assertions and deadlines remain unchanged. No production handler
+was changed to manufacture these test results.
+
+Run `39426053551` then retained a successful constrained-layout report and Qt
+exit 0, but taskkill returned 255 with an explicit no-running-instance diagnostic.
+Rather than broadening accepted taskkill errors, the four drivers that deliberately
+close their own window now require normal process exit within the existing
+five-second cleanup budget before forced cleanup is considered. Ordered contracts
+cover successful exit, timeout and nonzero exit; the latter two remain failures.
+The compiled close and keyboard/persistence regressions cover all four flows.

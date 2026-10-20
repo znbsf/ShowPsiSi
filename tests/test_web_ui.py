@@ -977,6 +977,172 @@ class BrowserTests(unittest.TestCase):
         self.page.reload()
         self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
 
+    def test_cancel_pause_resume_preserves_generation_and_lightweight_progress(self):
+        self.gate_native_messages()
+        self.page.evaluate('window.testGate.methods=["analyze"]')
+        self.page.locator('#scan').click()
+        self.wait_checkpoint()
+        self.page.wait_for_function('() => window.showpsisi.getState().packets > 0')
+        self.assertFalse(self.page.evaluate('Array.isArray(window.showpsisi.getState().tables)'))
+        # A progress frame must not replace explorer, list or inspector DOM.
+        self.page.evaluate('''() => {
+          window.renderMutations=0;
+          window.progressObserver=new MutationObserver(items=>window.renderMutations+=items.length);
+          for(const id of ['sidebar','list','inspector']) {
+            const node=document.getElementById(id);if(node)window.progressObserver.observe(node,{subtree:true,childList:true});
+          }
+          window.testGate.listener(window.testGate.progress.at(-1));
+        }''')
+        self.page.evaluate('() => new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))')
+        self.assertEqual(self.page.evaluate('window.renderMutations'),0)
+        self.page.locator('#pause-scan').click()
+        self.page.wait_for_function('()=>window.testGate.received.some(r=>r.method==="pause_analysis")')
+        self.assertEqual(self.page.locator('#pause-scan').inner_text(),'Pausing…')
+        self.assertNotEqual(self.page.evaluate('window.showpsisi.getState().analysis_status'),'paused','ACK alone is not a pause checkpoint')
+        Path(str(self.checkpoint)+'.release').touch()
+        self.page.wait_for_function('()=>window.showpsisi.getState().analysis_status==="paused" && document.querySelector("#pause-scan").textContent==="Resume"')
+        packets=self.page.evaluate('window.showpsisi.getState().packets')
+        theme=self.page.locator('html').get_attribute('data-theme')
+        self.page.locator('#theme-toggle').click()
+        self.assertNotEqual(self.page.locator('html').get_attribute('data-theme'),theme)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState().packets'),packets)
+        self.assertIn('detailed inspection after completion',self.page.locator('#scan-status').inner_text())
+        self.page.screenshot(path=str(self.artifacts/'analysis-paused.png'),full_page=True)
+        self.page.locator('#pause-scan').click()
+        self.page.wait_for_function('()=>window.testGate.held.some(r=>r.method==="analyze")')
+        self.page.evaluate('window.testGate.release("analyze")')
+        self.page.wait_for_function('()=>window.showpsisi.getState().complete && !document.querySelector("#scan").disabled')
+        complete=self.page.evaluate('window.showpsisi.getState()')
+        self.assertEqual(len(complete['services']),6)
+        self.page.evaluate('''() => { for(const frame of window.testGate.progress)window.testGate.listener(frame); }''')
+        self.page.evaluate('() => new Promise(resolve=>requestAnimationFrame(resolve))')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),complete)
+        self.assertFalse(self.page.locator('#pause-scan').is_visible())
+        self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
+
+    def test_cancel_while_paused_discards_and_rescans(self):
+        self.gate_native_messages()
+        self.page.locator('#scan').click();self.wait_checkpoint()
+        self.page.locator('#pause-scan').click()
+        self.page.wait_for_function('()=>window.testGate.received.some(r=>r.method==="pause_analysis")')
+        Path(str(self.checkpoint)+'.release').touch()
+        self.page.wait_for_function('()=>window.showpsisi.getState().analysis_status==="paused"')
+        self.page.locator('#cancel-scan').click()
+        self.page.wait_for_function('()=>window.showpsisi.getState().analysis_status==="cancelled" && !document.querySelector("#scan").disabled')
+        self.assertFalse(self.page.evaluate('window.showpsisi.getState().services?.length > 0'))
+        self.analyze()
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+
+    def test_preview_percent_budget_uses_actual_source_extent(self):
+        self.open_scan_options()
+        self.assertEqual(self.page.locator('#scan-budget-unit').input_value(),'percent')
+        self.assertEqual(self.page.locator('#scan-percent').input_value(),'10')
+        for mode in ('prefix','distributed'):
+            self.page.locator('#scan-mode').select_option(mode);self.analyze()
+            coverage=self.page.evaluate('window.showpsisi.getState().coverage')
+            self.assertTrue(coverage['partial'])
+            self.assertEqual(coverage['scanned_packets'],max(1,coverage['source_packets']//10))
+            self.assertEqual(sum(r['end_packet']-r['start_packet'] for r in coverage['ranges']),coverage['scanned_packets'])
+        self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
+
+    def test_large_compact_result_hydration_preserves_global_search(self):
+        from benchmark_analysis import generate
+        fixture=self.output/'many-distinct-eit.ts'
+        generate(fixture,'eit',1,5000)
+        self.gate_native_messages()
+        self.page.evaluate('''() => {window.hydrationTicks=0;window.hydrationTimer=setInterval(()=>window.hydrationTicks++,0);}''')
+        self.page.locator('#source').fill(str(fixture));self.page.locator('#scan').click()
+        self.page.wait_for_function('()=>window.showpsisi.getState().complete && !document.querySelector("#scan").disabled',timeout=120000)
+        self.page.evaluate('clearInterval(window.hydrationTimer)')
+        self.assertGreater(self.page.evaluate('window.hydrationTicks'),25,'Input/event loop must run between result batches')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState().tables.length'),5000)
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState().table_groups.length'),5000)
+        pages=self.page.evaluate('window.testGate.requests.filter(r=>r.method==="query_result" && r.params.collection==="tables").map(r=>r.params)')
+        self.assertGreaterEqual(len(pages),25)
+        self.assertTrue(all(p['limit']<=200 for p in pages))
+        self.page.locator('[data-tab="Tables"]').click()
+        self.assertEqual(self.page.locator('.table-branch').count(),100)
+        self.page.locator('#search').fill('0x1388')
+        self.page.wait_for_function('()=>document.querySelectorAll(".table-branch").length<100')
+        self.assertTrue(self.page.evaluate('workbench.tables(window.showpsisi.getState(),null,"",false,"0x1388").groups.some(g=>g.extension===5000)'))
+        self.assertGreater(self.page.locator('.table-branch').count(),0)
+        self.page.screenshot(path=str(self.artifacts/'large-compact-last-page-search.png'),full_page=True)
+
+    def test_snapshot_page_identity_failure_clears_incomplete_evidence(self):
+        self.gate_native_messages();self.analyze()
+        self.page.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT"')
+        self.page.evaluate('''() => {window.testGate.methods=["query_result"];window.showpsisi.snapshot(1000);}''')
+        self.page.wait_for_function('()=>window.testGate.held.some(r=>r.method==="query_result")')
+        # Deliberately corrupt a real response envelope to verify fail-closed UI
+        # publication. Positive scan/inspection evidence remains real-engine.
+        self.page.evaluate('''() => {const page=window.testGate.held.find(r=>r.method==='query_result');page.event.payload.result.at_packet=1001;window.testGate.release('query_result');}''')
+        self.page.wait_for_function('()=>window.showpsisi.getState().analysis_status==="failed"')
+        self.assertFalse(self.page.evaluate('window.showpsisi.getState().complete'))
+        self.assertFalse(self.page.evaluate('window.showpsisi.getState().tables?.length > 0'))
+        self.assertEqual(self.page.evaluate('window.showpsisi.getDetail()'),{})
+        self.assertIn('mismatch',self.page.locator('#notice').inner_text())
+        self.assertEqual(self.page.locator('.record').count(),0)
+
+    def test_result_hydration_can_stop_and_ignores_late_pages(self):
+        self.gate_native_messages()
+        self.page.evaluate('window.testGate.methods=["query_result"]')
+        self.page.locator('#scan').click()
+        self.page.wait_for_function('()=>window.testGate.held.some(r=>r.method==="query_result")')
+        self.assertFalse(self.page.evaluate('window.showpsisi.getState().complete'))
+        self.assertEqual(self.page.locator('#cancel-scan').inner_text(),'Stop loading')
+        self.assertFalse(self.page.locator('#pause-scan').is_visible())
+        self.page.locator('#cancel-scan').click()
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState().analysis_status'),'loading_cancelled')
+        self.assertFalse(self.page.locator('#scan').is_disabled())
+        self.assertFalse(self.page.evaluate('window.showpsisi.getState().tables?.length > 0'))
+        stopped=self.page.evaluate('window.showpsisi.getState()')
+        self.page.evaluate('window.testGate.release("query_result")')
+        self.page.wait_for_function('()=>window.showpsisi.getUiState().diagnostics.pending===0')
+        self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),stopped)
+        self.page.evaluate('window.testGate.methods=[]')
+        self.analyze()
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+
+    def test_preview_modes_exact_coverage_and_read_only(self):
+        self.open_scan_options()
+        self.page.locator('#scan-budget-unit').select_option('packets')
+        source_packets=self.sample.stat().st_size//188
+        for mode in ('prefix','range','distributed'):
+            with self.subTest(mode=mode):
+                self.page.locator('#scan-mode').select_option(mode)
+                self.page.locator('#scan-budget').fill('12000')
+                self.page.locator('#scan-start').fill('1000')
+                self.page.locator('#scan-end').fill('13000')
+                self.page.locator('#scan-windows').fill('4')
+                self.analyze()
+                state=self.page.evaluate('window.showpsisi.getState()');coverage=state['coverage']
+                self.assertTrue(state['complete']);self.assertTrue(coverage['partial'])
+                self.assertEqual(coverage['mode'],mode);self.assertEqual(coverage['source_packets'],source_packets)
+                self.assertEqual(coverage['scanned_packets'],12000)
+                self.assertEqual(sum(r['end_packet']-r['start_packet'] for r in coverage['ranges']),12000)
+                self.assertIn('PARTIAL PREVIEW',self.page.locator('#scan-coverage').inner_text())
+                self.assertIn('Unread gaps are unknown',self.page.locator('#scan-coverage').inner_text())
+                self.page.screenshot(path=str(self.artifacts/('analysis-preview-'+mode+'.png')),full_page=True)
+                self.assertGreater(self.page.locator('.bin.unobserved').count(),0)
+                before_gap=self.page.evaluate('window.showpsisi.getState().selected_packet')
+                gap=13001 if mode=='range' else 12001 if mode=='prefix' else coverage['ranges'][0]['end_packet']
+                self.page.evaluate('(packet)=>window.showpsisi.snapshot(packet)',gap)
+                self.assertEqual(self.page.evaluate('window.showpsisi.getState().selected_packet'),before_gap)
+                self.assertIn('not scanned',self.page.locator('#notice').inner_text())
+                if mode=='prefix':self.assertEqual(coverage['ranges'],[{'start_packet':0,'end_packet':12000}])
+                if mode=='range':self.assertEqual(coverage['ranges'],[{'start_packet':1000,'end_packet':13000}])
+                if mode=='distributed':self.assertEqual(len(coverage['ranges']),4)
+                self.page.wait_for_function('()=>window.showpsisi.getDetail().name || !window.showpsisi.getState().tables.length')
+                if self.page.locator('#edit').count():
+                    self.assertTrue(self.page.locator('#edit').is_disabled())
+                    self.assertIn('Partial preview',self.page.locator('#edit').get_attribute('title'))
+                rejection=self.page.evaluate('''async()=>{try {await window.showpsisi.call('preview_rename',{id:window.showpsisi.getDetail().id,service_id:101,name:'Not allowed'});return null;}catch(e){return {code:e.code,message:e.message};}}''')
+                self.assertTrue(rejection)
+                self.assertIn('partial',rejection['message'].lower())
+        self.page.locator('#scan-mode').select_option('full');self.analyze()
+        self.assertFalse(self.page.evaluate('window.showpsisi.getState().coverage.partial'))
+        self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
+
     def test_cancel_progress_waits_for_terminal_then_rescans(self):
         self.gate_native_messages()
         pid=self.bridge.proc.pid
@@ -984,6 +1150,10 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#scan').click()
         self.wait_checkpoint()
         self.page.wait_for_function('() => window.testGate.progress.length > 0')
+        # Native receipt precedes the coalesced animation-frame publication.
+        # The engine is held at after_progress: use that applied checkpoint,
+        # not an empty pre-frame state, as the ignored-envelope baseline.
+        self.page.wait_for_function('() => window.showpsisi.getState().packets > 0')
         before_cancel=self.page.evaluate('window.showpsisi.getState()')
         self.page.evaluate('''() => {
           const id=window.testGate.progress[0].payload.request_id;
@@ -991,6 +1161,9 @@ class BrowserTests(unittest.TestCase):
           window.testGate.listener({payload:{event:'progress',request_id:id,state:['malformed-state']}});
           window.testGate.listener({payload:{event:'progress',request_id:'another-request',state:{source:'foreign-request'}}});
         }''')
+        # A malformed envelope must not become visible on a later frame either.
+        self.page.evaluate('() => { window.ignoredProgressFrameDone=false; requestAnimationFrame(()=>window.ignoredProgressFrameDone=true); }')
+        self.page.wait_for_function('() => window.ignoredProgressFrameDone')
         self.assertEqual(self.page.evaluate('window.showpsisi.getState()'),before_cancel)
         cancel=self.page.locator('#cancel-scan')
         self.assertTrue(cancel.is_visible())
@@ -1100,7 +1273,8 @@ class BrowserTests(unittest.TestCase):
         self.gate_native_messages()
         self.page.locator('#scan').click()
         self.wait_checkpoint()
-        self.page.wait_for_function('() => window.showpsisi.getState().tables?.length > 0')
+        self.page.wait_for_function('() => window.showpsisi.getState().packets > 0')
+        self.assertFalse(self.page.evaluate('Array.isArray(window.showpsisi.getState().tables)'), 'Compact progress must not deliver evidence collections')
         Path(str(self.checkpoint)+'.release').touch()
         self.page.wait_for_function('() => !document.querySelector("#scan").disabled')
         state=self.page.evaluate('window.showpsisi.getState()')
@@ -1293,9 +1467,39 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(p.locator('#recent-menu [data-recent]').first.get_attribute('title'),str(self.sample))
         self.assertIn('session only',p.locator('#warning-message').inner_text())
 
+    def test_shortcut_close_event_is_the_focus_completion_boundary(self):
+        p=self.page
+        p.locator('#source').focus();p.keyboard.press('Control+/')
+        self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+        p.evaluate('''() => {
+          window.shortcutCloseObservation=null;
+          const dialog=document.querySelector('#shortcuts-dialog');
+          let closed=false;
+          dialog.addEventListener('close',()=>{
+            closed=true;
+            window.shortcutCloseObservation={beforeEvent,afterEvent:{closed,focus:document.activeElement.id}};
+          },{once:true});
+          dialog.close();
+          // Native restoration is synchronous, application close processing is not.
+          const beforeEvent={closed,focus:document.activeElement.id};
+        }''')
+        p.wait_for_function('()=>window.shortcutCloseObservation!==null')
+        observed=p.evaluate('window.shortcutCloseObservation')
+        self.assertEqual(observed['beforeEvent'],{'closed':False,'focus':'source'})
+        self.assertEqual(observed['afterEvent'],{'closed':True,'focus':'source'})
+        p.locator('#browse').focus();p.keyboard.press('?')
+        self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+
     def test_shortcut_help_uses_sidebar_table_and_restores_focus(self):
         p=self.page
-        for theme in ('dark','light'):
+        # Browser-native focus restoration occurs before the queued close event.
+        # Observe the application close listener's completion before moving focus
+        # for the next shortcut, rather than treating native focus as completion.
+        p.evaluate('''() => {
+          window.shortcutCloseCount=0;
+          document.querySelector('#shortcuts-dialog').addEventListener('close',()=>window.shortcutCloseCount++);
+        }''')
+        for theme_index,theme in enumerate(('dark','light')):
             if p.evaluate('document.documentElement.dataset.theme')!=theme:p.locator('#theme-toggle').click()
             source=p.locator('#source').input_value()
             p.locator('#source').focus();p.keyboard.press('End');p.keyboard.type('?')
@@ -1306,12 +1510,16 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(p.locator('#shortcuts-dialog .shortcut-row').all_text_contents(),p.locator('.sidebar-help .shortcut-row').all_text_contents())
             p.keyboard.press('Control+k')
             self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
-            p.keyboard.press('Escape');p.wait_for_function('()=>document.activeElement.id==="source"')
+            p.keyboard.press('Escape')
+            p.wait_for_function('(count)=>window.shortcutCloseCount===count',arg=theme_index*2+1)
+            p.wait_for_function('()=>document.activeElement.id==="source"')
             p.locator('#browse').focus();p.keyboard.press('?')
             self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
             p.keyboard.press('Tab')
             self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
-            p.locator('#close-shortcuts').click();p.wait_for_function('()=>document.activeElement.id==="browse"')
+            p.locator('#close-shortcuts').click()
+            p.wait_for_function('(count)=>window.shortcutCloseCount===count',arg=theme_index*2+2)
+            p.wait_for_function('()=>document.activeElement.id==="browse"')
             self.assertEqual(p.locator('#source').input_value(),source)
 
     def test_browser_file_drop_reports_desktop_only_without_changing_source(self):
@@ -1927,6 +2135,7 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(row.locator('.media-pids').inner_text(),'V —\nA —')
 
     def test_table_card_pagination_keeps_all_sibling_sections(self):
+        self.gate_native_messages()
         from make_fixture import section, descriptor, word, crc
         packets=[]
         for extension in range(1,102):
@@ -1937,6 +2146,10 @@ class BrowserTests(unittest.TestCase):
                 packets.append(bytes([0x47,0x40,0x11,0x10+(len(packets)%16),0])+raw+b'\xff'*(183-len(raw)))
         fixture=self.output/'table-card-pages.ts';fixture.write_bytes(b''.join(packets))
         self.analyze(fixture)
+        paged=self.page.evaluate('window.testGate.requests.filter(r=>r.method==="query_result" && r.params.collection==="tables").map(r=>r.params)')
+        self.assertEqual([p['offset'] for p in paged],[0,200])
+        self.assertTrue(all(p['limit']<=200 for p in paged))
+        self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().tables')),202)
         self.page.locator('[data-tab="Tables"]').click()
         self.assertEqual(self.page.locator('.table-branch').count(),100)
         self.assertEqual(self.page.locator('.table-branch [role="option"]').count(),200)

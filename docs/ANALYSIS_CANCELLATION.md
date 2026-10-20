@@ -1,5 +1,9 @@
 # Cooperative analysis cancellation
 
+For compact progress, revision-bound result pages, in-session pause/resume and
+bounded preview scans, see [responsive analysis](RESPONSIVE_ANALYSIS.md).
+Pause preserves the session; it does not change Cancel into a resumable action.
+
 Status: implemented and locally tested after merged PR #4 (`dcadd66`);
 new hosted CI and final native-runtime checks remain separately tracked.
 

@@ -196,6 +196,7 @@ window.addEventListener("error", event=>recordFrontendError(event.error || event
 window.addEventListener("unhandledrejection", event=>recordFrontendError(event.reason));
 let aggregateDiagnostic = null;
 let backendFailure = "";
+let completedScanOptions = null;
 let comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: 0 };
 let savedWorkspace = null, comparisonEvidence = "", inspectionEvidence = null;
 let firstPaint = false,
@@ -384,11 +385,11 @@ const invoke = (...args) =>
       );
 $("#app").innerHTML = `
 <header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><span class="toolbar-group" role="group" aria-label="View"><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button></span><span class="toolbar-group tertiary" role="group" aria-label="Help and diagnostics"><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api" title="Show the local JSONL agent API description">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></span></header>
-<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional SDK charset for the next scan, e.g. ISO-8859-15 or UTF-8. Explicit DVB selectors take precedence."><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
+<div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary>Keyboard shortcuts</summary><kbd>↑ ↓ Home End</kbd> <span>Move focus</span><br><kbd>Enter / Space</kbd> <span>Select</span><br><kbd>Ctrl K</kbd> <span>Search records</span><br><kbd>Ctrl O</kbd> <span>Open file</span><br><kbd>Ctrl Enter</kbd> <span>Analyze</span><br><kbd>Alt ←</kbd> <span>Back</span></details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary>Keyboard shortcuts</summary><kbd>↑ ↓ Home End</kbd> <span>Move focus</span><br><kbd>Enter / Space</kbd> <span>Select</span><br><kbd>Ctrl K</kbd> <span>Search records</span><br><kbd>Ctrl O</kbd> <span>Open file</span><br><kbd>Ctrl Enter</kbd> <span>Analyze</span><br><kbd>Ctrl+.</kbd> <span>Cancel active scan</span><br><kbd>F6 / Shift+F6</kbd> <span>Next / previous region</span><br><kbd>Alt ←</kbd> <span>Back</span></details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
 <footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only TS or raw-section BIN and manifest. TS has no media or PCR; BIN needs its adjacent manifest for PID and source evidence.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><label for="export-format">Export format</label><select id="export-format"><option value="ts">TS · SI-only transport stream (.ts)</option><option value="bin">BIN · raw SI sections (.bin)</option></select><div class="actions"><button class="btn" id="export" disabled>Save SI-only TS + manifest…</button><button class="btn" id="close-edit">Close</button></div></dialog>
@@ -432,11 +433,47 @@ function setExtraPidsError(message) {
   $("#source-feedback").hidden = !message;
 }
 $("#extra-pids").addEventListener("input", () => setExtraPidsError(""));
+function parseExtraPids(text) {
+  return text.trim() ? text.split(",").map(value => {
+    const token = value.trim();
+    if (!/^(0x[0-9a-f]+|[0-9]+)$/i.test(token))
+      throw new Error("Extra PIDs must be decimal or hexadecimal integers, separated by commas.");
+    const pid = Number(token);
+    if (pid > 8191) throw new Error("Extra PIDs must be between 0 and 8191 (0x1FFF).");
+    return pid;
+  }) : [];
+}
+function currentScanOptions() {
+  let pids = null;
+  try { pids = [...new Set(parseExtraPids($("#extra-pids").value))]; } catch (_) {}
+  return {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:pids};
+}
+function updateScanOptions() {
+  const options = currentScanOptions(), toggle = $("#scan-options-toggle"), summary = $("#scan-options-summary");
+  const text = workbench.scanOptionsSummary(options);
+  summary.textContent = text;
+  summary.hidden = !$("#scan-options").hidden || !text;
+  toggle.title = "Default charset and extra packet identifiers (PIDs) for the next scan" + (text ? " · " + text : "");
+  const changed = data.complete && completedScanOptions && workbench.scanOptionsKey(options) !== workbench.scanOptionsKey(completedScanOptions);
+  $("#scan-options-changed").hidden = !changed;
+  if (changed) $("#scan").setAttribute("aria-describedby", "scan-options-changed");
+  else $("#scan").removeAttribute("aria-describedby");
+}
+function setScanOptionsOpen(open) {
+  $("#scan-options").hidden = !open;
+  $("#scan-options-toggle").setAttribute("aria-expanded", String(open));
+  $("#scan-options-arrow").textContent = open ? "▾" : "▸";
+  updateScanOptions();
+}
+$("#scan-options-toggle").onclick = () => setScanOptionsOpen($("#scan-options").hidden);
+$("#standards").addEventListener("change", updateScanOptions);
+$("#default-charset").addEventListener("input", updateScanOptions);
+$("#extra-pids").addEventListener("input", updateScanOptions);
 function disableBackendActions() {
   if (!backendFailure) return;
   document
     .querySelectorAll(
-      "#scan,#cancel-scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
+      "#scan,#cancel-scan,#browse,#api,#source,#standards,#default-charset,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
     )
     .forEach((element) => {
       element.disabled = true;
@@ -566,30 +603,16 @@ async function scan() {
   }
   let extraPids = [];
   try {
-    extraPids = $("#extra-pids").value.trim()
-      ? $("#extra-pids")
-          .value.split(",")
-          .map((value) => {
-            const token = value.trim();
-            if (!/^(0x[0-9a-f]+|[0-9]+)$/i.test(token))
-              throw new Error(
-                "Extra PIDs must be decimal or hexadecimal integers, separated by commas.",
-              );
-            const pid = Number(token);
-            if (pid > 8191)
-              throw new Error(
-                "Extra PIDs must be between 0 and 8191 (0x1FFF).",
-              );
-            return pid;
-          })
-      : [];
+    extraPids = parseExtraPids($("#extra-pids").value);
   } catch (error) {
+    setScanOptionsOpen(true);
     setExtraPidsError(String(error));
     notice(String(error), true);
     $("#extra-pids").focus();
     return;
   }
   setExtraPidsError("");
+  const options = {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:[...new Set(extraPids)]};
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
@@ -608,14 +631,15 @@ async function scan() {
   try {
     const operation = call("analyze", {
       path,
-      standards: $("#standards").value,
-      default_charset: $("#default-charset").value.trim(),
-      ...(extraPids.length ? { extra_pids: [...new Set(extraPids)] } : {}),
+      standards: options.standards,
+      default_charset: options.default_charset,
+      ...(options.extra_pids.length ? { extra_pids: options.extra_pids } : {}),
     });
     render();
     const result = await operation;
     if (epoch !== scanEpoch) return;
     data = result;
+    if (result.complete) completedScanOptions = options;
     succeeded = true;
     render();
     notice(
@@ -848,6 +872,9 @@ function renderExplorer() {
 }
 function render() {
   dvbiWorkspace?.update();
+  updateScanOptions();
+  const issues = workbench.issueCounts(data.diagnostics || []);
+  const issueLabel = issues.hasSeverity ? issues.errors + " errors · " + issues.warnings + " warnings" + (issues.other ? " · " + issues.other + " other" : "") : issues.total + " issues";
   const stats = [
     ["SERVICES", num(data.services?.length), "in selected state", "Services"],
     [
@@ -858,7 +885,7 @@ function render() {
     ],
     [
       "ISSUES",
-      num(data.diagnostics?.length),
+      issues.hasSeverity ? `<span class="issue-errors">${num(issues.errors)} errors</span><span class="issue-warnings">${num(issues.warnings)} warnings</span>${issues.other ? `<span class="issue-other">${num(issues.other)} other</span>` : ""}` : num(issues.total),
       num(data.crc_errors) + " CRC failures",
       "Issues",
     ],
@@ -871,7 +898,7 @@ function render() {
   $("#stats").innerHTML = stats
     .map(
       ([label, value, sub, target]) =>
-        `<${target ? `button type="button" class="stat" data-stat-tab="${target}" title="Show ${target}"` : 'div class="stat"'}><span>${label}</span><strong>${value}</strong><small>${sub}</small></${target ? "button" : "div"}>`,
+        `<${target ? `button type="button" class="stat" data-stat-tab="${target}" aria-label="Show ${target} · ${target === 'Issues' ? issueLabel : value + ' ' + label.toLowerCase()} · ${sub}" title="Show ${target}${target === 'Issues' ? ' · CRC: Cyclic Redundancy Check failures' : ''}"` : 'div class="stat"'}><span>${label}</span><strong${target === 'Issues' ? ' class="issue-counts"' : ''}>${value}</strong><small>${sub}</small></${target ? "button" : "div"}>`,
     )
     .join("");
   // Stats double as shortcuts to the tab that lists what they count.
@@ -2066,7 +2093,27 @@ $("#next").onclick = () => {
   renderList();
   $("#list").scrollTop = 0;
 };
+function focusNextRegion(backwards) {
+  const visible = el => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden";
+  const regions = [$(".sourcebar"), $(".sidebar"), $(".center"), $("#inspector")].filter(visible);
+  const current = regions.findIndex(region => region.contains(document.activeElement));
+  const index = current < 0 ? (backwards ? regions.length - 1 : 0) : (current + (backwards ? -1 : 1) + regions.length) % regions.length;
+  const region = regions[index];
+  if (!region) return;
+  const preferred = region.matches(".sidebar") ? region.querySelector('#sidebar [tabindex="0"]')
+    : region.matches(".center") ? region.querySelector('#list [tabindex="0"]')
+    : region.querySelector('#tree-area [tabindex="0"], .evidence[tabindex="0"], .topology-sources button');
+  const candidates = region.matches(".sourcebar") ? [$("#source"), $("#scan-options-toggle")]
+    : [preferred, ...region.querySelectorAll('input, button:not([tabindex="-1"]), select, textarea, summary')];
+  (candidates.find(el => el && !el.disabled && visible(el)) || region).focus();
+}
 document.addEventListener("keydown", (e) => {
+  const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
+  if (workbenchKeys && e.key === "F6" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    focusNextRegion(e.shiftKey);
+    return;
+  }
   if(e.altKey && e.key === "ArrowLeft") {
     if(dvbiWorkspace.getState().active){e.preventDefault();$('#dvbi-back')?.click();return;}
     if(inspectionEvidence?.kind==='protocol'){e.preventDefault();$('#protocol-back')?.click();return;}
@@ -2081,8 +2128,11 @@ document.addEventListener("keydown", (e) => {
   }
   // Match the Qt workbench: Ctrl+O opens a source, Ctrl+Enter analyzes it.
   // Buttons keep their own disabled state; open dialogs keep their keys.
-  const shortcut = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
-  if (shortcut && e.key.toLowerCase() === "o") {
+  const shortcut = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && workbenchKeys;
+  if (shortcut && (e.key === "." || e.code === "Period")) {
+    e.preventDefault();
+    if (!$("#cancel-scan").hidden && !$("#cancel-scan").disabled) $("#cancel-scan").click();
+  } else if (shortcut && e.key.toLowerCase() === "o") {
     e.preventDefault();
     if (!$("#browse").disabled) $("#browse").click();
   } else if (shortcut && e.key === "Enter" && (e.target === document.body || (e.target.closest?.(".sourcebar") && e.target.id !== "source"))) {

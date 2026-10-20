@@ -555,6 +555,11 @@ ApplicationWindow {
         return name && name !== "Private / other" && all.indexOf(name) === index;
     })).concat(["Private / other"])
     property var extraPidsValue: parseExtraPids(extraPids.text)
+    property var pendingScanOptions: null
+    property var completedScanOptions: null
+    property var sourceScanOptions: ({standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue})
+    property string scanOptionsSummary: Shared.workbench.scanOptionsSummary(sourceScanOptions)
+    property bool scanOptionsChanged: !!analysisState.complete && completedScanOptions !== null && Shared.workbench.scanOptionsKey(sourceScanOptions) !== Shared.workbench.scanOptionsKey(completedScanOptions)
     function parseExtraPids(text) {
         let values = text.trim() ? text.trim().split(/[\s,]+/) : [];
         let result = [];
@@ -594,6 +599,7 @@ ApplicationWindow {
     }
     property var eventRows: analysisState.events || []
     property var issues: analysisState.diagnostics || []
+    property var issueCounts: Shared.workbench.issueCounts(issues)
     property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
         return tab === "Tables" ? true : tab === "Changes" ? searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
@@ -999,12 +1005,23 @@ ApplicationWindow {
         treeSearch.clear();
         tab = "Services";
         notice = "Scanning source…";
+        pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
         core.send("analyze", {
             path: source.text.trim(),
-            standards: standardChoice.currentValue,
-            default_charset: defaultCharset.text.trim(),
-            extra_pids: extraPidsValue
+            standards: pendingScanOptions.standards,
+            default_charset: pendingScanOptions.default_charset,
+            extra_pids: pendingScanOptions.extra_pids
         });
+    }
+    function focusNextRegion(backwards) {
+        let regions=[sourceBar,explorerPane,recordPane,inspectorPane], current=-1;
+        for(let item=win.activeFocusItem;item;item=item.parent){let index=regions.indexOf(item);if(index>=0){current=index;break;}}
+        let next=current<0 ? (backwards ? 3 : 0) : (current+(backwards ? -1 : 1)+4)%4;
+        if(next===0){if(source.enabled)source.forceActiveFocus();else scanOptionsToggle.forceActiveFocus();}
+        else if(next===1)explorerList.forceActiveFocus();
+        else if(next===2){if(tab==="Topology")topologyList.forceActiveFocus();else recordList.forceActiveFocus();}
+        else if(topologySummary)topologySourcesList.forceActiveFocus();
+        else {inspectorView="Structure";tree.forceActiveFocus();}
     }
     function activateHistory(entry) {
         selectExplorer({pid:entry.pid,name:entry.name});
@@ -1185,11 +1202,42 @@ ApplicationWindow {
         color: panel
         border.color: dividerColor
     }
+    component StatBadge: Button {
+        id: stat
+        property string label: ""
+        property string value: ""
+        property string detailText: ""
+        property var counts: null
+        implicitHeight: 28
+        topPadding: 3
+        bottomPadding: 3
+        leftPadding: 4
+        rightPadding: 4
+        focusPolicy: Qt.StrongFocus
+        contentItem: RowLayout {
+            spacing: 8
+            PlainLabel { text:stat.label; color:muted; font.pixelSize:11 }
+            PlainLabel { visible:!stat.counts || !stat.counts.hasSeverity; text:stat.value; color:ink; font.pixelSize:15; font.family:"monospace" }
+            PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity; text:stat.counts ? num(stat.counts.errors)+" errors" : ""; color:removedColor; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity; text:stat.counts ? num(stat.counts.warnings)+" warnings" : ""; color:warningColor; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity && stat.counts.other>0; text:stat.counts ? num(stat.counts.other)+" other" : ""; color:muted; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.detailText; text:stat.detailText; color:muted; font.pixelSize:11 }
+        }
+        background: Rectangle {
+            color:stat.hovered ? hoverSurface : "transparent"
+            border.color:stat.activeFocus ? blue : "transparent"
+            border.width:stat.activeFocus ? focusWidth : 0
+            radius:2
+        }
+        Keys.onReturnPressed: clicked()
+        Keys.onEnterPressed: clicked()
+    }
     Connections {
         target: core
         function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
         function onAvailabilityChanged() {
             if (core.availability === "disconnected") {
+                pendingScanOptions=null;
                 autoTimer.stop();
                 protocolRestoreTimer.stop();protocolRestoring=false;protocolRestorePending=null;
                 fileDialog.close();
@@ -1198,6 +1246,10 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if(method === "analyze") {
+                if(result.complete && pendingScanOptions !== null)completedScanOptions=pendingScanOptions;
+                pendingScanOptions=null;
+            }
             if (method === "query_topology") { acceptTopology(result); return; }
             if(method==="inspect"){
                 if(protocolSourceRef)resolveProtocolInspection(result);
@@ -1984,7 +2036,7 @@ ApplicationWindow {
                         return {type: item.toString(), x:item.x, y:item.y, width:item.width, height:item.height,
                             implicitHeight:item.implicitHeight, text:item.text || ""};
                     })};
-                core.key("F6");
+                core.key("Shift+F6");
                 checks.inspector_to_results = recordList.activeFocus;
                 core.key("F6");
                 checks.results_to_tree = tree.activeFocus;
@@ -2761,13 +2813,10 @@ ApplicationWindow {
         sequence: "F6"
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
-            if(tab === "Topology" && topologySummary){topologySourcesList.forceActiveFocus();return;}
-            if (recordList.activeFocus || recordSearch.activeFocus || topologyList.activeFocus || topologySearch.activeFocus) {
-                inspectorView = "Structure";
-                tree.forceActiveFocus();
-            } else if(tab === "Topology")topologyList.forceActiveFocus();else recordList.forceActiveFocus();
+            focusNextRegion(false);
         }
     }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode; onActivated:focusNextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         onActivated: {
@@ -2924,126 +2973,174 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        RowLayout {
+        ColumnLayout {
+            id: sourceBar
             visible: !metadataMode
             Layout.fillWidth: true
             Layout.margins: 10
-            spacing: 8
+            spacing: 6
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                PlainLabel {
+                    text: "SOURCE"
+                    color: muted
+                    font.pixelSize: 11
+                }
+                FieldInput {
+                    id: source
+                    enabled: backendReady
+                    Layout.fillWidth: true
+                    text: core.sample
+                    selectByMouse: true
+                    implicitHeight: 30
+                    Accessible.name: "Transport stream source path"
+                    onAccepted: scan()
+                }
+                Action {
+                    objectName: "openSource"
+                    text: "Open…"
+                    Accessible.name: "Open transport stream"
+                    enabled: backendReady
+                    onClicked: fileDialog.open()
+                    SafeTip {
+                        visible: anchorHovered
+                        text: "Open transport stream (Ctrl+O)"
+                    }
+                }
+                FieldChoice {
+                    id: standardChoice
+                    objectName: "standards"
+                    Layout.preferredWidth: 136
+                    implicitHeight: 30
+                    enabled: backendReady
+                    textRole: "label"
+                    valueRole: "value"
+                    model: [
+                        {
+                            label: "Standards: Auto",
+                            value: "auto"
+                        },
+                        {
+                            label: "DVB",
+                            value: "dvb"
+                        },
+                        {
+                            label: "ATSC",
+                            value: "atsc"
+                        },
+                        {
+                            label: "ISDB",
+                            value: "isdb"
+                        },
+                        {
+                            label: "ISDB Japan",
+                            value: "isdb-japan"
+                        },
+                        {
+                            label: "ISDB Brazil",
+                            value: "isdb-brazil"
+                        },
+                        {
+                            label: "SCTE",
+                            value: "scte"
+                        },
+                        {
+                            label: "DTMB",
+                            value: "dtmb"
+                        },
+                        {label:"J.94 System B",value:"j94-system-b"}
+                    ]
+                    Accessible.name: "Broadcast standard context for next scan"
+                    SafeTip {
+                        visible: anchorHovered
+                        text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
+                    }
+                }
+                Action {
+                    id: scanOptionsToggle
+                    objectName: "scanOptionsToggle"
+                    checkable: true
+                    text: "Scan options " + (checked ? "▾" : "▸") + (!checked && scanOptionsSummary ? " · " + scanOptionsSummary : "")
+                    Layout.minimumWidth: 118
+                    Layout.maximumWidth: 280
+                    Layout.preferredWidth: Math.min(implicitWidth, 280)
+                    Accessible.name: "Scan options"
+                    Accessible.description: (checked ? "Expanded" : "Collapsed") + " · Default charset and extra packet identifiers for the next scan" + (scanOptionsSummary ? " · " + scanOptionsSummary : "")
+                    contentItem: PlainLabel { text:scanOptionsToggle.text; color:ink; elide:Text.ElideRight; verticalAlignment:Text.AlignVCenter; horizontalAlignment:Text.AlignHCenter; font.pixelSize:11 }
+                    SafeTip { visible:anchorHovered; text:"Default charset and extra Packet Identifiers (PIDs) for the next scan" + (scanOptionsSummary ? " · " + scanOptionsSummary : "") }
+                }
+                Action {
+                    objectName: "analyzeSource"
+                    text: "Analyze"
+                    Accessible.name: "Analyze transport stream"
+                    Accessible.description: scanOptionsChanged ? "Options changed — re-analyze to apply" : ""
+                    primary: true
+                    visible: !core.busy
+                    enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null
+                    onClicked: scan()
+                }
+                Action {
+                    id: cancelButton
+                    objectName: "cancelAnalysis"
+                    text: core.cancelling ? "Cancelling…" : "Cancel"
+                    visible: core.busy
+                    enabled: core.available && !core.cancelling
+                    onClicked: cancelScan()
+                    Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
+                    SafeTip { visible: anchorHovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
+                }
+            }
             PlainLabel {
-                text: "SOURCE"
+                objectName: "scanOptionsChanged"
+                visible: scanOptionsChanged
+                Layout.alignment: Qt.AlignRight
+                text: "Options changed — re-analyze to apply"
                 color: muted
                 font.pixelSize: 11
             }
-            FieldChoice {
-                id: standardChoice
-                objectName: "standards"
-                Layout.preferredWidth: 136
-                implicitHeight: 30
-                enabled: backendReady
-                textRole: "label"
-                valueRole: "value"
-                model: [
-                    {
-                        label: "Standards: Auto",
-                        value: "auto"
-                    },
-                    {
-                        label: "DVB",
-                        value: "dvb"
-                    },
-                    {
-                        label: "ATSC",
-                        value: "atsc"
-                    },
-                    {
-                        label: "ISDB",
-                        value: "isdb"
-                    },
-                    {
-                        label: "ISDB Japan",
-                        value: "isdb-japan"
-                    },
-                    {
-                        label: "ISDB Brazil",
-                        value: "isdb-brazil"
-                    },
-                    {
-                        label: "SCTE",
-                        value: "scte"
-                    },
-                    {
-                        label: "DTMB",
-                        value: "dtmb"
-                    },
-                    {label:"J.94 System B",value:"j94-system-b"}
-                ]
-                Accessible.name: "Broadcast standard context for next scan"
-                SafeTip {
-                    visible: anchorHovered
-                    text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
-                }
-            }
-            FieldInput {
-                id: extraPids
-                objectName: "extraPids"
-                Layout.preferredWidth: 160
-                implicitHeight: 30
-                placeholderText: "Extra PIDs: 0x30, 100"
-                placeholderTextColor: muted
-                selectByMouse: true
-                enabled: backendReady
-                Accessible.name: "Additional packet identifiers, comma separated"
-                SafeTip {
-                    visible: anchorHovered
-                    text: "Optional extra packet identifiers, decimal or hexadecimal, from 0 to 8191."
-                }
-                onAccepted: scan()
-            }
-            FieldInput {
-                id: source
-                enabled: backendReady
+            RowLayout {
+                visible: scanOptionsToggle.checked
                 Layout.fillWidth: true
-                text: core.sample
-                selectByMouse: true
-                implicitHeight: 30
-                Accessible.name: "Transport stream source path"
-                onAccepted: scan()
-            }
-            Action {
-                objectName: "openSource"
-                text: "Open…"
-                enabled: backendReady
-                onClicked: fileDialog.open()
-                SafeTip {
-                    visible: anchorHovered
-                    text: "Open transport stream (Ctrl+O)"
+                spacing: 8
+                PlainLabel { text:"Default charset"; color:muted; font.pixelSize:11 }
+                FieldInput {
+                    id: defaultCharset
+                    objectName: "defaultCharset"
+                    Layout.fillWidth: true
+                    implicitHeight: 30
+                    placeholderText: "Default charset (optional)"
+                    placeholderTextColor: muted
+                    selectByMouse: true
+                    enabled: backendReady
+                    Accessible.name: "Default input charset for next scan"
+                    onAccepted: scan()
+                    SafeTip { visible: anchorHovered; text: "Optional TSDuck character set, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen. Original bytes are preserved." }
+                }
+                PlainLabel { text:"Extra PIDs"; color:muted; font.pixelSize:11 }
+                FieldInput {
+                    id: extraPids
+                    objectName: "extraPids"
+                    Layout.fillWidth: true
+                    implicitHeight: 30
+                    placeholderText: "Extra PIDs: 0x30, 100"
+                    placeholderTextColor: muted
+                    selectByMouse: true
+                    enabled: backendReady
+                    Accessible.name: "Additional packet identifiers, comma separated"
+                    SafeTip {
+                        visible: anchorHovered
+                        text: "Optional extra Packet Identifiers (PIDs), decimal or hexadecimal, from 0 to 8191."
+                    }
+                    onAccepted: scan()
                 }
             }
-            Action {
-                objectName: "analyzeSource"
-                text: "Analyze"
-                primary: true
-                visible: !core.busy
-                enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null
-                onClicked: scan()
+            PlainLabel {
+                visible: extraPidsValue === null
+                text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
+                color: removedColor
+                font.pixelSize: 11
             }
-            Action {
-                id: cancelButton
-                objectName: "cancelAnalysis"
-                text: core.cancelling ? "Cancelling…" : "Cancel"
-                visible: core.busy
-                enabled: core.available && !core.cancelling
-                onClicked: cancelScan()
-                Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
-                SafeTip { visible: anchorHovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
-            }
-        }
-        PlainLabel {
-            Layout.leftMargin: 12
-            visible: !metadataMode && extraPidsValue === null
-            text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
-            color: removedColor
-            font.pixelSize: 11
         }
         ProgressBar {
             Layout.fillWidth: true
@@ -3058,22 +3155,30 @@ ApplicationWindow {
             Layout.rightMargin: 12
             Layout.bottomMargin: 8
             spacing: 20
-            PlainLabel {
-                text: serviceRows.length + " services"
-                color: ink
-                font.pixelSize: 11
+            StatBadge {
+                objectName: "statsServices"
+                label: "SERVICES"
+                value: num(serviceRows.length)
+                Accessible.name: "Show Services · " + value + " services"
+                onClicked: tab="Services"
             }
-            PlainLabel {
-                text: num(analysisState.observations) + " section observations"
-                color: muted
-                font.pixelSize: 11
+            StatBadge {
+                objectName: "statsSections"
+                label: "SECTIONS"
+                value: num(analysisState.observations)
+                detailText: num((analysisState.tables || []).length) + " distinct payloads"
+                Accessible.name: "Show Tables · " + value + " section observations · " + detailText
+                onClicked: tab="Tables"
             }
-            PlainLabel {
-                text: issues.length + " issues · " + num(analysisState.crc_errors) + " CRC failures"
-                color: issues.length ? warningColor : muted
-                font.pixelSize: 11
-                HoverHandler { id: crcHover }
-                SafeTip { visible: crcHover.hovered; text: "CRC: cyclic redundancy check. A failed CRC means the section bytes were damaged or truncated." }
+            StatBadge {
+                objectName: "statsIssues"
+                label: "ISSUES"
+                value: num(issues.length)
+                counts: issueCounts
+                detailText: num(analysisState.crc_errors) + " CRC failures"
+                Accessible.name: "Show Issues · " + (issueCounts.hasSeverity ? issueCounts.errors + " errors · " + issueCounts.warnings + " warnings" + (issueCounts.other ? " · " + issueCounts.other + " other" : "") : value + " issues") + " · " + detailText
+                onClicked: tab="Issues"
+                SafeTip { visible:anchorHovered; text:"CRC: Cyclic Redundancy Check. A failed CRC means the section bytes were damaged or truncated." }
             }
             Item {
                 Layout.fillWidth: true
@@ -3185,7 +3290,22 @@ ApplicationWindow {
                             SafeTip { visible:anchorHovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
                         }
                     }
-                    TinyLabel { text: "↑ ↓ Home End · focus\nEnter / Space · select"; Layout.margins: 7 }
+                    Action {
+                        id: keyboardShortcuts
+                        objectName: "keyboardShortcuts"
+                        text: "Keyboard shortcuts " + (checked ? "▾" : "▸")
+                        checkable: true
+                        Layout.fillWidth: true
+                        Accessible.name: "Keyboard shortcuts"
+                    }
+                    PlainLabel {
+                        visible: keyboardShortcuts.checked
+                        text: "↑ ↓ Home End · focus\nEnter / Space · select\nCtrl+K · search records\nCtrl+O · open file\nCtrl+Return · analyze\nCtrl+. · cancel scan\nF6 / Shift+F6 · next / previous region\nSource → Explorer → Records → Inspector"
+                        color: muted
+                        font.pixelSize: 11
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
                     TinyLabel {
                         text: "EXTENSION"
                         Layout.margins: 7
@@ -4370,15 +4490,6 @@ ApplicationWindow {
                                     Action { id: protocolEvidenceToggle; text: checked ? "Hide original values and source" : "Original values and source"; checkable: true; Layout.fillWidth: true }
                                     TextArea { visible: protocolEvidenceToggle.checked; text: JSON.stringify(modelData.evidence,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
-                            }
-                            FieldInput {
-                                id: defaultCharset
-                                objectName: "defaultCharset"
-                                Layout.fillWidth: true
-                                placeholderText: "Next scan default charset (e.g. UTF-8)"
-                                enabled: backendReady
-                                Accessible.name: "Default input charset for next scan"
-                                SafeTip { visible: anchorHovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
                             }
                             FieldChoice {
                                 id: epgLanguageChoice

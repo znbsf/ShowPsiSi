@@ -1620,6 +1620,25 @@ details.sidebar-help summary::-webkit-details-marker { display: none; }
 details.sidebar-help summary::before { content: "▸ "; }
 details.sidebar-help[open] summary::before { content: "▾ "; }
 details.sidebar-help summary:hover { color: var(--text); }
+.sourcebar { flex-wrap: wrap; }
+.source-input { display: flex; flex: 1 1 280px; min-width: 0; gap: 8px; align-items: center; }
+.source-input label, .source-input .btn { flex-shrink: 0; }
+.sourcebar #source { flex: 1 1 120px; min-width: 0; }
+.sourcebar #standards { flex-shrink: 0; }
+.scan-actions { display: flex; flex-shrink: 0; gap: 8px; }
+#scan-options-toggle { display: inline-flex; align-items: center; gap: 8px; min-width: 120px; max-width: min(300px, 100%); }
+#scan-options-toggle > span:first-child { flex-shrink: 0; }
+#scan-options-summary { min-width: 0; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.scan-options-fields { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.scan-options-fields label { margin: 0; letter-spacing: 0; font-size: 11px; display: block; }
+.sourcebar #default-charset { flex: 0 1 160px; width: 160px; }
+.sourcebar #extra-pids { flex: 1 1 180px; width: 180px; min-width: 100px; }
+#scan-options-changed { flex: 1 1 100%; margin: 0; text-align: right; color: var(--muted); font-size: 11px; }
+.scan-options-fields[hidden], #scan-options-summary[hidden], #scan-options-changed[hidden] { display: none; }
+.stat .issue-counts { display: flex; flex-wrap: wrap; gap: 4px 8px; min-width: 0; white-space: normal; }
+.issue-counts .issue-errors { color: var(--red); }
+.issue-counts .issue-warnings { color: var(--warn-text); }
+.issue-counts .issue-other { color: var(--muted); }
 kbd { font: 11px var(--mono); color: var(--text); }
 .meta, .inspector-footer .meta, .timeline-top .meta, .reference p, .record-name small,
 .view-tabs button, .pid-head, .axis-basis, .arrival-axis, .density-ticks, #result-count,

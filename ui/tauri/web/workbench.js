@@ -38,6 +38,35 @@ var workbench = {
   }
 };
 
+// Scan intent is captured by each frontend when the request is sent. PID order
+// and duplicate entries do not change the monitored set; invalid input stays distinct.
+workbench.scanOptionsKey = function(options) {
+  var pids=options.extra_pids;
+  return JSON.stringify([options.standards,options.default_charset.trim(),pids===null?null:pids.filter(function(p,i,all){return all.indexOf(p)===i;}).sort(function(a,b){return a-b;})]);
+};
+workbench.scanOptionsSummary = function(options) {
+  var parts=[],pids=options.extra_pids;
+  if(options.default_charset.trim())parts.push('charset '+options.default_charset.trim());
+  if(pids===null)parts.push('invalid PIDs');
+  else {
+    pids=pids.filter(function(p,i,all){return all.indexOf(p)===i;});
+    pids.slice(0,2).forEach(function(p){parts.push('+PID '+workbench.hex(p));});
+    if(pids.length>2)parts.push('+'+(pids.length-2)+' more PIDs');
+  }
+  return parts.join(' · ');
+};
+workbench.issueCounts = function(issues) {
+  var counts={total:issues.length,errors:0,warnings:0,other:0,hasSeverity:false};
+  issues.forEach(function(issue) {
+    var severity=typeof issue.severity==='string'?issue.severity.toLowerCase().trim():'';
+    if(severity)counts.hasSeverity=true;
+    if(severity==='error')counts.errors++;
+    else if(severity==='warning')counts.warnings++;
+    else counts.other++;
+  });
+  return counts;
+};
+
 workbench.wireVersionText = function(row) { return row.versioning_supported===false || row.version===null?'version not carried':row.version===undefined?'version unavailable':'v'+row.version; };
 workbench.wireExtensionText = function(row) { return row.versioning_supported===false || row.extension===null?'extension not carried':row.extension===undefined?'extension unavailable':'Ext '+workbench.hex(row.extension); };
 workbench.wireCurrentText = function(row) { return row.versioning_supported===false || row.current===null?'current/next not carried':row.current===undefined?'current/next unavailable':row.current?'current':'next'; };

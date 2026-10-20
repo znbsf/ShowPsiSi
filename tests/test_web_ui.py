@@ -187,6 +187,7 @@ class BrowserTests(unittest.TestCase):
         p.locator('[data-view="hex"]').click();self.assertEqual(p.locator('.source-byte').count(),0)
 
     def test_dsmcc_module_cards_keep_snapshot_hash_and_all_sources(self):
+        self.open_scan_options()
         import test_dsmcc_summaries as f
         p=self.page
         for complete in (False,True):
@@ -824,6 +825,7 @@ class BrowserTests(unittest.TestCase):
         self.page.screenshot(path=str(self.artifacts/'satellite-candidates.png'))
 
     def test_signal_metadata_language_encoding_and_id_lookup(self):
+        self.open_scan_options()
         from test_signal_metadata import metadata_fixture
         path=self.output/'metadata.ts';path.write_bytes(metadata_fixture())
         self.page.locator('#standards').select_option('dvb')
@@ -904,6 +906,10 @@ class BrowserTests(unittest.TestCase):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()
         self.assertEqual(self.page_errors,[],'Browser JavaScript raised an exception')
+
+    def open_scan_options(self):
+        if self.page.locator('#scan-options').is_hidden():
+            self.page.locator('#scan-options-toggle').click()
 
     def analyze(self,path=None):
         self.page.locator('#source').fill(str(path or self.sample))
@@ -1819,6 +1825,7 @@ class BrowserTests(unittest.TestCase):
         self.assertNotIn('New B',self.page.locator('.evidence').inner_text())
 
     def test_standards_context_and_invalid_extra_pids(self):
+        self.open_scan_options()
         for standard in ('atsc','isdb-japan','dtmb'):
             self.page.locator('#standards').select_option(standard)
             self.page.locator('#extra-pids').fill('0x123, 291')
@@ -1843,6 +1850,7 @@ class BrowserTests(unittest.TestCase):
         self.analyze()
         # The reason for a rejected value stays next to the control; the footer
         # live region keeps the same message for the status contract.
+        self.open_scan_options()
         self.page.locator('#extra-pids').fill('0xNOPE')
         self.page.locator('#scan').click()
         self.assertIn('decimal or hexadecimal',self.page.locator('#notice').inner_text())
@@ -1937,6 +1945,7 @@ class BrowserTests(unittest.TestCase):
         self.assertGreater(card.locator('.record.tables .table-kind').count(), 0)
 
     def test_new_protocol_tables_without_service_projection(self):
+        self.open_scan_options()
         manifest=json.loads((ROOT/'tests/fixtures/tsduck345/manifest.json').read_text(encoding='utf-8'))
         cases=(('ATSC_AEIT','AEIT','Aggregate Event Information Table',None),
                ('DSMCC_DDB','DSMCC_download_data_message','DSM-CC Download Data Message',None),

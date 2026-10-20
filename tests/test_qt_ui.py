@@ -137,6 +137,10 @@ class NativeQtTests(unittest.TestCase):
                     if script in ('layout-set', 'layout-read', 'layout-small', 'layout-reset'):
                         self.assertTrue(screenshot.is_file(), 'Layout result preceded its screenshot')
                         self.assertEqual(screenshot.read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
+                    if script in ('layout-close', 'layout-key-drag', 'layout-key-reset', 'layout-key-constrained'):
+                        # These drivers call win.close() before publishing. A
+                        # report is not proof that graceful teardown has finished.
+                        self.assertEqual(process.wait(timeout=5), 0, 'Qt graceful close failed')
                     if after_report:
                         after_report()
                 finally:
@@ -869,6 +873,47 @@ class QtEvidenceRetentionTests(unittest.TestCase):
 
 
 class QtProcessCleanupTests(unittest.TestCase):
+    def exercise_close_completion(self, script, outcome=0):
+        with tempfile.TemporaryDirectory(prefix='qt-close-completion-') as directory:
+            root = Path(directory)
+            binary = root / ('fake-qt' + EXE)
+            binary.touch()
+            process = mock.Mock()
+            if isinstance(outcome, Exception):
+                process.wait.side_effect = outcome
+            else:
+                process.wait.return_value = outcome
+            order = mock.Mock()
+            order.attach_mock(process.wait, 'wait')
+            def publish(*args):
+                (root / (script + '.json')).write_text('{"passed":true}')
+                return {'passed': True}
+            with mock.patch.dict(os.environ, SHOWPSISI_QT=str(binary)), \
+                 mock.patch('subprocess.Popen', return_value=process), \
+                 mock.patch(__name__ + '.wait_for_qt_result', side_effect=publish), \
+                 mock.patch(__name__ + '.stop_qt_process') as cleanup:
+                order.attach_mock(cleanup, 'cleanup')
+                if isinstance(outcome, subprocess.TimeoutExpired):
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        NativeQtTests().run_script(script, root)
+                elif outcome != 0:
+                    with self.assertRaisesRegex(AssertionError, 'Qt graceful close failed'):
+                        NativeQtTests().run_script(script, root)
+                else:
+                    NativeQtTests().run_script(script, root)
+            self.assertEqual(order.mock_calls, [mock.call.wait(timeout=5), mock.call.cleanup(process)])
+
+    def test_close_flows_wait_for_exit_before_cleanup(self):
+        for script in ('layout-close', 'layout-key-drag', 'layout-key-reset', 'layout-key-constrained'):
+            with self.subTest(script=script):
+                self.exercise_close_completion(script)
+
+    def test_close_timeout_preserves_failure_and_owned_cleanup(self):
+        self.exercise_close_completion('layout-close', subprocess.TimeoutExpired('qt', 5))
+
+    def test_close_nonzero_exit_preserves_failure_and_owned_cleanup(self):
+        self.exercise_close_completion('layout-key-constrained', 1)
+
     def test_windows_cleanup_targets_owned_live_tree_and_waits(self):
         process = mock.Mock(pid=12345)
         process.poll.return_value = None

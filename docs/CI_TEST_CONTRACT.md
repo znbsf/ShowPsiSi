@@ -177,3 +177,11 @@ actual close-event handler before moving focus for the next opening; a separate
 regression verifies that boundary. Original ignored-frame, focus, content and
 modal-keyboard assertions and deadlines remain unchanged. No production handler
 was changed to manufacture these test results.
+
+Run `39426053551` then retained a successful constrained-layout report and Qt
+exit 0, but taskkill returned 255 with an explicit no-running-instance diagnostic.
+Rather than broadening accepted taskkill errors, the four drivers that deliberately
+close their own window now require normal process exit within the existing
+five-second cleanup budget before forced cleanup is considered. Ordered contracts
+cover successful exit, timeout and nonzero exit; the latter two remain failures.
+The compiled close and keyboard/persistence regressions cover all four flows.

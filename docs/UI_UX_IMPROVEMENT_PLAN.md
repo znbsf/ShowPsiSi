@@ -502,10 +502,40 @@ ShowPsiSi 的“证据优先”内核做得扎实：保留来源、显式未知�
 - Qt 的服务行、Hex ASCII、密度条键盘、禁用原因标签，目前只确认了 `Main.qml` 能通过 qmlcachegen 编译。本机 offscreen 启动后进程存活，但不产生日志、跟踪或测试结果；改动前的基线二进制也是这样，所以还不能确认 QML 运行时加载正确，需要在能运行 Qt 测试的环境（CI 或干净 Windows）复验。
 - 截图只用于观察视觉，不作为功能结论。
 
-### 14.5 仍待后续迭代的部分（按“克制”排序）
+### 14.5 第二阶段：由 Codex 执行、逐轮审查（分支 `ui/ux-refinement`）
 
-1. §5.1 检查器摘要条和 §5.5 Metadata 拆分：改动大，建议先完成 §12.1，把测试脚手架拆出 Main.qml。
-2. §2.2 两端源栏字段顺序统一。
-3. §4.6 Changes 的结构化 diff 视图（本轮只改了值的格式）。
-4. 排序和过滤（放到共享的 `workbench.js`）、字段与字节联动（需要引擎输出偏移，同步 PROTOCOL_COVERAGE.md）。
-5. 命令面板、拖放、EPG 网格、i18n：属于加法，放在最后。
+第二阶段由 Claude 规划并审查，Codex CLI 负责实现。每一轮都按同一个流程走：
+1. 写出任务说明。所有轮次共享同一份规则：遵守 AGENTS.md、两端同步、颜色只用令牌、保留测试依赖的 id 和 objectName、保持 CRLF。
+2. Codex 实现。
+3. 审查 diff，重点看删掉的测试行和新增的硬编码颜色。
+4. 构建 Qt，跑对比度测试和完整的 Web 测试套件，结果与基线比较。
+5. 如果出现回归，退回 Codex 修复；修好并通过后，单独提交。
+
+| 轮次 | 提交 | 内容（对应章节） | 审查发现并退回修复的问题 |
+|---|---|---|---|
+| R1 | `bbcc75c` | §2.2 源栏统一为 路径 → Standards → Scan options ▾（Charset、Extra PIDs）→ Analyze；折叠时显示非默认值的摘要；参数变化后提示重新分析；Qt 的 charset 从 Metadata 移到源栏。§2.3 Qt 统计可点击跳转；Issues 按严重度计数。§10 Web 加 `Ctrl+.` 和 `F6` / `Shift+F6` | 无 |
+| R2 | `6bf8e96` | §10 Alt+←/→ 只用于导航，面板尺寸改为 Ctrl+Alt+方向键。§2.4 消息分三级：info 4 秒后淡出；warning 常驻并计数；error 显示可关闭横幅。另有最近 50 条消息的历史（Esc 关闭）和 `aria-live` 分级 | DVB-I 工作区下 TS 页脚重新显示（`test_dvbi_independent_session…`）→ 已修复 |
+| R3 | `ca10fff` | §5.1 检查器头部压缩成一行摘要条（表、PID、版本、section、CRC、到达次数、标准、Scope）；详情可展开且会持久化；截断和解码器注释合并为一行警示条 | 标准上下文被折叠后不可见（`test_standards_context…`）→ 已加常驻标准 chip；摘要辅助函数补上空值保护 |
+| R4 | `0a5a87d` | §5.5 Metadata 拆成 Section metadata 和 Lookup 两组；查询结果改为键值表，带来源列，原始 JSON 收进 Raw 折叠区；“not verified” 等标记保留；Qt 命名空间显示可读名称 | 无 |
+| R5 | `7da52c0` | §4.6 字段级 A → B 差异，数值同时显示十六进制和十进制，嵌套可展开；`+N / −N / ~N` 改为过滤芯片；每侧的次级动作收拢。§7 时间轴标注改为 “Axis: packet index” 并加说明。新增 `--added-text` / `--removed-text` 令牌，已纳入对比度测试 | 无 |
+| R6 | `b70ee96` | §6 拖放文件（只填入路径，不自动分析；浏览器预览会明确提示该功能需要桌面版）；最多 10 条最近文件（沿用现有设置存储）；`?` / `Ctrl+/` 打开快捷键帮助浮层，内容来自同一张快捷键表 | 无 |
+
+**每轮最终结果**：
+- 构建：Qt 构建通过，QML 通过 qmlcachegen 编译。
+- `test_ui_contrast.py`：6/6 通过。
+- `test_web_ui.py`：测试从 59 个增加到 64 个，新增的都是 Codex 加的回归测试；失败的始终是同样 10 个基线用例（7 个取消测试，3 个导出测试），没有新增失败。
+- `test_qt_resource_paths` + `test_qt_evidence`：18/18 通过。
+
+**验证边界（重要）**：
+- 本机的 Qt scripted 测试，在改动前的二进制上也不产生结果 JSON。窗口能启动，也能拉起引擎，但不写跟踪和结果；脱离工具沙箱运行也一样。原因未查明。所以 Qt 端六轮改动**只验证到“能编译”**，交互正确性需要在 GitHub CI 的 Windows 原生检查（`scripts/ci/windows_native_checks.py --qt`）或干净的 Windows 上确认。
+- Tauri/WebView2 原生拖放、原生窗口下的焦点和快捷键，都没有在桌面上手动验证过。
+
+### 14.6 仍未做的部分
+
+- §5.2 字段 ↔ 字节联动：需要引擎在 JSONL 中输出 `byte_offset` / `bit_offset`，属于引擎和协议改动，要同步 PROTOCOL_COVERAGE.md。
+- §5.2 引用跳转。
+- §7 时间线上拖动 A/B 标记。
+- §6 命令面板（`>` 和 `#` 前缀）。
+- §2.1 溢出菜单：测试要求 `#reset-layout` 直接可见，所以本次只做了分组。
+- §12.1 把测试脚手架拆出 Main.qml：本机无法运行 Qt 测试，拆分风险太高，等 Qt 测试环境可用后再做。
+- P2：EPG 时间网格、i18n、Web 局部渲染、Update 对话框改版、References 去重。

@@ -1,5 +1,11 @@
 # Validation
 
+Responsive local-file analysis adds `test_responsive_analysis.py`,
+`test_analysis_preview_review.py` and `test_qt_analysis_modes.py` to the strict
+native gates. These exercise compact result paging, pause/resume/cancellation
+and bounded preview coverage against the actual engine. See
+[the contract and benchmark limitations](../docs/RESPONSIVE_ANALYSIS.md).
+
 Windows AppLocal packaging helper regressions run with Python 3.12 and pinned
 `pefile==2024.8.26`: `test_vc_runtime.py`, `test_applocal_validation.py`,
 `test_corresponding_source.py`, `test_portable_package.py`,

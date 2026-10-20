@@ -171,6 +171,12 @@ class Core:
         """Backwards-compatible synchronous request, safe alongside other calls."""
         return self.submit(method, params, progress).result()
 
+    def pause_analysis(self, request_id):
+        return self.call('pause_analysis', {'request_id': request_id})
+
+    def resume_analysis(self, request_id):
+        return self.call('resume_analysis', {'request_id': request_id})
+
     def cancel_analysis(self, request_id):
         """Request cooperative cancellation; never terminate the child process."""
         return self.call('cancel_analysis', {'request_id': request_id})

@@ -14,7 +14,10 @@
     "j94_system_b": "Explicit ITU-T J.94 (10/2016) System B section inspection; descriptor-revised NIT/NTT/short-VCT subtables via bounded query_cable_oob, plus STT arithmetic. Raw short headers stay unversioned. No current SCTE65 equivalence, synchronized network lineup, receiver actions, OOB hardware or snapshot export.",
     "snapshot_comparison": "Read-only selected valid-current section, actual-TS service and EIT observation differences within one successful analysis revision. Maximum 200 changes per page. Not broadcast validity or EIT schedule completeness.",
     "ordinary_request_queue": 64,
-    "cancellation": "Cooperative targeted cancellation of queued or running analyses. Integer/string request IDs are distinct. Accepted cancellation wins over completion until the terminal commit. Blocking file reads, SDK work and stdout may delay cancellation."
+    "cancellation": "Cooperative targeted cancellation of queued or running analyses. Integer/string request IDs are distinct. Accepted cancellation wins over completion until the terminal commit. Blocking file reads, SDK work and stdout may delay cancellation.",
+    "responsive_analysis": "Opt-in compact progress/terminal metadata, lazy revision/cutoff-bound collection pages, bounded occurrence inspection, and cooperative pause/resume. Legacy result shapes remain default.",
+    "partial_analysis": "Prefix, explicit packet range or a few distributed contiguous windows. Packet positions remain source-absolute. Gaps reset section assembly and semantic generation selection. Partial evidence cannot be edited or exported.",
+    "result_page_item_bytes": 262144
   },
   "tools": [
     {
@@ -88,8 +91,16 @@
           "element_id": {
             "type": "string"
           },
-          "child_offset": {"type": "integer", "minimum": 0, "maximum": 20000},
-          "child_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+          "child_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20000
+          },
+          "child_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
           "source_offset": {
             "type": "integer",
             "minimum": 0,
@@ -116,16 +127,49 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "orbital_position_degrees": {"type": "number", "minimum": 0, "maximum": 180},
-          "direction": {"type": "string", "enum": ["E", "W"]},
-          "tolerance_degrees": {"type": "number", "minimum": 0, "maximum": 1, "description": "Explicit orbital-position tolerance; default 0 means identical nominal slot."},
-          "frequency_hz": {"type": "number", "minimum": 1, "maximum": 1000000000000},
-          "symbol_rate": {"type": "number", "minimum": 1, "maximum": 1000000000},
-          "polarization": {"type": "string", "enum": ["horizontal", "vertical", "left", "right"]}
+          "orbital_position_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 180
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "E",
+              "W"
+            ]
+          },
+          "tolerance_degrees": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Explicit orbital-position tolerance; default 0 means identical nominal slot."
+          },
+          "frequency_hz": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000000000000
+          },
+          "symbol_rate": {
+            "type": "number",
+            "minimum": 1,
+            "maximum": 1000000000
+          },
+          "polarization": {
+            "type": "string",
+            "enum": [
+              "horizontal",
+              "vertical",
+              "left",
+              "right"
+            ]
+          }
         },
         "additionalProperties": false
       },
-      "annotations": {"readOnlyHint": true}
+      "annotations": {
+        "readOnlyHint": true
+      }
     },
     {
       "name": "lookup_identifier",
@@ -133,14 +177,48 @@
       "inputSchema": {
         "type": "object",
         "properties": {
-          "namespace": {"type": "string", "enum": ["original_network_id", "network_id", "bouquet_id", "ca_system_id", "private_data_specifier", "registration_id", "data_broadcast_id", "platform_id", "oui"]},
-          "value": {"type": "integer", "minimum": 0, "maximum": 4294967295},
-          "standards": {"type": "string", "enum": ["auto", "dvb", "atsc", "isdb", "isdb-japan", "isdb-brazil", "scte", "dtmb"]}
+          "namespace": {
+            "type": "string",
+            "enum": [
+              "original_network_id",
+              "network_id",
+              "bouquet_id",
+              "ca_system_id",
+              "private_data_specifier",
+              "registration_id",
+              "data_broadcast_id",
+              "platform_id",
+              "oui"
+            ]
+          },
+          "value": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "standards": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "dvb",
+              "atsc",
+              "isdb",
+              "isdb-japan",
+              "isdb-brazil",
+              "scte",
+              "dtmb"
+            ]
+          }
         },
-        "required": ["namespace", "value"],
+        "required": [
+          "namespace",
+          "value"
+        ],
         "additionalProperties": false
       },
-      "annotations": {"readOnlyHint": true}
+      "annotations": {
+        "readOnlyHint": true
+      }
     },
     {
       "name": "capabilities",
@@ -195,6 +273,48 @@
             },
             "maxItems": 8192,
             "description": "Additional section-carrying PIDs to monitor."
+          },
+          "response_mode": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "compact"
+            ]
+          },
+          "scan_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "prefix",
+              "range",
+              "distributed"
+            ]
+          },
+          "max_packets": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Total packet budget for prefix/distributed, default 250000; full ignores this field."
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "end_packet": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Exclusive source-absolute end packet for range mode."
+          },
+          "window_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16,
+            "description": "Number of sequential windows for distributed mode, default 4; adjacent windows are merged."
+          },
+          "sample_percent": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "description": "For prefix/distributed only: total budget=max(1,floor(source_packets*percent/100)), after framing detection. Mutually exclusive with max_packets. Rejected for full/range."
           }
         },
         "required": [
@@ -232,13 +352,20 @@
     },
     {
       "name": "query",
-      "description": "Read retained section evidence (including invalid raw variants), per-version coverage, packet-arrival distributions and latest observed current sections and derived actual-TS services from complete SDT on canonical PID 0x0011 (extra-PID SDTs stay table evidence) at a packet position. Observation state, not a guarantee of broadcast validity intervals.",
+      "description": "Read retained section evidence (including invalid raw variants), per-version coverage, packet-arrival distributions and latest observed current sections and derived actual-TS services from complete SDT on canonical PID 0x0011 (extra-PID SDTs stay table evidence) at a packet position. Observation state, not a guarantee of broadcast validity intervals. Opt-in response_mode compact returns only metadata; hydrate requested collections with query_result.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "at_packet": {
             "type": "integer",
             "minimum": 0
+          },
+          "response_mode": {
+            "type": "string",
+            "enum": [
+              "legacy",
+              "compact"
+            ]
           }
         },
         "additionalProperties": false
@@ -360,6 +487,15 @@
             "type": "integer",
             "minimum": 0,
             "description": "Limit section occurrences and native table assembly to observations at or before this packet. Rejects sections not yet observed. Omitted: all occurrences; native table assembled at inspected section last occurrence."
+          },
+          "occurrence_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "occurrence_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
           }
         },
         "required": [
@@ -494,6 +630,101 @@
             "maximum": 100
           }
         },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "pause_analysis",
+      "description": "Cooperatively pause a matching queued/running analysis; acknowledgement is not the owner-thread paused progress event.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Original analyze request ID. Integer 1 and string \"1\" identify different requests."
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "resume_analysis",
+      "description": "Cooperatively resume a matching queued/running analysis; acknowledgement is not the owner-thread paused progress event.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "request_id": {
+            "type": [
+              "integer",
+              "string"
+            ],
+            "description": "Original analyze request ID. Integer 1 and string \"1\" identify different requests."
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false
+      }
+    },
+    {
+      "name": "query_result",
+      "description": "Read a revision/cutoff-bound, lazy cached result collection page. Tables/groups omit distributions; inspect one section for distribution. History/density remain scan-global. Maximum 256 KiB item payload per page.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "collection": {
+            "type": "string",
+            "enum": [
+              "tables",
+              "services",
+              "events",
+              "history",
+              "table_history",
+              "diagnostics",
+              "density",
+              "table_groups"
+            ]
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "collection"
+        ],
         "additionalProperties": false
       },
       "annotations": {

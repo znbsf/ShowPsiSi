@@ -27,7 +27,8 @@ from qt_evidence import retain_qt_evidence
 
 def native_environment():
     env = os.environ.copy()
-    libraries = [ROOT / '.deps/Qt/6.7.3/gcc_64/lib',
+    libraries = [ROOT / '.deps/native-root/usr/lib/x86_64-linux-gnu',
+                 ROOT / '.deps/Qt/6.7.3/gcc_64/lib',
                  ROOT / '.deps/python/PySide6/Qt/lib',
                  ROOT / '.deps/tsduck/usr/lib',
                  ROOT / '.deps/tsduck/usr/lib/x86_64-linux-gnu']

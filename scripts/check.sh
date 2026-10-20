@@ -22,9 +22,13 @@ python -m unittest discover -s tests -p test_dvbi.py -v
 python -m unittest discover -s tests -p test_dvbi_presentation.py -v
 python -m unittest discover -s tests -p test_sdk_migration.py -v
 python -m unittest discover -s tests -p test_cancellation.py -v
+python -m unittest discover -s tests -p test_responsive_analysis.py -v
+python -m unittest discover -s tests -p test_analysis_preview_review.py -v
+python -m unittest discover -s tests -p test_web_scan_helpers.py -v
 python -m unittest discover -s tests -p test_mcp_cancellation.py -v
 python -m unittest discover -s tests -p test_cloud_preview.py -v
 python -m unittest discover -s tests -p test_qt_ui.py -v
+python -m unittest discover -s tests -p test_qt_analysis_modes.py -v
 python -m unittest discover -s tests -p test_protocol_presentation.py -v
 python -m unittest discover -s tests -p test_qt_protocol_cards.py -v
 

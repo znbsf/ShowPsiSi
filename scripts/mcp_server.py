@@ -57,11 +57,15 @@ class MCPServer:
         self.output = output
         self.tools = core.call('capabilities')['tools']
         for tool in self.tools:
-            if tool['name'] == 'cancel_analysis':
+            if tool['name'] in {'cancel_analysis', 'pause_analysis', 'resume_analysis'}:
                 tool['description'] = ('Cooperatively cancel an active analyze tool call by its outer '
                                        'MCP request ID. Returns an acknowledgement; the original '
                                        'analysis returns an analysis_cancelled tool error. '
                                        'notifications/cancelled instead suppresses that original reply.')
+                if tool['name'] != 'cancel_analysis':
+                    tool['description'] = ('Cooperatively ' + tool['name'].split('_')[0] +
+                                           ' an active analyze tool call by its outer MCP request ID. '
+                                           'Acknowledgement does not substitute for owner-thread progress status.')
                 tool['inputSchema']['properties']['request_id']['description'] = (
                     'The outer MCP tools/call request ID of the active analyze call, preserving '
                     'string versus integer type. This is not an internal native request ID.')
@@ -86,13 +90,18 @@ class MCPServer:
             if (self._active.get(call.rid) is not call or call.cancelled or
                     call.request.done()):
                 return
-            packets = event.get('state', {}).get('packets')
+            state = event.get('state', {})
+            coverage = state.get('coverage', {})
+            packets = coverage.get('scanned_packets', state.get('packets'))
             if type(packets) is not int or packets <= call.progress:
                 return
             call.progress = packets
-            self.send({'jsonrpc': '2.0', 'method': 'notifications/progress',
-                       'params': {'progressToken': call.token, 'progress': packets,
-                                  'message': 'Analyzing transport-stream packets'}})
+            params = {'progressToken': call.token, 'progress': packets,
+                      'message': 'Analyzing transport-stream packets'}
+            ranges = coverage.get('ranges', [])
+            if ranges:
+                params['total'] = sum(item['end_packet'] - item['start_packet'] for item in ranges)
+            self.send({'jsonrpc': '2.0', 'method': 'notifications/progress', 'params': params})
 
     def _wait(self, call, translate_id=None):
         try:
@@ -118,7 +127,7 @@ class MCPServer:
             self._workers.add(worker)
         worker.start()
 
-    def _cancel(self, target, suppress_response):
+    def _cancel(self, target, suppress_response, method='cancel_analysis'):
         """Caller holds _lock. Only map active outer analysis IDs to native IDs."""
         call = self._active.get(target) if valid_id(target) else None
         if call is None or call.name != 'analyze' or call.request.done():
@@ -127,8 +136,9 @@ class MCPServer:
             call.suppress_response = True
         if call.cancelled and suppress_response:
             return None
-        call.cancelled = True
-        return self.core.submit('cancel_analysis', {'request_id': call.request.request_id})
+        if method == 'cancel_analysis':
+            call.cancelled = True
+        return self.core.submit(method, {'request_id': call.request.request_id})
 
     def _cancel_notification(self, request):
         # Notifications are fire-and-forget, including malformed/late requests.
@@ -159,13 +169,13 @@ class MCPServer:
                            'error': {'code': -32600, 'message': 'Request ID is already active'}})
                 return
             try:
-                if name == 'cancel_analysis':
+                if name in {'cancel_analysis', 'pause_analysis', 'resume_analysis'}:
                     if (not isinstance(args, dict) or set(args) != {'request_id'} or
                             not valid_id(args['request_id'])):
                         raise CoreError({'code': 'request_failed',
                                          'message': 'request_id must be an outer analysis request ID (string or integer)'})
                     translate_id = args['request_id']
-                    call.request = self._cancel(translate_id, suppress_response=False)
+                    call.request = self._cancel(translate_id, suppress_response=False, method=name)
                     if call.request is None:
                         self.reply(rid, tool_result({'request_id': translate_id,
                                                     'requested': False, 'reason': 'not_running'}))
@@ -225,6 +235,11 @@ class MCPServer:
         # before explicit client cleanup, which may otherwise cancel analyses.
         with self._lock:
             workers = list(self._workers)
+            # A paused native scan cannot finish while its stdin remains open.
+            # Resume accepted analyses for passive EOF draining, not cancellation.
+            for call in self._active.values():
+                if call.name == 'analyze' and not call.request.done():
+                    self.core.submit('resume_analysis', {'request_id': call.request.request_id})
         for worker in workers:
             worker.join()
         self.core.close()

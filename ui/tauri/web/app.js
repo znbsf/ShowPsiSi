@@ -138,7 +138,8 @@ function categoryBadge(row) {
 }
 const isBadCrc = (row) => row.crc?.status === "invalid";
 let allTableHistory = false, historyIdentity = "";
-let showBadCrc = false, evidenceScope = "merged", groupedTables = true, sectionGroupOpen = false;
+let showBadCrc = false, evidenceScope = "merged", groupedTables = true;
+let inspectorDetails = workbench.inspectorDisclosure();
 const openTableGroups = new Set();
 function syntaxXml(xml) {
   // Tokenize original text, then escape each token. Never interpret SDK XML as HTML.
@@ -161,7 +162,7 @@ function distributionPanel(row) {
   const d = row.distribution;
   if (!d) return '';
   const bins = d.bins || [], max = Math.max(1, ...bins.map(b => b.count));
-  return `<details class="arrival"><summary>Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</summary><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</details>`;
+  return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
 let data = {},
@@ -1634,11 +1635,11 @@ function referencePanel() {
 }
 function sectionGroupPanel() {
   const group = (data.table_groups || []).find(g => (g.section_ids || []).includes(detail.id));
-  if (!group) return '';
+  if (!group) return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections ? '' : 'hidden'}><p class="meta">${esc(workbench.wireHeaderText(detail))} · No capture-wide group available at this cutoff.</p></div>`;
   const sources = (data.tables || []).filter(r => group.section_ids.includes(r.id));
   const hidden = sources.filter(isBadCrc).length;
-  if(group.versioning_supported===false)return `<details class="section-group" id="section-group" ${sectionGroupOpen?'open':''}><summary>Exact section evidence · ${esc(group.validity)} · map assembly unsupported</summary><p class="meta">${esc(group.coverage_scope || group.coverage_model || detail.header_semantics)}</p><p class="meta">${esc(workbench.wireHeaderText(group))}</p><select id="section-choice" aria-label="Select original section evidence">${sources.map(r=>`<option value="${esc(r.id)}" ${r.id===detail.id?'selected':''}>${esc(r.name)} · CRC ${esc(r.crc?.status || 'unavailable')} · #${num(r.first_packet)}</option>`).join('')}</select></details>`;
-  return `<details class="section-group" id="section-group" ${sectionGroupOpen ? "open" : ""}><summary>▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</summary><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links"><select id="section-choice" aria-label="Select original section evidence">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<option value="${esc(r.id)}" ${r.id === detail.id ? 'selected' : ''}>${esc(workbench.wireSectionText(r))} · CRC ${esc(r.crc?.transmitted_hex || '—')} · ${esc(r.crc?.status || 'unavailable')} · #${r.first_packet}</option>`).join('')}</select></div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</details>`;
+  if(group.versioning_supported===false)return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections?'':'hidden'}><p class="meta">Exact section evidence · ${esc(group.validity)} · map assembly unsupported</p><p class="meta">${esc(group.coverage_scope || group.coverage_model || detail.header_semantics)}</p><p class="meta">${esc(workbench.wireHeaderText(group))}</p><select id="section-choice" aria-label="Select original section evidence">${sources.map(r=>`<option value="${esc(r.id)}" ${r.id===detail.id?'selected':''}>${esc(r.name)} · CRC ${esc(r.crc?.status || 'unavailable')} · #${num(r.first_packet)}</option>`).join('')}</select></div>`;
+  return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections ? "" : "hidden"}><p class="meta">▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</p><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links"><select id="section-choice" aria-label="Select original section evidence">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<option value="${esc(r.id)}" ${r.id === detail.id ? 'selected' : ''}>${esc(workbench.wireSectionText(r))} · CRC ${esc(r.crc?.transmitted_hex || '—')} · ${esc(r.crc?.status || 'unavailable')} · #${r.first_packet}</option>`).join('')}</select></div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</div>`;
 }
 let epgLanguage = "", identifierResult = null, satelliteResult = null;
 function satelliteText(x) {
@@ -1677,6 +1678,34 @@ function metadataPanel() {
     <h3>ID names and sources</h3>${(detail.identifier_lookups || []).map(x => card(`${x.namespace} · ${x.raw_hex}`, `${x.label || "Unknown"} · ${x.status}\n${x.uncertainty}`, x)).join("") || '<p class="meta">No supported identifiers indexed in this section.</p>'}
     <h3>Text encoding diagnostics</h3><p class="meta">${esc(detail.text_diagnostic_scope || "")}</p>${(detail.text_diagnostics || []).map(x => card(`${x.field} · ${x.language_code || "no language tag"}`, `${x.status} · ${x.effective_charset || "unknown charset"} · ${x.basis}\n${x.decoded_text}\nSelector: ${x.selector_hex || "none"} · section offset ${x.source.section_offset}\nRaw: ${x.raw_hex}\n${(x.warnings || []).join("\n")}`, x)).join("") || '<p class="meta">No supported text fields in this section.</p>'}</div>`;
 }
+function applyInspectorDetails(panel) {
+  const container = panel?.querySelector('#inspector-details');
+  if (!container) return;
+  const areas = [...panel.querySelectorAll('[data-inspector-content]')];
+  areas.forEach(el => { el.hidden = !inspectorDetails[el.dataset.inspectorContent]; });
+  panel.querySelectorAll('[data-inspector-detail]').forEach(el => {
+    el.setAttribute('aria-expanded', String(inspectorDetails[el.dataset.inspectorDetail]));
+  });
+  container.hidden = !areas.some(el => !el.hidden);
+}
+function bindInspectorSummary(panel, scroll) {
+  const chips = panel?.querySelector('.inspector-chips');
+  if (!chips) return;
+  chips.scrollLeft = scroll;
+  panel.querySelectorAll('[data-inspector-detail]').forEach(el => {
+    el.onclick = () => {
+      const key = el.dataset.inspectorDetail;
+      inspectorDetails[key] = !inspectorDetails[key];
+      applyInspectorDetails(panel);
+      const target = panel.querySelector('[data-inspector-content="' + key + '"]');
+      const container = panel.querySelector('#inspector-details');
+      if (target && container && inspectorDetails[key]) container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      saveLayout();
+    };
+  });
+  chips.addEventListener('focusin', event => event.target?.scrollIntoView?.({block:'nearest',inline:'nearest'}));
+  applyInspectorDetails(panel);
+}
 // One reason per blocked state, in the order a user can resolve them.
 function editBlockReason() {
   if (backendFailure) return "Backend disconnected";
@@ -1689,16 +1718,14 @@ function editBlockReason() {
 }
 function renderInspector() {
   const panel = $("#inspector");
+  if (!panel) return;
   if (tab === "Topology" && !topology.active) { renderTopologyInspector(); return; }
-  // Read live disclosure state before replacing its DOM. The asynchronous
-  // toggle event may not have fired when a source-section change starts.
-  const previousSectionGroup = panel.querySelector("#section-group");
-  if (previousSectionGroup) sectionGroupOpen = previousSectionGroup.open;
+  const summaryScroll = panel.querySelector(".inspector-chips")?.scrollLeft || 0;
   if (aggregateDiagnostic) {
     panel.innerHTML = `<div class="panel-title">TRANSPORT DIAGNOSTIC <span class="bad">AGGREGATE</span></div><div class="empty"><span class="empty-icon bad">⚠</span><h3>${esc(aggregateDiagnostic.code)}</h3><p>${esc(aggregateDiagnostic.detail)}</p><p>${num(aggregateDiagnostic.count)} observations across monitored SI PIDs. Individual packet locations are not indexed.</p></div>`;
     return;
   }
-  if (loadingDetail || detailError || !detail.name) {
+  if (loadingDetail || detailError || !detail?.name) {
     if (tab === "Changes" && !loadingDetail && !detailError) {
       // Comparison mode replaces the record list, so a "select a record" hint
       // would point at nothing. Describe the workflow that is actually on screen.
@@ -1712,22 +1739,20 @@ function renderInspector() {
     );
     return;
   }
-  const nativeWarnings = Array.isArray(detail.native_decode_warnings)
-    ? detail.native_decode_warnings.filter((warning) => typeof warning === "string")
-    : [];
-  if (detail.native_xml_guarded)
-    nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
+  const nativeWarnings = workbench.inspectorWarnings(detail, data);
   const xmlSource = evidenceScope === "section" ? detail.section_tsduck_xml : detail.merged?.complete ? detail.merged.tsduck_xml : null;
   const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
-  panel.innerHTML = sourceContextHeader()+`<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence && inspectionEvidence?.kind!=='topology' ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ ${esc(workbench.wireVersionText(detail))}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · ${esc(workbench.wireSectionText(detail))} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.versioning_supported===false?' · exact section only; map assembly unsupported':detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope" title="Section: fields + bytes · Merged: SDK tree + XML"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}" title="Fields and bytes of this exact section">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}" title="SDK tree and XML of the complete merged table">Merged table</button></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? topologyHexDump(detail.raw_hex) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${editBlockReason() ? `disabled title="${esc(editBlockReason())}"` : 'title="Preview and export a renamed service"'}>Rename service…</button></div>`;
+  const summary = workbench.inspectorSummary(detail);
+  const chip = (key, label, id, title) => `<button class="summary-chip" id="${id}" data-inspector-detail="${key}" aria-expanded="${inspectorDetails[key]}" aria-controls="${key === 'sections' ? 'section-group' : key + '-details'}" aria-label="${esc(title)}" title="${esc(title)}">${label}</button>`;
+  panel.innerHTML = sourceContextHeader()+`${comparisonEvidence && inspectionEvidence?.kind!=='topology' ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading inspector-summary" role="group" aria-label="Section summary">${chip('identity', esc(summary.profile), 'standards-profile-summary-toggle', summary.profileHelp)}<div class="inspector-chips"><h2 ${tip(detail.name)}>${chip('identity', categoryBadge(detail) + (detail.valid ? '' : ' <span class="bad">INVALID</span>'), 'identity-toggle', detail.name + ' · ' + (glossary[detail.name] || detail.name) + ' · section identity and validity')}</h2>${chip('identity', 'PID ' + hex(detail.pid), 'pid-summary-toggle', glossary.PID + ' · TID: Table Identifier ' + hex(detail.table_id, 2) + (selectedService >= 0 ? ' · SID: ' + glossary.SID + ' ' + hex(selectedService) : ''))}${chip('identity', esc(summary.version), 'version-summary-toggle', 'Wire version and current/next state')}${chip('sections', esc(summary.section), 'section-group-toggle', 'Original section evidence and capture-wide table coverage')}${chip('crc', `<span class="${detail.crc?.status === 'invalid' ? 'bad' : detail.crc?.status === 'valid' ? 'ok' : 'muted'}">${esc(summary.crc)}</span>`, 'crc-toggle', glossary.CRC + ': ' + (detail.crc?.status || 'unavailable'))}${detail.distribution ? chip('arrival', num(detail.distribution.observation_count) + ' arrivals', 'arrival-toggle', 'Arrival distribution in packet positions; elapsed seconds only from a supplied bitrate') : ''}</div><div class="scope-tabs" role="group" aria-label="Decode scope" title="Section: fields + bytes · Merged: SDK tree + XML"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === 'section'}" aria-label="Selected section evidence" title="Section: fields and bytes of this exact section">Section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === 'merged'}" aria-label="Merged table evidence" title="Merged: SDK (Software Development Kit) tree and XML of the complete table">Merged</button>${chip('scope', 'ⓘ', 'scope-details-toggle', 'Decode scope details and native assembly cutoff')}</div></div>${nativeWarnings.length ? `<button class="inspector-warning summary-chip" id="inspector-warning-toggle" data-inspector-detail="warnings" aria-expanded="${inspectorDetails.warnings}" aria-controls="warnings-details" aria-label="${nativeWarnings.length} truncation and decoder notes" title="Expand truncation and decoder notes"><span aria-hidden="true">⚠</span> ${nativeWarnings.length} ${nativeWarnings.length === 1 ? 'note' : 'notes'}</button>` : ''}<div class="inspector-details" id="inspector-details" hidden><div id="identity-details" data-inspector-content="identity" ${inspectorDetails.identity ? '' : 'hidden'}><p class="meta identity-line">${detail.valid ? 'VALID' : 'INVALID'} · PID ${hex(detail.pid)} · TID ${hex(detail.table_id, 2)} · ${esc(workbench.wireHeaderText(detail))} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || 'unavailable')} (${esc(detail.crc?.status || 'unavailable')}) · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? ' · ' + esc(reportedStandards(detail)) : ''}${selectedService >= 0 ? ' · SID ' + hex(selectedService) : ''}</p></div><div id="crc-details" data-inspector-content="crc" ${inspectorDetails.crc ? '' : 'hidden'}><p class="meta">Cyclic Redundancy Check: ${esc(detail.crc?.status || 'unavailable')} · transmitted ${esc(detail.crc?.transmitted_hex || '—')} · expected ${esc(detail.crc?.calculated_hex || '—')}</p></div>${distributionPanel(detail)}${sectionGroupPanel()}<div id="scope-details" data-inspector-content="scope" ${inspectorDetails.scope ? '' : 'hidden'}><p class="meta">Section: fields and bytes of this exact section. Merged: SDK tree and XML of the complete table.</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.versioning_supported===false?' · exact section only; map assembly unsupported':detail.merged?.complete ? ' · complete merged generation' : ' · incomplete / superseded: merged decode unavailable'}</p>` : ''}<p class="meta">${esc(detail.inspection_scope?.native_table || 'Native table assembly evidence cutoff')} · TSDuck: ${esc(detail.native_decode_status || 'not available')} · First evidence packet: ${num(detail.first_packet)}</p></div>${nativeWarnings.length ? `<div id="warnings-details" data-inspector-content="warnings" ${inspectorDetails.warnings ? '' : 'hidden'}><p class="meta" id="native-decode-warnings" role="note">${nativeWarnings.map(esc).join('<br>')}</p></div>` : ''}</div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? topologyHexDump(detail.raw_hex) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${editBlockReason() ? `disabled title="${esc(editBlockReason())}"` : 'title="Preview and export a renamed service"'}>Rename service…</button></div>`;
   bindTopologySourceHeader();bindProtocolSource();
   $('#protocol-previous')?.addEventListener('click',()=>{protocolCardOffset=Math.max(0,protocolCardOffset-20);renderInspector();($('#protocol-previous')?.disabled?$('#protocol-next'):$('#protocol-previous'))?.focus({preventScroll:true});});
   $('#protocol-next')?.addEventListener('click',()=>{protocolCardOffset+=20;renderInspector();($('#protocol-next')?.disabled?$('#protocol-previous'):$('#protocol-next'))?.focus({preventScroll:true});});
-  $("#section-group")?.addEventListener("toggle", event => { if (event.target.isConnected) sectionGroupOpen = event.target.open; });
-  panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); });
+  bindInspectorSummary(panel, summaryScroll);
+  panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); panel.querySelector('[data-scope="' + evidenceScope + '"]').focus({preventScroll:true}); });
   const sectionChoice = panel.querySelector("#section-choice");
   if (sectionChoice) sectionChoice.onchange = () => inspect(sectionChoice.value, -1, "", inspectionEvidence);
-  $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#section-group").open = true; });
+  $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#group-show-bad")?.focus({preventScroll:true}); });
   $("#epg-language")?.addEventListener("change", e => { epgLanguage=e.target.value; renderList(); renderInspector(); $("#epg-language")?.focus(); });
   $("#identifier-query")?.addEventListener("click", async () => {
     const value=$("#identifier-value").value.trim(), output=$("#identifier-result");
@@ -2218,8 +2243,10 @@ function readLayout() {
       widths[name] = Math.max(layoutBounds[name][0], Math.min(layoutBounds[name][1], value));
     }
     preferredLayout = widths;
+    inspectorDetails = workbench.inspectorDisclosure(saved.inspectorDetails);
   } catch (error) {
     preferredLayout = {};
+    inspectorDetails = workbench.inspectorDisclosure();
     // Parsing/shape errors recover to defaults; inaccessible storage is also
     // harmless. Do not remove another version or any unrelated application data.
     layoutStorageWarning("Layout defaults restored");
@@ -2228,7 +2255,11 @@ function readLayout() {
 function saveLayout(reset = false) {
   try {
     if (reset) window.localStorage.removeItem(LAYOUT_KEY);
-    else window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ version: 1, widths: preferredLayout }));
+    else {
+      const layout = { version: 1, widths: preferredLayout };
+      if (Object.values(inspectorDetails).some(Boolean)) layout.inspectorDetails = inspectorDetails;
+      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    }
     layoutStorageAvailable = true;
     layoutStorageWarning("");
   } catch (error) {
@@ -2326,6 +2357,8 @@ splitter("#split-right", "inspector", -1);
 window.addEventListener("resize", applyLayout);
 $("#reset-layout").onclick = () => {
   preferredLayout = {};
+  inspectorDetails = workbench.inspectorDisclosure();
+  renderInspector();
   applyLayout();
   saveLayout(true);
   notice(layoutStorageAvailable ? "Default layout restored" : "Default layout restored for this session");

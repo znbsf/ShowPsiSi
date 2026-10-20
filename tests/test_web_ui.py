@@ -1640,14 +1640,15 @@ class BrowserTests(unittest.TestCase):
         self.page.evaluate('id=>window.showpsisi.inspect(id)',row['id'])
         self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=row['id'])
         detail=self.page.evaluate('window.showpsisi.getDetail()')
+        self.page.locator('#identity-toggle').click()
         identity=self.page.locator('.identity-line').inner_text()
         self.assertIn('TID 0x42',identity)
         self.assertIn(detail['crc']['transmitted_hex'],identity)
         self.assertEqual(detail['distribution']['observation_count'],2)
-        self.page.locator('.arrival summary').click()
+        self.page.locator('#arrival-toggle').click()
         self.assertIn('not PCR',self.page.locator('.arrival').inner_text())
         self.assertGreater(self.page.locator('.section-density span').count(),0)
-        self.page.locator('#section-group summary').click()
+        self.page.locator('#section-group-toggle').click()
         self.assertIn('mixed',self.page.locator('#section-group').inner_text())
         sibling=next(r for r in state['tables'] if r['extension']==1 and r['section']==1 and r['valid'])
         self.page.locator('#section-choice').select_option(sibling['id'])
@@ -1673,7 +1674,8 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(root.get_attribute('aria-expanded'),'true')
         for width,height in [(1000,680),(520,1000)]:
             self.page.set_viewport_size({'width':width,'height':height})
-            self.page.locator('#section-group').evaluate('(el)=>el.open=true')
+            if self.page.locator('#section-group-toggle').get_attribute('aria-expanded') == 'false':
+                self.page.locator('#section-group-toggle').click()
             tree=self.page.locator('#tree-area')
             self.assertGreaterEqual(tree.bounding_box()['height'],140)
             tree.scroll_into_view_if_needed()
@@ -1775,7 +1777,7 @@ class BrowserTests(unittest.TestCase):
         row=branch.locator('[role="option"]').first
         row.focus();row.press('Enter')
         p.wait_for_function('()=>!document.querySelector("#inspector .empty")')
-        p.locator('.arrival summary').click()
+        p.locator('#arrival-toggle').click()
         self.assertEqual(p.locator('.arrival .arrival-axis span').count(),5)
         self.assertIn('packet positions',p.locator('.arrival .axis-basis').inner_text())
         self.assertTrue(p.locator('#table-filter-tools #show-bad-crc').is_visible())
@@ -1840,6 +1842,7 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#tree-search').fill('Old B')
         self.assertIn('Old B',self.page.locator('#tree-area').inner_text())
         self.assertNotIn('New B',self.page.locator('#tree-area').inner_text())
+        self.page.locator('#scope-details-toggle').click()
         for view in ('hex','xml','references','tree'):
             self.page.locator('[data-view="'+view+'"]').click()
             self.assertIn('packet 1',self.page.locator('#native-assembly-evidence').inner_text())
@@ -2021,6 +2024,8 @@ class BrowserTests(unittest.TestCase):
                 self.assertIn(explanation,self.page.locator('.inspector-heading h2').get_attribute('title'))
                 if name == 'DSMCC_DII':
                     self.assertTrue(detail['native_xml_guarded'])
+                    if self.page.locator('#inspector-warning-toggle').get_attribute('aria-expanded') == 'false':
+                        self.page.locator('#inspector-warning-toggle').click()
                     warnings=self.page.locator('#native-decode-warnings')
                     self.assertIn('namespace is not established',warnings.inner_text())
                     self.assertIn('Original wire bytes remain authoritative',warnings.inner_text())
@@ -2200,6 +2205,43 @@ class BrowserTests(unittest.TestCase):
         self.assertIn('https://github.com/znbsf/ShowPsiSi/releases',self.page.locator('#about-feedback').inner_text())
         self.assertEqual(len(self.page.context.pages),page_count)
         self.page.locator('#close-about').click()
+
+    def test_inspector_summary_disclosures_persist_and_reset(self):
+        self.page.set_viewport_size({'width':1440,'height':900})
+        self.analyze()
+        p=self.page
+        p.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        toggles=['identity-toggle','crc-toggle','arrival-toggle','section-group-toggle','scope-details-toggle']
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'false')
+        self.assertGreaterEqual(p.locator('#tree-area').bounding_box()['height'],p.locator('#inspector').bounding_box()['height']*0.65)
+        # Space/Enter operate real buttons without replacing the focused control.
+        p.locator('#identity-toggle').focus();p.keyboard.press('Space')
+        self.assertTrue(p.locator('.identity-line').is_visible())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'identity-toggle')
+        p.locator('#crc-toggle').focus();p.keyboard.press('Enter')
+        for element in toggles[2:]:
+            p.locator('#'+element).click()
+        if p.locator('#inspector-warning-toggle').count():
+            p.locator('#inspector-warning-toggle').click()
+            self.assertTrue(p.locator('#native-decode-warnings').is_visible())
+        expected=p.evaluate('JSON.parse(localStorage.getItem("showpsisi.workbench.layout.v1")).inspectorDetails')
+        self.assertTrue(all(expected[key] for key in ('identity','crc','arrival','sections','scope')))
+        p.locator('[data-view="hex"]').click()
+        p.locator('[data-view="tree"]').click()
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'true')
+        p.reload()
+        p.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+        self.analyze()
+        p.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'true')
+        p.locator('#reset-layout').click()
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'false')
+        self.assertFalse(p.locator('#inspector-details').is_visible())
+        self.assertIsNone(p.evaluate('localStorage.getItem("showpsisi.workbench.layout.v1")'))
 
     def test_layout_persists_clamps_and_resets(self):
         self.analyze()

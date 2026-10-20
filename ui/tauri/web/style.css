@@ -1670,3 +1670,22 @@ kbd { font: 11px var(--mono); color: var(--text); }
 dialog { border-radius: 8px; }
 dialog h2 { font-size: 16px; font-weight: 600; }
 .empty h3 { font-size: 13px; }
+
+/* Inspector metadata occupies one row; disclosures borrow a bounded area. */
+.inspector-summary { padding: 4px 8px; gap: 2px; min-height: 34px; justify-content: flex-start; }
+.inspector-chips { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.inspector-summary h2 { flex: none; font-size: 11px; white-space: nowrap; }
+.summary-chip { flex: none; min-height: 26px; padding: 3px 4px; border: 1px solid transparent; border-radius: 2px; background: var(--surface); color: var(--text); font-size: 11px; white-space: nowrap; }
+.summary-chip:hover { background: var(--hover); }
+.summary-chip[aria-expanded="true"] { background: var(--selected); border-color: var(--border); }
+.inspector-summary .table-kind { padding: 0; background: transparent; font-size: inherit; }
+.inspector-summary .scope-tabs { flex: none; flex-wrap: nowrap; gap: 0; padding: 0; }
+.inspector-summary .scope-tabs .btn { min-height: 26px; padding: 3px 4px; font-size: 11px; }
+.inspector-details { max-height: min(180px, 28%); overflow: auto; margin: 0 8px 4px; padding: 0 4px; user-select: text; }
+.inspector-details p { margin: 4px 0; overflow-wrap: anywhere; }
+.inspector-details .arrival, .inspector-details .section-group { margin: 0; padding: 0; border: 0; }
+.inspector-details .section-links select, .inspector-details #section-choice { max-width: 100%; }
+.inspector-warning { margin: 0 8px 2px; text-align: left; color: var(--warn-text); min-height: 24px; }
+.inspector-warning::after { content: ' ▸'; }
+.inspector-warning[aria-expanded="true"]::after { content: ' ▾'; }
+#native-decode-warnings { color: var(--warn-text); }

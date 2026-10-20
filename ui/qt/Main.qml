@@ -359,8 +359,21 @@ ApplicationWindow {
         });
         return entries.filter(function(x){return x.title.indexOf("Event ")===0;}).concat(entries.filter(function(x){return x.title.indexOf("Event ")!==0;}));
     }
-    property bool arrivalOpen: false
-    property bool sectionGroupOpen: false
+    property var initialInspectorDetails: Shared.workbench.inspectorDisclosure(savedLayout.inspectorDetails)
+    property bool identityOpen: initialInspectorDetails.identity
+    property bool crcOpen: initialInspectorDetails.crc
+    property bool arrivalOpen: initialInspectorDetails.arrival
+    property bool sectionGroupOpen: initialInspectorDetails.sections
+    property bool scopeOpen: initialInspectorDetails.scope
+    property bool warningsOpen: initialInspectorDetails.warnings
+    onIdentityOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(identityOpen)revealInspectorDetail(identityDetails);}
+    onCrcOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(crcOpen)revealInspectorDetail(crcDetails);}
+    onArrivalOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(arrivalOpen)revealInspectorDetail(arrivalDetails);}
+    onSectionGroupOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(sectionGroupOpen)revealInspectorDetail(sectionChoice.visible ? sectionChoice : sectionGroupDetails);}
+    onScopeOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(scopeOpen)revealInspectorDetail(cutoffDetails);}
+    onWarningsOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(warningsOpen)revealInspectorDetail(nativeDecodeWarningLabel);}
+    readonly property var inspectorSummary: Shared.workbench.inspectorSummary(detail)
+    readonly property var inspectorNotes: Shared.workbench.inspectorWarnings(detail,analysisState)
     property bool showInvalidSections: false
     property string evidenceScope: "Merged"
     property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
@@ -764,14 +777,7 @@ ApplicationWindow {
         // QVariantList arrives as a QML sequence, not a JavaScript Array.
         return Array.isArray(value) || (value !== null && typeof value === "object" && Number.isInteger(value.length) && value.length >= 0 && typeof value.forEach === "function" && typeof value.splice === "function");
     }
-    function nativeWarningsText() {
-        let warnings = [], reported = detail.native_decode_warnings || [];
-        for (let i = 0; isList(reported) && i < reported.length; ++i)
-            if (typeof reported[i] === "string") warnings.push(reported[i]);
-        if (detail.native_xml_guarded)
-            warnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex.");
-        return warnings.join("\n");
-    }
+    function nativeWarningsText() { return inspectorNotes.join("\n"); }
     function valueText(key, value) {
         if (value === null || value === undefined)
             return "—";
@@ -810,12 +816,19 @@ ApplicationWindow {
         next[path] = row ? !row.closed : !next[path];
         collapsed = next;
     }
+    function revealInspectorDetail(item) {
+        Qt.callLater(function() {
+            let point=item.mapToItem(inspectorDetailsColumn,0,0);
+            inspectorDetailsScroll.contentItem.contentY=Math.max(0,Math.min(point.y,Math.max(0,inspectorDetailsScroll.contentHeight-inspectorDetailsScroll.availableHeight)));
+        });
+    }
     function rememberLayout() {
         if (!layoutReady)
             return;
         let value = { version: 1, explorer: explorerPane.width,
             inspector: pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width,
             timeline: pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height };
+        value.inspectorDetails = {identity:identityOpen,crc:crcOpen,arrival:arrivalOpen,sections:sectionGroupOpen,scope:scopeOpen,warnings:warningsOpen};
         if (!core.saveLayout(value)) {
             showMessage("Layout could not be saved. The current layout remains usable.", "warning");
         } else {
@@ -824,6 +837,7 @@ ApplicationWindow {
         }
     }
     function resetLayout() {
+        identityOpen=false;crcOpen=false;arrivalOpen=false;sectionGroupOpen=false;scopeOpen=false;warningsOpen=false;
         layoutSaveTimer.stop();
         pendingInspectorSize = -1;
         pendingTimelineSize = -1;
@@ -1199,6 +1213,26 @@ ApplicationWindow {
             border.color: control.activeFocus ? blue : controlBorder
             border.width: control.activeFocus ? focusWidth : 1
         }
+    }
+    component SummaryChip: Action {
+        id: chip
+        property string help: ""
+        property bool disclosure: true
+        property var scrollHost: null
+        implicitHeight: 26
+        leftPadding: 4
+        rightPadding: 4
+        checkable: true
+        Accessible.name: text + (disclosure ? (checked ? ", expanded" : ", collapsed") : "")
+        Accessible.description: help
+        onActiveFocusChanged: if(activeFocus && scrollHost)scrollHost.reveal(chip)
+        background: Rectangle {
+            radius: 2
+            color: chip.checked ? selectionSurface : chip.hovered ? hoverSurface : panel
+            border.color: chip.activeFocus ? blue : chip.checked ? dividerColor : "transparent"
+            border.width: chip.activeFocus ? focusWidth : 1
+        }
+        SafeTip { visible: anchorHovered; text: chip.help }
     }
     component NavItem: ItemDelegate {
         id: nav
@@ -1726,6 +1760,7 @@ ApplicationWindow {
                 checks.epg_hint = tab === "EPG" && eventRows.length === 0 && recordEmptyHint.visible && recordEmptyHint.text.indexOf("an empty projection does not mean decoding failed") >= 0;
                 checks.epg_selection = selected === savedId && detail.raw_hex === savedRaw;
                 checks.tables_click = core.click("tab_Tables");
+                warningsOpen=guarded;
                 phase++;
             } else if (phase === 3) {
                 checks.tables_selection = tab === "Tables" && rows.length > 0 && selected === savedId;
@@ -2049,6 +2084,7 @@ ApplicationWindow {
                 let name = "record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
                 checks.change_row_exposed = core.isExposed(name);
                 checks.change_row_click = core.click(name);
+                scopeOpen=true;
                 core.click("inspectBefore");
                 phase = 4;
             } else if (phase === 4) {
@@ -2056,6 +2092,7 @@ ApplicationWindow {
                 checks.before_name = chosenService().name === changedService.before.value.name;
                 checks.no_snapshot_mutation = analysisState.selected_packet === initialPacket;
                 checks.inspector_controls_exposed = ["inspectBefore", "inspectAfter", "inspectionCutoff", "useComparisonSnapshot"].every(function (name) { return core.isExposed(name); });
+                scopeOpen=false;
                 core.click("inspectAfter");
                 phase++;
             } else if (phase === 5) {
@@ -4053,20 +4090,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: spaceUnit
-                    RowLayout {
-                        Layout.fillWidth: true
-                        TinyLabel {
-                            text: activeInspectionRef ? "SOURCE EVIDENCE" : "SECTION INSPECTOR"
-                            Layout.fillWidth: true
-                        }
-                        Action { text:(arrivalOpen?"▾ ":"▸ ")+"Arrival"; objectName:"arrivalToggle"; visible:!!detail.id; implicitHeight:20; onClicked:arrivalOpen=!arrivalOpen }
-                        Action { text:(sectionGroupOpen?"▾ ":"▸ ")+"Sections"; objectName:"sectionGroupToggle"; visible:(selectedGroup.section_ids || []).length>1 || selectedGroup.last_section>0; implicitHeight:20; onClicked:sectionGroupOpen=!sectionGroupOpen }
-                        PlainLabel {
-                            text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
-                            color: detail.valid === false ? removedColor : muted
-                            font.pixelSize: 11
-                        }
-                    }
+                    TinyLabel { visible:core.inspecting || !detail.id; text:core.inspecting ? "LOADING SECTION…" : "Select a section"; Layout.fillWidth:true }
                     ColumnLayout {
                         visible: !!topologyEvidenceRef && !protocolSourceRef
                         Layout.fillWidth:true
@@ -4181,113 +4205,202 @@ ApplicationWindow {
                             HoverHandler { id: changeHover }
                         }
                     }
-                    PlainLabel {
-                        id: sectionTitle
-                        text: detail.name ? tableLabel(detail.name) + (tableLabel(detail.name) === detail.name ? " · " + explanation(detail.name) : "") : "Select a section"
-                        SafeTip { id: sectionTitleTip; visible: sectionTitleHover.hovered; text: detail.name + " · " + explanation(detail.name) }
-                        HoverHandler { id: sectionTitleHover }
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        color: tableColor(detail.name)
-                        font.weight: Font.DemiBold
-                    }
-                    PlainLabel {
-                        text: detail.pid !== undefined ? "PID " + hex(detail.pid) + " · TID " + hex(detail.table_id, 2) + " · " + Shared.workbench.wireHeaderText(detail) + " · " + detail.bytes + " B" : "Select a row to view fields and source bytes"
-                        color: muted
-                        font.pixelSize: 11
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
-                    PlainLabel {
-                        objectName: "sectionCrc"
-                        text: crcText(detail) + ((detail.crc || {}).calculated_hex ? " · expected " + detail.crc.calculated_hex : "")
+                    RowLayout {
+                        objectName: "inspectorSummary"
                         visible: !!detail.id
                         Layout.fillWidth: true
-                        color: detail.valid === false ? removedColor : muted
-                        font.family: "monospace"
-                        font.pixelSize: 11
-                        elide: Text.ElideRight
-                    }
-                    PlainLabel {
-                        objectName: "sectionArrivals"
-                        text: arrivalText(detail)
-                        visible: !!text
-                        Layout.fillWidth: true
-                        color: muted
-                        font.pixelSize: 11
-                        elide: Text.ElideRight
-                        HoverHandler { id: arrivalsHover }
-                        SafeTip { visible: arrivalsHover.hovered; text: "Packet-position distribution; not wall-clock timing. " + ((detail.distribution || {}).basis || "") + "\nGap packets min / mean / max: " + detail.distribution?.min_gap_packets + " / " + detail.distribution?.mean_gap_packets + " / " + detail.distribution?.max_gap_packets + (detail.distribution?.first_seconds !== null && detail.distribution?.first_seconds !== undefined ? "\nSeconds from supplied bitrate: " + detail.distribution.first_seconds + " → " + detail.distribution.last_seconds : "\nSeconds unavailable without a bitrate. No PCR-derived clock.") }
-                    }
-                    Row {
-                        visible: !!detail.distribution && arrivalOpen
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 12
-                        spacing: 1
-                        Repeater {
-                            model: detail.distribution?.bins || []
-                            Rectangle {
-                                required property var modelData
-                                width: Math.max(1, (inspectorPane.width - 22) / Math.max(1, detail.distribution.bins.length) - 1)
-                                height: 12
-                                color: modelData.bad ? removedColor : tableColor(detail.name)
-                                opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / Math.max(1, detail.distribution.observation_count) * 8) : 0.08
-                                HoverHandler { id: arrivalBinHover }
-                                SafeTip { visible: arrivalBinHover.hovered; text: "Packets " + modelData.from_packet + "–" + modelData.to_packet + ": " + modelData.count + " arrivals; " + modelData.bad + " invalid" }
+                        Layout.preferredHeight: 32
+                        spacing: 2
+                        SummaryChip { objectName:"standardsProfileToggle"; text:inspectorSummary.profile; checked:identityOpen; help:inspectorSummary.profileHelp; onClicked:identityOpen=!identityOpen }
+                        Flickable {
+                            id: summaryChips
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            contentWidth: summaryChipRow.implicitWidth
+                            contentHeight: height
+                            flickableDirection: Flickable.HorizontalFlick
+                            boundsBehavior: Flickable.StopAtBounds
+                            clip: true
+                            function reveal(item) {
+                                let point=item.mapToItem(contentItem,0,0);
+                                contentX=Math.max(0,Math.min(Math.max(0,contentWidth-width),Math.max(point.x+item.width-width,Math.min(contentX,point.x))));
+                            }
+                            ScrollBar.horizontal: ScrollBar { height:4 }
+                            Row {
+                                id: summaryChipRow
+                                spacing: 2
+                                SummaryChip {
+                                    id: identityChip
+                                    objectName: "identityToggle"
+                                    text: tableLabel(detail.name)
+                                    checked: identityOpen
+                                    help: detail.name + " · " + explanation(detail.name) + " · section identity and validity"
+                                    scrollHost: summaryChips
+                                    onClicked: identityOpen=!identityOpen
+                                    contentItem: PlainLabel {
+                                        id: sectionTitle
+                                        text: identityChip.text
+                                        color: tableColor(detail.name)
+                                        font.weight: Font.DemiBold
+                                        font.pixelSize: 11
+                                        verticalAlignment: Text.AlignVCenter
+                                        SafeTip { id:sectionTitleTip; visible:sectionTitleHover.hovered; text:detail.name + " · " + explanation(detail.name) }
+                                        HoverHandler { id:sectionTitleHover }
+                                    }
+                                }
+                                PlainLabel { visible:detail.valid===false; text:"INVALID"; color:removedColor; font.pixelSize:11; anchors.verticalCenter:parent.verticalCenter }
+                                SummaryChip { objectName:"pidSummaryToggle"; text:"PID " + hex(detail.pid); checked:identityOpen; help:"PID: Packet Identifier (13 bits) · TID: Table Identifier " + hex(detail.table_id,2) + (selectedService>=0 ? " · SID: Service Identifier " + hex(selectedService) : ""); scrollHost:summaryChips; onClicked:identityOpen=!identityOpen }
+                                SummaryChip { objectName:"versionSummaryToggle"; text:inspectorSummary.version; checked:identityOpen; help:"Wire version and current/next state"; scrollHost:summaryChips; onClicked:identityOpen=!identityOpen }
+                                SummaryChip { objectName:"sectionGroupToggle"; text:inspectorSummary.section; checked:sectionGroupOpen; help:"Original section evidence and capture-wide table coverage"; scrollHost:summaryChips; onClicked:sectionGroupOpen=!sectionGroupOpen }
+                                SummaryChip {
+                                    id: crcChip
+                                    objectName:"crcToggle"; text:inspectorSummary.crc; checked:crcOpen; help:"CRC: Cyclic Redundancy Check · " + (detail.crc?.status || "unavailable"); scrollHost:summaryChips; onClicked:crcOpen=!crcOpen
+                                    contentItem: PlainLabel { text:crcChip.text; color:detail.crc?.status==="invalid" ? removedColor : detail.crc?.status==="valid" ? addedColor : muted; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
+                                }
+                                SummaryChip { objectName:"arrivalToggle"; visible:!!detail.distribution; text:num(detail.distribution?.observation_count) + " arrivals"; checked:arrivalOpen; help:"Arrival distribution in packet positions; elapsed seconds only from a supplied bitrate"; scrollHost:summaryChips; onClicked:arrivalOpen=!arrivalOpen }
                             }
                         }
-                    }
-
-                    RowLayout {
-                        visible: sectionGroupOpen && !!selectedGroup.id
-                        Layout.fillWidth: true
-                        spacing: 4
-                        FieldChoice {
-                            id: sectionChoice
-                            objectName: "sectionChoice"
-                            Layout.fillWidth: true
-                            implicitHeight: 28
-                            model: siblingSections.map(function(r) { return Shared.workbench.wireSectionText(r) + " · " + crcText(r) + " · #" + r.first_packet; })
-                            currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
-                            onActivated: { let r=siblingSections[currentIndex]; if(r){if(topologyEvidenceRef)openTopologySibling(r);else inspect(r.id, -1, detail.native_table_at_packet);} }
-                            Accessible.name: "Select original section evidence"
+                        Row {
+                            objectName: "evidenceScope"
+                            spacing: 0
+                            ButtonGroup { id:inspectorScopeGroup }
+                            SummaryChip { ButtonGroup.group:inspectorScopeGroup; objectName:"sectionScope"; text:"Section"; checked:evidenceScope==="Section"; disclosure:false; help:"Section: fields and bytes of this exact section"; Accessible.name:"Selected section evidence"; onClicked:evidenceScope="Section" }
+                            SummaryChip { ButtonGroup.group:inspectorScopeGroup; objectName:"mergedScope"; text:"Merged"; checked:evidenceScope==="Merged"; disclosure:false; help:"Merged: SDK (Software Development Kit) tree and XML of the complete table"; Accessible.name:"Merged table evidence"; onClicked:evidenceScope="Merged" }
+                            SummaryChip { objectName:"scopeDetailsToggle"; text:"ⓘ"; checked:scopeOpen; help:"Decode scope details and native assembly cutoff"; Accessible.name:"Decode scope details, " + (scopeOpen ? "expanded" : "collapsed"); onClicked:scopeOpen=!scopeOpen }
                         }
                     }
-                    PlainLabel {
-                        objectName: "sectionCoverage"
-                        text: groupSummary()
-                        visible: !!text && sectionGroupOpen
+                    SummaryChip {
+                        id: inspectorWarningChip
+                        objectName: "inspectorWarningToggle"
+                        visible: !!detail.id && inspectorNotes.length>0
                         Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        font.pixelSize: 11
-                        color: selectedGroup.validity === "valid" ? muted : changedColor
+                        implicitHeight: 24
+                        checked: warningsOpen
+                        text: "⚠ " + inspectorNotes.length + (inspectorNotes.length===1 ? " note" : " notes") + (warningsOpen ? " ▾" : " ▸")
+                        help: "Expand truncation and decoder notes"
+                        onClicked: warningsOpen=!warningsOpen
+                        contentItem: PlainLabel { text:inspectorWarningChip.text; color:warningColor; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
                     }
-                    Action { visible:sectionGroupOpen && !!selectedGroup.id; text:(showInvalidSections?"Hide":"Show")+" bad CRC sections"; implicitHeight:24; onClicked:showInvalidSections=!showInvalidSections }
-                    PlainLabel {
-                        objectName: "inspectionCutoff"
-                        visible: detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
-                        text: (detail.merged?.complete ? "Merged assembly" : "No complete merged assembly") + " · cutoff #" + num(detail.native_table_at_packet)
+                    ScrollView {
+                        id: inspectorDetailsScroll
+                        objectName: "inspectorDetails"
+                        visible: !!detail.id && (identityOpen || crcOpen || arrivalOpen && !!detail.distribution || sectionGroupOpen || scopeOpen || warningsOpen && inspectorNotes.length>0)
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        color: muted
-                        font.pixelSize: 11
-                        HoverHandler {
-                            id: cutoffHover
+                        Layout.preferredHeight: Math.min(inspectorDetailsColumn.implicitHeight, Math.max(72,inspectorPane.height*0.28))
+                        contentWidth: availableWidth
+                        clip: true
+                        ColumnLayout {
+                            id: inspectorDetailsColumn
+                            width: inspectorDetailsScroll.availableWidth
+                            spacing: 4
+                            PlainLabel {
+                                id: identityDetails
+                                objectName: "sectionIdentity"
+                                visible: identityOpen
+                                text: (detail.valid ? "VALID" : "INVALID") + " · PID " + hex(detail.pid) + " · TID " + hex(detail.table_id,2) + " · " + Shared.workbench.wireHeaderText(detail) + " · " + detail.bytes + " B" + (selectedService>=0 ? " · SID " + hex(selectedService) : "")
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                id: crcDetails
+                                objectName: "sectionCrc"
+                                text: crcText(detail) + ((detail.crc || {}).calculated_hex ? " · expected " + detail.crc.calculated_hex : "")
+                                visible: crcOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: detail.valid === false ? removedColor : muted
+                                font.family: "monospace"
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                id: arrivalDetails
+                                objectName: "sectionArrivals"
+                                text: arrivalText(detail)
+                                visible: arrivalOpen && !!text
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                visible: arrivalOpen && !!detail.distribution
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                                text: "Packet-position distribution; not wall-clock timing. " + ((detail.distribution || {}).basis || "") + "\nGap packets min / mean / max: " + detail.distribution?.min_gap_packets + " / " + detail.distribution?.mean_gap_packets + " / " + detail.distribution?.max_gap_packets + (detail.distribution?.first_seconds !== null && detail.distribution?.first_seconds !== undefined ? "\nSeconds from supplied bitrate: " + detail.distribution.first_seconds + " → " + detail.distribution.last_seconds : "\nSeconds unavailable without a bitrate. No PCR-derived clock.")
+                            }
+                            Row {
+                                visible: !!detail.distribution && arrivalOpen
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 12
+                                spacing: 1
+                                Repeater {
+                                    model: detail.distribution?.bins || []
+                                    Rectangle {
+                                        required property var modelData
+                                        width: Math.max(1, (inspectorDetailsColumn.width - 2) / Math.max(1, detail.distribution.bins.length) - 1)
+                                        height: 12
+                                        color: modelData.bad ? removedColor : tableColor(detail.name)
+                                        opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / Math.max(1, detail.distribution.observation_count) * 8) : 0.08
+                                        HoverHandler { id:arrivalBinHover }
+                                        SafeTip { visible:arrivalBinHover.hovered; text:"Packets " + modelData.from_packet + "–" + modelData.to_packet + ": " + modelData.count + " arrivals; " + modelData.bad + " invalid" }
+                                    }
+                                }
+                            }
+                            FieldChoice {
+                                id: sectionChoice
+                                objectName: "sectionChoice"
+                                visible: sectionGroupOpen && !!selectedGroup.id
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                model: siblingSections.map(function(r) { return Shared.workbench.wireSectionText(r) + " · " + crcText(r) + " · #" + r.first_packet; })
+                                currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
+                                onActivated: { let r=siblingSections[currentIndex]; if(r){if(topologyEvidenceRef)openTopologySibling(r);else inspect(r.id,-1,detail.native_table_at_packet);} }
+                                Accessible.name: "Select original section evidence"
+                            }
+                            PlainLabel {
+                                id: sectionGroupDetails
+                                objectName: "sectionCoverage"
+                                text: groupSummary() || Shared.workbench.wireHeaderText(detail) + " · No capture-wide group available at this cutoff."
+                                visible: sectionGroupOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                font.pixelSize: 11
+                                color: selectedGroup.validity === "valid" ? muted : changedColor
+                            }
+                            Action { visible:sectionGroupOpen && !!selectedGroup.id; text:(showInvalidSections?"Hide":"Show")+" bad CRC sections"; implicitHeight:24; onClicked:showInvalidSections=!showInvalidSections }
+                            PlainLabel {
+                                id: cutoffDetails
+                                objectName: "inspectionCutoff"
+                                visible: scopeOpen && detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
+                                text: (detail.merged?.complete ? "Merged assembly" : "No complete merged assembly") + " · cutoff #" + num(detail.native_table_at_packet)
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                visible: scopeOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                                text: "Section: fields and bytes of this exact section. Merged: SDK tree and XML of the complete table.\n" + (detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff") + "\nTSDuck: " + (detail.native_decode_status || "not available") + "\nFirst evidence packet: " + num(detail.first_packet)
+                            }
+                            PlainLabel {
+                                id: nativeDecodeWarningLabel
+                                objectName: "nativeDecodeWarnings"
+                                text: nativeWarningsText()
+                                visible: !!text && warningsOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: warningColor
+                                font.pixelSize: 11
+                            }
                         }
-                        SafeTip {
-                            visible: cutoffHover.hovered
-                            text: (detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff") + "\nTSDuck: " + (detail.native_decode_status || "not available") + "\nFirst evidence packet: " + num(detail.first_packet)
-                        }
-                    }
-                    PlainLabel {
-                        id: nativeDecodeWarningLabel
-                        objectName: "nativeDecodeWarnings"
-                        text: nativeWarningsText()
-                        visible: !!text
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        color: warningColor
-                        font.pixelSize: 11
                     }
                     Flow {
                         Layout.fillWidth: true
@@ -4304,25 +4417,6 @@ ApplicationWindow {
                                 text: modelData === "XML" && detail.native_xml_guarded ? "Guarded XML" : modelData
                                 highlighted: inspectorView === modelData
                                 onClicked: inspectorView = modelData
-                            }
-                        }
-                        Row {
-                            objectName: "evidenceScope"
-                            width: 100
-                            height: 28
-                            Action {
-                                objectName: "sectionScope"
-                                text: "Section"; width: 50; height: 28
-                                highlighted: evidenceScope === "Section"
-                                onClicked: evidenceScope = "Section"
-                                Accessible.name: "Selected section evidence"
-                            }
-                            Action {
-                                objectName: "mergedScope"
-                                text: "Merged"; width: 50; height: 28
-                                highlighted: evidenceScope === "Merged"
-                                onClicked: evidenceScope = "Merged"
-                                Accessible.name: "Merged table evidence"
                             }
                         }
                     }
@@ -4692,7 +4786,7 @@ ApplicationWindow {
                     }
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: compactInspector ? 2 : 1
+                        columns: 2
                         columnSpacing: spaceUnit * 2
                         rowSpacing: spaceUnit
                         Action {

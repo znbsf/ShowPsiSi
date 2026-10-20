@@ -76,6 +76,34 @@ workbench.wireSectionText = function(row) {
 };
 workbench.wireHeaderText = function(row) { return [workbench.wireExtensionText(row),workbench.wireVersionText(row),workbench.wireSectionText(row),workbench.wireCurrentText(row)].join(' · '); };
 
+// Inspector disclosures are layout preferences, independent of selected evidence.
+workbench.inspectorDisclosure = function(saved) {
+  var state={identity:false,crc:false,arrival:false,sections:false,scope:false,warnings:false};
+  Object.keys(state).forEach(function(key) { state[key]=!!saved && saved[key]===true; });
+  return state;
+};
+workbench.inspectorSummary = function(row) {
+  row=row || {};
+  var status=(row.crc || {}).status,profile=typeof row.standards_context==='string'?row.standards_context:'';
+  var profiles={auto:['Auto','Automatic standards detection'],dvb:['DVB','Digital Video Broadcasting'],atsc:['ATSC','Advanced Television Systems Committee'],
+    isdb:['ISDB','Integrated Services Digital Broadcasting'],'isdb-japan':['ISDB-Japan','Integrated Services Digital Broadcasting · Japan'],
+    'isdb-brazil':['ISDB-Brazil','Integrated Services Digital Broadcasting · Brazil'],dtmb:['DTMB','Digital Terrestrial Multimedia Broadcasting'],
+    scte:['SCTE','Society of Cable Telecommunications Engineers'],'j94-system-b':['J.94-B','J.94 (2016) System B']};
+  var selected=profiles[profile] || [profile || 'Profile unavailable',profile || 'Not reported by the engine'];
+  return {version:workbench.wireVersionText(row),section:workbench.wireSectionText(row).replace('§','sec '),
+    crc:'CRC '+(status==='valid'?'✓':status==='invalid'?'✕':status==='not_present'?'—':'?'),
+    profile:selected[0],profileHelp:'Engine standards profile: '+selected[1]+'. This is the context used for this evidence; changing scan options requires a new analysis.'};
+};
+workbench.inspectorWarnings = function(detail, state) {
+  detail=detail || {};state=state || {};
+  var warnings=[],reported=detail.native_decode_warnings || [];
+  if(typeof reported.forEach==='function')reported.forEach(function(warning) { if(typeof warning==='string' && warning)warnings.push(warning); });
+  if(detail.native_xml_guarded)warnings.push('Guarded SDK XML: '+(detail.native_xml_guard_reason || 'ambiguous descriptor interpretation')+'. Original wire bytes remain authoritative in Hex bytes.');
+  var truncated=(state.demux || {}).truncated_sections;
+  if(truncated)warnings.push('Capture-wide demux: '+truncated+' truncated section(s). This count covers the whole capture, not only the selected section.');
+  return warnings;
+};
+
 
 workbench.value = function(key, value) {
   if(value == null) return '—';

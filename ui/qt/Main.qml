@@ -26,6 +26,8 @@ ApplicationWindow {
     property color controlBorder: lightTheme ? "#6f7b8a" : "#778496"
     property color blue: lightTheme ? "#155fbe" : "#78acfa"
     property color warningColor: lightTheme ? "#805900" : "#e2c16d"
+    property color errorSurface: lightTheme ? "#fbe3e5" : "#5a1d1d"
+    property color errorInk: lightTheme ? "#8f1d2c" : "#ffffff"
     color: surface
     font.family: "Segoe UI"
     font.pixelSize: 12
@@ -243,12 +245,21 @@ ApplicationWindow {
         }
         highlightTopologyHex();
     }
+    // One reason per blocked rename state, in the order a user can resolve them.
+    function editBlockReason() {
+        if (!backendReady) return "Backend unavailable";
+        if (!analysisState.complete || core.inspecting) return "Wait for the analysis to finish";
+        if (detail.name !== "SDT") return "Rename needs an SDT (Service Description Table) section";
+        if (!detail.valid) return "Rename needs a section with a valid CRC";
+        if (!chosenService()) return "This SDT section lists no services";
+        return "";
+    }
     function highlightTopologyHex() {
         let range=activeInspectionResolution.byte_range || activeInspectionResolution.range;
         if(!activeInspectionRef || !range || range.offset_scope!=="section_bytes")return;
         let start=range.offset,end=start+range.length-1;
         if(range.length>0 && end<(detail.raw_hex || "").replace(/\s/g,"").length/2){
-            let pos=function(offset){return Math.floor(offset/16)*54+6+(offset%16)*3;};
+            let pos=function(offset){return Math.floor(offset/16)*72+6+(offset%16)*3;};
             Qt.callLater(function(){hexEvidence.select(pos(start),pos(end)+2);});
         }
     }
@@ -3058,9 +3069,11 @@ ApplicationWindow {
                 font.pixelSize: 11
             }
             PlainLabel {
-                text: issues.length + " issues · " + num(analysisState.crc_errors) + " cyclic redundancy check failures"
+                text: issues.length + " issues · " + num(analysisState.crc_errors) + " CRC failures"
                 color: issues.length ? warningColor : muted
                 font.pixelSize: 11
+                HoverHandler { id: crcHover }
+                SafeTip { visible: crcHover.hovered; text: "CRC: cyclic redundancy check. A failed CRC means the section bytes were damaged or truncated." }
             }
             Item {
                 Layout.fillWidth: true
@@ -3680,7 +3693,7 @@ ApplicationWindow {
                             required property int index
                             objectName: tab === "Services" ? "service_" + modelData.id : tab === "Issues" ? "issue_" + modelData.code : "record_" + index
                             width: ListView.view.width
-                            height: tab === "Issues" ? 88 : tab === "Services" ? 94 : modelData.logical ? 100 : 58
+                            height: tab === "Issues" ? 88 : tab === "Services" ? 72 : modelData.logical ? 100 : 58
                             focusPolicy: Qt.StrongFocus
                             Keys.onSpacePressed: { if(tab === "Tables" && modelData.logical) toggleTableGroup(modelData); else activate(modelData); }
                             Keys.onRightPressed: { if(tab === "Tables" && modelData.logical && !expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
@@ -3724,15 +3737,11 @@ ApplicationWindow {
                                         wrapMode: Text.Wrap
                                         maximumLineCount: tab === "Issues" || modelData.logical ? 3 : 1
                                     }
+                                    // Type and media PIDs share one line; the tooltip keeps the full text.
                                     PlainLabel {
                                         visible: tab === "Services"
-                                        text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type")
+                                        text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + " · V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
                                         width: parent.width; color: muted; font.pixelSize:11; elide:Text.ElideRight
-                                    }
-                                    PlainLabel {
-                                        visible: tab === "Services"
-                                        text: "V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
-                                        width: parent.width; color: muted; font.family:"monospace"; font.pixelSize:10; elide:Text.ElideRight
                                     }
                                 }
                             }
@@ -4290,9 +4299,12 @@ ApplicationWindow {
                             text: {
                                 let raw = (detail.raw_hex || "").replace(/\s/g, "");
                                 let lines = [];
+                                // Fixed 72-character lines (offset, 16 bytes, ASCII) keep
+                                // highlightTopologyHex() character positions exact.
                                 for (let i = 0; i < raw.length; i += 32) {
                                     let bytes = raw.slice(i, i + 32).match(/.{1,2}/g) || [];
-                                    lines.push((i / 2).toString(16).toUpperCase().padStart(4, "0") + "  " + bytes.join(" "));
+                                    let ascii = bytes.map(function(b) { let c = parseInt(b, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : "."; }).join("");
+                                    lines.push((i / 2).toString(16).toUpperCase().padStart(4, "0") + "  " + bytes.join(" ").padEnd(47, " ") + "  " + ascii);
                                 }
                                 return lines.join("\n");
                             }
@@ -4524,6 +4536,15 @@ ApplicationWindow {
                             }
                         }
                     }
+                    PlainLabel {
+                        objectName: "renameBlockedReason"
+                        visible: !selectedChange && !!detail.name && text !== ""
+                        text: editBlockReason()
+                        color: muted
+                        font.pixelSize: 11
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
                 }
             }
         }
@@ -4573,6 +4594,34 @@ ApplicationWindow {
                     readonly property int binCount: (analysisState.density || []).length
                     readonly property real binWidth: Math.max(1, (width - Math.max(0, binCount - 1) * 2) / Math.max(1, binCount))
                     readonly property bool interactive: backendReady && !!analysisState.complete
+                    // Keyboard parity with the Web slider: arrows step one bin,
+                    // Page keys step a tenth, Home/End jump to the ends.
+                    objectName: "densityStrip"
+                    activeFocusOnTab: interactive
+                    Accessible.role: Accessible.Slider
+                    Accessible.name: "Section occurrence density; arrow keys load a packet position"
+                    function stepBin(delta) {
+                        if (!interactive || !binCount) return;
+                        let current = binForPacket(analysisState.selected_packet);
+                        snapshot(packetAtBin(Math.max(0, Math.min(binCount - 1, current + delta))));
+                    }
+                    Keys.onLeftPressed: stepBin(-1)
+                    Keys.onRightPressed: stepBin(1)
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_Home) { stepBin(-binCount); event.accepted = true; }
+                        else if (event.key === Qt.Key_End) { stepBin(binCount); event.accepted = true; }
+                        else if (event.key === Qt.Key_PageUp) { stepBin(-Math.max(1, Math.round(binCount / 10))); event.accepted = true; }
+                        else if (event.key === Qt.Key_PageDown) { stepBin(Math.max(1, Math.round(binCount / 10))); event.accepted = true; }
+                    }
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -3
+                        color: "transparent"
+                        visible: densityStrip.activeFocus
+                        border.color: blue
+                        border.width: focusWidth
+                        radius: 2
+                    }
                     function packetAtBin(index) {
                         let packets = Number(analysisState.packets || 0);
                         if (!packets) return 0;
@@ -4595,7 +4644,7 @@ ApplicationWindow {
                                 objectName: "densityBin" + index
                                 width: densityStrip.binWidth
                                 height: 20
-                                color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : "#3794ff"
+                                color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : blue
                                 opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
                                 // Partially invalid bins keep the section colour and
                                 // add the invalid share instead of hiding the count.
@@ -4631,7 +4680,7 @@ ApplicationWindow {
                         width: 2
                         height: parent.height
                         color: ink
-                        border.color: "#181818"
+                        border.color: surface
                         x: {
                             let index = densityStrip.binForPacket(analysisState.selected_packet);
                             if (index < 0) return 0;
@@ -4679,14 +4728,14 @@ ApplicationWindow {
         Rectangle {
             Layout.fillWidth: true
             height: 26
-            color: core.error ? "#5a1d1d" : surface
+            color: core.error ? errorSurface : surface
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 PlainLabel {
                     text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : core.error || (core.availability === "starting" ? "Starting backend…" : notice) || "Ready · all processing stays on this machine"
-                    color: core.error ? "#ffffff" : muted
+                    color: core.error ? errorInk : muted
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle

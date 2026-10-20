@@ -9,6 +9,11 @@ option(SHOWPSISI_BUILD_UPDATER_TESTS "Build isolated Qt release/update contract 
 find_package(Threads REQUIRED)
 # Pinned offline XML dependency, shared by both frontends through the core.
 # Keep upstream sources unchanged; import rejects DTDs before any entity work.
+# UTF-8 sources must not depend on the host ANSI code page (for example 936).
+# Scope the flag to C/C++ so the resource compiler never receives it.
+if(MSVC)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/utf-8>")
+endif()
 set(EXPAT_SHARED_LIBS OFF)
 set(EXPAT_BUILD_TOOLS OFF)
 set(EXPAT_BUILD_EXAMPLES OFF)
@@ -84,7 +89,7 @@ if(SHOWPSISI_BUILD_CANCELLATION_TESTS)
   configure_showpsisi_core(showpsisi-core-test)
 endif()
 if(MSVC)
-  add_compile_options(/utf-8 /W3)
+  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/W3>")
   target_compile_options(showpsisi-core PRIVATE /utf-8 /W3)
 endif()
 if(BUILD_QT_UI)
@@ -103,6 +108,10 @@ if(BUILD_QT_UI)
           assets/icons/showpsisi-64.png assets/icons/showpsisi-128.png
           assets/icons/showpsisi-256.png)
   if(WIN32)
+    # Ninja's cmcldeps wrapper forwards the localized /showIncludes prefix
+    # (for example Chinese MSVC), which rc.exe rejects with RC1107. The icon
+    # script has no header dependencies worth tracking.
+    set(CMAKE_NINJA_CMCLDEPS_RC OFF)
     enable_language(RC)
     target_sources(showpsisi-qt PRIVATE assets/icons/showpsisi.rc)
     target_include_directories(showpsisi-qt PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons")

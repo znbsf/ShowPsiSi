@@ -177,7 +177,7 @@ child.stdin.close();child.wait();thread.join()
     def test_lazy_references_preserve_selection_and_invalidate_new_evidence(self):
         with tempfile.TemporaryDirectory(prefix='qt-reference-persistence-') as directory:
             report=self.run_script('reference-persistence',directory,timeout=30)
-            for name in ('deferred','hidden_retained','reference_selection','reference_scroll',
+            for name in ('deferred','hidden_retained','reference_selection','reference_scroll','reference_model_stable',
                          'dialog_hidden_retained','dialog_selection','hex_selection','other_record','identity_invalidates'):
                 self.assertTrue(report['checks'][name],report)
 

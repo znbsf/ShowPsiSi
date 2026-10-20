@@ -1720,7 +1720,23 @@ ApplicationWindow {
         Keys.onReturnPressed: clicked()
         Keys.onEnterPressed: clicked()
     }
+    Connections {
+        target: inspectorReferences
+        function onModelChanged() { if(referencePersistenceTest.running)referencePersistenceTest.modelChanges++; }
+    }
     Timer {
+        id: referencePersistenceTest
+        property int modelChanges: 0
+        property int delegateCreates: 0
+        property int delegateDestroys: 0
+        property var observations: []
+        function observe(label) {
+            observations.push({phase:label, modelChanges:modelChanges, delegateCreates:delegateCreates, delegateDestroys:delegateDestroys,
+                width:inspectorReferences.width,height:inspectorReferences.height,currentIndex:inspectorReferences.currentIndex,count:inspectorReferences.count,visible:inspectorReferences.visible,
+                loadedIdentity:inspectorReferences.loadedIdentity,currentIdentity:inspectorReferences.currentIdentity,
+                currentItem:!!inspectorReferences.currentItem,
+                selection:inspectorReferences.currentItem ? inspectorReferences.currentItem.urlField.selectedText : null});
+        }
         interval: 40; repeat: true
         running: core.env("SHOWPSISI_SCRIPT")==="reference-persistence"
         property int phase: 0
@@ -1736,17 +1752,17 @@ ApplicationWindow {
             if(phase===1){
                 if(!inspectorReferences.currentItem)return;
                 let field=inspectorReferences.currentItem.urlField;field.select(1,8);urlSelection=field.selectedText;
-                savedY=inspectorReferences.contentY;inspectorView="Structure";phase=2;return;
+                savedY=inspectorReferences.contentY;observe("before_hide");inspectorView="Structure";observe("after_hide");phase=2;return;
             }
-            if(phase===2){checks.hidden_retained=inspectorReferences.currentItem && inspectorReferences.currentItem.urlField.selectedText===urlSelection;inspectorView="References";phase=3;return;}
-            if(phase===3){checks.reference_selection=!!urlSelection && inspectorReferences.currentItem.urlField.selectedText===urlSelection;checks.reference_scroll=inspectorReferences.contentY===savedY;specificationDialog.open();phase=4;return;}
+            if(phase===2){observe("hidden_tick");checks.hidden_retained=!!inspectorReferences.currentItem && inspectorReferences.currentItem.urlField.selectedText===urlSelection;inspectorView="References";phase=3;return;}
+            if(phase===3){observe("shown_tick");checks.reference_model_stable=observations.every(function(row){return row.modelChanges===observations[0].modelChanges;});checks.reference_selection=!!urlSelection && !!inspectorReferences.currentItem && inspectorReferences.currentItem.urlField.selectedText===urlSelection;checks.reference_scroll=inspectorReferences.contentY===savedY;specificationDialog.open();phase=4;return;}
             if(phase===4){if(!dialogReferences.currentItem)return;let field=dialogReferences.currentItem.urlField;field.select(1,9);dialogSelection=field.selectedText;specificationDialog.close();phase=5;return;}
-            if(phase===5){checks.dialog_hidden_retained=dialogReferences.currentItem && dialogReferences.currentItem.urlField.selectedText===dialogSelection;specificationDialog.open();phase=6;return;}
-            if(phase===6){checks.dialog_selection=!!dialogSelection && dialogReferences.currentItem.urlField.selectedText===dialogSelection;specificationDialog.close();inspectorView="Hex";phase=7;return;}
+            if(phase===5){checks.dialog_hidden_retained=!!dialogReferences.currentItem && dialogReferences.currentItem.urlField.selectedText===dialogSelection;specificationDialog.open();phase=6;return;}
+            if(phase===6){checks.dialog_selection=!!dialogSelection && !!dialogReferences.currentItem && dialogReferences.currentItem.urlField.selectedText===dialogSelection;specificationDialog.close();inspectorView="Hex";phase=7;return;}
             if(phase===7){hexEvidence.select(1,8);hexSelection=hexEvidence.selectedText;inspectorView="Structure";phase=8;return;}
             if(phase===8){inspectorView="Hex";phase=9;return;}
             if(phase===9){checks.hex_selection=!!hexSelection && hexEvidence.selectedText===hexSelection;inspectorView="Structure";previousId=detail.id;let row=(analysisState.tables || []).find(function(r){return r.id!==previousId;});checks.other_record=!!row;if(row)inspect(row.id);phase=10;return;}
-            if(phase===10){if(detail.id===previousId)return;checks.identity_invalidates=inspectorReferences.model.length===0 && dialogReferences.model.length===0;stop();core.capture(core.env("SHOWPSISI_SCREENSHOT"));core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));}
+            if(phase===10){if(detail.id===previousId)return;checks.identity_invalidates=inspectorReferences.model.length===0 && dialogReferences.model.length===0;stop();core.capture(core.env("SHOWPSISI_SCREENSHOT"));core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks,observations:observations}));}
         }
     }
     Connections {
@@ -5917,8 +5933,12 @@ ApplicationWindow {
                         property string loadedIdentity: ""
                         onVisibleChanged: if(visible)loadedIdentity=currentIdentity
                         onCurrentIdentityChanged: if(visible)loadedIdentity=currentIdentity
-                        model:visible || loadedIdentity===currentIdentity ? specificationLinks : []; spacing:12; ScrollBar.vertical:ScrollBar {}
+                        // Expose only the latched evidence identity. Visibility must not
+                        // bypass activation or reassign the model on same-detail tab changes.
+                        model:loadedIdentity===currentIdentity ? specificationLinks : []; spacing:12; ScrollBar.vertical:ScrollBar {}
                         delegate:Column {
+                            Component.onCompleted: if(referencePersistenceTest.running)referencePersistenceTest.delegateCreates++
+                            Component.onDestruction: if(referencePersistenceTest && referencePersistenceTest.running)referencePersistenceTest.delegateDestroys++
                             required property var modelData
                             property alias urlField: referenceUrl
                             width:ListView.view.width; spacing:6
@@ -6397,7 +6417,7 @@ ApplicationWindow {
                 property bool dialogOpen: specificationDialog.visible
                 onDialogOpenChanged: if(dialogOpen)loadedIdentity=currentIdentity
                 onCurrentIdentityChanged: if(dialogOpen)loadedIdentity=currentIdentity
-                model: dialogOpen || loadedIdentity===currentIdentity ? specificationLinks : []
+                model: loadedIdentity===currentIdentity ? specificationLinks : []
                 ScrollBar.vertical: ScrollBar {}
                 delegate: Column {
                     property alias urlField: dialogReferenceUrl

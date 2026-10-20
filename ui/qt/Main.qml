@@ -286,6 +286,13 @@ ApplicationWindow {
     property string epgLanguage: ""
     property var identifierResult: ({})
     property var satelliteResult: ({})
+    function revealMetadataControl(item) {
+        if(inspectorView!=="Metadata" || !item)return;
+        let scroll=metadataScroll.contentItem,y=item.mapToItem(metadataContent,0,0).y,top=scroll.contentY;
+        if(y<top)top=y;
+        else if(y+Math.min(item.height,metadataScroll.availableHeight)>top+metadataScroll.availableHeight)top=y+Math.min(item.height,metadataScroll.availableHeight)-metadataScroll.availableHeight;
+        scroll.contentY=Math.max(0,Math.min(top,Math.max(0,scroll.contentHeight-metadataScroll.availableHeight)));
+    }
     function satelliteText(x) {
         let p=x.raw_parameters || {};
         return "Candidates only · " + (x.status || x.error || "") + "\n" +
@@ -1126,6 +1133,77 @@ ApplicationWindow {
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
+    }
+    component LookupTable: ColumnLayout {
+        id: lookupTable
+        property var result: ({})
+        property string label: "Lookup result"
+        readonly property var presentation: Shared.workbench.lookupResult(result)
+        readonly property real keyWidth: width * (presentation.hasSource ? 0.32 : 0.40)
+        readonly property real sourceWidth: width * 0.30
+        visible: Object.keys(result).length > 0
+        Layout.fillWidth: true
+        spacing: 0
+        Accessible.role: Accessible.Table
+        Accessible.name: label
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            PlainLabel { text: "Key"; color: muted; font.bold: true; Layout.preferredWidth: lookupTable.keyWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.keyWidth }
+            PlainLabel { text: "Value"; color: muted; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0 }
+            PlainLabel { text: "Source"; color: muted; font.bold: true; visible: lookupTable.presentation.hasSource; Layout.preferredWidth: lookupTable.sourceWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.sourceWidth }
+        }
+        Repeater {
+            model: lookupTable.presentation.rows
+            ColumnLayout {
+                id: lookupRow
+                required property var modelData
+                Layout.fillWidth: true
+                spacing: 0
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: dividerColor }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    PlainLabel {
+                        id: keyCell
+                        text: lookupRow.modelData.label
+                        Layout.preferredWidth: lookupTable.keyWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.keyWidth; Layout.alignment: Qt.AlignTop
+                        padding: 4; wrapMode: Text.WrapAnywhere; color: muted; font.pixelSize: 11
+                        activeFocusOnTab: true
+                        onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(keyCell);})
+                        Accessible.name: text
+                        Accessible.description: "Raw key: " + lookupRow.modelData.key + (lookupRow.modelData.help ? " · " + lookupRow.modelData.help : "")
+                        background: Rectangle { color: surface; border.color: blue; border.width: keyCell.activeFocus ? focusWidth : 0 }
+                        HoverHandler { id: keyHover }
+                        SafeTip { visible: keyHover.hovered || keyCell.activeFocus; text: keyCell.Accessible.description }
+                    }
+                    TextArea {
+                        id: valueCell
+                        text: lookupRow.modelData.value
+                        Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.alignment: Qt.AlignTop
+                        padding: 4; readOnly: true; selectByMouse: true; activeFocusOnTab: true
+                        textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; font.family: "monospace"; font.pixelSize: 12; color: ink
+                        onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(valueCell);})
+                        Accessible.name: lookupTable.label + " · " + lookupRow.modelData.label
+                        background: Rectangle { color: surface; border.color: blue; border.width: valueCell.activeFocus ? focusWidth : 0 }
+                    }
+                    TextArea {
+                        id: sourceCell
+                        visible: lookupTable.presentation.hasSource
+                        text: lookupRow.modelData.source || "—"
+                        Layout.preferredWidth: lookupTable.sourceWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.sourceWidth; Layout.alignment: Qt.AlignTop
+                        padding: 4; readOnly: true; selectByMouse: true; activeFocusOnTab: true
+                        textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; font.pixelSize: 11; color: muted
+                        onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(sourceCell);})
+                        Accessible.name: "Source for " + lookupRow.modelData.label
+                        Accessible.description: lookupRow.modelData.sourceTip
+                        background: Rectangle { color: surface; border.color: blue; border.width: sourceCell.activeFocus ? focusWidth : 0 }
+                        HoverHandler { id: sourceHover }
+                        SafeTip { visible: sourceHover.hovered || sourceCell.activeFocus; text: lookupRow.modelData.sourceTip }
+                    }
+                }
+            }
+        }
     }
     component SafeTip: ToolTip {
         id: tip
@@ -2747,12 +2825,14 @@ ApplicationWindow {
             if(phase===3){
                 checks.encoding=detail.text_diagnostics.some(function(x){return x.basis==="wire_selector" && x.selector_hex==="15";});
                 checks.english=metadataEntries().some(function(x){return x.text.indexOf("First second")>=0;});
+                if(!core.isExposed("epgLanguage")){revealMetadataControl(epgLanguageChoice);return;}
                 checks.language_control=core.click("epgLanguage");core.key("End");core.key("Return");phase=4;return;
             }
             if(phase===4){
                 checks.chinese=epgLanguage==="zho" && rowTitle(rows[0])==="新闻";
                 checks.incomplete=metadataEntries().some(function(x){return x.text.indexOf("incomplete")>=0 && x.text.indexOf("No complete extended text")>=0;});
                 identifierKind.currentIndex=3;identifierValue.text="0x0500";
+                if(!core.isExposed("identifierQuery")){revealMetadataControl(identifierQuery);return;}
                 checks.lookup_click=core.click("identifierQuery");phase=5;return;
             }
             if(phase===5){
@@ -2784,6 +2864,7 @@ ApplicationWindow {
                 checks.wire=!!x && x.raw_parameters.frequency_hz===11538000000 && x.wire_source.section_id===detail.id && !!x.raw_descriptor_hex;
                 checks.colocated=!!x && x.candidates.length===2 && x.confirmed_satellite===null;
                 checks.presentation=metadataEntries().some(function(e){return e.text.indexOf("HOTBIRD 13F")>=0 && e.text.indexOf("not checked")>=0 && e.evidence.indexOf("reviewed_at")>=0;});
+                if(!core.isExposed("satelliteQuery")){revealMetadataControl(satelliteQuery);return;}
                 satellitePosition.text="122";checks.lookup_click=core.click("satelliteQuery");phase=4;return;
             }
             if(phase===4){
@@ -4618,10 +4699,12 @@ ApplicationWindow {
                         clip: true
                         contentWidth: availableWidth
                         ColumnLayout {
+                            id: metadataContent
                             width: metadataScroll.availableWidth
                             spacing: 8
+                            PlainLabel { text: "Section metadata"; Layout.fillWidth: true; font.bold: true; font.pixelSize: 13; color: ink }
                             PlainLabel {
-                                text: "Selected section: ID names, text encoding and multilingual EPG. Reference labels do not verify current ownership."
+                                text: "Changes with the selected section. Reference labels do not verify current ownership."
                                 Layout.fillWidth: true
                                 wrapMode: Text.Wrap
                                 color: muted
@@ -4654,6 +4737,7 @@ ApplicationWindow {
                                     TextArea { visible: protocolEvidenceToggle.checked; text: JSON.stringify(modelData.evidence,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
                             }
+                            PlainLabel { text: "Multilingual EPG"; Layout.fillWidth: true; font.bold: true; color: ink }
                             FieldChoice {
                                 id: epgLanguageChoice
                                 objectName: "epgLanguage"
@@ -4663,71 +4747,9 @@ ApplicationWindow {
                                 currentIndex: Math.max(0, model.indexOf(epgLanguage || "Default"))
                                 onActivated: epgLanguage=currentIndex === 0 ? "" : currentText
                                 Accessible.name: "Preferred EPG language"
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(epgLanguageChoice);})
+                                SafeTip { visible: anchorHovered; text: "Preferred Electronic Programme Guide language; unavailable languages explicitly fall back." }
                             }
-                            FieldChoice {
-                                id: identifierKind
-                                objectName: "identifierKind"
-                                Layout.fillWidth: true
-                                implicitHeight: 30
-                                model: ["original_network_id","network_id","bouquet_id","ca_system_id","private_data_specifier","registration_id","data_broadcast_id","platform_id","oui"]
-                                Accessible.name: "Identifier namespace"
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                FieldInput { id: identifierValue; objectName: "identifierValue"; Layout.fillWidth: true; placeholderText: "ID: decimal or 0x hexadecimal"; Accessible.name: "Identifier value" }
-                                Action {
-                                    objectName: "identifierQuery"
-                                    text: "Look up"
-                                    enabled: backendReady
-                                    onClicked: {
-                                        let value=identifierValue.text.trim();
-                                        if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))) {identifierResult={error:"Enter a whole decimal or hexadecimal ID"};return;}
-                                        core.send("lookup_identifier",{namespace:identifierKind.currentText,value:Number(value),standards:detail.standards_context || standardChoice.currentValue});
-                                    }
-                                }
-                            }
-                            Action {
-                                id: identifierEvidence
-                                visible: Object.keys(identifierResult).length > 0
-                                text: checked ? "Hide lookup evidence" : "Show lookup evidence"
-                                checkable: true
-                                Layout.fillWidth: true
-                            }
-                            PlainLabel {
-                                visible: Object.keys(identifierResult).length > 0
-                                text: (identifierResult.label || identifierResult.error || identifierResult.status || "") + " · " + (identifierResult.raw_hex || "") + "\n" + (identifierResult.uncertainty || "")
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                            }
-                            TextArea {
-                                visible: identifierEvidence.checked && Object.keys(identifierResult).length > 0
-                                Layout.fillWidth: true
-                                readOnly: true
-                                selectByMouse: true
-                                textFormat: TextEdit.PlainText
-                                wrapMode: TextEdit.WrapAnywhere
-                                text: JSON.stringify(identifierResult,null,2)
-                            }
-                            PlainLabel { text: "Satellite candidates · nominal GEO slot"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: blue }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                FieldInput { id: satellitePosition; objectName: "satellitePosition"; Layout.fillWidth: true; placeholderText: "Degrees: 13.0"; Accessible.name: "Orbital position in degrees" }
-                                FieldChoice { id: satelliteDirection; objectName: "satelliteDirection"; model: ["E","W"]; implicitWidth: 65; Accessible.name: "Orbital direction" }
-                                Action {
-                                    objectName: "satelliteQuery"
-                                    text: "Candidates"
-                                    enabled: backendReady
-                                    onClicked: {
-                                        let value=satellitePosition.text.trim();
-                                        satelliteResult={};
-                                        if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180) {satelliteResult={error:"Enter degrees from 0 to 180"};return;}
-                                        core.send("lookup_satellite",{orbital_position_degrees:Number(value),direction:satelliteDirection.currentText});
-                                    }
-                                }
-                            }
-                            TextArea { objectName: "satelliteResult"; visible: Object.keys(satelliteResult).length > 0; text: satelliteText(satelliteResult); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
-                            Action { id: satelliteEvidence; visible: Object.keys(satelliteResult).length > 0; text: checked ? "Hide satellite lookup evidence" : "Satellite lookup evidence"; checkable: true; Layout.fillWidth: true }
-                            TextArea { visible: satelliteEvidence.checked && Object.keys(satelliteResult).length > 0; text: JSON.stringify(satelliteResult,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                             PlainLabel { text: detail.text_diagnostic_scope || "Analyze a stream to inspect metadata."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
                             Repeater {
                                 model: metadataEntries()
@@ -4741,6 +4763,90 @@ ApplicationWindow {
                                     TextArea { visible: evidenceToggle.checked; text: modelData.evidence; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
                             }
+                            Rectangle { Layout.fillWidth: true; Layout.topMargin: 12; Layout.bottomMargin: 8; implicitHeight: 1; color: dividerColor }
+                            PlainLabel { text: "Lookup"; Layout.fillWidth: true; font.bold: true; font.pixelSize: 13; color: ink }
+                            PlainLabel { text: "Not tied to the selected section"; Layout.fillWidth: true; color: muted }
+                            PlainLabel { text: "Identifier lookup"; Layout.fillWidth: true; font.bold: true; color: ink }
+                            FieldChoice {
+                                id: identifierKind
+                                objectName: "identifierKind"
+                                Layout.fillWidth: true
+                                implicitHeight: 30
+                                model: Shared.workbench.identifierNamespaces
+                                textRole: "label"
+                                valueRole: "value"
+                                Accessible.name: "Identifier namespace"
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierKind);})
+                                SafeTip { visible: anchorHovered; text: (Shared.workbench.identifierNamespaces[identifierKind.currentIndex] || {}).help + " · " + identifierKind.currentValue }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                FieldInput { id: identifierValue; objectName: "identifierValue"; Layout.fillWidth: true; placeholderText: "ID: decimal or 0x hexadecimal"; Accessible.name: "Identifier value"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierValue);}) }
+                                Action {
+                                    id: identifierQuery
+                                    objectName: "identifierQuery"
+                                    text: "Look up"
+                                    Accessible.name: "Look up identifier"
+                                    onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierQuery);})
+                                    enabled: backendReady
+                                    onClicked: {
+                                        let value=identifierValue.text.trim();
+                                        identifierResult={};identifierEvidence.checked=false;
+                                        if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))) {identifierResult={error:"Enter a whole decimal or hexadecimal ID"};return;}
+                                        core.send("lookup_identifier",{namespace:identifierKind.currentValue,value:Number(value),standards:analysisState.standards_context || "auto"});
+                                    }
+                                }
+                            }
+                            PlainLabel { text: "Uses the analyzed standard context; choose an explicit standard and rescan if context is required."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
+                            LookupTable { objectName: "identifierResult"; result: identifierResult; label: "Identifier lookup result" }
+                            Action {
+                                id: identifierEvidence
+                                visible: Object.keys(identifierResult).length > 0
+                                text: "Raw"
+                                checkable: true
+                                Layout.fillWidth: true
+                                Accessible.name: "Raw identifier lookup JSON, " + (checked ? "expanded" : "collapsed")
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierEvidence);})
+                                SafeTip { visible: anchorHovered; text: "Original JavaScript Object Notation (JSON), including all values and source evidence." }
+                            }
+                            TextArea {
+                                id: identifierRawText
+                                visible: identifierEvidence.checked && Object.keys(identifierResult).length > 0
+                                Layout.fillWidth: true
+                                readOnly: true
+                                selectByMouse: true
+                                textFormat: TextEdit.PlainText
+                                wrapMode: TextEdit.WrapAnywhere
+                                text: JSON.stringify(identifierResult,null,2)
+                                font.family: "monospace"
+                                activeFocusOnTab: true
+                                Accessible.name: "Original identifier lookup JSON"
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierRawText);})
+                            }
+                            PlainLabel { text: "Satellite lookup"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: ink }
+                            PlainLabel { text: "Nominal GEO slot only. An incomplete reference snapshot; never a confirmed satellite."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                FieldInput { id: satellitePosition; objectName: "satellitePosition"; Layout.fillWidth: true; placeholderText: "Degrees: 13.0"; Accessible.name: "Orbital position in degrees"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satellitePosition);}) }
+                                FieldChoice { id: satelliteDirection; objectName: "satelliteDirection"; model: ["E","W"]; implicitWidth: 65; Accessible.name: "Orbital direction"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteDirection);}); SafeTip { visible: anchorHovered; text: "East or west of the prime meridian · nominal geostationary Earth orbit (GEO) slot" } }
+                                Action {
+                                    id: satelliteQuery
+                                    objectName: "satelliteQuery"
+                                    text: "Candidates"
+                                    Accessible.name: "Look up satellite candidates"
+                                    onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteQuery);})
+                                    enabled: backendReady
+                                    onClicked: {
+                                        let value=satellitePosition.text.trim();
+                                        satelliteResult={};satelliteEvidence.checked=false;
+                                        if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180) {satelliteResult={error:"Enter degrees from 0 to 180"};return;}
+                                        core.send("lookup_satellite",{orbital_position_degrees:Number(value),direction:satelliteDirection.currentText});
+                                    }
+                                }
+                            }
+                            LookupTable { objectName: "satelliteResult"; result: satelliteResult; label: "Satellite lookup result" }
+                            Action { id: satelliteEvidence; visible: Object.keys(satelliteResult).length > 0; text: "Raw"; checkable: true; Layout.fillWidth: true; Accessible.name: "Raw satellite lookup JSON, " + (checked ? "expanded" : "collapsed"); onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteEvidence);}); SafeTip { visible: anchorHovered; text: "Original JavaScript Object Notation (JSON), including all values and source evidence." } }
+                            TextArea { id: satelliteRawText; visible: satelliteEvidence.checked && Object.keys(satelliteResult).length > 0; text: JSON.stringify(satelliteResult,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; activeFocusOnTab: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; font.family: "monospace"; Accessible.name: "Original satellite lookup JSON"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteRawText);}) }
                         }
                     }
                     ListView {

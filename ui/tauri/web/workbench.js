@@ -67,6 +67,52 @@ workbench.issueCounts = function(issues) {
   return counts;
 };
 
+workbench.identifierNamespaces = [
+  {value:'original_network_id',label:'Original network ID',help:'Original network identifier'},
+  {value:'network_id',label:'Network ID',help:'Network identifier'},
+  {value:'bouquet_id',label:'Bouquet ID',help:'Bouquet identifier'},
+  {value:'ca_system_id',label:'CA system ID (conditional access)',help:'Conditional access system identifier'},
+  {value:'private_data_specifier',label:'Private data specifier',help:'Private descriptor namespace'},
+  {value:'registration_id',label:'Registration ID',help:'Registered format identifier'},
+  {value:'data_broadcast_id',label:'Data broadcast ID',help:'Data broadcast identifier'},
+  {value:'platform_id',label:'Platform ID',help:'Platform identifier'},
+  {value:'oui',label:'OUI (organizationally unique identifier)',help:'Organizationally unique identifier'}
+];
+workbench.lookupLabel = function(key) {
+  var acronyms={id:'ID',ids:'IDs',sdk:'SDK',url:'URL',oui:'OUI',ca:'CA',geo:'GEO',hz:'Hz',fec:'FEC',pid:'PID',onid:'ONID',tsid:'TSID'};
+  var words=String(key).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/_/g,' ').split(' ');
+  return words.map(function(word,i){return acronyms[word.toLowerCase()] || (i===0?word.charAt(0).toUpperCase()+word.slice(1):word);}).join(' ');
+};
+// Flatten returned JSON without hiding false, null, empty collections or unknown
+// flags. Source columns inherit only explicit provenance, never inferred meaning.
+workbench.lookupResult = function(result) {
+  var rows=[],acronyms={id:'ID: identifier',sdk:'SDK: Software Development Kit',url:'URL: Uniform Resource Locator',oui:'OUI: organizationally unique identifier',ca:'CA: conditional access',geo:'GEO: geostationary Earth orbit',hz:'Hz: hertz',fec:'FEC: forward error correction',pid:'PID: Packet Identifier',onid:'ONID: Original Network Identifier',tsid:'TSID: Transport Stream Identifier'};
+  function text(value) { return typeof value==='string'?(value || '""'):JSON.stringify(value); }
+  function provenance(value) {
+    if(!value || typeof value!=='object')return text(value);
+    var identity=value.publisher || value.file || value.path || value.kind || value.section_id || value.url;
+    return identity?[identity,value.reviewed_at || value.sdk_version || value.revision].filter(Boolean).join(' · '):JSON.stringify(value);
+  }
+  function visit(value,path,label,source,sourceTip) {
+    if(value!==null && typeof value==='object' && Object.keys(value).length) {
+      var keys=Object.keys(value),origins=keys.filter(function(k){return /^(source|sources|provenance|wire_source|catalog)$/.test(k);});
+      if(origins.length) {
+        source=origins.map(function(k){return provenance(value[k]);}).join('\n');
+        sourceTip=origins.map(function(k){return k+': '+JSON.stringify(value[k],null,2);}).join('\n');
+      }
+      keys.forEach(function(k){
+        var array=Array.isArray(value),raw=array?'['+k+']':k,readable=array?raw:workbench.lookupLabel(k);
+        visit(value[k],path?(path+(array?'':'.')+raw):raw,label?(label+(array?' ':' › ')+readable):readable,source,sourceTip);
+      });
+    } else {
+      var help=path.split(/[.\[\]_]+/).map(function(k){return acronyms[k.toLowerCase()];}).filter(function(x,i,all){return x && all.indexOf(x)===i;}).join(' · ');
+      rows.push({key:path,label:label,help:help,value:text(value),source:source || '',sourceTip:sourceTip || ''});
+    }
+  }
+  if(result!==null && result!==undefined)visit(result,'','', '', '');
+  return {rows:rows,hasSource:rows.some(function(row){return !!row.source;})};
+};
+
 workbench.wireVersionText = function(row) { return row.versioning_supported===false || row.version===null?'version not carried':row.version===undefined?'version unavailable':'v'+row.version; };
 workbench.wireExtensionText = function(row) { return row.versioning_supported===false || row.extension===null?'extension not carried':row.extension===undefined?'extension unavailable':'Ext '+workbench.hex(row.extension); };
 workbench.wireCurrentText = function(row) { return row.versioning_supported===false || row.current===null?'current/next not carried':row.current===undefined?'current/next unavailable':row.current?'current':'next'; };

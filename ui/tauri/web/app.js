@@ -1642,6 +1642,28 @@ function sectionGroupPanel() {
   return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections ? "" : "hidden"}><p class="meta">▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</p><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links"><select id="section-choice" aria-label="Select original section evidence">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<option value="${esc(r.id)}" ${r.id === detail.id ? 'selected' : ''}>${esc(workbench.wireSectionText(r))} · CRC ${esc(r.crc?.transmitted_hex || '—')} · ${esc(r.crc?.status || 'unavailable')} · #${r.first_packet}</option>`).join('')}</select></div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</div>`;
 }
 let epgLanguage = "", identifierResult = null, satelliteResult = null;
+const lookupState={namespace:"original_network_id",identifier:"",position:"",direction:"E",identifierOpen:false,identifierRaw:false,satelliteRaw:false,identifierNotice:"Enter a decimal or hexadecimal ID.",satelliteNotice:""};
+const lookupFields=[["identifier-kind","namespace","change"],["identifier-value","identifier","input"],["satellite-position","position","input"],["satellite-direction","direction","change"]];
+const lookupDisclosures=[["identifier-lookup","identifierOpen"],["identifier-raw","identifierRaw"],["satellite-raw","satelliteRaw"]];
+function rememberLookupState(panel) {
+  lookupFields.forEach(([id,key])=>{const el=panel.querySelector('#'+id);if(el)lookupState[key]=el.value;});
+  lookupDisclosures.forEach(([id,key])=>{const el=panel.querySelector('#'+id);if(el)lookupState[key]=el.open;});
+}
+function lookupTable(result, label) {
+  const model=workbench.lookupResult(result);
+  return `<table class="lookup-table${model.hasSource?' with-source':''}" aria-label="${esc(label)}"><thead><tr><th scope="col">Key</th><th scope="col">Value</th>${model.hasSource?'<th scope="col">Source</th>':''}</tr></thead><tbody>${model.rows.map(row=>`<tr><th scope="row" title="${esc(row.key+(row.help?' · '+row.help:''))}">${esc(row.label)}</th><td class="lookup-value">${esc(row.value)}</td>${model.hasSource?`<td class="lookup-source" title="${esc(row.sourceTip)}">${esc(row.source || '—')}</td>`:''}</tr>`).join('')}</tbody></table>`;
+}
+function lookupOutput(kind) {
+  const result=kind==='identifier'?identifierResult:satelliteResult;
+  return result?lookupTable(result,kind==='identifier'?'Identifier lookup result':'Satellite lookup result'):`<p class="meta">${esc(lookupState[kind+'Notice'])}</p>`;
+}
+function refreshLookupResult(kind) {
+  const result=kind==='identifier'?identifierResult:satelliteResult,output=$('#'+kind+'-result');
+  if(!output)return;
+  output.innerHTML=lookupOutput(kind);
+  $('#'+kind+'-evidence').textContent=result?JSON.stringify(result,null,2):'';
+  const raw=$('#'+kind+'-raw');raw.hidden=!result;raw.open=lookupState[kind+'Raw'];
+}
 function satelliteText(x) {
   const p=x.raw_parameters || {};
   return "Candidates only · " + (x.status || x.error || "") + "\n" +
@@ -1669,14 +1691,18 @@ function metadataPanel() {
   protocolVisibleSources=[];
   const protocolHtml=protocols.total?`<section aria-label="Protocol summaries"><h3>Protocol summaries</h3><p class="meta">${protocols.offset+1}–${Math.min(protocols.offset+protocols.limit,protocols.total)} of ${protocols.total} cards · original evidence retained</p><div class="metadata-query"><button class="btn small" id="protocol-previous" ${protocols.has_previous?'':'disabled'}>Previous cards</button><button class="btn small" id="protocol-next" ${protocols.has_more?'':'disabled'}>Next cards</button></div>${protocols.cards.map((x,cardIndex)=>{const refs=workbench.protocolCardSources(x),limit=protocolSourceLimits[protocolCardOffset+cardIndex] || 100;return `<div class="protocol-card">`+card(x.title,x.text,x.evidence)+(refs.length?`<details class="protocol-sources"><summary>Source references (${refs.length})</summary>${refs.slice(0,limit).map((item,i)=>{const index=protocolVisibleSources.push(item)-1;return `<button class="btn topology-source" id="protocol-source-${cardIndex}-${i}" data-protocol-source="${index}" ${item.available && !busy && !backendFailure?'':'disabled'}><strong>${esc(item.label)}</strong><span>${esc(item.precision)} · cutoff #${num(item.ref.at_packet)} · revision ${num(item.ref.analysis_revision)}</span><span>${esc(item.ref.section_id || 'Source identity unavailable')}</span></button>`;}).join('')}${refs.length>limit?`<button class="btn" data-protocol-more="${protocolCardOffset+cardIndex}">Show more sources (${limit} / ${refs.length})</button>`:''}</details>`:'')+'</div>';}).join('')}</section>`:'';
   const events = detail.events || [], languages = [...new Set(events.flatMap(e => (e.language_variants || []).map(v => v.language_code)))].sort();
-  return `<div class="metadata-panel" aria-label="Signal metadata"><p class="meta">Selected section only. Reference labels are not verified current operator ownership. Original bytes remain in Hex.</p>
-    ${protocolHtml}<details><summary>Look up an identifier</summary><div class="metadata-query"><select id="identifier-kind" aria-label="Identifier namespace">${[["original_network_id","Original network ID"],["network_id","Network ID"],["bouquet_id","Bouquet ID"],["ca_system_id","CA system ID (conditional access)"],["private_data_specifier","Private data specifier"],["registration_id","Registration ID"],["data_broadcast_id","Data broadcast ID"],["platform_id","Platform ID"],["oui","OUI (organizationally unique identifier)"]].map(([k, label]) => `<option value="${k}">${label}</option>`).join("")}</select><input id="identifier-value" placeholder="0x0001" aria-label="Identifier value"><button class="btn small" id="identifier-query">Look up</button></div><p class="meta">Uses the analyzed standard context; choose an explicit standard and rescan if context is required.</p><pre id="identifier-result">${esc(identifierResult ? readableValue(identifierResult) : "Enter a decimal or hexadecimal ID.")}</pre></details>
-    <h3>Satellite candidates</h3><div class="satellite-query metadata-query"><input id="satellite-position" placeholder="Degrees: 13.0" aria-label="Orbital position in degrees"><select id="satellite-direction" aria-label="Orbital direction"><option>E</option><option>W</option></select><button class="btn small" id="satellite-query">Candidates</button></div><p class="meta">Nominal GEO slot only. An incomplete reference snapshot; never a confirmed satellite.</p><pre id="satellite-result">${satelliteResult ? esc(satelliteText(satelliteResult)) : ""}</pre><details class="satellite-lookup-evidence"><summary>Satellite lookup evidence</summary><pre id="satellite-evidence">${satelliteResult ? esc(JSON.stringify(satelliteResult,null,2)) : ""}</pre></details>
+  return `<div class="metadata-panel" aria-label="Signal metadata"><section class="metadata-group" aria-label="Section metadata"><h2>Section metadata</h2><p class="meta">Changes with the selected section. Reference labels are not verified current operator ownership. Original bytes remain in Hex.</p>
+    ${protocolHtml}
+    <h3>Satellite associations</h3>
     ${(detail.satellite_associations || []).map(x => card("Satellite candidates · " + (x.transport ? "TS " + hex(x.transport.transport_stream_id) + " / ONID " + hex(x.transport.original_network_id) : "section descriptor") + " · offset " + x.wire_source.section_offset,satelliteText(x),x)).join("") || '<p class="meta">No supported satellite delivery descriptor in this section. S2/S2X-only descriptors do not establish a slot.</p>'}
-    <h3>Multilingual EPG</h3><label for="epg-language">Preferred language</label><select id="epg-language"><option value="">Default (language-code order)</option>${languages.map(l => `<option value="${esc(l)}" ${epgLanguage === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+    <h3 title="Electronic Programme Guide">Multilingual EPG</h3><label for="epg-language">Preferred language</label><select id="epg-language" title="Electronic Programme Guide language"><option value="">Default (language-code order)</option>${languages.map(l => `<option value="${esc(l)}" ${epgLanguage === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
     ${events.map(e => {const v=eventVariant(e);return card(`Event ${hex(e.id)} · ${v.language_code || "no language"}${epgLanguage && v.language_code !== epgLanguage ? " · fallback" : ""}`, `${eventTitle(e)}\nShort: ${v.short_status || "absent"}\n${v.short_text || ""}\nExtended: ${v.extended_status || "absent"}\n${v.extended_text ?? "No complete extended text"}\n${(v.warnings || []).join("\n")}`, {event_id:e.id,service_id:e.service_id,source_id:e.source_id,variant:v});}).join("") || '<p class="meta">No EIT events in this section.</p>'}
     <h3>ID names and sources</h3>${(detail.identifier_lookups || []).map(x => card(`${x.namespace} · ${x.raw_hex}`, `${x.label || "Unknown"} · ${x.status}\n${x.uncertainty}`, x)).join("") || '<p class="meta">No supported identifiers indexed in this section.</p>'}
-    <h3>Text encoding diagnostics</h3><p class="meta">${esc(detail.text_diagnostic_scope || "")}</p>${(detail.text_diagnostics || []).map(x => card(`${x.field} · ${x.language_code || "no language tag"}`, `${x.status} · ${x.effective_charset || "unknown charset"} · ${x.basis}\n${x.decoded_text}\nSelector: ${x.selector_hex || "none"} · section offset ${x.source.section_offset}\nRaw: ${x.raw_hex}\n${(x.warnings || []).join("\n")}`, x)).join("") || '<p class="meta">No supported text fields in this section.</p>'}</div>`;
+    <h3>Text encoding diagnostics</h3><p class="meta">${esc(detail.text_diagnostic_scope || "")}</p>${(detail.text_diagnostics || []).map(x => card(`${x.field} · ${x.language_code || "no language tag"}`, `${x.status} · ${x.effective_charset || "unknown charset"} · ${x.basis}\n${x.decoded_text}\nSelector: ${x.selector_hex || "none"} · section offset ${x.source.section_offset}\nRaw: ${x.raw_hex}\n${(x.warnings || []).join("\n")}`, x)).join("") || '<p class="meta">No supported text fields in this section.</p>'}</section>
+    <section class="metadata-group metadata-lookup" aria-label="Lookup"><h2>Lookup</h2><p class="meta">Not tied to the selected section</p>
+    <details id="identifier-lookup" ${lookupState.identifierOpen?'open':''}><summary title="Look up an identifier (ID) in the SDK (Software Development Kit) registry">Look up an identifier</summary><div class="metadata-query"><select id="identifier-kind" aria-label="Identifier namespace" title="Choose an identifier (ID) namespace">${workbench.identifierNamespaces.map(x=>`<option value="${x.value}" title="${esc(x.help)} · ${x.value}" ${lookupState.namespace===x.value?'selected':''}>${esc(x.label)}</option>`).join('')}</select><input id="identifier-value" value="${esc(lookupState.identifier)}" placeholder="0x0001" aria-label="Identifier value"><button class="btn small" id="identifier-query">Look up</button></div><p class="meta">Uses the analyzed standard context; choose an explicit standard and rescan if context is required.</p><div id="identifier-result" aria-live="polite">${lookupOutput('identifier')}</div><details class="lookup-raw" id="identifier-raw" ${identifierResult?'':'hidden'} ${lookupState.identifierRaw?'open':''}><summary aria-label="Raw identifier lookup JSON" title="Original JSON (JavaScript Object Notation) with all values and source evidence">Raw</summary><pre id="identifier-evidence" tabindex="0" aria-label="Original identifier lookup JSON">${identifierResult?esc(JSON.stringify(identifierResult,null,2)):''}</pre></details></details>
+    <h3>Satellite lookup</h3><div class="satellite-query metadata-query"><input id="satellite-position" value="${esc(lookupState.position)}" placeholder="Degrees: 13.0" aria-label="Orbital position in degrees"><select id="satellite-direction" aria-label="Orbital direction" title="East or west of the prime meridian"><option value="E" ${lookupState.direction==='E'?'selected':''}>E</option><option value="W" ${lookupState.direction==='W'?'selected':''}>W</option></select><button class="btn small" id="satellite-query">Candidates</button></div><p class="meta" title="Geostationary Earth orbit">Nominal GEO slot only. An incomplete reference snapshot; never a confirmed satellite.</p><div id="satellite-result" aria-live="polite">${lookupOutput('satellite')}</div><details class="satellite-lookup-evidence lookup-raw" id="satellite-raw" ${satelliteResult?'':'hidden'} ${lookupState.satelliteRaw?'open':''}><summary aria-label="Raw satellite lookup JSON" title="Original JSON (JavaScript Object Notation) with all values and source evidence">Raw</summary><pre id="satellite-evidence" tabindex="0" aria-label="Original satellite lookup JSON">${satelliteResult?esc(JSON.stringify(satelliteResult,null,2)):''}</pre></details>
+    </section></div>`;
 }
 function applyInspectorDetails(panel) {
   const container = panel?.querySelector('#inspector-details');
@@ -1719,6 +1745,7 @@ function editBlockReason() {
 function renderInspector() {
   const panel = $("#inspector");
   if (!panel) return;
+  rememberLookupState(panel);
   if (tab === "Topology" && !topology.active) { renderTopologyInspector(); return; }
   const summaryScroll = panel.querySelector(".inspector-chips")?.scrollLeft || 0;
   if (aggregateDiagnostic) {
@@ -1754,22 +1781,26 @@ function renderInspector() {
   if (sectionChoice) sectionChoice.onchange = () => inspect(sectionChoice.value, -1, "", inspectionEvidence);
   $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#group-show-bad")?.focus({preventScroll:true}); });
   $("#epg-language")?.addEventListener("change", e => { epgLanguage=e.target.value; renderList(); renderInspector(); $("#epg-language")?.focus(); });
+  lookupFields.forEach(([id,key,event])=>$('#'+id)?.addEventListener(event,e=>lookupState[key]=e.target.value));
+  lookupDisclosures.forEach(([id,key])=>$('#'+id)?.addEventListener('toggle',e=>lookupState[key]=e.target.open));
   $("#identifier-query")?.addEventListener("click", async () => {
-    const value=$("#identifier-value").value.trim(), output=$("#identifier-result");
-    if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))){output.textContent="Enter a whole decimal or hexadecimal ID.";return;}
-    try {identifierResult=await call("lookup_identifier",{namespace:$("#identifier-kind").value,value:Number(value),standards:detail.standards_context || "auto"});output.textContent=readableValue(identifierResult);}
-    catch(error){output.textContent=String(error);}
+    const value=$("#identifier-value").value.trim(),namespace=$("#identifier-kind").value;
+    identifierResult=null;lookupState.identifierRaw=false;lookupState.identifierNotice="Looking up identifier…";
+    if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))){lookupState.identifierNotice="Enter a whole decimal or hexadecimal ID.";refreshLookupResult('identifier');return;}
+    refreshLookupResult('identifier');
+    try {identifierResult=await call("lookup_identifier",{namespace,value:Number(value),standards:data.standards_context || "auto"});}
+    catch(error){lookupState.identifierNotice=String(error);}
+    refreshLookupResult('identifier');
   });
   $("#satellite-query")?.addEventListener("click", async () => {
-    const value=$("#satellite-position").value.trim(), output=$("#satellite-result"), evidence=$("#satellite-evidence");
-    satelliteResult=null; evidence.textContent="";
-    if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180){output.textContent="Enter degrees from 0 to 180.";return;}
-    output.textContent="Looking up candidates…";
+    const value=$("#satellite-position").value.trim(),direction=$("#satellite-direction").value;
+    satelliteResult=null;lookupState.satelliteRaw=false;lookupState.satelliteNotice="Looking up candidates…";
+    if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180){lookupState.satelliteNotice="Enter degrees from 0 to 180.";refreshLookupResult('satellite');return;}
+    refreshLookupResult('satellite');
     try {
-      const result=await call("lookup_satellite",{orbital_position_degrees:Number(value),direction:$("#satellite-direction").value});
-      if(!output.isConnected)return;
-      satelliteResult=result; output.textContent=satelliteText(result);evidence.textContent=JSON.stringify(result,null,2);
-    } catch(error){output.textContent=String(error);}
+      satelliteResult=await call("lookup_satellite",{orbital_position_degrees:Number(value),direction});
+    } catch(error){lookupState.satelliteNotice=String(error);}
+    refreshLookupResult('satellite');
   });
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>

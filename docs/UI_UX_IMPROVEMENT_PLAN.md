@@ -519,6 +519,9 @@ ShowPsiSi 的“证据优先”内核做得扎实：保留来源、显式未知�
 | R4 | `0a5a87d` | §5.5 Metadata 拆成 Section metadata 和 Lookup 两组；查询结果改为键值表，带来源列，原始 JSON 收进 Raw 折叠区；“not verified” 等标记保留；Qt 命名空间显示可读名称 | 无 |
 | R5 | `7da52c0` | §4.6 字段级 A → B 差异，数值同时显示十六进制和十进制，嵌套可展开；`+N / −N / ~N` 改为过滤芯片；每侧的次级动作收拢。§7 时间轴标注改为 “Axis: packet index” 并加说明。新增 `--added-text` / `--removed-text` 令牌，已纳入对比度测试 | 无 |
 | R6 | `b70ee96` | §6 拖放文件（只填入路径，不自动分析；浏览器预览会明确提示该功能需要桌面版）；最多 10 条最近文件（沿用现有设置存储）；`?` / `Ctrl+/` 打开快捷键帮助浮层，内容来自同一张快捷键表 | 无 |
+| R7 | `27db7f9` | §5.2 Structure 树中的引用跳转：只对标准表中由“表 + 字段名”确定语义的字段显示 “→”（PAT program_map_PID、PMT elementary_PID / PCR_PID、SDT/EIT service_id、CAT 中已解码 CA_descriptor 的 CA_PID）；私有描述符、保留值、0x1FFF、目标不存在或不唯一时不显示链接。Ctrl+Enter 跳转，Alt+← 返回（复用现有返回栈） | Qt 的 Ctrl+Enter 原本会抢走“重新分析”快捷键 → 只在 Structure 树聚焦且当前行有引用时才跳转；Qt 脚本在新行布局完成前点击 → 加一次布局 tick；Web 测试对路径的假设过窄 → 改为任意 `/descriptors/` 路径 |
+| R8 | `9ce1e2a` | §7 时间轴上可拖动的 A/B 标记（Slider 语义，可键盘微调），与 A/B 输入框双向同步；密度条高度 20 → 28 | 拖动按像素量化，测试要求精确包号 → 两端测试按 `ceil(包数/像素宽)` 容差比较并与实时值核对；Qt 中 Shift+Tab 从 A 无法回到密度条 → 显式处理 Tab 顺序 |
+| R9 | 本轮提交 | §6 命令面板：Ctrl+K 搜索框支持 `>` 命令（与快捷键帮助共用同一张表，未加载时禁用并给出原因）和 `#` 标识符跳转（`#0x0100`、`#pid`、`#sid`、`#table`，十六进制按正确位宽显示，找不到时给出提示，跳转可 Alt+← 返回）；普通文本仍是记录搜索。Web 为 combobox/listbox 语义，Qt 为 ComboBox 可访问角色 | Qt 6.7 的 JS 引擎没有 `String.prototype.trimStart`，导致搜索框 `query` 不再更新，记录过滤全部失效（13 个 Qt 用例失败）→ 改为正则；空搜索框按 Esc 会把焦点移走，违反原有“Esc 清空并保留焦点”的约定（`input_focus`）→ 两端都只在面板打开时恢复焦点 |
 
 **每轮最终结果**：
 - 构建：Qt 构建通过，QML 通过 qmlcachegen 编译。
@@ -527,15 +530,13 @@ ShowPsiSi 的“证据优先”内核做得扎实：保留来源、显式未知�
 - `test_qt_resource_paths` + `test_qt_evidence`：18/18 通过。
 
 **验证边界（重要）**：
-- 本机的 Qt scripted 测试，在改动前的二进制上也不产生结果 JSON。窗口能启动，也能拉起引擎，但不写跟踪和结果；脱离工具沙箱运行也一样。原因未查明。所以 Qt 端六轮改动**只验证到“能编译”**，交互正确性需要在 GitHub CI 的 Windows 原生检查（`scripts/ci/windows_native_checks.py --qt`）或干净的 Windows 上确认。
+- R1–R6 期间本机 Qt scripted 测试不产生结果。原因已查明并记录在 [CLOUD_DEVELOPMENT.md](CLOUD_DEVELOPMENT.md) 的 “Local Windows Qt interaction tests” 一节（DLL 搜索路径、仓库外写入被拦截、字体目录、GBK 区域设置）。按该节配置环境后，R7–R9 的 Qt 套件均在本机完整运行；R1–R6 的 Qt 改动同时由 PR 的 GitHub CI Windows 原生检查覆盖。
+- 本机 offscreen 运行通过不等于原生 Windows 桌面交互通过。
 - Tauri/WebView2 原生拖放、原生窗口下的焦点和快捷键，都没有在桌面上手动验证过。
 
 ### 14.6 仍未做的部分
 
 - §5.2 字段 ↔ 字节联动：需要引擎在 JSONL 中输出 `byte_offset` / `bit_offset`，属于引擎和协议改动，要同步 PROTOCOL_COVERAGE.md。
-- §5.2 引用跳转。
-- §7 时间线上拖动 A/B 标记。
-- §6 命令面板（`>` 和 `#` 前缀）。
 - §2.1 溢出菜单：测试要求 `#reset-layout` 直接可见，所以本次只做了分组。
-- §12.1 把测试脚手架拆出 Main.qml：本机无法运行 Qt 测试，拆分风险太高，等 Qt 测试环境可用后再做。
+- §12.1 把测试脚手架拆出 Main.qml：本机 Qt 测试现已可运行，可以作为单独一轮推进。
 - P2：EPG 时间网格、i18n、Web 局部渲染、Update 对话框改版、References 去重。

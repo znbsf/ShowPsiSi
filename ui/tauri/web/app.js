@@ -150,13 +150,13 @@ function syntaxXml(xml) {
       i % 2 ? `<span class="xml-string">${esc(token)}</span>` : esc(token).replace(/([\w:.-]+)(=)/g, '<span class="xml-attribute">$1</span>$2')).join("") + '</span>';
   }).join("");
 }
-function arrivalAxis(first, last, timing = data.timing) {
+function arrivalAxis(first, last, timing = data.timing, timeline = false) {
   const scale = Number(timing?.seconds_per_packet);
   const timed = scale > 0 && timing?.basis === "user supplied bitrate";
   return `<div class="arrival-axis" aria-label="${timed ? 'Estimated seconds from supplied bitrate, not PCR' : 'Packet positions'}">${[0, .25, .5, .75, 1].map(f => {
     const packet = Math.round(first + (last-first)*f);
     return `<span>${timed ? (packet*scale).toFixed(3)+' s' : '#'+num(packet)}</span>`;
-  }).join('')}</div><div class="axis-basis">${timed ? 'Estimated elapsed seconds · user supplied 188-byte TS bitrate · not PCR time' : 'Zero-based packet positions · no measured time available'}</div>`;
+  }).join('')}</div><div class="axis-basis" ${!timed && timeline ? 'title="No PCR/TDT clock is used; positions are packet indices."' : ''}>${timed ? 'Estimated elapsed seconds · user supplied 188-byte TS bitrate · not PCR time' : timeline ? 'Axis: packet index' : 'Zero-based packet positions · no measured time available'}</div>`;
 }
 function distributionPanel(row) {
   const d = row.distribution;
@@ -200,7 +200,7 @@ window.addEventListener("unhandledrejection", event=>recordFrontendError(event.r
 let aggregateDiagnostic = null;
 let backendFailure = "";
 let completedScanOptions = null;
-let comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: 0 };
+let comparison = { from: null, to: null, kind: "all", filters: [], result: null, error: "", loading: false, epoch: 0 };
 let savedWorkspace = null, comparisonEvidence = "", inspectionEvidence = null;
 let firstPaint = false,
   completePaint = false,
@@ -613,7 +613,7 @@ function resetAnalysisViews() {
   comparisonEvidence = "";
   inspectionEvidence = null;
   if (tab === "Changes") tab = "Services";
-  comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
+  comparison = { from: null, to: null, kind: "all", filters: [], result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
   ++queryEpoch;
   selectionReset();
   editTarget = null;
@@ -1257,6 +1257,7 @@ function invalidateComparison() {
   comparison.loading = false;
   comparison.result = null;
   comparison.error = "";
+  comparison.filters = [];
   ++inspectEpoch;
   detail = {};
   detailError = "";
@@ -1298,26 +1299,20 @@ function renderComparison() {
   $("#run-comparison").onclick = () => runComparison();
   renderComparisonResults();
 }
-function comparisonValue(value) {
-  if (value == null) return "—";
-  return typeof value === "object" ? readableValue(value) : String(value);
+// Keep keys and scalar values literal; containers disclose their field rows.
+function readableValue(value, key = "", present = true) {
+  return workbench.comparisonValue(key, value, present);
 }
-// Field-by-field text for nested evidence values; keys stay verbatim so the
-// reading can be matched against the engine record.
-function readableValue(value, depth = 0) {
-  if (value == null) return "—";
-  if (typeof value !== "object") return String(value);
-  if (depth > 2) return JSON.stringify(value);
-  if (Array.isArray(value)) return value.length ? value.map((item) => readableValue(item, depth + 1)).join(", ") : "none";
-  const entries = Object.entries(value);
-  if (!entries.length) return "—";
-  return entries.map(([key, item]) => `${key}: ${item && typeof item === "object" ? "{ " + readableValue(item, depth + 1) + " }" : readableValue(item, depth + 1)}`).join(depth ? " · " : "\n");
+function comparisonDiff(change) {
+  function field(node) {
+    const text = `<span title="${esc(workbench.comparisonHelp(node.key))}">${esc(node.label)}</span>: ${node.note ? esc(node.note) : `${esc(readableValue(node.before, node.key, node.hasBefore))} → ${esc(readableValue(node.after, node.key, node.hasAfter))}`}`;
+    return node.children.length ? `<details class="comparison-field diff-${node.change}"><summary aria-label="${esc(workbench.comparisonFieldText(node))}">${text}</summary><div class="comparison-children">${node.children.map(field).join("")}</div></details>` : `<div class="comparison-field diff-${node.change}">${text}</div>`;
+  }
+  return `<div class="comparison-diff" role="group" aria-label="Field changes from A to B">${workbench.comparisonFields(change).map(field).join("")}</div>`;
 }
 function comparisonSide(side, label, change, index) {
   if (!side) return `<div class="comparison-side absent"><h4>${label}</h4><p>No observed record in this state</p></div>`;
-  const value = side.value;
-  const fields = [...new Set([...(change.changed_fields || []).filter((field) => field !== "payload"), ...(change.kind === "services" ? ["name", "provider", "pmt_pid"] : change.kind === "events" ? ["title", "start", "duration_seconds"] : ["name", "version", "bytes"])])].filter((field) => change.changed_fields?.includes(field) || Object.prototype.hasOwnProperty.call(value, field));
-  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span><button class="btn small" data-comparison-topology="${index}:${label[0]}" ${busy || backendFailure?'disabled':''}>Topology at ${label[0]}</button>${side.evidence?.length ? `<button class="btn small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure ? "disabled" : ""} title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button>` : ""}${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · ${esc(workbench.wireVersionText(evidence))} · ${esc(workbench.wireSectionText(evidence))}</button>`).join("")}</div></div>`;
+  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><button class="btn primary small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure || !side.evidence?.length ? "disabled" : ""} aria-label="Use snapshot ${label[0]} at packet ${side.at_packet}" title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button><div class="comparison-evidence" role="group" aria-label="Source actions for snapshot ${label[0]}"><span class="meta">Source</span><button class="btn small" data-comparison-topology="${index}:${label[0]}" ${busy || backendFailure?'disabled':''}>Topology at ${label[0]}</button>${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="PID: Packet Identifier · inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · ${esc(workbench.wireVersionText(evidence))} · ${esc(workbench.wireSectionText(evidence))}</button>`).join("")}</div></div>`;
 }
 function renderComparisonResults() {
   const result = comparison.result;
@@ -1330,14 +1325,21 @@ function renderComparisonResults() {
     $("#list").innerHTML = `<div class="empty"><span class="empty-icon">${comparison.error ? "⚠" : "⇄"}</span><h3>${comparison.loading ? "Comparing observed states…" : comparison.error ? "Unable to compare" : "What changed between versions?"}</h3><p>${esc(comparison.error || "Choose A and B from the captured version history or the current snapshot, then compare. Original source bytes remain unchanged.")}</p></div>`;
     return;
   }
-  const totals = Object.values(result.summary).reduce((counts, item) => ({ added: counts.added + item.added, removed: counts.removed + item.removed, changed: counts.changed + item.changed }), { added: 0, removed: 0, changed: 0 });
-  $("#list").innerHTML = `<div class="comparison-summary"><strong>A ${num(result.from_packet)} → B ${num(result.to_packet)}</strong><span>All record types: <span class="ok">${num(totals.added)} added</span> · <span class="bad">${num(totals.removed)} removed</span> · ${num(totals.changed)} changed</span><span class="meta">${result.kind === "all" ? "Showing all kinds" : "Showing " + esc(result.kind)} · ${num(result.total_changes)} changes</span></div>${result.changes.length ? result.changes.map((change, index) => {
+  const totals = workbench.comparisonTotals(result), filters = comparison.filters;
+  const changes = result.changes.map((change, index) => ({change, index})).filter(({change}) => workbench.comparisonMatches(change, filters));
+  $("#list").innerHTML = `<div class="comparison-summary"><strong>A ${num(result.from_packet)} → B ${num(result.to_packet)}</strong><div class="comparison-filters" role="group" aria-label="Filter changes on this page">${[["added", "+"], ["removed", "−"], ["changed", "~"]].map(([kind, sign]) => `<button class="btn small diff-${kind}" data-change-filter="${kind}" aria-pressed="${filters.includes(kind)}" title="Toggle ${kind} changes on this page; no active filters shows all changes">${sign}${num(totals[kind])} ${kind}</button>`).join('<span aria-hidden="true">·</span>')}</div><span class="meta">${result.kind === "all" ? "All record types" : esc(result.kind)} · ${num(result.total_changes)} changes · ${num(changes.length)} shown on this page</span></div>${changes.length ? changes.map(({change, index}) => {
     const identity = change.identity, value = change.after?.value || change.before?.value || {};
     const title = change.kind === "services" ? (value.name || "Unnamed service") + " · SID " + hex(identity.service_id)
       : change.kind === "events" ? (value.title || "Untitled event") + " · event " + hex(identity.event_id)
         : (value.name || "Table") + " · PID " + hex(identity.pid) + " · section " + identity.section;
-    return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${change.changed_fields?.length ? `<p class="changed-fields">Changed: ${change.changed_fields.map(esc).join(", ")}</p>${change.changed_fields.includes("payload") ? '<p class="meta">Raw section payload differs. Open source evidence to inspect its bytes.</p>' : ""}` : ""}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div></article>`;
-  }).join("") : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+    return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${comparisonDiff(change)}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div><details class="comparison-raw"><summary aria-label="Raw comparison record for ${esc(title)}">Raw</summary><pre>${esc(JSON.stringify(change, null, 2))}</pre></details></article>`;
+  }).join("") : filters.length && result.changes.length ? '<div class="empty"><h3>No matching changes on this page</h3><p>Toggle the filters to show all changes, or use Previous / Next to visit another page.</p></div>' : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+  $("#list").querySelectorAll("[data-change-filter]").forEach((el) => el.onclick = () => {
+    const kind = el.dataset.changeFilter;
+    comparison.filters = filters.includes(kind) ? filters.filter((item) => item !== kind) : [...filters, kind];
+    renderComparisonResults();
+    $(`[data-change-filter="${kind}"]`).focus();
+  });
   $('#list').querySelectorAll('[data-comparison-topology]').forEach(el=>el.onclick=()=>{const [index,letter]=el.dataset.comparisonTopology.split(':');const change=result.changes[Number(index)];openComparisonTopology(letter==='A'?change.before:change.after,letter);});
   $("#list").querySelectorAll("[data-use-comparison]").forEach((el) => {
     el.onclick = () => {
@@ -1945,7 +1947,7 @@ function renderTimeline() {
   const interactive = data.complete && !busy && !backendFailure;
   const middle = packets > 1 ? Math.round((packets - 1) / 2) : 0;
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1))}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
+    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1), data.timing, true)}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
       .slice(historyPage * 40, (historyPage + 1) * 40)
       .map(
         (h, i) =>

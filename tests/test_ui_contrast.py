@@ -108,7 +108,7 @@ class WorkbenchContrastTests(unittest.TestCase):
                 for foreground in ('text', 'muted', 'green', 'red', 'accent', 'syntax-label',
                                    'syntax-value', 'syntax-private', 'syntax-tag', 'syntax-string',
                                    'tree-branch', 'tree-label', 'tree-number', 'tree-string', 'tree-meta',
-                                   'label-text', 'value-text', 'changed-text', 'changed-strong',
+                                   'label-text', 'value-text', 'added-text', 'removed-text', 'changed-text', 'changed-strong',
                                    'warn-text', 'private-text'):
                     with self.subTest(theme=theme, foreground=foreground, background=background):
                         self.assert_ratio(tokens[foreground], tokens[background], 4.5, 'Web text')

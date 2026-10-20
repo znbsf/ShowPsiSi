@@ -159,6 +159,71 @@ workbench.value = function(key, value) {
   if(/pid|_id$|^id$/.test(key)) return workbench.hex(value)+' ('+value+')';
   return String(value);
 };
+// Comparison presentation follows the engine's changed_fields. Nested rows show
+// literal A/B values; array indices are positions, never inferred identities.
+workbench.comparisonIsList = function(value) {return Array.isArray(value) || value!==null && typeof value==='object' && Number.isInteger(value.length) && typeof value.forEach==='function';};
+workbench.comparisonValue = function(key, value, present) {
+  if(present===false)return 'Not observed';
+  if(value===null)return 'null';
+  if(value===undefined)return 'Not provided';
+  if(typeof value==='object')return workbench.comparisonIsList(value)?value.length+' items':Object.keys(value).length+' fields';
+  if(typeof value==='number' && Number.isFinite(value)) {
+    var width=0,name=String(key).toLowerCase();
+    if(/^(private_data_specifier|pds|crc|crc32|registration_id)$/.test(name))width=8;
+    else if(/^(oui|platform_id)$/.test(name))width=6;
+    else if(/^(tag|descriptor_tag|tag_extension|table_id|type|stream_type|service_type|section|last_section|section_number|last_section_number|version|version_number)$/.test(name))width=2;
+    else if(/(^|_)(pid|pids)$/.test(name) || /^(id|service_id|program_number|event_id|network_id|original_network_id|transport_stream_id|onid|ts_id|tsid|extension|bouquet_id|ca_system_id|data_broadcast_id|application_id)$/.test(name))width=4;
+    var digits=Math.abs(value).toString(16).toUpperCase();
+    if(Number.isInteger(value))digits=digits.padStart(width,'0');
+    return (value<0?'-':'')+'0x'+digits+' ('+String(value)+')';
+  }
+  return typeof value==='string'?JSON.stringify(value):String(value);
+};
+workbench.comparisonHelp = function(key) {
+  if(/^pmt_pid$/i.test(key))return 'PMT: Program Map Table · PID: Packet Identifier';
+  if(/^pcr_pid$/i.test(key))return 'PCR: Program Clock Reference · PID: Packet Identifier';
+  if(/pid/i.test(key))return 'PID: Packet Identifier';
+  if(/lcn|logical_channel_number/i.test(key))return 'LCN: Logical Channel Number';
+  if(/pds|private_data_specifier/i.test(key))return 'PDS: Private Data Specifier';
+  if(/crc/i.test(key))return 'CRC: Cyclic Redundancy Check';
+  if(/onid|original_network_id/i.test(key))return 'ONID: Original Network Identifier';
+  if(/ts_?id|transport_stream_id/i.test(key))return 'TSID: Transport Stream Identifier';
+  if(/service_id/i.test(key))return 'SID: Service Identifier';
+  if(/^oui$/i.test(key))return 'OUI: Organizationally Unique Identifier';
+  return key;
+};
+workbench.comparisonFields = function(change) {
+  if(!change)return [];
+  var before=change.before && change.before.value || {},after=change.after && change.after.value || {};
+  function keys(a,b) {return Object.keys(a).concat(Object.keys(b).filter(function(k){return !Object.prototype.hasOwnProperty.call(a,k);}));}
+  function object(value) {return value!==null && typeof value==='object';}
+  function node(label,path,a,b,hasA,hasB,valueKey,root) {
+    var children=[],role=!hasA?'added':!hasB?'removed':root?'changed':JSON.stringify(a)===JSON.stringify(b)?'context':'changed';
+    if(object(a) || object(b)) {
+      var left=object(a)?a:{},right=object(b)?b:{},list=workbench.comparisonIsList(a) || workbench.comparisonIsList(b);
+      children=keys(left,right).map(function(k){return node(list?'['+k+']':k,path+'/'+k.replace(/~/g,'~0').replace(/\//g,'~1'),left[k],right[k],Object.prototype.hasOwnProperty.call(left,k),Object.prototype.hasOwnProperty.call(right,k),list?valueKey:k,false);});
+    }
+    return {path:path,label:label,key:valueKey,before:a,after:b,hasBefore:hasA,hasAfter:hasB,change:role,children:children};
+  }
+  var fields=change.change==='changed'?(change.changed_fields || []):keys(before,after);
+  return fields.map(function(key){
+    if(key==='payload' && change.kind==='tables')return {path:'/payload',label:'payload',key:key,change:'changed',note:'Raw section bytes changed · inspect A / B in Hex',children:[]};
+    return node(key,'/'+key.replace(/~/g,'~0').replace(/\//g,'~1'),before[key],after[key],!!change.before && Object.prototype.hasOwnProperty.call(before,key),!!change.after && Object.prototype.hasOwnProperty.call(after,key),key,true);
+  });
+};
+workbench.comparisonFieldText = function(node) {
+  return node.label+': '+(node.note || workbench.comparisonValue(node.key,node.before,node.hasBefore)+' → '+workbench.comparisonValue(node.key,node.after,node.hasAfter));
+};
+workbench.comparisonRows = function(change,expanded) {
+  var rows=[];
+  function visit(node,depth) {rows.push(Object.assign({},node,{depth:depth}));if(expanded[node.path])node.children.forEach(function(child){visit(child,depth+1);});}
+  workbench.comparisonFields(change).forEach(function(node){visit(node,0);});return rows;
+};
+workbench.comparisonTotals = function(result) {
+  var counts={added:0,removed:0,changed:0};
+  Object.keys(result.summary || {}).forEach(function(kind){if(result.kind==='all' || result.kind===kind)Object.keys(counts).forEach(function(key){counts[key]+=result.summary[kind][key] || 0;});});return counts;
+};
+workbench.comparisonMatches = function(change,filters) {return !filters.length || filters.indexOf(change.change)>=0;};
 workbench.objectNode = function(id, label, value) {
   if(value !== null && typeof value === 'object') {
     var list=Array.isArray(value) || (Number.isInteger(value.length) && typeof value.forEach==='function');

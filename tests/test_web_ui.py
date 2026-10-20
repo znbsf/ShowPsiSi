@@ -1938,7 +1938,9 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(density.get_attribute('tabindex'),'0')
         self.assertEqual(self.page.locator('#density .bin').count(),80)
         self.assertEqual(self.page.locator('#density .axis-basis').inner_text(),
-                         'Zero-based packet positions · no measured time available')
+                         'Axis: packet index')
+        self.assertEqual(self.page.locator('#density .axis-basis').get_attribute('title'),
+                         'No PCR/TDT clock is used; positions are packet indices.')
         self.assertEqual(self.page.locator('#density .arrival-axis span').count(),5)
         fill=self.page.evaluate('''() => {
           const bins=[...document.querySelectorAll("#density .bin")];

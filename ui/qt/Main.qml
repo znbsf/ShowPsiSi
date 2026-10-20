@@ -59,6 +59,8 @@ ApplicationWindow {
     property real pendingInspectorSize: -1
     property real pendingTimelineSize: -1
     property var comparison: ({})
+    property var comparisonFilters: []
+    property var comparisonCounts: Shared.workbench.comparisonTotals(comparison)
     property var selectedChange: null
     property var comparisonWorkspace: null
     property int comparisonEvidenceIndex: 0
@@ -641,7 +643,7 @@ ApplicationWindow {
     property var issueCounts: Shared.workbench.issueCounts(issues)
     property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
-        return tab === "Tables" ? true : tab === "Changes" ? searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
+        return tab === "Tables" ? true : tab === "Changes" ? Shared.workbench.comparisonMatches(row,comparisonFilters) && searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
     })
     property bool selectionHidden: !!selected && !(tab === "Tables" ? rawTableRows : rows).some(function (row) {
         if (tab === "Changes")
@@ -903,22 +905,9 @@ ApplicationWindow {
         return row.change.toUpperCase() + " · " + row.kind + " · " + (value.name || value.title || (row.kind === "tables" ? "Table " + hex(value.table_id, 2) : "SID " + hex(value.service_id === undefined ? value.id : value.service_id)));
     }
     function changeFields(row, full) {
-        if (!row)
-            return "";
-        return (row.changed_fields || []).map(function (field) {
-            if (field === "payload" && row.kind === "tables")
-                return "Raw section bytes changed · compare A / B in Hex";
-            let before = row.before ? row.before.value[field] : undefined;
-            let after = row.after ? row.after.value[field] : undefined;
-            let render = function (value) {
-                if (value === undefined) return "—";
-                if (value !== null && typeof value === "object" && !full)
-                    return Array.isArray(value) ? value.length + " entries" : "structured metadata";
-                return typeof value === "object" ? JSON.stringify(value) : valueText(field, value);
-            };
-            return field + ": " + render(before) + " → " + render(after);
-        }).join("\n");
+        return Shared.workbench.comparisonRows(row,{}).map(function(field){return Shared.workbench.comparisonFieldText(field);}).join("\n");
     }
+    function changeColor(kind) { return kind === "added" ? addedColor : kind === "removed" ? removedColor : kind === "changed" ? changedColor : muted; }
     function restoreComparisonWorkspace() {
         let saved = comparisonWorkspace;
         comparisonWorkspace = null;
@@ -1020,6 +1009,7 @@ ApplicationWindow {
         preview = {};
         comparison = {};
         selectedChange = null;
+        comparisonFilters = [];
         comparisonWorkspace = null;
         previewIntent = {};
         comparisonError = "";
@@ -1133,6 +1123,59 @@ ApplicationWindow {
     }
     component PlainLabel: Label {
         textFormat: Text.PlainText
+    }
+    component ComparisonDiff: Column {
+        id: diff
+        property var change: null
+        property var expanded: ({})
+        spacing: 2
+        onChangeChanged: expanded = ({})
+        function toggleField(path) {
+            let next=Object.assign({},expanded);next[path]=!next[path];expanded=next;
+            Qt.callLater(function(){for(let i=0;i<diffRows.count;i++){let item=diffRows.itemAt(i);if(item && item.modelData.path===path){item.focusBranch();break;}}});
+        }
+        Repeater {
+            id: diffRows
+            model: Shared.workbench.comparisonRows(diff.change,diff.expanded)
+            delegate: Item {
+                required property var modelData
+                width: diff.width
+                height: branch.visible ? branch.implicitHeight : scalar.implicitHeight
+                function focusBranch() { branch.forceActiveFocus(); }
+                Action {
+                    id: branch
+                    visible: modelData.children.length > 0
+                    width: parent.width
+                    leftPadding: 4 + modelData.depth * 12
+                    rightPadding: 4
+                    implicitHeight: Math.max(24,contentItem.implicitHeight + 8)
+                    checkable: true
+                    checked: !!diff.expanded[modelData.path]
+                    text: (checked ? "▾ " : "▸ ") + Shared.workbench.comparisonFieldText(modelData)
+                    Accessible.name: Shared.workbench.comparisonFieldText(modelData)
+                    Accessible.description: Shared.workbench.comparisonHelp(modelData.key) + (checked ? ", expanded" : ", collapsed")
+                    contentItem: PlainLabel { text:branch.text; color:changeColor(modelData.change); wrapMode:Text.WrapAnywhere; font.family:"monospace"; font.pixelSize:11 }
+                    background: Rectangle { color:branch.hovered ? hoverSurface : "transparent"; border.color:branch.activeFocus ? blue : "transparent"; border.width:branch.activeFocus ? focusWidth : 0; radius:2 }
+                    onClicked: diff.toggleField(modelData.path)
+                    SafeTip { visible:anchorHovered; text:Shared.workbench.comparisonHelp(modelData.key) + " · Expand nested A / B fields; array labels are positions" }
+                }
+                PlainLabel {
+                    id: scalar
+                    visible: !branch.visible
+                    width: parent.width
+                    leftPadding: 4 + modelData.depth * 12
+                    topPadding: 3
+                    bottomPadding: 3
+                    text: Shared.workbench.comparisonFieldText(modelData)
+                    color: changeColor(modelData.change)
+                    wrapMode: Text.WrapAnywhere
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    HoverHandler { id: fieldHover }
+                    SafeTip { visible:fieldHover.hovered; text:Shared.workbench.comparisonHelp(modelData.key) }
+                }
+            }
+        }
     }
     component LookupTable: ColumnLayout {
         id: lookupTable
@@ -3774,7 +3817,7 @@ ApplicationWindow {
                         visible: tab === "Changes"
                         Layout.fillWidth: true
                         Layout.margins: 8
-                        spacing: 6
+                        spacing: 4
                         RowLayout {
                             Layout.fillWidth: true
                             PlainLabel { text: "A"; color: muted; Layout.preferredWidth: 14 }
@@ -3786,7 +3829,7 @@ ApplicationWindow {
                                 placeholderText: "Packet cutoff"
                                 enabled: backendReady && !core.comparing
                                 selectByMouse: true
-                                onTextChanged: comparison = {}
+                                onTextChanged: { comparison = {}; comparisonFilters = []; }
                                 Accessible.name: "Snapshot A inclusive packet cutoff"
                                 onAccepted: compareSnapshots(0)
                                 Keys.onEscapePressed: recordList.forceActiveFocus()
@@ -3810,7 +3853,7 @@ ApplicationWindow {
                                 placeholderText: "Packet cutoff"
                                 enabled: backendReady && !core.comparing
                                 selectByMouse: true
-                                onTextChanged: comparison = {}
+                                onTextChanged: { comparison = {}; comparisonFilters = []; }
                                 Accessible.name: "Snapshot B inclusive packet cutoff"
                                 onAccepted: compareSnapshots(0)
                                 Keys.onEscapePressed: recordList.forceActiveFocus()
@@ -3860,7 +3903,7 @@ ApplicationWindow {
                                 valueRole: "value"
                                 model: [{label:"All changes",value:"all"},{label:"Services",value:"services"},{label:"Tables",value:"tables"},{label:"Events",value:"events"}]
                                 enabled: backendReady && !core.comparing
-                                onActivated: comparison = {}
+                                onActivated: { comparison = {}; comparisonFilters = []; }
                                 Accessible.name: "Snapshot change category"
                             }
                             Action {
@@ -3896,16 +3939,37 @@ ApplicationWindow {
                             SafeTip { visible: sourceHover.hovered; text: comparison.source || "" }
                             HoverHandler { id: sourceHover }
                         }
-                        PlainLabel {
+                        Flow {
                             visible: !!comparison.summary
                             Layout.fillWidth: true
-                            wrapMode: compactComparison ? Text.NoWrap : Text.Wrap
-                            elide: Text.ElideRight
+                            spacing: 4
+                            Repeater {
+                                model: ["added","removed","changed"]
+                                SummaryChip {
+                                    id: changeFilter
+                                    required property string modelData
+                                    objectName: "comparisonFilter_" + modelData
+                                    implicitHeight: 24
+                                    disclosure: false
+                                    text: (modelData === "added" ? "+" : modelData === "removed" ? "−" : "~") + num(comparisonCounts[modelData]) + " " + modelData
+                                    checked: comparisonFilters.indexOf(modelData) >= 0
+                                    Accessible.name: text + " changes on this page"
+                                    help: "Toggle " + modelData + " changes on this page. No active filters shows all changes."
+                                    contentItem: PlainLabel { text:changeFilter.text; color:changeColor(changeFilter.modelData); horizontalAlignment:Text.AlignHCenter; verticalAlignment:Text.AlignVCenter; font.pixelSize:11 }
+                                    onClicked: {
+                                        comparisonFilters = comparisonFilters.indexOf(modelData)>=0 ? comparisonFilters.filter(function(kind){return kind!==modelData;}) : comparisonFilters.concat([modelData]);
+                                        recordList.currentIndex = rows.length ? 0 : -1;
+                                    }
+                                }
+                            }
+                        }
+                        PlainLabel {
+                            visible: !!comparison.summary && (comparisonFilters.length > 0 || comparison.total_changes > 100)
+                            Layout.fillWidth: true
                             font.pixelSize: 11
-                            color: changedColor
-                            text: Object.keys(comparison.summary || {}).map(function (kind) { let count = comparison.summary[kind]; return kind + ": +" + count.added + " / −" + count.removed + " / ~" + count.changed; }).join("  ·  ")
-                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorText }
-                            HoverHandler { id: comparisonSummaryHover }
+                            color: muted
+                            wrapMode: Text.Wrap
+                            text: rows.length + " shown · filters apply to this page"
                         }
                         PlainLabel {
                             visible: !!comparison.source && !compactComparison
@@ -4000,7 +4064,7 @@ ApplicationWindow {
                             required property int index
                             objectName: tab === "Services" ? "service_" + modelData.id : tab === "Issues" ? "issue_" + modelData.code : "record_" + index
                             width: ListView.view.width
-                            height: tab === "Issues" ? 88 : tab === "Services" ? 72 : modelData.logical ? 100 : 58
+                            height: tab === "Changes" ? Math.max(58,contentItem.implicitHeight + topPadding + bottomPadding) : tab === "Issues" ? 88 : tab === "Services" ? 72 : modelData.logical ? 100 : 58
                             focusPolicy: Qt.StrongFocus
                             Keys.onSpacePressed: { if(tab === "Tables" && modelData.logical) toggleTableGroup(modelData); else activate(modelData); }
                             Keys.onRightPressed: { if(tab === "Tables" && modelData.logical && !expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
@@ -4014,42 +4078,51 @@ ApplicationWindow {
                                 color: recordDelegate.highlighted ? selectionSurface : recordDelegate.hovered ? hoverSurface : "transparent"
                                 border.color: recordDelegate.activeFocus ? blue : "transparent"
                             }
-                            contentItem: RowLayout {
-                                spacing: 8
-                                Item {
-                                    Layout.preferredWidth: tab === "Services" ? 38 : 20
-                                    Layout.fillHeight: true
-                                    PlainLabel {
-                                        anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
-                                        text: tab === "Services" ? (modelData.logical_channel_number === null || modelData.logical_channel_number === undefined ? "—" : modelData.logical_channel_number) : tab === "Tables" ? (modelData.logical ? (expandedTables[modelData.group.id] ? "▾" : "▸") : "·") : ""
-                                        color: tab === "Tables" ? tableColor(modelData.name) : muted
-                                        font.family: "monospace"
-                                    }
-                                    MouseArea { anchors.fill:parent; enabled:tab === "Tables" && !!modelData.logical; onClicked:toggleTableGroup(modelData) }
-                                }
-                                Column {
+                            contentItem: ColumnLayout {
+                                spacing: 6
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 5
-                                    PlainLabel {
-                                        text: tab === "Services" ? (modelData.name || "Unnamed service") : rowTitle(modelData)
-                                        width: parent.width
-                                        color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? warningColor : ink
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
+                                    spacing: 8
+                                    Item {
+                                        Layout.preferredWidth: tab === "Services" ? 38 : 20
+                                        Layout.fillHeight: true
+                                        PlainLabel {
+                                            anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
+                                            text: tab === "Services" ? (modelData.logical_channel_number === null || modelData.logical_channel_number === undefined ? "—" : modelData.logical_channel_number) : tab === "Tables" ? (modelData.logical ? (expandedTables[modelData.group.id] ? "▾" : "▸") : "·") : ""
+                                            color: tab === "Tables" ? tableColor(modelData.name) : muted
+                                            font.family: "monospace"
+                                        }
+                                        MouseArea { anchors.fill:parent; enabled:tab === "Tables" && !!modelData.logical; onClicked:toggleTableGroup(modelData) }
                                     }
-                                    PlainLabel {
-                                        text: rowSubtitle(modelData)
-                                        width: parent.width; color: muted; font.pixelSize: 11
-                                        elide: Text.ElideRight
-                                        wrapMode: Text.Wrap
-                                        maximumLineCount: tab === "Issues" || modelData.logical ? 3 : 1
+                                    Column {
+                                        Layout.fillWidth: true
+                                        spacing: 5
+                                        PlainLabel {
+                                            text: tab === "Services" ? (modelData.name || "Unnamed service") : rowTitle(modelData)
+                                            width: parent.width
+                                            color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? warningColor : ink
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 12
+                                        }
+                                        PlainLabel {
+                                            text: rowSubtitle(modelData)
+                                            width: parent.width; color: muted; font.pixelSize: 11
+                                            elide: Text.ElideRight
+                                            wrapMode: Text.Wrap
+                                            maximumLineCount: tab === "Issues" || modelData.logical ? 3 : 1
+                                        }
+                                        // Type and media PIDs share one line; the tooltip keeps the full text.
+                                        PlainLabel {
+                                            visible: tab === "Services"
+                                            text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + " · V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
+                                            width: parent.width; color: muted; font.pixelSize:11; elide:Text.ElideRight
+                                        }
                                     }
-                                    // Type and media PIDs share one line; the tooltip keeps the full text.
-                                    PlainLabel {
-                                        visible: tab === "Services"
-                                        text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + " · V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
-                                        width: parent.width; color: muted; font.pixelSize:11; elide:Text.ElideRight
-                                    }
+                                }
+                                ComparisonDiff {
+                                    visible: tab === "Changes"
+                                    Layout.fillWidth: true
+                                    change: visible ? recordDelegate.modelData : null
                                 }
                             }
                             onClicked: {
@@ -4069,7 +4142,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparisonFilters.length ? "No matching changes on this page. Toggle the filters or use Previous / Next." : comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
@@ -4218,51 +4291,36 @@ ApplicationWindow {
                     ColumnLayout {
                         visible: !!selectedChange
                         Layout.fillWidth: true
-                        spacing: 5
+                        spacing: 4
                         RowLayout {
                             Layout.fillWidth: true
-                            Action {
+                            SummaryChip {
                                 objectName: "inspectBefore"
                                 text: compactInspector ? "A" : "A · Before"
                                 Accessible.name: "A · Before"
-                                primary: comparisonSide === "before"
+                                disclosure: false
+                                checked: comparisonSide === "before"
                                 enabled: backendReady && !!selectedChange && !!selectedChange.before
+                                help: "Inspect source evidence at snapshot A; the workbench snapshot stays unchanged"
                                 onClicked: inspectChange(selectedChange, "before")
                             }
-                            Action {
+                            SummaryChip {
                                 objectName: "inspectAfter"
                                 text: compactInspector ? "B" : "B · After"
                                 Accessible.name: "B · After"
-                                primary: comparisonSide === "after"
+                                disclosure: false
+                                checked: comparisonSide === "after"
                                 enabled: backendReady && !!selectedChange && !!selectedChange.after
+                                help: "Inspect source evidence at snapshot B; the workbench snapshot stays unchanged"
                                 onClicked: inspectChange(selectedChange, "after")
                             }
-                            FieldChoice {
-                                id: comparisonSource
-                                objectName: "comparisonSource"
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 65
-                                implicitHeight: 28
-                                textRole: "label"
-                                model: selectedChange && selectedChange[comparisonSide] ? (selectedChange[comparisonSide].evidence || []).map(function(e) {return {label:e.name + " · PID " + hex(e.pid) + " · §" + e.section + " · " + e.id};}) : []
-                                currentIndex: comparisonEvidenceIndex
-                                enabled: backendReady && count > 0
-                                Accessible.name: "Comparison source evidence"
-                                onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
-                                SafeTip { visible: anchorHovered; text: comparisonSource.currentText }
-                            }
-                            Action {
-                                objectName:"comparisonTopology"
-                                text:compactInspector ? "Tree" : "Topology"
-                                Accessible.name:"Topology at the selected comparison cutoff"
-                                enabled:backendReady && !!selectedChange && !core.inspecting
-                                onClicked:openComparisonTopology()
-                                SafeTip {visible:anchorHovered;text:"Inspect semantic objects at this comparison cutoff without changing the workbench snapshot"}
-                            }
+                            Item { Layout.fillWidth: true }
                             Action {
                                 objectName: "useComparisonSnapshot"
                                 text: "Use snapshot"
-                                enabled: backendReady && !!selectedChange && !core.inspecting
+                                primary: true
+                                Accessible.name: "Use snapshot " + (comparisonSide === "before" ? "A" : "B")
+                                enabled: backendReady && !!selectedChange && !!selectedChange[comparisonSide] && (selectedChange[comparisonSide].evidence || []).length > 0 && !core.inspecting
                                 onClicked: {
                                     let row = selectedChange, side = row[comparisonSide];
                                     selectedChange = null;
@@ -4274,6 +4332,33 @@ ApplicationWindow {
                                 SafeTip { visible: anchorHovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
                             }
                         }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            PlainLabel { text:"Source"; color:muted; font.pixelSize:11 }
+                            FieldChoice {
+                                id: comparisonSource
+                                objectName: "comparisonSource"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 65
+                                implicitHeight: 26
+                                textRole: "label"
+                                model: selectedChange && selectedChange[comparisonSide] ? (selectedChange[comparisonSide].evidence || []).map(function(e) {return {label:e.name + " · PID " + hex(e.pid) + " · §" + e.section + " · " + e.id};}) : []
+                                currentIndex: comparisonEvidenceIndex
+                                enabled: backendReady && count > 0
+                                Accessible.name: "Comparison source evidence"
+                                onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
+                                SafeTip { visible: anchorHovered; text: "PID: Packet Identifier · " + comparisonSource.currentText }
+                            }
+                            Action {
+                                objectName:"comparisonTopology"
+                                text:"Topology"
+                                Accessible.name:"Topology at the selected comparison cutoff"
+                                implicitHeight:26
+                                enabled:backendReady && !!selectedChange && !core.inspecting
+                                onClicked:openComparisonTopology()
+                                SafeTip {visible:anchorHovered;text:"Inspect semantic objects at this comparison cutoff without changing the workbench snapshot"}
+                            }
+                        }
                         PlainLabel {
                             text: changeFields(selectedChange) || "Section presence changed between A and B. Inspect the available side."
                             Layout.fillWidth: true
@@ -4281,7 +4366,7 @@ ApplicationWindow {
                             wrapMode: Text.WrapAnywhere
                             elide: Text.ElideRight
                             font.pixelSize: 11
-                            color: changedColor
+                            color: changeColor(selectedChange ? selectedChange.change : "context")
                             SafeTip { visible: changeHover.hovered; text: changeFields(selectedChange, true) }
                             HoverHandler { id: changeHover }
                         }
@@ -4940,8 +5025,11 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     TinyLabel {
-                        text: "ALL ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "PACKET INDEX · NO CLOCK")
+                        objectName: "timelineAxisLabel"
+                        text: "ALL ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "Axis: packet index")
                         Layout.fillWidth: true
+                        HoverHandler { id: timelineAxisHover }
+                        SafeTip { visible:timelineAxisHover.hovered; text:analysisState.timing?.seconds_per_packet > 0 ? "Estimated elapsed seconds from the supplied bitrate; not PCR time" : "No PCR/TDT clock is used; positions are packet indices." }
                     }
                     FieldChoice { objectName:"historyScope"; Layout.preferredWidth:180; Layout.minimumWidth:180; model:["Selected table history","All table history"]; currentIndex:allTableHistory?1:0; onActivated:allTableHistory=currentIndex===1; implicitHeight:24 }
                     PlainLabel { text:historyRows.length+" transitions"; color:muted; Layout.fillWidth:true; elide:Text.ElideRight }

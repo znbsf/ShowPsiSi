@@ -43,6 +43,24 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_command_palette_commands_and_pid_jump(self):
+        for theme in ('dark','light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-palette-') as directory:
+                report=self.run_script('command-palette',directory,auto=False,overrides={'SHOWPSISI_THEME':theme,'SHOWPSISI_STANDARDS':'dvb'})
+                self.assertEqual(report['phase'],10,report)
+                self.assertTrue(all(report['checks'].values()),report)
+                for check in ('export_disabled','theme_command','pid_suggestion','pid_jump','pid_back','unknown_pid','unknown_unchanged','escape_focus','plain_search'):
+                    self.assertTrue(report['checks'][check],report)
+
+    def test_structure_reference_jump_and_back(self):
+        for theme in ('dark','light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-reference-') as directory:
+                report=self.run_script('reference-jumps',directory,overrides={'SHOWPSISI_THEME':theme,'SHOWPSISI_STANDARDS':'dvb'})
+                self.assertEqual(report['phase'],9,report)
+                self.assertTrue(all(report['checks'].values()),report)
+                for check in ('pat_link','click_jump','click_back','keyboard_jump','keyboard_back','tab_reachable','tab_jump','tab_back','private_no_link','service_jump','service_back'):
+                    self.assertTrue(report['checks'][check],report)
+
     def test_workbench_paging_and_snapshot_clamping(self):
         sys.path.insert(0,str(ROOT/'scripts'))
         from make_fixture import section, word
@@ -363,6 +381,14 @@ for line in sys.stdin:
                     self.assertTrue(report['checks'][check], report)
                 self.assertEqual((Path(directory)/'operations-parity.png.edit.png').read_bytes()[:8], b'\x89PNG\r\n\x1a\n')
 
+    def test_comparison_timeline_markers_input_drag_and_keyboard(self):
+        for theme in ('dark','light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-markers-') as directory:
+                report=self.run_script('comparison-markers',directory,overrides={'SHOWPSISI_THEME':theme})
+                self.assertEqual(report['phase'],8,report)
+                for check in ('initial_hidden','input_sync','drag_a','drag_b','clamp_a','clamp_b','compare_focus_a','compare_focus_b','tab_order','partial_tab_order','keyboard_a','keyboard_b','invalid_hidden','retained_markers','retained_drag','no_auto_requests','density_snapshot','snapshot_sync'):
+                    self.assertTrue(report['checks'][check],report)
+
     def test_snapshot_comparison_and_evidence_cutoffs(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-comparison-') as directory:
             report = self.run_script('comparison', directory)
@@ -418,6 +444,7 @@ for line in sys.stdin:
             configured = self.run_script('layout-set', directory, auto=False,
                                          overrides={'SHOWPSISI_TEST_LAYOUT_SAVE_DELAY': '700'})
             self.assertTrue(configured['persistedAcknowledged'])
+            self.assertTrue(configured['navigationKeysDidNotResize'], 'Alt+arrows must not resize; resizing uses Ctrl+Alt+arrows')
             self.assertGreater(configured['acknowledgementAttempts'], 0)
             self.assertTrue(configured['dragged'])
             self.assertTrue(configured['invalid_rejected'])

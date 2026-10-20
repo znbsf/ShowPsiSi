@@ -107,9 +107,16 @@ class WorkbenchContrastTests(unittest.TestCase):
             for background in ('bg', 'surface', 'raised', 'selected', 'hover', 'input'):
                 for foreground in ('text', 'muted', 'green', 'red', 'accent', 'syntax-label',
                                    'syntax-value', 'syntax-private', 'syntax-tag', 'syntax-string',
-                                   'tree-branch', 'tree-label', 'tree-number', 'tree-string', 'tree-meta'):
+                                   'tree-branch', 'tree-label', 'tree-number', 'tree-string', 'tree-meta',
+                                   'label-text', 'value-text', 'added-text', 'removed-text', 'changed-text', 'changed-strong',
+                                   'warn-text', 'private-text'):
                     with self.subTest(theme=theme, foreground=foreground, background=background):
                         self.assert_ratio(tokens[foreground], tokens[background], 4.5, 'Web text')
+            # Paired role surfaces: badges and search matches carry their own fill.
+            self.assert_ratio(tokens['danger-text'], tokens['danger-bg'], 4.5, f'{theme} error banner and badge')
+            self.assert_ratio(tokens['accent'], tokens['danger-bg'], 3, f'{theme} error detail focus')
+            self.assert_ratio(tokens['changed-strong'], tokens['match-bg'], 4.5, f'{theme} search match')
+            for background in ('bg', 'surface', 'raised', 'selected', 'hover', 'input'):
                 for foreground in ('accent', 'control-border', 'control-border-hover'):
                     with self.subTest(theme=theme, control=foreground, background=background):
                         self.assert_ratio(tokens[foreground], tokens[background], 3, 'Web control')
@@ -147,6 +154,7 @@ class WorkbenchContrastTests(unittest.TestCase):
                 for foreground in ('blue', 'controlBorder'):
                     with self.subTest(theme=theme, control=foreground, background=background):
                         self.assert_ratio(tokens[foreground], tokens[background], 3, 'Qt control')
+            self.assert_ratio(tokens['errorInk'], tokens['errorSurface'], 4.5, f'{theme} Qt error status')
             # Actual action-hover and semantic tree expressions stay bound to tested surfaces.
             self.assertTrue('(control.hovered ? hoverSurface : raised)' in self.qml, 'Action hover surface changed; update coverage')
             self.assertTrue('nav.highlighted ? selectionSurface : nav.hovered ? hoverSurface' in self.qml, 'Navigation surfaces changed; update coverage')

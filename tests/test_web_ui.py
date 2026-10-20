@@ -9,6 +9,7 @@ fabricated; foreign/malformed event tests intentionally inject invalid envelopes
 """
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -187,6 +188,7 @@ class BrowserTests(unittest.TestCase):
         p.locator('[data-view="hex"]').click();self.assertEqual(p.locator('.source-byte').count(),0)
 
     def test_dsmcc_module_cards_keep_snapshot_hash_and_all_sources(self):
+        self.open_scan_options()
         import test_dsmcc_summaries as f
         p=self.page
         for complete in (False,True):
@@ -805,6 +807,10 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#satellite-position').fill('122')
         self.page.locator('#satellite-query').click()
         self.page.wait_for_function('() => document.querySelector("#satellite-result").textContent.includes("AsiaSat 9")')
+        self.assertEqual(self.page.locator('#satellite-result thead th').all_inner_texts(),['Key','Value','Source'])
+        self.assertEqual(self.page.locator('#satellite-result tr:has(th[title="confirmed_satellite"]) .lookup-value').inner_text(),'null')
+        self.assertIn('not verified',self.page.locator('#satellite-result').inner_text())
+        self.assertFalse(self.page.locator('.satellite-lookup-evidence').evaluate('(el)=>el.open'))
         self.page.locator('.satellite-lookup-evidence summary').click()
         evidence=json.loads(self.page.locator('#satellite-evidence').inner_text())
         self.assertIsNone(evidence['confirmed_satellite'])
@@ -824,6 +830,7 @@ class BrowserTests(unittest.TestCase):
         self.page.screenshot(path=str(self.artifacts/'satellite-candidates.png'))
 
     def test_signal_metadata_language_encoding_and_id_lookup(self):
+        self.open_scan_options()
         from test_signal_metadata import metadata_fixture
         path=self.output/'metadata.ts';path.write_bytes(metadata_fixture())
         self.page.locator('#standards').select_option('dvb')
@@ -840,12 +847,18 @@ class BrowserTests(unittest.TestCase):
         self.assertIn('新闻',self.page.locator('#list').inner_text())
         self.assertIn('incomplete',panel.inner_text())
         self.assertIn('No complete extended text',panel.inner_text())
-        self.page.locator('.metadata-panel > details > summary').first.click()
+        self.page.locator('#identifier-lookup > summary').click()
         self.page.locator('#identifier-kind').select_option('ca_system_id')
         self.page.locator('#identifier-value').fill('0x0500')
         self.page.locator('#identifier-query').click()
         self.page.wait_for_function('() => document.querySelector("#identifier-result").textContent.includes("Viaccess")')
         self.assertIn('not verified',self.page.locator('#identifier-result').inner_text())
+        self.assertEqual(self.page.locator('#identifier-result thead th').all_inner_texts(),['Key','Value','Source'])
+        self.assertFalse(self.page.locator('#identifier-raw').evaluate('(el)=>el.open'))
+        self.page.locator('#epg-language').select_option('')
+        self.assertEqual(self.page.locator('#identifier-kind').input_value(),'ca_system_id')
+        self.assertEqual(self.page.locator('#identifier-value').input_value(),'0x0500')
+        self.assertIn('Viaccess',self.page.locator('#identifier-result').inner_text())
         self.page.locator('.metadata-card details summary').first.click()
         self.assertIn('section_id',panel.inner_text())
         self.assertEqual(path.read_bytes(),metadata_fixture())
@@ -904,6 +917,10 @@ class BrowserTests(unittest.TestCase):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()
         self.assertEqual(self.page_errors,[],'Browser JavaScript raised an exception')
+
+    def open_scan_options(self):
+        if self.page.locator('#scan-options').is_hidden():
+            self.page.locator('#scan-options-toggle').click()
 
     def analyze(self,path=None):
         self.page.locator('#source').fill(str(path or self.sample))
@@ -1011,6 +1028,9 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(state['history'],[])
         self.assertIn('Analysis cancelled',self.page.locator('#notice').inner_text())
         self.assertFalse(self.page.locator('#notice').evaluate('(element)=>element.classList.contains("error")'))
+        self.assertTrue(self.page.locator('#status-warning').is_visible())
+        self.assertIn('Analysis cancelled',self.page.locator('#warning-message').get_attribute('title'))
+        self.assertIn('×1',self.page.locator('#warning-message').inner_text())
         self.assertTrue(self.page.locator('#scan').evaluate('(element)=>element===document.activeElement'))
         self.assertFalse(cancel.is_visible())
         self.assertTrue(self.page.locator('#latest').is_disabled())
@@ -1234,6 +1254,119 @@ class BrowserTests(unittest.TestCase):
         self.page.wait_for_function('() => document.querySelector("#notice").textContent.includes("Native file dialogs")')
         self.assertIn('local TS file path',self.page.locator('#notice').inner_text())
 
+    def test_recent_files_persist_deduplicate_and_select_without_analysis(self):
+        p=self.page;key='showpsisi.workbench.recent.v1'
+        paths=[str(self.output/('recent-'+str(i)+'.ts')) for i in range(12)]
+        p.evaluate('([key,paths])=>localStorage.setItem(key,JSON.stringify(paths))',[key,[None,'',paths[0],paths[0]]+paths[1:]])
+        p.reload();p.wait_for_function('()=>window.showpsisi && document.querySelector("#source").value.length>0')
+        p.locator('#recent').focus();p.keyboard.press('ArrowDown')
+        self.assertEqual(p.locator('#recent-menu [data-recent]').count(),10)
+        self.assertEqual(p.locator('#recent-menu [data-recent]').first.inner_text(),Path(paths[0]).name)
+        self.assertEqual(p.locator('#recent-menu [data-recent]').first.get_attribute('title'),paths[0])
+        p.keyboard.press('?');self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+        p.keyboard.press('Escape');p.wait_for_function('()=>document.activeElement.dataset.recent==="0"')
+        p.keyboard.press('Escape');self.assertEqual(p.evaluate('document.activeElement.id'),'recent')
+        self.analyze()
+        stored=p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key)
+        self.assertEqual(stored,[str(self.sample)]+paths[:9])
+        self.analyze();self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),stored)
+        p.reload();p.wait_for_function('()=>window.showpsisi && document.querySelector("#source").value.length>0')
+        before=p.evaluate('window.showpsisi.getState()')
+        p.locator('#recent').click();p.locator('#recent-menu [data-recent="2"]').click()
+        self.assertEqual(p.locator('#source').input_value(),paths[1])
+        self.assertEqual(p.evaluate('document.activeElement.id'),'scan')
+        self.assertEqual(p.evaluate('window.showpsisi.getState()'),before)
+        self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),stored)
+        p.locator('#reset-layout').click()
+        self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),stored)
+        p.locator('#recent').click();p.locator('#clear-recent').click()
+        self.assertEqual(p.evaluate('key=>JSON.parse(localStorage.getItem(key))',key),[])
+        self.assertEqual(p.evaluate('document.activeElement.id'),'recent')
+        p.reload();p.wait_for_function('()=>window.showpsisi && document.querySelector("#source").value.length>0')
+        p.locator('#recent').click()
+        self.assertEqual(p.locator('#recent-menu [data-recent]').count(),0)
+        self.assertTrue(p.locator('#clear-recent').is_disabled())
+        p.keyboard.press('Escape')
+        p.evaluate("Object.defineProperty(Storage.prototype,'setItem',{value:()=>{throw new Error('storage unavailable');},configurable:true})")
+        self.analyze()
+        p.locator('#recent').click()
+        self.assertEqual(p.locator('#recent-menu [data-recent]').first.get_attribute('title'),str(self.sample))
+        self.assertIn('session only',p.locator('#warning-message').inner_text())
+
+    def test_shortcut_help_uses_sidebar_table_and_restores_focus(self):
+        p=self.page
+        for theme in ('dark','light'):
+            if p.evaluate('document.documentElement.dataset.theme')!=theme:p.locator('#theme-toggle').click()
+            source=p.locator('#source').input_value()
+            p.locator('#source').focus();p.keyboard.press('End');p.keyboard.type('?')
+            self.assertFalse(p.locator('#shortcuts-dialog').is_visible())
+            self.assertEqual(p.locator('#source').input_value(),source+'?')
+            p.locator('#source').fill(source);p.keyboard.press('Control+/')
+            self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+            self.assertEqual(p.locator('#shortcuts-dialog .shortcut-row').all_text_contents(),p.locator('.sidebar-help .shortcut-row').all_text_contents())
+            p.keyboard.press('Control+k')
+            self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
+            p.keyboard.press('Escape');p.wait_for_function('()=>document.activeElement.id==="source"')
+            p.locator('#browse').focus();p.keyboard.press('?')
+            self.assertTrue(p.locator('#shortcuts-dialog').is_visible())
+            p.keyboard.press('Tab')
+            self.assertTrue(p.locator('#shortcuts-dialog').evaluate('(el)=>el.contains(document.activeElement)'))
+            p.locator('#close-shortcuts').click();p.wait_for_function('()=>document.activeElement.id==="browse"')
+            self.assertEqual(p.locator('#source').input_value(),source)
+
+    def test_browser_file_drop_reports_desktop_only_without_changing_source(self):
+        p=self.page;source=p.locator('#source').input_value();before=p.evaluate('window.showpsisi.getState()')
+        prevented=p.evaluate("""() => {
+          const transfer=new DataTransfer();transfer.items.add(new File(['local drop fixture'],'dropped.ts'));
+          const drag=new DragEvent('dragover',{bubbles:true,cancelable:true,dataTransfer:transfer});
+          const drop=new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:transfer});
+          document.dispatchEvent(drag);document.dispatchEvent(drop);
+          return drag.defaultPrevented && drop.defaultPrevented;
+        }""")
+        self.assertTrue(prevented)
+        self.assertIn('desktop app only',p.locator('#notice').inner_text())
+        self.assertEqual(p.locator('#notice').get_attribute('aria-live'),'polite')
+        self.assertEqual(p.locator('#source').input_value(),source)
+        self.assertEqual(p.evaluate('window.showpsisi.getState()'),before)
+        p.locator('#recent').click();self.assertEqual(p.locator('#recent-menu [data-recent]').count(),0)
+
+    def test_message_banner_history_expiry_and_keyboard_close(self):
+        self.page.locator('#source').fill(str(self.output/'missing-message-source.ts'))
+        self.page.locator('#scan').click()
+        self.page.wait_for_function('() => window.showpsisi.getState().analysis_status === "failed" && !document.querySelector("#scan").disabled')
+        error=self.page.locator('#notice').inner_text()
+        self.assertEqual(self.page.locator('#notice').get_attribute('aria-live'),'assertive')
+        self.assertEqual(self.page.locator('#error-message').inner_text(),error)
+        self.assertTrue(self.page.locator('#error-banner').is_visible())
+        self.page.locator('#reset-layout').click()
+        self.assertEqual(self.page.locator('#notice').inner_text(),'Default layout restored')
+        self.assertEqual(self.page.locator('#notice').get_attribute('aria-live'),'polite')
+        self.assertEqual(self.page.locator('#error-message').inner_text(),error)
+        self.page.wait_for_function('() => getComputedStyle(document.querySelector("#notice")).visibility === "hidden"',timeout=6000)
+        self.assertEqual(self.page.locator('#notice').text_content(),'Default layout restored')
+        self.page.locator('#messages').focus();self.page.keyboard.press('Enter')
+        self.assertTrue(self.page.locator('#messages-dialog').is_visible())
+        self.assertIn(error,self.page.locator('#message-list').inner_text())
+        self.assertEqual(self.page.locator('#message-list .message-level').first.inner_text(),'info')
+        self.assertEqual(self.page.locator('#message-list .message-level.error').count(),1)
+        self.assertTrue(self.page.locator('#message-list time').first.get_attribute('datetime'))
+        self.page.keyboard.press('Escape')
+        self.assertFalse(self.page.locator('#messages-dialog').is_visible())
+        self.assertEqual(self.page.evaluate('document.activeElement.id'),'messages')
+        self.page.locator('#dismiss-error').click()
+        self.assertFalse(self.page.locator('#error-banner').is_visible())
+        self.page.locator('#messages').click()
+        self.assertIn(error,self.page.locator('#message-list').inner_text())
+        self.page.locator('#close-messages').click()
+        self.page.locator('#save-diagnostics').click()
+        self.page.wait_for_function('() => document.querySelector("#error-message").textContent.startsWith("Diagnostics failed:")')
+        self.assertTrue(self.page.locator('#error-banner').is_visible())
+        self.assertEqual(self.page.locator('#notice').get_attribute('aria-live'),'assertive')
+        self.page.evaluate('() => {for(let i=0;i<55;i++)document.querySelector("#reset-layout").click();}')
+        self.page.locator('#messages').click()
+        self.assertEqual(self.page.locator('#message-list li').count(),50)
+        self.assertEqual(self.page.locator('#message-list .message-level.error').count(),0)
+
     def test_edit_format_save_intent_and_real_exports(self):
         """Inject only Save choices; every preview/export remains a real engine call.
 
@@ -1391,6 +1524,60 @@ class BrowserTests(unittest.TestCase):
         self.assertIn('validation artifacts directory',blocked)
         self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
 
+    def test_structure_reference_jump_click_keyboard_and_back(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT"')
+        p.locator('#sidebar [data-pid="0"][data-filter="PAT"]').click()
+        p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="PAT" && window.showpsisi.getUiState().settled')
+        p.locator('#tree-search').fill('pmt_pid')
+        row=p.locator('[data-node-path="section/fields/programs/0/pmt_pid"]')
+        jump=row.locator('.reference-jump')
+        self.assertEqual(jump.get_attribute('aria-label'),'Go to PMT · PID 0x0100 (256)')
+        self.assertIn('Program Map Table',jump.get_attribute('title'))
+        origin=p.evaluate('()=>{const s=window.showpsisi.getUiState();return {id:s.selected,sid:s.selected_service,tab:s.tab,view:s.inspector,scope:s.evidence_scope,filter:s.table_filter,grouped:s.records.grouped,search:s.tree_search};}')
+        for activation in ('click','Control+Enter','tab'):
+            row=p.locator('[data-node-path="section/fields/programs/0/pmt_pid"]');jump=row.locator('.reference-jump')
+            if activation=='click':jump.click()
+            elif activation=='tab':
+                row.focus();row.press('Tab')
+                self.assertTrue(jump.evaluate('(el)=>el===document.activeElement'))
+                p.keyboard.press('Enter')
+            else:row.focus();row.press(activation)
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().name==="PMT" && window.showpsisi.getDetail().pid===256')
+            state=p.evaluate('window.showpsisi.getUiState()')
+            self.assertEqual(state['tab'],'Tables');self.assertEqual(state['selected'],p.evaluate('window.showpsisi.getDetail().id'))
+            self.assertEqual(state['selected_service'],-1)
+            self.assertEqual(p.locator('#list [aria-selected="true"]').get_attribute('data-key'),state['selected'])
+            # Back from a focused tree row must not fold it or fall through to Analyze.
+            p.locator('#tree-area [role="treeitem"]').first.focus();p.keyboard.press('Alt+ArrowLeft')
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().name==="PAT"')
+            restored=p.evaluate('()=>{const s=window.showpsisi.getUiState();return {id:s.selected,sid:s.selected_service,tab:s.tab,view:s.inspector,scope:s.evidence_scope,filter:s.table_filter,grouped:s.records.grouped,search:s.tree_search};}')
+            self.assertEqual(restored,origin)
+            self.assertEqual(p.locator(':focus').get_attribute('data-node-path'),'section/fields/programs/0/pmt_pid')
+        # A service reference crosses tabs and must restore the EIT event selection.
+        p.locator('[data-tab="EPG"]').click();p.locator('#list [data-row]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().name==="EIT"')
+        event=p.evaluate('window.showpsisi.getDetail().id');p.locator('#tree-search').fill('service_id')
+        p.locator('#tree-area .reference-jump[aria-label^="Go to Service"]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().tab==="Services" && window.showpsisi.getDetail().name==="SDT"')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().selected_service'),101)
+        p.keyboard.press('Alt+ArrowLeft')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().tab==="EPG"')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().selected'),event)
+        self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),event)
+        self.assertEqual(p.locator('#tree-search').input_value(),'service_id')
+
+    def test_structure_private_descriptor_fields_have_no_jump(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT" && window.showpsisi.getUiState().settled')
+        p.locator('#tree-search').fill('logical_channel_number')
+        fields=p.locator('#tree-area .tree-leaf').filter(has=p.locator('.node-label',has_text='logical_channel_number'))
+        self.assertGreater(fields.count(),0,'The real sample must expose its decoded private descriptor fields')
+        self.assertEqual(fields.locator('.reference-jump').count(),0)
+        # The service summary repeats the value; the descriptor's own decoded field must be among the unlinked rows.
+        paths=fields.evaluate_all('(rows)=>rows.map(r=>r.dataset.nodePath)');self.assertTrue(any('/descriptors/' in path for path in paths),paths)
+
     def test_tree_composite_focus_states_and_keyboard_contract(self):
         self.analyze()
         self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
@@ -1471,6 +1658,70 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(any(indexed[child].get('role', {}).get('value') == 'group' for child in root_ax['childIds']))
         self.page.locator('#tree-search').press('Enter')
         self.page.screenshot(path=str(self.artifacts/'tree-keyboard-focus.png'))
+
+    def test_command_palette_commands_disabled_and_focus(self):
+        p=self.page;field=p.locator('#search')
+        p.locator('#source').focus();p.keyboard.press('Control+k');field.fill('>export')
+        option=p.locator('#palette-list [role="option"]')
+        self.assertEqual(field.get_attribute('role'),'combobox')
+        self.assertEqual(field.get_attribute('aria-expanded'),'true')
+        self.assertEqual(option.get_attribute('aria-disabled'),'true')
+        self.assertIn('Analyze a source',option.get_attribute('title'))
+        self.assertEqual(option.evaluate('(el)=>getComputedStyle(el).color'),p.locator('#palette-empty').evaluate('(el)=>getComputedStyle(el).color'))
+        field.press('Enter');self.assertFalse(p.locator('#edit-dialog').is_visible())
+        self.assertFalse(p.evaluate('window.showpsisi.getState().complete === true'))
+        field.press('Escape');self.assertEqual(p.evaluate('document.activeElement.id'),'source')
+        self.assertEqual(field.input_value(),'');self.assertEqual(field.get_attribute('aria-expanded'),'false')
+        before=p.locator('html').get_attribute('data-theme')
+        p.keyboard.press('Control+k');field.fill('>ThEmE')
+        self.assertEqual(option.count(),1);self.assertEqual(option.locator('span').inner_text(),'Toggle theme');self.assertEqual(option.locator('kbd').inner_text(),'—')
+        self.assertEqual(field.get_attribute('aria-activedescendant'),option.get_attribute('id'))
+        field.press('Enter');self.assertNotEqual(p.locator('html').get_attribute('data-theme'),before)
+        self.assertEqual(p.evaluate('document.activeElement.id'),'source')
+        p.keyboard.press('Control+k');field.fill('>compare SNAP')
+        self.assertIn('Compare snapshots',option.inner_text())
+        field.fill('>');self.assertLessEqual(p.locator('#command-palette').bounding_box()['height'],258)
+        field.press('ArrowDown');self.assertEqual(field.get_attribute('aria-activedescendant'),'palette-option-1')
+        field.press('ArrowUp');self.assertEqual(field.get_attribute('aria-activedescendant'),'palette-option-0')
+        field.press('Escape');self.assertEqual(p.evaluate('document.activeElement.id'),'source')
+        # Escape outside palette mode keeps the pre-palette contract: clear, keep focus.
+        p.keyboard.press('Control+k');field.press('Escape')
+        self.assertEqual(p.evaluate('document.activeElement.id'),'search')
+
+    def test_command_palette_identifier_jumps_back_and_plain_search(self):
+        self.analyze();p=self.page;field=p.locator('#search')
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT"')
+        origin=p.evaluate('window.showpsisi.getDetail().id')
+        p.keyboard.press('Control+k');field.fill('Sports UHD');field.press('Enter')
+        self.assertTrue(p.locator('#list').evaluate('(el)=>el.contains(document.activeElement)'))
+        self.assertEqual(p.locator('#list [role="option"]').count(),1)
+        p.keyboard.press('Control+k');field.fill('#0x0000')
+        self.assertEqual(p.locator('#palette-list [role="option"] span').inner_text(),'PID 0x0000 (0)')
+        self.assertEqual(p.locator('#list [role="option"]').count(),1,'Prefixes must retain the record filter')
+        field.press('Enter');p.wait_for_function('()=>window.showpsisi.getDetail().name==="PAT" && window.showpsisi.getDetail().pid===0')
+        self.assertEqual(p.locator('#tabs [aria-selected="true"]').inner_text(),'Tables')
+        self.assertEqual(p.locator('#sidebar .active').get_attribute('data-pid'),'0')
+        p.keyboard.press('Alt+ArrowLeft');p.wait_for_function('(id)=>window.showpsisi.getDetail().id===id',arg=origin)
+        self.assertEqual(field.input_value(),'Sports UHD');self.assertEqual(p.locator('#tabs [aria-selected="true"]').inner_text(),'Services')
+        p.keyboard.press('Control+k');field.fill('#pid 8190')
+        self.assertIn('No PID 0x1FFE in this stream',p.locator('#palette-empty').inner_text())
+        self.assertIn('0 identifier targets',p.locator('#palette-status').inner_text())
+        self.assertEqual(p.locator('#palette-list [role="option"]').count(),0)
+        field.press('Enter');self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),origin)
+        field.press('Escape');self.assertEqual(field.input_value(),'Sports UHD')
+        for query,label,kind,number in (('#256','PID 0x0100 (256)','pid',256),('#pid 0x0100','PID 0x0100 (256)','pid',256),('#sid 0x0067','SID 0x0067 (103)','sid',103),('#table 0x42','Table 0x42 (66)','table_id',66)):
+            p.keyboard.press('Control+k');field.fill(query)
+            self.assertIn(label,p.locator('#palette-list').inner_text());field.press('Enter')
+            if kind=='sid':
+                p.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT" && document.querySelector("#list [aria-selected=true]")?.dataset.key.startsWith("service:")')
+                self.assertEqual(p.locator('#tabs [aria-selected="true"]').inner_text(),'Services')
+            else:p.wait_for_function('([kind,number])=>window.showpsisi.getDetail()[kind]===number',arg=[kind,number])
+            p.keyboard.press('Alt+ArrowLeft');p.wait_for_function('(id)=>window.showpsisi.getDetail().id===id',arg=origin)
+        for invalid in ('#pid 8192','#sid 65536','#table 256','#0x100garbage'):
+            p.keyboard.press('Control+k');field.fill(invalid)
+            self.assertEqual(p.locator('#palette-list [role="option"]').count(),0)
+            field.press('Enter');self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),origin)
+            field.press('Escape')
 
     def test_record_search_keyboard_and_tree(self):
         self.analyze()
@@ -1594,14 +1845,15 @@ class BrowserTests(unittest.TestCase):
         self.page.evaluate('id=>window.showpsisi.inspect(id)',row['id'])
         self.page.wait_for_function('id=>window.showpsisi.getDetail().id===id',arg=row['id'])
         detail=self.page.evaluate('window.showpsisi.getDetail()')
+        self.page.locator('#identity-toggle').click()
         identity=self.page.locator('.identity-line').inner_text()
         self.assertIn('TID 0x42',identity)
         self.assertIn(detail['crc']['transmitted_hex'],identity)
         self.assertEqual(detail['distribution']['observation_count'],2)
-        self.page.locator('.arrival summary').click()
+        self.page.locator('#arrival-toggle').click()
         self.assertIn('not PCR',self.page.locator('.arrival').inner_text())
         self.assertGreater(self.page.locator('.section-density span').count(),0)
-        self.page.locator('#section-group summary').click()
+        self.page.locator('#section-group-toggle').click()
         self.assertIn('mixed',self.page.locator('#section-group').inner_text())
         sibling=next(r for r in state['tables'] if r['extension']==1 and r['section']==1 and r['valid'])
         self.page.locator('#section-choice').select_option(sibling['id'])
@@ -1627,7 +1879,8 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(root.get_attribute('aria-expanded'),'true')
         for width,height in [(1000,680),(520,1000)]:
             self.page.set_viewport_size({'width':width,'height':height})
-            self.page.locator('#section-group').evaluate('(el)=>el.open=true')
+            if self.page.locator('#section-group-toggle').get_attribute('aria-expanded') == 'false':
+                self.page.locator('#section-group-toggle').click()
             tree=self.page.locator('#tree-area')
             self.assertGreaterEqual(tree.bounding_box()['height'],140)
             tree.scroll_into_view_if_needed()
@@ -1729,7 +1982,7 @@ class BrowserTests(unittest.TestCase):
         row=branch.locator('[role="option"]').first
         row.focus();row.press('Enter')
         p.wait_for_function('()=>!document.querySelector("#inspector .empty")')
-        p.locator('.arrival summary').click()
+        p.locator('#arrival-toggle').click()
         self.assertEqual(p.locator('.arrival .arrival-axis span').count(),5)
         self.assertIn('packet positions',p.locator('.arrival .axis-basis').inner_text())
         self.assertTrue(p.locator('#table-filter-tools #show-bad-crc').is_visible())
@@ -1794,6 +2047,7 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#tree-search').fill('Old B')
         self.assertIn('Old B',self.page.locator('#tree-area').inner_text())
         self.assertNotIn('New B',self.page.locator('#tree-area').inner_text())
+        self.page.locator('#scope-details-toggle').click()
         for view in ('hex','xml','references','tree'):
             self.page.locator('[data-view="'+view+'"]').click()
             self.assertIn('packet 1',self.page.locator('#native-assembly-evidence').inner_text())
@@ -1819,6 +2073,7 @@ class BrowserTests(unittest.TestCase):
         self.assertNotIn('New B',self.page.locator('.evidence').inner_text())
 
     def test_standards_context_and_invalid_extra_pids(self):
+        self.open_scan_options()
         for standard in ('atsc','isdb-japan','dtmb'):
             self.page.locator('#standards').select_option(standard)
             self.page.locator('#extra-pids').fill('0x123, 291')
@@ -1843,6 +2098,7 @@ class BrowserTests(unittest.TestCase):
         self.analyze()
         # The reason for a rejected value stays next to the control; the footer
         # live region keeps the same message for the status contract.
+        self.open_scan_options()
         self.page.locator('#extra-pids').fill('0xNOPE')
         self.page.locator('#scan').click()
         self.assertIn('decimal or hexadecimal',self.page.locator('#notice').inner_text())
@@ -1877,7 +2133,9 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(density.get_attribute('tabindex'),'0')
         self.assertEqual(self.page.locator('#density .bin').count(),80)
         self.assertEqual(self.page.locator('#density .axis-basis').inner_text(),
-                         'Zero-based packet positions · no measured time available')
+                         'Axis: packet index')
+        self.assertEqual(self.page.locator('#density .axis-basis').get_attribute('title'),
+                         'No PCR/TDT clock is used; positions are packet indices.')
         self.assertEqual(self.page.locator('#density .arrival-axis span').count(),5)
         fill=self.page.evaluate('''() => {
           const bins=[...document.querySelectorAll("#density .bin")];
@@ -1937,6 +2195,7 @@ class BrowserTests(unittest.TestCase):
         self.assertGreater(card.locator('.record.tables .table-kind').count(), 0)
 
     def test_new_protocol_tables_without_service_projection(self):
+        self.open_scan_options()
         manifest=json.loads((ROOT/'tests/fixtures/tsduck345/manifest.json').read_text(encoding='utf-8'))
         cases=(('ATSC_AEIT','AEIT','Aggregate Event Information Table',None),
                ('DSMCC_DDB','DSMCC_download_data_message','DSM-CC Download Data Message',None),
@@ -1972,6 +2231,8 @@ class BrowserTests(unittest.TestCase):
                 self.assertIn(explanation,self.page.locator('.inspector-heading h2').get_attribute('title'))
                 if name == 'DSMCC_DII':
                     self.assertTrue(detail['native_xml_guarded'])
+                    if self.page.locator('#inspector-warning-toggle').get_attribute('aria-expanded') == 'false':
+                        self.page.locator('#inspector-warning-toggle').click()
                     warnings=self.page.locator('#native-decode-warnings')
                     self.assertIn('namespace is not established',warnings.inner_text())
                     self.assertIn('Original wire bytes remain authoritative',warnings.inner_text())
@@ -2152,12 +2413,53 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(len(self.page.context.pages),page_count)
         self.page.locator('#close-about').click()
 
+    def test_inspector_summary_disclosures_persist_and_reset(self):
+        self.page.set_viewport_size({'width':1440,'height':900})
+        self.analyze()
+        p=self.page
+        p.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        toggles=['identity-toggle','crc-toggle','arrival-toggle','section-group-toggle','scope-details-toggle']
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'false')
+        self.assertGreaterEqual(p.locator('#tree-area').bounding_box()['height'],p.locator('#inspector').bounding_box()['height']*0.65)
+        # Space/Enter operate real buttons without replacing the focused control.
+        p.locator('#identity-toggle').focus();p.keyboard.press('Space')
+        self.assertTrue(p.locator('.identity-line').is_visible())
+        self.assertEqual(p.evaluate('document.activeElement.id'),'identity-toggle')
+        p.locator('#crc-toggle').focus();p.keyboard.press('Enter')
+        for element in toggles[2:]:
+            p.locator('#'+element).click()
+        if p.locator('#inspector-warning-toggle').count():
+            p.locator('#inspector-warning-toggle').click()
+            self.assertTrue(p.locator('#native-decode-warnings').is_visible())
+        expected=p.evaluate('JSON.parse(localStorage.getItem("showpsisi.workbench.layout.v1")).inspectorDetails')
+        self.assertTrue(all(expected[key] for key in ('identity','crc','arrival','sections','scope')))
+        p.locator('[data-view="hex"]').click()
+        p.locator('[data-view="tree"]').click()
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'true')
+        p.reload()
+        p.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+        self.analyze()
+        p.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'true')
+        p.locator('#reset-layout').click()
+        for element in toggles:
+            self.assertEqual(p.locator('#'+element).get_attribute('aria-expanded'),'false')
+        self.assertFalse(p.locator('#inspector-details').is_visible())
+        self.assertIsNone(p.evaluate('localStorage.getItem("showpsisi.workbench.layout.v1")'))
+
     def test_layout_persists_clamps_and_resets(self):
         self.analyze()
         self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')
         left=self.page.locator('#split-left')
         right=self.page.locator('#split-right')
         self.assertEqual(left.get_attribute('aria-valuenow'),'178')
+        for handle in (left,right):
+            width=handle.get_attribute('aria-valuenow')
+            handle.focus();handle.press('Alt+ArrowLeft');handle.press('Alt+ArrowRight')
+            self.assertEqual(handle.get_attribute('aria-valuenow'),width,'Alt+arrows navigate; plain arrows resize the focused divider')
         left.focus();left.press('ArrowRight')
         self.assertEqual(left.get_attribute('aria-valuenow'),'194')
         box=right.bounding_box()
@@ -2209,9 +2511,102 @@ class BrowserTests(unittest.TestCase):
         self.page.locator('#split-left').focus();self.page.keyboard.press('ArrowRight')
         self.assertEqual(self.page.locator('#split-left').get_attribute('aria-valuenow'),'194')
         self.assertIn('session only',self.page.locator('#layout-status').inner_text())
+        self.page.locator('#split-left').press('ArrowRight')
+        self.assertIn('×2',self.page.locator('#warning-message').inner_text())
         self.page.locator('#reset-layout').click()
         self.assertEqual(self.page.locator('#split-left').get_attribute('aria-valuenow'),'178')
         self.assertEqual(len(self.page.evaluate('window.showpsisi.getState().services')),6)
+        self.assertTrue(self.page.locator('#status-warning').is_visible())
+        self.page.locator('#dismiss-warning').click()
+        self.assertFalse(self.page.locator('#status-warning').is_visible())
+
+    def test_comparison_timeline_markers_input_drag_and_keyboard(self):
+        p=self.page
+        self.assertEqual(p.locator('[data-comparison-marker]:visible').count(),0)
+        self.analyze();p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertEqual(p.locator('[data-comparison-marker]:visible').count(),0)
+        p.locator('#compare-snapshots').click()
+        maximum=p.evaluate('window.showpsisi.getState().packets-1')
+        bins=p.locator('#density .bin').count();step=max(1,int(maximum/(bins-1)+0.5))
+        snapshot=p.evaluate('window.showpsisi.getState().selected_packet')
+        def inputs(a,b):
+            p.locator('#compare-from').fill(str(a));p.locator('#compare-to').fill(str(b))
+        def marker(side):
+            return p.locator('[data-comparison-marker="'+side+'"]')
+        def synced(side,packet):
+            handle=marker(side)
+            self.assertEqual(handle.get_attribute('role'),'slider')
+            self.assertEqual(handle.get_attribute('aria-label'),'Comparison '+('A' if side=='from' else 'B')+' packet')
+            self.assertEqual(handle.get_attribute('aria-valuenow'),str(packet))
+            self.assertEqual(handle.get_attribute('aria-valuetext'),'Packet '+str(packet))
+            self.assertAlmostEqual(handle.evaluate('(el)=>parseFloat(el.style.left)'),packet/maximum*100,places=3)
+            box=handle.bounding_box();bar=p.locator('#density').bounding_box()
+            self.assertAlmostEqual(box['x']+box['width']/2,bar['x']+bar['width']*packet/maximum,delta=1)
+        def drag(side,ratio,expected):
+            box=marker(side).bounding_box();bar=p.locator('#density').bounding_box()
+            p.mouse.move(box['x']+box['width']/2,box['y']+box['height']/2);p.mouse.down()
+            p.mouse.move(bar['x']+bar['width']*ratio,box['y']+box['height']/2,steps=8)
+            # A pointer resolves to whole pixels; one pixel may span several packets.
+            tolerance=math.ceil(maximum/bar['width'])
+            # Changes mounts the inputs; check live values before release there.
+            live=int(marker(side).get_attribute('aria-valuenow'))
+            self.assertLessEqual(abs(live-expected),tolerance)
+            if p.locator('#compare-'+side).count():
+                self.assertEqual(int(p.locator('#compare-'+side).input_value()),live)
+            synced(side,live)
+            self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),snapshot)
+            p.mouse.up()
+            self.assertEqual(int(p.locator('#compare-'+side).input_value()),live)
+            self.assertEqual(p.evaluate('document.activeElement.id'),'run-comparison')
+            self.assertIsNone(p.evaluate('window.showpsisi.getComparison()'))
+        inputs(maximum//5,maximum*4//5)
+        synced('from',maximum//5);synced('to',maximum*4//5)
+        drag('from',0.3,int(maximum*0.3+0.5));drag('to',0.7,int(maximum*0.7+0.5))
+        # Only the dragged endpoint clamps when crossing; handles remain distinct at equality.
+        bound=int(p.locator('#compare-to').input_value())
+        drag('from',0.9,bound);drag('to',0.1,bound)
+        self.assertEqual(p.locator('#compare-from').input_value(),p.locator('#compare-to').input_value())
+        inputs(step*2,maximum-step*2)
+        p.locator('#density').focus();p.keyboard.press('Tab')
+        self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-a')
+        p.keyboard.press('Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-b')
+        p.keyboard.press('Shift+Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-a')
+        p.keyboard.press('Shift+Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'density')
+        a=marker('from');b=marker('to');a.focus()
+        for key,expected in [('ArrowRight',step*3),('Shift+ArrowLeft',step*3-1),('ArrowLeft',step*2-1),('Home',0),('End',maximum-step*2)]:
+            a.press(key);self.assertEqual(int(p.locator('#compare-from').input_value()),expected);synced('from',expected)
+        b.focus()
+        for key,expected in [('Shift+ArrowRight',maximum-step*2+1),('ArrowRight',maximum-step+1),('End',maximum),('Home',maximum-step*2),('ArrowLeft',maximum-step*2)]:
+            b.press(key);self.assertEqual(int(p.locator('#compare-to').input_value()),expected);synced('to',expected)
+        self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-b')
+        self.assertEqual(p.evaluate('window.showpsisi.getState().selected_packet'),snapshot)
+        self.assertIsNone(p.evaluate('window.showpsisi.getComparison()'))
+        for invalid in ('1.5','-1',str(maximum+1),''):
+            p.locator('#compare-from').fill(invalid);self.assertFalse(marker('from').is_visible())
+        p.locator('#density').focus();p.keyboard.press('Tab')
+        self.assertEqual(p.evaluate('document.activeElement.id'),'comparison-marker-b')
+        p.keyboard.press('Shift+Tab');self.assertEqual(p.evaluate('document.activeElement.id'),'density')
+        p.locator('#compare-to').fill('');self.assertFalse(marker('to').is_visible())
+        p.locator('#density').focus();p.keyboard.press('Tab')
+        self.assertNotEqual(p.evaluate('document.activeElement.id'),'density')
+        inputs(maximum//5,maximum*4//5)
+        p.locator('[data-tab="Services"]').click()
+        self.assertTrue(marker('from').is_visible());self.assertTrue(marker('to').is_visible())
+        # Operating a retained marker returns to Changes and focuses Compare.
+        drag('from',0.3,int(maximum*0.3+0.5))
+        self.assertEqual(p.locator('[data-tab="Changes"]').get_attribute('aria-selected'),'true')
+        for theme in ('light','dark'):
+            if p.locator('html').get_attribute('data-theme')!=theme:p.locator('#theme-toggle').click()
+            synced('from',int(maximum*0.3+0.5));synced('to',maximum*4//5)
+            self.assertIn('drag to change the comparison start',marker('from').get_attribute('title'))
+            self.assertIn('drag to change the comparison end',marker('to').get_attribute('title'))
+        # A plain bin click still loads a snapshot through the real engine.
+        index=bins//2;expected=int(index*maximum/(bins-1)+0.5)
+        p.locator('#density .bin').nth(index).click()
+        p.wait_for_function('(packet)=>window.showpsisi.getState().selected_packet===packet',arg=expected)
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+        self.assertTrue(p.locator('#density .bin-cursor').is_visible())
+        synced('from',int(maximum*0.3+0.5));synced('to',maximum*4//5)
 
     def test_comparison_history_evidence_and_restored_snapshot(self):
         self.analyze()

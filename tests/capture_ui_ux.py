@@ -23,6 +23,7 @@ try:
             metrics.append(p.evaluate('([width,height,density])=>({width,height,density,tree:document.querySelector("#tree-area").getBoundingClientRect().toJSON(),footer:document.querySelector("footer").getBoundingClientRect().toJSON(),visibleRows:[...document.querySelectorAll("#tree-area [role=treeitem]")].filter(el=>el.checkVisibility() && (el.querySelector(":scope > .tree-row")||el).getBoundingClientRect().top >= document.querySelector("#tree-area").getBoundingClientRect().top && (el.querySelector(":scope > .tree-row")||el).getBoundingClientRect().bottom <=document.querySelector("#tree-area").getBoundingClientRect().bottom).length,fieldFont:getComputedStyle(document.querySelector(".node-value")).fontSize})',[width,height,density]))
             p.screenshot(path=str(out/f'web-{width}-{height}-{density}.png'))
     # Real input validation rather than injecting a fabricated backend response.
+    case.open_scan_options()
     p.locator('#extra-pids').fill('invalid-pid')
     p.locator('#scan').click()
     p.wait_for_function('()=>document.querySelector("#notice").classList.contains("error")')

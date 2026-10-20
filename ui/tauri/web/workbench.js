@@ -1,6 +1,31 @@
 // Shared presentation contract. No DOM, Qt, parser or filesystem dependencies.
 var workbench = {
   hex: function(n, width) { return '0x' + Number(n || 0).toString(16).padStart(width || 4, '0'); },
+  commandMatches: function(label, query) {
+    var words=label.toLowerCase().split(/\s+/);
+    return query.toLowerCase().trim().split(/\s+/).filter(Boolean).every(function(term) {return words.some(function(word) {return word.indexOf(term)>=0;});});
+  },
+  // Resolve only identifiers already supplied by the engine in this snapshot.
+  paletteIdentifier: function(query, state) {
+    var match=/^#\s*(?:(pid|sid|table)\s+)?(0x[0-9a-f]+|[0-9]+)\s*$/i.exec(query);
+    if(!match)return {message:'Enter a PID, SID or table ID in decimal or 0x hexadecimal'};
+    var kind=(match[1] || 'pid').toLowerCase(),number=Number(match[2]),width=kind==='table'?2:4;
+    var name=kind==='table'?'Table':kind.toUpperCase(),maximum=kind==='pid'?8191:kind==='sid'?65535:255;
+    if(!Number.isInteger(number) || number>maximum)return {message:name+' must be between 0 and '+maximum};
+    var id=workbench.hex(number,width).toUpperCase().replace('0X','0x'),label=name+' '+id+' ('+number+')';
+    var help=kind==='pid'?'PID: Packet Identifier · 13 bits':kind==='sid'?'SID: Service Identifier · 16 bits':'Table ID: Table Identifier · 8 bits';
+    var tables=state.tables || [],target=null;
+    if(kind==='sid') {
+      var service=(state.services || []).find(function(s) {return s.id===number && tables.some(function(r) {return r.id===s.source_id;});});
+      if(service)target={kind:'service',id:service.source_id,sid:service.id,key:service.key};
+    } else {
+      var selected={};
+      (state.table_groups || []).forEach(function(g) {(g.selected_section_ids || []).forEach(function(id) {selected[id]=true;});});
+      var rows=tables.filter(function(r) {return kind==='pid'?r.pid===number:r.table_id===number;}).sort(function(a,b) {return Number(!!selected[b.id])-Number(!!selected[a.id]) || workbench.sort(a,b);});
+      if(rows.length)target={kind:'section',id:rows[0].id,sid:-1,pid:rows[0].pid,name:rows[0].name || 'Private / other'};
+    }
+    return {label:label,help:help,target:target,message:target?'':'No '+name+' '+id+' in this stream'};
+  },
   matches: function(row, query) {
     var values = JSON.stringify(row).toLowerCase();
     Object.keys(row).forEach(function(k) { if (typeof row[k] === 'number') values += ' ' + workbench.hex(row[k]) + ' ' + workbench.hex(row[k], 2); });
@@ -38,6 +63,81 @@ var workbench = {
   }
 };
 
+// Scan intent is captured by each frontend when the request is sent. PID order
+// and duplicate entries do not change the monitored set; invalid input stays distinct.
+workbench.scanOptionsKey = function(options) {
+  var pids=options.extra_pids;
+  return JSON.stringify([options.standards,options.default_charset.trim(),pids===null?null:pids.filter(function(p,i,all){return all.indexOf(p)===i;}).sort(function(a,b){return a-b;})]);
+};
+workbench.scanOptionsSummary = function(options) {
+  var parts=[],pids=options.extra_pids;
+  if(options.default_charset.trim())parts.push('charset '+options.default_charset.trim());
+  if(pids===null)parts.push('invalid PIDs');
+  else {
+    pids=pids.filter(function(p,i,all){return all.indexOf(p)===i;});
+    pids.slice(0,2).forEach(function(p){parts.push('+PID '+workbench.hex(p));});
+    if(pids.length>2)parts.push('+'+(pids.length-2)+' more PIDs');
+  }
+  return parts.join(' · ');
+};
+workbench.issueCounts = function(issues) {
+  var counts={total:issues.length,errors:0,warnings:0,other:0,hasSeverity:false};
+  issues.forEach(function(issue) {
+    var severity=typeof issue.severity==='string'?issue.severity.toLowerCase().trim():'';
+    if(severity)counts.hasSeverity=true;
+    if(severity==='error')counts.errors++;
+    else if(severity==='warning')counts.warnings++;
+    else counts.other++;
+  });
+  return counts;
+};
+
+workbench.identifierNamespaces = [
+  {value:'original_network_id',label:'Original network ID',help:'Original network identifier'},
+  {value:'network_id',label:'Network ID',help:'Network identifier'},
+  {value:'bouquet_id',label:'Bouquet ID',help:'Bouquet identifier'},
+  {value:'ca_system_id',label:'CA system ID (conditional access)',help:'Conditional access system identifier'},
+  {value:'private_data_specifier',label:'Private data specifier',help:'Private descriptor namespace'},
+  {value:'registration_id',label:'Registration ID',help:'Registered format identifier'},
+  {value:'data_broadcast_id',label:'Data broadcast ID',help:'Data broadcast identifier'},
+  {value:'platform_id',label:'Platform ID',help:'Platform identifier'},
+  {value:'oui',label:'OUI (organizationally unique identifier)',help:'Organizationally unique identifier'}
+];
+workbench.lookupLabel = function(key) {
+  var acronyms={id:'ID',ids:'IDs',sdk:'SDK',url:'URL',oui:'OUI',ca:'CA',geo:'GEO',hz:'Hz',fec:'FEC',pid:'PID',onid:'ONID',tsid:'TSID'};
+  var words=String(key).replace(/([a-z])([A-Z])/g,'$1 $2').replace(/_/g,' ').split(' ');
+  return words.map(function(word,i){return acronyms[word.toLowerCase()] || (i===0?word.charAt(0).toUpperCase()+word.slice(1):word);}).join(' ');
+};
+// Flatten returned JSON without hiding false, null, empty collections or unknown
+// flags. Source columns inherit only explicit provenance, never inferred meaning.
+workbench.lookupResult = function(result) {
+  var rows=[],acronyms={id:'ID: identifier',sdk:'SDK: Software Development Kit',url:'URL: Uniform Resource Locator',oui:'OUI: organizationally unique identifier',ca:'CA: conditional access',geo:'GEO: geostationary Earth orbit',hz:'Hz: hertz',fec:'FEC: forward error correction',pid:'PID: Packet Identifier',onid:'ONID: Original Network Identifier',tsid:'TSID: Transport Stream Identifier'};
+  function text(value) { return typeof value==='string'?(value || '""'):JSON.stringify(value); }
+  function provenance(value) {
+    if(!value || typeof value!=='object')return text(value);
+    var identity=value.publisher || value.file || value.path || value.kind || value.section_id || value.url;
+    return identity?[identity,value.reviewed_at || value.sdk_version || value.revision].filter(Boolean).join(' · '):JSON.stringify(value);
+  }
+  function visit(value,path,label,source,sourceTip) {
+    if(value!==null && typeof value==='object' && Object.keys(value).length) {
+      var keys=Object.keys(value),origins=keys.filter(function(k){return /^(source|sources|provenance|wire_source|catalog)$/.test(k);});
+      if(origins.length) {
+        source=origins.map(function(k){return provenance(value[k]);}).join('\n');
+        sourceTip=origins.map(function(k){return k+': '+JSON.stringify(value[k],null,2);}).join('\n');
+      }
+      keys.forEach(function(k){
+        var array=Array.isArray(value),raw=array?'['+k+']':k,readable=array?raw:workbench.lookupLabel(k);
+        visit(value[k],path?(path+(array?'':'.')+raw):raw,label?(label+(array?' ':' › ')+readable):readable,source,sourceTip);
+      });
+    } else {
+      var help=path.split(/[.\[\]_]+/).map(function(k){return acronyms[k.toLowerCase()];}).filter(function(x,i,all){return x && all.indexOf(x)===i;}).join(' · ');
+      rows.push({key:path,label:label,help:help,value:text(value),source:source || '',sourceTip:sourceTip || ''});
+    }
+  }
+  if(result!==null && result!==undefined)visit(result,'','', '', '');
+  return {rows:rows,hasSource:rows.some(function(row){return !!row.source;})};
+};
+
 workbench.wireVersionText = function(row) { return row.versioning_supported===false || row.version===null?'version not carried':row.version===undefined?'version unavailable':'v'+row.version; };
 workbench.wireExtensionText = function(row) { return row.versioning_supported===false || row.extension===null?'extension not carried':row.extension===undefined?'extension unavailable':'Ext '+workbench.hex(row.extension); };
 workbench.wireCurrentText = function(row) { return row.versioning_supported===false || row.current===null?'current/next not carried':row.current===undefined?'current/next unavailable':row.current?'current':'next'; };
@@ -46,6 +146,34 @@ workbench.wireSectionText = function(row) {
   return row.versioning_supported===false || section===null?'section number not carried':section===undefined?'section number unavailable':'§'+section+(row.last_section!=null?'/'+row.last_section:'');
 };
 workbench.wireHeaderText = function(row) { return [workbench.wireExtensionText(row),workbench.wireVersionText(row),workbench.wireSectionText(row),workbench.wireCurrentText(row)].join(' · '); };
+
+// Inspector disclosures are layout preferences, independent of selected evidence.
+workbench.inspectorDisclosure = function(saved) {
+  var state={identity:false,crc:false,arrival:false,sections:false,scope:false,warnings:false};
+  Object.keys(state).forEach(function(key) { state[key]=!!saved && saved[key]===true; });
+  return state;
+};
+workbench.inspectorSummary = function(row) {
+  row=row || {};
+  var status=(row.crc || {}).status,profile=typeof row.standards_context==='string'?row.standards_context:'';
+  var profiles={auto:['Auto','Automatic standards detection'],dvb:['DVB','Digital Video Broadcasting'],atsc:['ATSC','Advanced Television Systems Committee'],
+    isdb:['ISDB','Integrated Services Digital Broadcasting'],'isdb-japan':['ISDB-Japan','Integrated Services Digital Broadcasting · Japan'],
+    'isdb-brazil':['ISDB-Brazil','Integrated Services Digital Broadcasting · Brazil'],dtmb:['DTMB','Digital Terrestrial Multimedia Broadcasting'],
+    scte:['SCTE','Society of Cable Telecommunications Engineers'],'j94-system-b':['J.94-B','J.94 (2016) System B']};
+  var selected=profiles[profile] || [profile || 'Profile unavailable',profile || 'Not reported by the engine'];
+  return {version:workbench.wireVersionText(row),section:workbench.wireSectionText(row).replace('§','sec '),
+    crc:'CRC '+(status==='valid'?'✓':status==='invalid'?'✕':status==='not_present'?'—':'?'),
+    profile:selected[0],profileHelp:'Engine standards profile: '+selected[1]+'. This is the context used for this evidence; changing scan options requires a new analysis.'};
+};
+workbench.inspectorWarnings = function(detail, state) {
+  detail=detail || {};state=state || {};
+  var warnings=[],reported=detail.native_decode_warnings || [];
+  if(typeof reported.forEach==='function')reported.forEach(function(warning) { if(typeof warning==='string' && warning)warnings.push(warning); });
+  if(detail.native_xml_guarded)warnings.push('Guarded SDK XML: '+(detail.native_xml_guard_reason || 'ambiguous descriptor interpretation')+'. Original wire bytes remain authoritative in Hex bytes.');
+  var truncated=(state.demux || {}).truncated_sections;
+  if(truncated)warnings.push('Capture-wide demux: '+truncated+' truncated section(s). This count covers the whole capture, not only the selected section.');
+  return warnings;
+};
 
 
 workbench.value = function(key, value) {
@@ -56,47 +184,185 @@ workbench.value = function(key, value) {
   if(/pid|_id$|^id$/.test(key)) return workbench.hex(value)+' ('+value+')';
   return String(value);
 };
-workbench.objectNode = function(id, label, value) {
+// Comparison presentation follows the engine's changed_fields. Nested rows show
+// literal A/B values; array indices are positions, never inferred identities.
+workbench.comparisonIsList = function(value) {return Array.isArray(value) || value!==null && typeof value==='object' && Number.isInteger(value.length) && typeof value.forEach==='function';};
+workbench.comparisonValue = function(key, value, present) {
+  if(present===false)return 'Not observed';
+  if(value===null)return 'null';
+  if(value===undefined)return 'Not provided';
+  if(typeof value==='object')return workbench.comparisonIsList(value)?value.length+' items':Object.keys(value).length+' fields';
+  if(typeof value==='number' && Number.isFinite(value)) {
+    var width=0,name=String(key).toLowerCase();
+    if(/^(private_data_specifier|pds|crc|crc32|registration_id)$/.test(name))width=8;
+    else if(/^(oui|platform_id)$/.test(name))width=6;
+    else if(/^(tag|descriptor_tag|tag_extension|table_id|type|stream_type|service_type|section|last_section|section_number|last_section_number|version|version_number)$/.test(name))width=2;
+    else if(/(^|_)(pid|pids)$/.test(name) || /^(id|service_id|program_number|event_id|network_id|original_network_id|transport_stream_id|onid|ts_id|tsid|extension|bouquet_id|ca_system_id|data_broadcast_id|application_id)$/.test(name))width=4;
+    var digits=Math.abs(value).toString(16).toUpperCase();
+    if(Number.isInteger(value))digits=digits.padStart(width,'0');
+    return (value<0?'-':'')+'0x'+digits+' ('+String(value)+')';
+  }
+  return typeof value==='string'?JSON.stringify(value):String(value);
+};
+workbench.comparisonHelp = function(key) {
+  if(/^pmt_pid$/i.test(key))return 'PMT: Program Map Table · PID: Packet Identifier';
+  if(/^pcr_pid$/i.test(key))return 'PCR: Program Clock Reference · PID: Packet Identifier';
+  if(/pid/i.test(key))return 'PID: Packet Identifier';
+  if(/lcn|logical_channel_number/i.test(key))return 'LCN: Logical Channel Number';
+  if(/pds|private_data_specifier/i.test(key))return 'PDS: Private Data Specifier';
+  if(/crc/i.test(key))return 'CRC: Cyclic Redundancy Check';
+  if(/onid|original_network_id/i.test(key))return 'ONID: Original Network Identifier';
+  if(/ts_?id|transport_stream_id/i.test(key))return 'TSID: Transport Stream Identifier';
+  if(/service_id/i.test(key))return 'SID: Service Identifier';
+  if(/^oui$/i.test(key))return 'OUI: Organizationally Unique Identifier';
+  return key;
+};
+workbench.comparisonFields = function(change) {
+  if(!change)return [];
+  var before=change.before && change.before.value || {},after=change.after && change.after.value || {};
+  function keys(a,b) {return Object.keys(a).concat(Object.keys(b).filter(function(k){return !Object.prototype.hasOwnProperty.call(a,k);}));}
+  function object(value) {return value!==null && typeof value==='object';}
+  function node(label,path,a,b,hasA,hasB,valueKey,root) {
+    var children=[],role=!hasA?'added':!hasB?'removed':root?'changed':JSON.stringify(a)===JSON.stringify(b)?'context':'changed';
+    if(object(a) || object(b)) {
+      var left=object(a)?a:{},right=object(b)?b:{},list=workbench.comparisonIsList(a) || workbench.comparisonIsList(b);
+      children=keys(left,right).map(function(k){return node(list?'['+k+']':k,path+'/'+k.replace(/~/g,'~0').replace(/\//g,'~1'),left[k],right[k],Object.prototype.hasOwnProperty.call(left,k),Object.prototype.hasOwnProperty.call(right,k),list?valueKey:k,false);});
+    }
+    return {path:path,label:label,key:valueKey,before:a,after:b,hasBefore:hasA,hasAfter:hasB,change:role,children:children};
+  }
+  var fields=change.change==='changed'?(change.changed_fields || []):keys(before,after);
+  return fields.map(function(key){
+    if(key==='payload' && change.kind==='tables')return {path:'/payload',label:'payload',key:key,change:'changed',note:'Raw section bytes changed · inspect A / B in Hex',children:[]};
+    return node(key,'/'+key.replace(/~/g,'~0').replace(/\//g,'~1'),before[key],after[key],!!change.before && Object.prototype.hasOwnProperty.call(before,key),!!change.after && Object.prototype.hasOwnProperty.call(after,key),key,true);
+  });
+};
+workbench.comparisonFieldText = function(node) {
+  return node.label+': '+(node.note || workbench.comparisonValue(node.key,node.before,node.hasBefore)+' → '+workbench.comparisonValue(node.key,node.after,node.hasAfter));
+};
+workbench.comparisonRows = function(change,expanded) {
+  var rows=[];
+  function visit(node,depth) {rows.push(Object.assign({},node,{depth:depth}));if(expanded[node.path])node.children.forEach(function(child){visit(child,depth+1);});}
+  workbench.comparisonFields(change).forEach(function(node){visit(node,0);});return rows;
+};
+workbench.comparisonTotals = function(result) {
+  var counts={added:0,removed:0,changed:0};
+  Object.keys(result.summary || {}).forEach(function(kind){if(result.kind==='all' || result.kind===kind)Object.keys(counts).forEach(function(key){counts[key]+=result.summary[kind][key] || 0;});});return counts;
+};
+workbench.comparisonMatches = function(change,filters) {return !filters.length || filters.indexOf(change.change)>=0;};
+// Allowlisted decoded paths only. Attribute names are lowercased by xmlTree in
+// the engine. Descriptor descendants never inherit a table field's semantics.
+workbench.referenceRules = {
+  PAT:{ids:[0x00],paths:{'native/PAT/service/program_map_pid':'pmt','native/PAT/network_pid':'nit',
+    'application/fields/programs/*/pmt_pid':'pmt','application/fields/programs/*/service_id':'network-program'}},
+  PMT:{ids:[0x02],paths:{'native/PMT/pcr_pid':'pid','native/PMT/component/elementary_pid':'pid',
+    'application/fields/pcr_pid':'pid','application/fields/streams/*/pid':'pid'}},
+  SDT:{ids:[0x42,0x46],paths:{'native/SDT/service/service_id':'service','native/SDT/transport_stream_id':'transport',
+    'native/SDT/original_network_id':'transport','application/fields/transport_stream_id':'transport','application/fields/original_network_id':'transport'}},
+  EIT:{ids:[0x4e,0x4f,0x50,0x51,0x52,0x53,0x54,0x55,0x56,0x57,0x58,0x59,0x5a,0x5b,0x5c,0x5d,0x5e,0x5f,
+    0x60,0x61,0x62,0x63,0x64,0x65,0x66,0x67,0x68,0x69,0x6a,0x6b,0x6c,0x6d,0x6e,0x6f],paths:{
+    'native/EIT/service_id':'service','native/EIT/transport_stream_id':'transport','native/EIT/original_network_id':'transport'}},
+  CAT:{ids:[0x01],paths:{'native/CAT/CA_descriptor/ca_pid':'ca'}}
+};
+workbench.referenceNumber = function(value) {
+  if(typeof value!=='number' && (typeof value!=='string' || !/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value)))return null;
+  return Number.isSafeInteger(Number(value)) && Number(value)>=0 ? Number(value) : null;
+};
+workbench.resolveReference = function(field, detail, state) {
+  if(!field || !detail || !state || !state.complete || detail.valid!==true || detail.current!==true ||
+    detail.analysis_revision!==state.revision || state.selected_packet!=null && detail.native_table_at_packet!==state.selected_packet)return null;
+  var rule=Object.prototype.hasOwnProperty.call(workbench.referenceRules,detail.name)?workbench.referenceRules[detail.name]:null,path=String(field.path || '').replace(/\/\d+(?=\/|$)/g,'/*');
+  if(!rule || rule.ids.indexOf(detail.table_id)<0 || !Object.prototype.hasOwnProperty.call(rule.paths,path))return null;
+  var kind=rule.paths[path],number=workbench.referenceNumber(field.value),attrs=field.attributes || {},root=field.root || {},sid;
+  if(number===null)return null;
+  var selected={};
+  (state.table_groups || []).forEach(function(g){(g.selected_section_ids || []).forEach(function(id){selected[id]=true;});});
+  if(!selected[detail.id])return null;
+  var tables=(state.tables || []).filter(function(r){return selected[r.id] && r.valid===true && r.current===true && (!r.crc || r.crc.status!=='invalid');});
+  function identifier(n) {return workbench.hex(n,4).toUpperCase().replace('0X','0x')+' ('+n+')';}
+  function target(rows, suffix) {
+    if(!rows.length)return null;
+    var first=rows[0];
+    // Multiple sections of one identity are navigable; conflicting objects are not.
+    if(rows.some(function(r){return r.pid!==first.pid || r.table_id!==first.table_id || r.extension!==first.extension || r.version!==first.version;}))return null;
+    first=rows.slice().sort(workbench.sort)[0];
+    return {kind:'section',id:first.id,sid:-1,pid:first.pid,name:first.name,table_id:first.table_id,
+      label:'Go to '+first.name+' · PID '+identifier(first.pid)+(suffix || ''),
+      help:'PID: Packet Identifier · '+({PMT:'PMT: Program Map Table',NIT:'NIT: Network Information Table',SDT:'SDT: Service Description Table'}[first.name] || 'TID: Table Identifier '+workbench.hex(first.table_id,2))};
+  }
+  function pid(n) {return n!==null && n>=0x0010 && n<0x1fff;}
+  if(kind==='pmt') {
+    sid=workbench.referenceNumber(attrs.service_id);
+    if(sid===null || sid>=0xffff || !pid(number))return null;
+    return sid===0 ? target(tables.filter(function(r){return r.pid===number && r.table_id===0x40 && r.name==='NIT';})) :
+      target(tables.filter(function(r){return r.pid===number && r.table_id===0x02 && r.name==='PMT' && r.extension===sid;}));
+  }
+  if(kind==='nit' || kind==='network-program') {
+    if(kind==='network-program') {if(number!==0)return null;number=workbench.referenceNumber(attrs.pmt_pid);}
+    return pid(number)?target(tables.filter(function(r){return r.pid===number && r.table_id===0x40 && r.name==='NIT';})):null;
+  }
+  if(kind==='pid' || kind==='ca') {
+    if(!pid(number))return null;
+    if(kind==='ca' && !(detail.descriptors || []).some(function(d){return d.tag===0x09 && d.native_decoded===true && d.decode_status==='decoded' &&
+      !d.malformed && !d.extension && d.native && d.native.name==='CA_descriptor' && workbench.referenceNumber((d.native.attributes || {}).ca_pid)===number;}))return null;
+    return target(tables.filter(function(r){return r.pid===number;}));
+  }
+  var tsid=workbench.referenceNumber(root.transport_stream_id),onid=workbench.referenceNumber(root.original_network_id);
+  if(tsid===null || onid===null || !tsid || tsid>=0xffff || !onid || onid>=0xffff)return null;
+  if(kind==='transport' && number!==(path.endsWith('/transport_stream_id')?tsid:onid))return null;
+  var services=(state.services || []).filter(function(s){return s.ts_id===tsid && s.onid===onid && (kind!=='service' || s.id===number) && tables.some(function(r){return r.id===s.source_id;});});
+  if(kind==='service') {
+    if(!number || number>=0xffff || services.length!==1)return null;
+    var service=services[0];
+    return {kind:'service',id:service.source_id,sid:service.id,key:service.key,pid:tables.find(function(r){return r.id===service.source_id;}).pid,
+      label:'Go to Service · SID '+identifier(service.id)+' · TSID '+identifier(tsid)+' · ONID '+identifier(onid),
+      help:'SID: Service Identifier · TSID: Transport Stream Identifier · ONID: Original Network Identifier'+(pid(service.pmt_pid)?' · PMT: Program Map Table, PID '+identifier(service.pmt_pid):'')};
+  }
+  return target(tables.filter(function(r){return services.some(function(s){return s.source_id===r.id;});}),' · TSID '+identifier(tsid)+' · ONID '+identifier(onid));
+};
+workbench.objectNode = function(id, label, value, context) {
+  var next=context?Object.assign({},context,{path:context.path+'/'+id}):null;
   if(value !== null && typeof value === 'object') {
     var list=Array.isArray(value) || (Number.isInteger(value.length) && typeof value.forEach==='function');
-    return {id:id,label:label,value:list?value.length+' entries':'',children:Object.keys(value).map(function(k) {return workbench.objectNode(k,list?'['+k+']':k,value[k]);})};
+    return {id:id,label:label,value:list?value.length+' entries':'',children:Object.keys(value).map(function(k) {return workbench.objectNode(k,list?'['+k+']':k,value[k],next?Object.assign({},next,{attributes:value}):null);})};
   }
-  return {id:id,label:label,value:workbench.value(label,value),kind:typeof value};
+  return {id:id,label:label,value:workbench.value(label,value),kind:typeof value,reference:next?workbench.resolveReference(Object.assign({},next,{value:value}),context.detail,context.state):null};
 };
-workbench.sdkNode = function(node, sid) {
+workbench.sdkNode = function(node, sid, context) {
+  var next=context?Object.assign({},context,{path:context.path+'/'+node.name,root:context.root || node.attributes}):null;
   var children=[];
-  var attributes=Object.keys(node.attributes || {}).map(function(k) {var v=node.attributes[k];return {id:k,label:k,value:String(v),kind:/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(String(v))?'number':'string'};});
+  var attributes=Object.keys(node.attributes || {}).map(function(k) {var v=node.attributes[k];return {id:k,label:k,value:String(v),kind:/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(String(v))?'number':'string',reference:next && !(node.attribute_case_collisions || []).length?workbench.resolveReference(Object.assign({},next,{path:next.path+'/'+k,value:v,attributes:node.attributes}),context.detail,context.state):null};});
   if(attributes.length) children.push({id:'attributes',label:'Attributes',children:attributes});
   (node.children || []).forEach(function(child,i) {
     if(sid>=0 && child.name==='service' && Number((child.attributes || {}).service_id)!==sid) return;
-    var n=workbench.sdkNode(child,sid);n.id='child'+i;children.push(n);
+    var n=workbench.sdkNode(child,sid,next);n.id='child'+i;children.push(n);
   });
   if(node.text) children.push({id:'text',label:'Text',value:node.text,kind:'string'});
   return {id:'table',label:node.name,kind:'native',children:children};
 };
-workbench.descriptorNode = function(d) {
+workbench.descriptorNode = function(d, context) {
   var meta=Object.assign({},d);delete meta.raw;delete meta.native;delete meta.fields;delete meta.extension;
   meta.descriptor_tag=meta.tag;delete meta.tag;
   var children=[workbench.objectNode('meta','Descriptor header',meta)];
   if(Object.keys(d.fields || {}).length) children.push(workbench.objectNode('fields','Application decoded fields',d.fields));
-  if(d.native) {var n=workbench.sdkNode(d.native,-1);n.id='native';children.push(n);}
+  if(d.native) {var n=workbench.sdkNode(d.native,-1,context && d.tag===0x09 && d.native_decoded===true && d.decode_status==='decoded' && !d.extension && !d.malformed?Object.assign({},context,{path:'native/'+context.detail.name}):null);n.id='native';children.push(n);}
   if(d.extension) children.push(workbench.objectNode('extension','Extension',d.extension));
   children.push({id:'raw',label:'Raw bytes',value:d.raw || '',kind:'string'});
   return {id:String(d.offset),label:(d.native_decoded || d.extension?'◆ ':'? ')+(d.name || 'opaque_descriptor')+' · '+workbench.hex(d.tag,2),tone:d.malformed || (d.decode_status && d.decode_status!=='decoded')?'bad':d.extension?'private':'',value:d.length+' B @ '+d.offset,children:children};
 };
-workbench.structure = function(detail, scope, sid) {
+workbench.structure = function(detail, scope, sid, state) {
+  var context={detail:detail,state:state,path:'native'};
   var header={};
   ['pid','table_id','extension','version','current','section','last_section','versioning_supported','header_semantics','bytes','valid','crc','detected_standards'].forEach(function(k) {if(detail[k]!==undefined) header[k]=detail[k];});
   var children=[workbench.objectNode('header','Section header',header)];
   var sdk=scope==='section'?detail.section_native_table:(detail.merged || {}).native_table;
-  children.push({id:'native',label:(detail.application_decoder?'Application decoded structure':'TSDuck decoded structure')+' · '+(scope==='section'?'selected section':'merged table'),value:sdk?(detail.application_decoder?'Application evidence':'SDK evidence'):scope==='section'?'No standalone SDK structure; section-local display in Decoded':'No complete selected generation; no merged decode',children:sdk?[workbench.sdkNode(sdk,sid)]:[]});
+  children.push({id:'native',label:(detail.application_decoder?'Application decoded structure':'TSDuck decoded structure')+' · '+(scope==='section'?'selected section':'merged table'),value:sdk?(detail.application_decoder?'Application evidence':'SDK evidence'):scope==='section'?'No standalone SDK structure; section-local display in Decoded':'No complete selected generation; no merged decode',children:sdk && sdk.name===detail.name?[workbench.sdkNode(sdk,sid,context)]:sdk?[workbench.sdkNode(sdk,sid)]:[]});
   if(scope==='merged' && (detail.native_table_sources || []).length) children.push(workbench.objectNode('assembly',detail.merged && detail.merged.complete?'Merged table source sections':'Candidate sections · no completed merge',detail.native_table_sources));
-  children.push(workbench.objectNode('fields','Application decoded fields',detail.fields || {}));
+  children.push(workbench.objectNode('fields','Application decoded fields',detail.fields || {},{detail:detail,state:state,path:'application',root:detail.fields || {}}));
   var services=(detail.services || []).filter(function(s){return sid<0 || s.id===sid;});
-  if(services.length) children.push({id:'services',label:'Services',children:services.map(function(s) {return {id:String(s.id),label:s.name || 'Service',value:'SID '+workbench.hex(s.id),children:[workbench.objectNode('fields','Service fields',s),{id:'descriptors',label:'Descriptors',children:(detail.descriptors || []).filter(function(d){return d.service_id===s.id;}).map(workbench.descriptorNode)}]};})});
+  if(services.length) children.push({id:'services',label:'Services',children:services.map(function(s) {return {id:String(s.id),label:s.name || 'Service',value:'SID '+workbench.hex(s.id),children:[workbench.objectNode('fields','Service fields',s),{id:'descriptors',label:'Descriptors',children:(detail.descriptors || []).filter(function(d){return d.service_id===s.id;}).map(function(d){return workbench.descriptorNode(d);})}]};})});
   if((detail.events || []).length) children.push(workbench.objectNode('events','Events',detail.events));
   var descriptors=(detail.descriptors || []).filter(function(d){return !(detail.services || []).some(function(s){return s.id===d.service_id;});});
-  if(descriptors.length) children.push({id:'descriptors',label:(detail.events || []).length?'Section descriptors (event ownership unavailable)':'Descriptors',children:descriptors.map(workbench.descriptorNode)});
+  if(descriptors.length) children.push({id:'descriptors',label:(detail.events || []).length?'Section descriptors (event ownership unavailable)':'Descriptors',children:descriptors.map(function(d){return workbench.descriptorNode(d,context);})});
   if(detail.distribution) children.push(workbench.objectNode('arrivals','Arrival distribution · packet positions',detail.distribution));
   if((detail.descriptors || []).length) children.push(workbench.objectNode('audit','Descriptor decode audit · selected section',{
     scope:'Application-indexed descriptor loops; native-only loops may contain additional descriptors',

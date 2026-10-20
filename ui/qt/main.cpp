@@ -27,6 +27,7 @@
 #include <QHash>
 #include <QSet>
 #include <QSettings>
+#include <QStringList>
 #include <QStandardPaths>
 #include <QProcessEnvironment>
 #include <cmath>
@@ -342,6 +343,8 @@ public:
         Q_UNUSED(light); Q_UNUSED(caption); Q_UNUSED(text);
 #endif
     }
+    Q_INVOKABLE QStringList loadRecentFiles(){return layoutSettings()->value("workbenchRecentFiles").toStringList().mid(0,10);}
+    Q_INVOKABLE bool saveRecentFiles(QStringList paths){auto settings=layoutSettings();settings->setValue("workbenchRecentFiles",paths.mid(0,10));settings->sync();return settings->status()==QSettings::NoError;}
     Q_INVOKABLE QString loadTheme(){return layoutSettings()->value("workbenchTheme","dark").toString();}
     Q_INVOKABLE void saveTheme(QString theme){auto settings=layoutSettings(); settings->setValue("workbenchTheme",theme=="light"?"light":"dark");settings->sync();}
     Q_INVOKABLE QVariantMap loadLayout(){

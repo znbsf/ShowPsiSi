@@ -138,7 +138,8 @@ function categoryBadge(row) {
 }
 const isBadCrc = (row) => row.crc?.status === "invalid";
 let allTableHistory = false, historyIdentity = "";
-let showBadCrc = false, evidenceScope = "merged", groupedTables = true, sectionGroupOpen = false;
+let showBadCrc = false, evidenceScope = "merged", groupedTables = true;
+let inspectorDetails = workbench.inspectorDisclosure();
 const openTableGroups = new Set();
 function syntaxXml(xml) {
   // Tokenize original text, then escape each token. Never interpret SDK XML as HTML.
@@ -149,19 +150,19 @@ function syntaxXml(xml) {
       i % 2 ? `<span class="xml-string">${esc(token)}</span>` : esc(token).replace(/([\w:.-]+)(=)/g, '<span class="xml-attribute">$1</span>$2')).join("") + '</span>';
   }).join("");
 }
-function arrivalAxis(first, last, timing = data.timing) {
+function arrivalAxis(first, last, timing = data.timing, timeline = false) {
   const scale = Number(timing?.seconds_per_packet);
   const timed = scale > 0 && timing?.basis === "user supplied bitrate";
   return `<div class="arrival-axis" aria-label="${timed ? 'Estimated seconds from supplied bitrate, not PCR' : 'Packet positions'}">${[0, .25, .5, .75, 1].map(f => {
     const packet = Math.round(first + (last-first)*f);
     return `<span>${timed ? (packet*scale).toFixed(3)+' s' : '#'+num(packet)}</span>`;
-  }).join('')}</div><div class="axis-basis">${timed ? 'Estimated elapsed seconds · user supplied 188-byte TS bitrate · not PCR time' : 'Zero-based packet positions · no measured time available'}</div>`;
+  }).join('')}</div><div class="axis-basis" ${!timed && timeline ? 'title="No PCR/TDT clock is used; positions are packet indices."' : ''}>${timed ? 'Estimated elapsed seconds · user supplied 188-byte TS bitrate · not PCR time' : timeline ? 'Axis: packet index' : 'Zero-based packet positions · no measured time available'}</div>`;
 }
 function distributionPanel(row) {
   const d = row.distribution;
   if (!d) return '';
   const bins = d.bins || [], max = Math.max(1, ...bins.map(b => b.count));
-  return `<details class="arrival"><summary>Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</summary><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</details>`;
+  return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
 let data = {},
@@ -187,6 +188,8 @@ let selected = "",
   cancelling = false,
   activeAnalyze = null;
 const recentResponses = [];
+const messages = [];
+let messageTimer = null, activeWarning = null;
 const frontendErrors = [];
 function recordFrontendError(error) {
   frontendErrors.push({at:new Date().toISOString(),message:String(error?.stack || error).slice(0,2048)});
@@ -196,7 +199,8 @@ window.addEventListener("error", event=>recordFrontendError(event.error || event
 window.addEventListener("unhandledrejection", event=>recordFrontendError(event.reason));
 let aggregateDiagnostic = null;
 let backendFailure = "";
-let comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: 0 };
+let completedScanOptions = null;
+let comparison = { from: null, to: null, kind: "all", filters: [], result: null, error: "", loading: false, epoch: 0 };
 let savedWorkspace = null, comparisonEvidence = "", inspectionEvidence = null;
 let firstPaint = false,
   completePaint = false,
@@ -259,11 +263,47 @@ function selectTopology(id,remember=true) {
   renderList();renderInspector();
 }
 function topologyBack() {
+  if(topology.history.at(-1)?.kind==='selection') {selectionBack();return;}
   if(topology.revealed) {topology.revealed=false;tab='Topology';search=topology.search;$('#search').value=search;render();$('#list').scrollTop=topology.scroll;$('#topology-show-table')?.focus({preventScroll:true});return;}
   if(topology.active) {const ref=topology.active,node=topologyNode(),index=node?workbench.topologyEvidence(node,topology.snapshot.edges).findIndex(item=>item.ref===ref):-1;++inspectEpoch;loadingDetail=false;topology.active=null;topology.resolution=null;renderInspector();if(index>=0)$('#inspector [data-topology-source="'+index+'"]')?.focus({preventScroll:true});return;}
   const previous=topology.history.pop();
   if(previous) {Object.assign(topology,{selected:previous.selected,focused:previous.focused,active:previous.active,resolution:previous.resolution,expanded:previous.expanded,limits:previous.limits,search:previous.search,family:previous.family});search=topology.search;$('#search').value=search;restoreInspectionState(previous.inspection);renderList();renderInspector();$('#list').scrollTop=previous.scroll;}
   else if(topology.origin==='Changes') {changeTab('Changes');render();}
+}
+// Reference selections share the existing navigation stack and Alt+Left route.
+function selectionBack() {
+  if(busy || loadingDetail || backendFailure)return;
+  const saved=topology.history.pop();if(!saved || saved.kind!=='selection')return;
+  if(saved.inspection.analysisRevision!==data.revision || saved.inspection.workspacePacket!==workspaceCutoff())return;
+  ({tab,filter,pidFilter,search,page,groupedTables,showBadCrc,explorerFocusKey,historyPage,historyIdentity}=saved);
+  Object.assign(topology,saved.topology);
+  savedWorkspace=saved.workspace;protocolResolution=saved.protocolResolution;
+  restoreInspectionState(saved.inspection);$('#search').value=search;render();
+  $('#list').scrollTop=saved.listScroll;$('#inspector').scrollTop=saved.inspectorScroll;
+  const row=[...$('#tree-area')?.querySelectorAll('[role="treeitem"]') || []].find(el=>el.dataset.nodePath===saved.path);
+  if(row)focusTreeItem(row);else if(!saved.path)$('#list [tabindex="0"]')?.focus({preventScroll:true});if($('#tree-area'))$('#tree-area').scrollTop=saved.treeScroll;
+}
+async function jumpReference(target,path) {
+  if(!target || busy || loadingDetail || backendFailure)return;
+  const saved={kind:'selection',inspection:inspectionState(),tab,filter,pidFilter,search,page,groupedTables,showBadCrc,explorerFocusKey,historyPage,historyIdentity,
+    workspace:savedWorkspace,protocolResolution,protocolDepth:protocolSourceHistory.length,
+    topology:{active:topology.active,resolution:topology.resolution,revealed:topology.revealed,sourceWorkspace:topology.sourceWorkspace},
+    listScroll:$('#list').scrollTop,inspectorScroll:$('#inspector').scrollTop,treeScroll:$('#tree-area')?.scrollTop || 0,path};
+  changeTab(target.kind==='service'?'Services':'Tables');
+  topology.history.push(saved);if(topology.history.length>100)topology.history.shift();
+  topology.active=null;topology.resolution=null;topology.revealed=false;
+  search='';$('#search').value='';page=0;view='tree';evidenceScope='section';
+  let key=target.id;
+  if(target.kind==='service') {
+    const service=data.services.find(s=>s.id===target.sid && s.source_id===target.id && s.key===target.key);
+    key=rowIdentity(service);page=Math.max(0,Math.floor(recordRows().findIndex(s=>rowIdentity(s)===key)/PAGE_SIZE));
+  } else {
+    selectExplorer({pid:target.pid,name:target.name});groupedTables=false;
+    if(data.tables?.find(row=>row.id===target.id)?.crc?.status==='invalid')showBadCrc=true;
+    page=Math.max(0,Math.floor(recordRows().findIndex(r=>r.id===target.id)/PAGE_SIZE));
+  }
+  await inspect(target.id,target.sid,key);
+  render();$('#tree-area [role="treeitem"][tabindex="0"]')?.focus({preventScroll:true});
 }
 async function inspectTopologyEvidence(ref) {
   if(busy || backendFailure || topology.stale || !topology.snapshot)return;
@@ -373,6 +413,33 @@ function openComparisonTopology(side,label) {
 }
 
 const PAGE_SIZE = 100;
+const recordTabs = ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"];
+const commandTable = [
+  {id:"analyze",description:"Analyze",keys:"Ctrl Enter",reason:()=>paletteBackendReason() || (!$("#source").value.trim()?"Choose a source first":""),run:()=>$("#scan").click()},
+  {id:"open",description:"Open…",keys:"Ctrl O",reason:()=>paletteBackendReason(),run:()=>$("#browse").click()},
+  {id:"export",description:"Export…",keys:"",reason:()=>!data.complete?"Analyze a source before exporting":paletteBackendReason() || editBlockReason(),run:()=>$("#edit")?.click()},
+  {id:"compare",description:"Compare snapshots",keys:"",reason:()=>paletteBackendReason() || (!data.complete?"Analyze a source before comparing snapshots":""),run:()=>$("#compare-snapshots")?.click()},
+  {id:"latest",description:"Latest state",keys:"",reason:()=>paletteBackendReason() || (!data.complete?"Analyze a source to view its latest state":""),run:()=>snapshot(-1)},
+  {id:"theme",description:"Toggle theme",keys:"",run:()=>$("#theme-toggle").click()},
+  {id:"layout",description:"Reset layout",keys:"",run:()=>$("#reset-layout").click()},
+  {id:"help",description:"Shortcut help",keys:"? / Ctrl+/",run:showShortcutHelp},
+  ...recordTabs.map(next=>({id:"tab-"+next.toLowerCase(),description:next,keys:"",run:()=>{$('#tabs [data-tab="'+next+'"]').click();}}))
+];
+const shortcutTable = [
+  {keys:"↑ ↓ Home End",description:"Move focus in lists and trees"},
+  {keys:"Enter / Space",description:"Select the focused item"},
+  {keys:"Ctrl K",description:"Search records"},
+  commandTable.find(row=>row.id==="open"),
+  commandTable.find(row=>row.id==="analyze"),
+  {keys:"Ctrl+.",description:"Cancel active scan"},
+  {keys:"F6 / Shift+F6",description:"Next / previous region"},
+  {keys:"Alt ←",description:"Back"},
+  {keys:"Ctrl+Enter (Structure)",description:"Go to the focused field's reference"},
+  {keys:"← → on divider",description:"Resize focused pane"},
+  commandTable.find(row=>row.id==="help"),
+  {keys:"Esc",description:"Close shortcut help"}
+];
+const shortcutRows = () => shortcutTable.map(row => `<div class="shortcut-row"><kbd>${esc(row.keys)}</kbd><span>${esc(row.description)}</span></div>`).join("");
 const native = window.__TAURI__;
 const invoke = (...args) =>
   native?.core?.invoke
@@ -383,19 +450,134 @@ const invoke = (...args) =>
         ),
       );
 $("#app").innerHTML = `
-<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><button class="btn quiet" id="reset-layout" title="Restore default pane widths">Reset layout</button><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></header>
-<div class="sourcebar"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional SDK charset for the next scan, e.g. ISO-8859-15 or UTF-8. Explicit DVB selectors take precedence."><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored PIDs, decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored PIDs, decimal or hexadecimal, separated by commas"><button class="btn" id="browse">Open file…</button><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Stop the active analysis; the source file stays unchanged">Cancel</button></div>
+<header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><span class="toolbar-group" role="group" aria-label="View"><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="reset-layout" title="Restore default pane widths. Focus a divider and use arrow keys to resize; Alt+Left navigates back.">Reset layout</button></span><span class="toolbar-group tertiary" role="group" aria-label="Help and diagnostics"><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api" title="Show the local JSONL agent API description">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></span></header>
+<div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button><div class="recent-files"><button class="btn" id="recent" aria-label="Recent transport streams" aria-haspopup="menu" aria-expanded="false" aria-controls="recent-menu" title="Choose a recently analyzed source without starting analysis">Recent ▾</button><div id="recent-menu" role="menu" aria-label="Recent transport streams" tabindex="-1" hidden></div></div></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
 <div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
-<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><div class="sidebar-help">↑ ↓ Home End <span>Move focus</span><br>Enter / Space <span>Select</span><br>Ctrl / ⌘ K <span>Search records</span></div></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search services, IDs, providers…" aria-label="Search records"><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector"></aside></main>
+<div id="error-banner" role="region" aria-label="Error message" hidden><span id="error-message" tabindex="0" aria-label="Error details"></span><button class="btn small" id="dismiss-error" aria-label="Dismiss error message">Dismiss</button></div>
+<main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary title="Show shortcut help with ? or Ctrl+/">Keyboard shortcuts</summary>${shortcutRows()}</details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search records · &gt; commands · # PID/SID" aria-label="Search records" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="palette-list" title="Search records · &gt; commands · # PID: Packet Identifier / SID: Service Identifier"><div id="command-palette" hidden><div id="palette-list" role="listbox" aria-label="Commands and identifier targets"></div><p id="palette-empty" class="muted"></p></div><span id="palette-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
 <section class="timeline" aria-label="Section occurrence history" id="timeline"></section>
-<footer><span class="status-dot" id="status-dot"></span><span id="notice" role="status" aria-live="polite">Open a stream to begin</span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span></footer>
+<footer><span class="status-dot" id="status-dot" aria-hidden="true"></span><span id="notice" role="status" aria-live="polite" aria-atomic="true">Open a stream to begin</span><span id="status-warning" hidden><span id="warning-message"></span><button class="btn small" id="dismiss-warning" aria-label="Dismiss warning message">Dismiss</button></span><span id="snapshot-state">LOCAL · SOURCE READ-ONLY</span><button class="btn small" id="messages" aria-label="Messages" aria-haspopup="dialog" aria-controls="messages-dialog" aria-expanded="false">Messages</button></footer>
+<dialog id="shortcuts-dialog" aria-labelledby="shortcuts-title"><h2 id="shortcuts-title">Keyboard shortcuts</h2><div class="shortcut-list">${shortcutRows()}</div><div class="actions"><button class="btn" id="close-shortcuts" aria-label="Close shortcut help">Close</button></div></dialog>
+<dialog id="messages-dialog" aria-labelledby="messages-title"><h2 id="messages-title">Messages</h2><p id="messages-empty">No messages yet.</p><ol id="message-list" tabindex="0" aria-label="Last 50 messages, newest first"></ol><div class="actions"><button class="btn" id="close-messages" aria-label="Close message history">Close</button></div></dialog>
 <dialog id="edit-dialog" aria-labelledby="edit-title"><h2 id="edit-title">Rename service</h2><p>Preview an SDT edit. Export creates a new SI-only TS or raw-section BIN and manifest. TS has no media or PCR; BIN needs its adjacent manifest for PID and source evidence.</p><label for="edit-service">Service</label><select id="edit-service"></select><label for="rename">New service name</label><input id="rename"><button class="btn primary" id="preview">Preview change</button><p id="diff" role="status"></p><label for="export-format">Export format</label><select id="export-format"><option value="ts">TS · SI-only transport stream (.ts)</option><option value="bin">BIN · raw SI sections (.bin)</option></select><div class="actions"><button class="btn" id="export" disabled>Save SI-only TS + manifest…</button><button class="btn" id="close-edit">Close</button></div></dialog>
 <dialog id="about-dialog" aria-labelledby="about-title"><h2 id="about-title">About ShowPsiSi</h2><p>Qt and Tauri workbenches share the C++ / TSDuck signal engine.</p><p>Windows installer updates are available in the Qt edition; this frontend opens the official release page.</p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi" target="_blank" rel="noopener noreferrer">Official source repository</a></p><p><a data-project-link href="https://github.com/znbsf/ShowPsiSi/releases" target="_blank" rel="noopener noreferrer">Official releases and downloads</a></p><p id="about-feedback" role="status"></p><button class="btn" id="close-about">Close</button></dialog>
 <dialog id="api-dialog" aria-labelledby="api-title"><h2 id="api-title">Native agent API</h2><pre id="api-text"></pre><button class="btn" id="close-api">Close</button></dialog>`;
-const dvbiWorkspace=createDvbiWorkspace({call,invoke,status:()=>({busy:busy || exportPending,error:backendFailure}),changed:()=>{if(!dvbiWorkspace.getState().active)applyLayout();}});
+let lastDvbiMessage = "";
+const dvbiWorkspace=createDvbiWorkspace({call,invoke,status:()=>({busy:busy || exportPending,error:backendFailure}),changed:()=>{
+  const state=dvbiWorkspace.getState(), error=state.error || state.inspectError;
+  const text=error || (state.importing ? "Loading local document…" : state.loading ? "Loading document objects…" : state.metadata ? "Local document imported · original file unchanged" : "Choose a local XML document");
+  if(state.active && text!==lastDvbiMessage){lastDvbiMessage=text;notice(text,error ? "error" : "info");}
+  if(!state.active)applyLayout();
+}});
 $('#input-kind').onchange=e=>dvbiWorkspace.activate(e.target.value==='dvbi');
+const RECENT_FILES_KEY = "showpsisi.workbench.recent.v1";
+function recentPathKey(path) {
+  const key=path.replace(/\\/g,"/");
+  return /^(?:[a-z]:\/|\/\/)/i.test(key) ? key.toLowerCase() : key;
+}
+function normalizeRecentFiles(paths) {
+  const seen=new Set();
+  return (Array.isArray(paths)?paths:[]).filter(path=>typeof path==="string" && path.trim()).map(path=>path.trim()).filter(path=>{
+    const key=recentPathKey(path);if(seen.has(key))return false;seen.add(key);return true;
+  }).slice(0,10);
+}
+let recentFiles=[];
+try {recentFiles=normalizeRecentFiles(JSON.parse(localStorage.getItem(RECENT_FILES_KEY)));} catch (_) {}
+function saveRecentFiles() {
+  try {localStorage.setItem(RECENT_FILES_KEY,JSON.stringify(recentFiles));}
+  catch (_) {notice("Recent files saved for this session only.","warning");}
+}
+function renderRecentFiles() {
+  $("#recent-menu").innerHTML=recentFiles.map((path,index)=>`<button type="button" role="menuitem" tabindex="-1" data-recent="${index}" title="${esc(path)}" aria-label="${esc(path)}">${esc(path.split(/[\\/]/).pop())}</button>`).join("") +
+    (recentFiles.length?'':'<span class="recent-empty">No recent files</span>') + `<button type="button" role="menuitem" tabindex="-1" id="clear-recent" aria-label="Clear recent files" ${recentFiles.length?'':'disabled'}>Clear recent</button>`;
+}
+function closeRecentFiles(focus=false) {
+  $("#recent-menu").hidden=true;$("#recent").setAttribute("aria-expanded","false");
+  if(focus)$("#recent").focus();
+}
+function openRecentFiles(last=false) {
+  renderRecentFiles();$("#recent-menu").hidden=false;$("#recent").setAttribute("aria-expanded","true");
+  const items=[...$("#recent-menu").querySelectorAll('button:not(:disabled)')];
+  (items[last?items.length-1:0] || $("#recent-menu")).focus();
+}
+function chooseSource(path) {
+  if(busy || exportPending || backendFailure || dvbiWorkspace.getState().importing || document.querySelector("dialog[open]"))return;
+  $("#input-kind").value="ts";dvbiWorkspace.activate(false);$("#source").value=path;
+  closeRecentFiles();$("#scan").focus();
+}
+$("#recent").onclick=()=>$("#recent-menu").hidden?openRecentFiles():closeRecentFiles(true);
+$("#recent").onkeydown=event=>{if(event.key==='ArrowDown' || event.key==='ArrowUp'){event.preventDefault();openRecentFiles(event.key==='ArrowUp');}};
+$("#recent-menu").onclick=event=>{
+  const item=event.target.closest('button');if(!item || item.disabled)return;
+  if(item.id==='clear-recent'){recentFiles=[];saveRecentFiles();renderRecentFiles();closeRecentFiles(true);}
+  else if(item.dataset.recent!==undefined)chooseSource(recentFiles[Number(item.dataset.recent)]);
+};
+$("#recent-menu").onkeydown=event=>{
+  const items=[...$("#recent-menu").querySelectorAll('button:not(:disabled)')],index=items.indexOf(document.activeElement);
+  if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+    event.preventDefault();event.stopPropagation();
+    const next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowUp'?-1:1)+items.length)%items.length;
+    items[next]?.focus();
+  } else if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeRecentFiles(true);}
+  else if(event.key==='Tab'){event.preventDefault();closeRecentFiles();$(event.shiftKey?'#browse':'#standards').focus();}
+};
+document.addEventListener("pointerdown",event=>{if(!event.target.closest('.recent-files'))closeRecentFiles();});
+document.addEventListener("focusin",event=>{if(!event.target.closest('.recent-files'))closeRecentFiles();});
+renderRecentFiles();
+let shortcutReturnFocus=null, shortcutReturnRecent=null;
+function showShortcutHelp() {
+  if(document.querySelector("dialog[open]"))return;
+  shortcutReturnFocus=document.activeElement;
+  shortcutReturnRecent=$("#recent-menu").contains(shortcutReturnFocus) ? shortcutReturnFocus.dataset.recent ?? shortcutReturnFocus.id : null;
+  closeRecentFiles();$("#shortcuts-dialog").showModal();$("#close-shortcuts").focus();
+}
+$("#close-shortcuts").onclick=()=>$("#shortcuts-dialog").close();
+$("#shortcuts-dialog").addEventListener("keydown",event=>{if(event.key==="Tab"){event.preventDefault();$("#close-shortcuts").focus();}});
+$("#shortcuts-dialog").addEventListener("close",()=>{
+  const previous=shortcutReturnFocus;shortcutReturnFocus=null;
+  if(shortcutReturnRecent!==null){
+    const item=shortcutReturnRecent;shortcutReturnRecent=null;openRecentFiles();
+    (item==="clear-recent"?$("#clear-recent"):$('[data-recent="'+item+'"]'))?.focus();
+  } else if(previous?.isConnected && !previous.disabled)previous.focus({preventScroll:true});
+  else ($("#scan").disabled?$("#messages"):$("#scan")).focus();
+});
+document.addEventListener("keydown",event=>{
+  if(event.isComposing || event.defaultPrevented || document.querySelector("dialog[open]"))return;
+  const textInput=event.target.isContentEditable || event.target.closest?.('textarea,[role="textbox"]') || event.target.matches?.('input') && !['button','checkbox','color','file','hidden','image','radio','range','reset','submit'].includes(event.target.type);
+  const help=event.key==='?' && !event.ctrlKey && !event.metaKey && !event.altKey && !textInput;
+  const chord=(event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key==='/' || event.code==='Slash');
+  if(help || chord){event.preventDefault();event.stopPropagation();showShortcutHelp();}
+},true);
+let nativeFileDrop=false, stopFileDrop=null;
+function acceptDroppedPaths(paths) {
+  if(!Array.isArray(paths) || paths.length!==1){notice("Drop one local file at a time.");return;}
+  const path=paths[0];
+  if(typeof path!=="string" || !/^(?:[a-z]:[\\/]|\\\\|\/)/i.test(path)){notice("The platform did not provide a local file path. Use Open… to choose a source.");return;}
+  chooseSource(path);
+}
+document.addEventListener("dragover",event=>{
+  if(!event.dataTransfer || ![...event.dataTransfer.types].includes('Files'))return;
+  event.preventDefault();event.dataTransfer.dropEffect='copy';
+});
+document.addEventListener("drop",event=>{
+  if(!event.dataTransfer || ![...event.dataTransfer.types].includes('Files'))return;
+  event.preventDefault();
+  const files=[...event.dataTransfer.files];
+  if(env.runtime!=='cloud-browser' && files.length && files.every(file=>typeof file.path==='string' && file.path))acceptDroppedPaths(files.map(file=>file.path));
+  else if(!nativeFileDrop)notice("File drop is supported in the desktop app only. Use Open… or enter a local source path.");
+});
+async function listenForFileDrop() {
+  if(env.runtime==='cloud-browser')return;
+  try {
+    const current=native?.webviewWindow?.getCurrentWebviewWindow?.();
+    if(!current?.onDragDropEvent)return;
+    stopFileDrop=await current.onDragDropEvent(event=>{if(event.payload.type==='drop')acceptDroppedPaths(event.payload.paths);});
+    nativeFileDrop=true;
+  } catch (_) {notice("File drop is unavailable. Use Open… to choose a local source.");}
+}
+window.addEventListener("pagehide",()=>{stopFileDrop?.();stopFileDrop=null;nativeFileDrop=false;});
 let theme = "dark";
 try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
 function applyTheme() {
@@ -410,17 +592,56 @@ $("#theme-toggle").onclick = () => {
   try { localStorage.setItem("showpsisi.theme", theme); } catch (_) {}
   applyTheme();
 };
-function notice(text, error = false) {
-  if (backendFailure) {
-    text = backendFailure;
-    error = true;
-  }
-  $("#notice").textContent = text;
-  $("#notice").title = text;
-  $("#notice").setAttribute("aria-live", error ? "assertive" : "polite");
-  $("#status-dot").classList.toggle("error", error);
-  $("#notice").classList.toggle("error", error);
+function renderMessages() {
+  if (!$("#messages-dialog").open) return;
+  const list = $("#message-list"), scroll = list.scrollTop;
+  $("#messages-empty").hidden = !!messages.length;
+  list.innerHTML = messages.slice().reverse().map(message => `<li><span class="message-level ${message.level}">${message.level}</span><time datetime="${message.at}" title="${message.at}">${esc(new Date(message.at).toLocaleTimeString())}</time><span>${esc(message.text)}</span></li>`).join("");
+  list.scrollTop = scroll;
 }
+function renderWarning() {
+  $("#status-warning").hidden = !activeWarning;
+  if (!activeWarning) return;
+  const text = "⚠ " + activeWarning.text + " ×" + activeWarning.count;
+  $("#warning-message").textContent = $("#notice").textContent === activeWarning.text ? "⚠ ×" + activeWarning.count : text;
+  $("#warning-message").title = text;
+  $("#warning-message").setAttribute("aria-label", text);
+}
+function notice(text, level = "info") {
+  // Retain boolean callers while giving persistent notices an explicit level.
+  level = level === true ? "error" : level === false ? "info" : level;
+  text = String(text || "");
+  if (!text) return;
+  clearTimeout(messageTimer);
+  messages.push({level, at:new Date().toISOString(), text});
+  if (messages.length > 50) messages.shift();
+  if (level === "warning") activeWarning = {text, count:activeWarning?.text === text ? activeWarning.count + 1 : 1};
+  if (level === "error") {
+    activeWarning = null;
+    $("#error-message").textContent = text;
+    $("#error-banner").hidden = false;
+  }
+  const line = $("#notice"), dot = $("#status-dot");
+  line.setAttribute("aria-live", level === "error" ? "assertive" : "polite");
+  line.classList.remove("info-expired");
+  line.classList.toggle("error", level === "error");
+  line.classList.toggle("warning", level === "warning");
+  line.textContent = line.title = text;
+  dot.hidden = false;
+  dot.classList.toggle("error", level === "error");
+  dot.classList.toggle("warning", level === "warning");
+  if (level === "info") messageTimer = setTimeout(() => {line.classList.add("info-expired");dot.hidden = true;}, 4000);
+  renderWarning();
+  renderMessages();
+}
+$("#dismiss-error").onclick = () => {$("#error-banner").hidden = true;if(document.activeElement === $("#dismiss-error"))$("#messages").focus();};
+$("#dismiss-warning").onclick = () => {
+  if($("#notice").textContent===activeWarning?.text){$("#notice").classList.add("info-expired");$("#notice").classList.remove("warning");$("#status-dot").hidden=true;}
+  activeWarning=null;renderWarning();$("#messages").focus();
+};
+$("#messages").onclick = () => {$("#messages-dialog").showModal();$("#messages").setAttribute("aria-expanded", "true");renderMessages();$("#close-messages").focus();};
+$("#close-messages").onclick = () => $("#messages-dialog").close();
+$("#messages-dialog").addEventListener("close", () => {$("#messages").setAttribute("aria-expanded", "false");$("#messages").focus();});
 // Field-scoped validation feedback. The footer live region still carries the
 // announcement; this element keeps the reason next to the control that failed.
 function setExtraPidsError(message) {
@@ -432,11 +653,47 @@ function setExtraPidsError(message) {
   $("#source-feedback").hidden = !message;
 }
 $("#extra-pids").addEventListener("input", () => setExtraPidsError(""));
+function parseExtraPids(text) {
+  return text.trim() ? text.split(",").map(value => {
+    const token = value.trim();
+    if (!/^(0x[0-9a-f]+|[0-9]+)$/i.test(token))
+      throw new Error("Extra PIDs must be decimal or hexadecimal integers, separated by commas.");
+    const pid = Number(token);
+    if (pid > 8191) throw new Error("Extra PIDs must be between 0 and 8191 (0x1FFF).");
+    return pid;
+  }) : [];
+}
+function currentScanOptions() {
+  let pids = null;
+  try { pids = [...new Set(parseExtraPids($("#extra-pids").value))]; } catch (_) {}
+  return {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:pids};
+}
+function updateScanOptions() {
+  const options = currentScanOptions(), toggle = $("#scan-options-toggle"), summary = $("#scan-options-summary");
+  const text = workbench.scanOptionsSummary(options);
+  summary.textContent = text;
+  summary.hidden = !$("#scan-options").hidden || !text;
+  toggle.title = "Default charset and extra packet identifiers (PIDs) for the next scan" + (text ? " · " + text : "");
+  const changed = data.complete && completedScanOptions && workbench.scanOptionsKey(options) !== workbench.scanOptionsKey(completedScanOptions);
+  $("#scan-options-changed").hidden = !changed;
+  if (changed) $("#scan").setAttribute("aria-describedby", "scan-options-changed");
+  else $("#scan").removeAttribute("aria-describedby");
+}
+function setScanOptionsOpen(open) {
+  $("#scan-options").hidden = !open;
+  $("#scan-options-toggle").setAttribute("aria-expanded", String(open));
+  $("#scan-options-arrow").textContent = open ? "▾" : "▸";
+  updateScanOptions();
+}
+$("#scan-options-toggle").onclick = () => setScanOptionsOpen($("#scan-options").hidden);
+$("#standards").addEventListener("change", updateScanOptions);
+$("#default-charset").addEventListener("input", updateScanOptions);
+$("#extra-pids").addEventListener("input", updateScanOptions);
 function disableBackendActions() {
   if (!backendFailure) return;
   document
     .querySelectorAll(
-      "#scan,#cancel-scan,#browse,#api,#source,#standards,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
+      "#scan,#cancel-scan,#browse,#recent,#api,#source,#standards,#default-charset,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
     )
     .forEach((element) => {
       element.disabled = true;
@@ -526,7 +783,7 @@ function resetAnalysisViews() {
   comparisonEvidence = "";
   inspectionEvidence = null;
   if (tab === "Changes") tab = "Services";
-  comparison = { from: null, to: null, kind: "all", result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
+  comparison = { from: null, to: null, kind: "all", filters: [], result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
   ++queryEpoch;
   selectionReset();
   editTarget = null;
@@ -566,30 +823,16 @@ async function scan() {
   }
   let extraPids = [];
   try {
-    extraPids = $("#extra-pids").value.trim()
-      ? $("#extra-pids")
-          .value.split(",")
-          .map((value) => {
-            const token = value.trim();
-            if (!/^(0x[0-9a-f]+|[0-9]+)$/i.test(token))
-              throw new Error(
-                "Extra PIDs must be decimal or hexadecimal integers, separated by commas.",
-              );
-            const pid = Number(token);
-            if (pid > 8191)
-              throw new Error(
-                "Extra PIDs must be between 0 and 8191 (0x1FFF).",
-              );
-            return pid;
-          })
-      : [];
+    extraPids = parseExtraPids($("#extra-pids").value);
   } catch (error) {
+    setScanOptionsOpen(true);
     setExtraPidsError(String(error));
     notice(String(error), true);
     $("#extra-pids").focus();
     return;
   }
   setExtraPidsError("");
+  const options = {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:[...new Set(extraPids)]};
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
@@ -606,29 +849,32 @@ async function scan() {
   notice("Analyzing stream… incremental results appear below");
   let succeeded = false;
   try {
+    recentFiles=normalizeRecentFiles([path,...recentFiles]);saveRecentFiles();closeRecentFiles();renderRecentFiles();
     const operation = call("analyze", {
       path,
-      standards: $("#standards").value,
-      default_charset: $("#default-charset").value.trim(),
-      ...(extraPids.length ? { extra_pids: [...new Set(extraPids)] } : {}),
+      standards: options.standards,
+      default_charset: options.default_charset,
+      ...(options.extra_pids.length ? { extra_pids: options.extra_pids } : {}),
     });
     render();
     const result = await operation;
     if (epoch !== scanEpoch) return;
     data = result;
+    if (result.complete) completedScanOptions = options;
     succeeded = true;
     render();
     notice(
       (cancelling ? "Analysis completed before cancellation took effect · " : "Analysis complete · ") +
         num(data.packets) +
-        " packets · source unchanged",
+        " packets · source unchanged" + (data.demux?.truncated_sections ? " · " + num(data.demux.truncated_sections) + " truncated section(s)" : ""),
+      data.demux?.truncated_sections ? "warning" : "info",
     );
   } catch (error) {
     if (epoch !== scanEpoch) return;
     if (error.code === "analysis_cancelled") {
       resetAnalysisViews();
       data = error.data?.state || { analysis_status: "cancelled", complete: false };
-      notice("Analysis cancelled · source unchanged · ready to analyze again");
+      notice("Analysis cancelled · source unchanged · ready to analyze again", "warning");
     } else {
       resetAnalysisViews();
       data = { source: path, analysis_status: "failed", complete: false };
@@ -848,17 +1094,22 @@ function renderExplorer() {
 }
 function render() {
   dvbiWorkspace?.update();
+  updateScanOptions();
+  const issues = workbench.issueCounts(data.diagnostics || []);
+  const issueLabel = issues.hasSeverity ? issues.errors + " errors · " + issues.warnings + " warnings" + (issues.other ? " · " + issues.other + " other" : "") : issues.total + " issues";
   const stats = [
-    ["SERVICES", num(data.services?.length), "in selected state"],
+    ["SERVICES", num(data.services?.length), "in selected state", "Services"],
     [
       "SECTIONS",
       num(data.observations),
       num(data.tables?.length) + " distinct payloads",
+      "Tables",
     ],
     [
       "ISSUES",
-      num(data.diagnostics?.length),
+      issues.hasSeverity ? `<span class="issue-errors">${num(issues.errors)} errors</span><span class="issue-warnings">${num(issues.warnings)} warnings</span>${issues.other ? `<span class="issue-other">${num(issues.other)} other</span>` : ""}` : num(issues.total),
       num(data.crc_errors) + " CRC failures",
+      "Issues",
     ],
     [
       "SCAN",
@@ -868,12 +1119,17 @@ function render() {
   ];
   $("#stats").innerHTML = stats
     .map(
-      ([label, value, sub]) =>
-        `<div class="stat"><span>${label}</span><strong>${value}</strong><small>${sub}</small></div>`,
+      ([label, value, sub, target]) =>
+        `<${target ? `button type="button" class="stat" data-stat-tab="${target}" aria-label="Show ${target} · ${target === 'Issues' ? issueLabel : value + ' ' + label.toLowerCase()} · ${sub}" title="Show ${target}${target === 'Issues' ? ' · CRC: Cyclic Redundancy Check failures' : ''}"` : 'div class="stat"'}><span>${label}</span><strong${target === 'Issues' ? ' class="issue-counts"' : ''}>${value}</strong><small>${sub}</small></${target ? "button" : "div"}>`,
     )
     .join("");
+  // Stats double as shortcuts to the tab that lists what they count.
+  $("#stats").querySelectorAll("[data-stat-tab]").forEach((el) => {
+    el.onclick = () => [...document.querySelectorAll("#tabs [data-tab]")].find((t) => t.dataset.tab === el.dataset.statTab)?.click();
+  });
   $("#scan").disabled = busy || !native || !!backendFailure;
   $("#browse").disabled = busy || !native || !!backendFailure;
+  $("#recent").disabled = busy || !native || !!backendFailure;
   $("#scan").textContent = busy ? "Analyzing…" : "Analyze";
   $("#cancel-scan").hidden = !busy;
   $("#cancel-scan").disabled = cancelling || activeAnalyze === null || !!backendFailure;
@@ -891,7 +1147,7 @@ function render() {
   renderExplorer();
   $("#extension").innerHTML =
     `<div class="panel-title">DESCRIPTOR EXTENSION</div><strong>${esc(data.extension_id || "No extension reported")}</strong><p>Schema extensions use their declared scope. Native decoding follows the table context; raw evidence is retained.</p>`;
-  $("#tabs").innerHTML = ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
+  $("#tabs").innerHTML = recordTabs
     .map(
       (t) =>
         `<button role="tab" aria-selected="${tab === t}" tabindex="${tab === t ? 0 : -1}" class="${tab === t ? "active" : ""}" data-tab="${t}" ${tip(t)}>${t}${t === "Issues" && data.diagnostics?.length ? ` <span class="tab-count">${num(data.diagnostics.length)}</span>` : ""}</button>`,
@@ -921,16 +1177,7 @@ function render() {
         }
       };
     });
-  $("#search").placeholder =
-    tab === "Services"
-      ? "Search services, providers, SID…"
-      : tab === "Topology"
-        ? "Search loaded objects, IDs, types, states…"
-        : tab === "Tables"
-        ? "Search table, PID, version…"
-        : tab === "EPG"
-          ? "Search programmes, SID, start time…"
-          : "Search issue code or evidence…";
+  $("#search").placeholder = "Search records · > commands · # PID/SID";
   $("#snapshot-state").textContent =
     data.analysis_status === "cancelled"
       ? "CANCELLED · SOURCE UNCHANGED"
@@ -1145,7 +1392,7 @@ function changeTab(next) {
     detailError = "";
     aggregateDiagnostic = null;
     comparisonEvidence = "";
-    if (comparison.from === null && data.complete) {
+    if (comparison.from === null && comparison.to === null && data.complete) {
       comparison.to = data.selected_packet ?? Math.max(0, data.packets - 1);
       comparison.from = data.history?.find((entry) => entry.last_packet < comparison.to)?.last_packet ?? 0;
     }
@@ -1173,6 +1420,9 @@ function invalidateComparison() {
   comparison.loading = false;
   comparison.result = null;
   comparison.error = "";
+  comparison.filters = [];
+  updateComparisonMarkers();
+  if (tab !== "Changes") return;
   ++inspectEpoch;
   detail = {};
   detailError = "";
@@ -1214,17 +1464,23 @@ function renderComparison() {
   $("#run-comparison").onclick = () => runComparison();
   renderComparisonResults();
 }
-function comparisonValue(value) {
-  if (value == null) return "—";
-  return typeof value === "object" ? JSON.stringify(value) : String(value);
+// Keep keys and scalar values literal; containers disclose their field rows.
+function readableValue(value, key = "", present = true) {
+  return workbench.comparisonValue(key, value, present);
+}
+function comparisonDiff(change) {
+  function field(node) {
+    const text = `<span title="${esc(workbench.comparisonHelp(node.key))}">${esc(node.label)}</span>: ${node.note ? esc(node.note) : `${esc(readableValue(node.before, node.key, node.hasBefore))} → ${esc(readableValue(node.after, node.key, node.hasAfter))}`}`;
+    return node.children.length ? `<details class="comparison-field diff-${node.change}"><summary aria-label="${esc(workbench.comparisonFieldText(node))}">${text}</summary><div class="comparison-children">${node.children.map(field).join("")}</div></details>` : `<div class="comparison-field diff-${node.change}">${text}</div>`;
+  }
+  return `<div class="comparison-diff" role="group" aria-label="Field changes from A to B">${workbench.comparisonFields(change).map(field).join("")}</div>`;
 }
 function comparisonSide(side, label, change, index) {
   if (!side) return `<div class="comparison-side absent"><h4>${label}</h4><p>No observed record in this state</p></div>`;
-  const value = side.value;
-  const fields = [...new Set([...(change.changed_fields || []).filter((field) => field !== "payload"), ...(change.kind === "services" ? ["name", "provider", "pmt_pid"] : change.kind === "events" ? ["title", "start", "duration_seconds"] : ["name", "version", "bytes"])])].filter((field) => change.changed_fields?.includes(field) || Object.prototype.hasOwnProperty.call(value, field));
-  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><dl>${fields.map((field) => `<div class="${change.changed_fields?.includes(field) ? "changed-value" : "context-value"}"><dt>${esc(field)}</dt><dd>${esc(Object.prototype.hasOwnProperty.call(value, field) ? fieldValue(field, typeof value[field] === "object" ? comparisonValue(value[field]) : value[field]) : "Not observed in this snapshot")}</dd></div>`).join("")}</dl><div class="comparison-evidence"><span class="meta">Source evidence</span><button class="btn small" data-comparison-topology="${index}:${label[0]}" ${busy || backendFailure?'disabled':''}>Topology at ${label[0]}</button>${side.evidence?.length ? `<button class="btn small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure ? "disabled" : ""} title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button>` : ""}${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="Inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · ${esc(workbench.wireVersionText(evidence))} · ${esc(workbench.wireSectionText(evidence))}</button>`).join("")}</div></div>`;
+  return `<div class="comparison-side"><h4>${label} <span>packet ${num(side.at_packet)}</span></h4><button class="btn primary small" data-use-comparison="${index}:${label[0]}" ${busy || backendFailure || !side.evidence?.length ? "disabled" : ""} aria-label="Use snapshot ${label[0]} at packet ${side.at_packet}" title="Move the workbench to packet ${side.at_packet}; edits and exports will use this cutoff">Use snapshot</button><div class="comparison-evidence" role="group" aria-label="Source actions for snapshot ${label[0]}"><span class="meta">Source</span><button class="btn small" data-comparison-topology="${index}:${label[0]}" ${busy || backendFailure?'disabled':''}>Topology at ${label[0]}</button>${(side.evidence || []).map((evidence, evidenceIndex) => `<button class="btn small" aria-pressed="${selectedKey === "comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex}" data-evidence-key="${esc("comparison:" + side.at_packet + ":" + change.kind + ":" + change.key + ":" + evidenceIndex)}" data-comparison-evidence="${index}:${label[0]}:${evidenceIndex}" ${backendFailure ? "disabled" : ""} title="PID: Packet Identifier · inspect ${esc(evidence.id)} at packet ${side.at_packet}">PID ${hex(evidence.pid)} · ${esc(workbench.wireVersionText(evidence))} · ${esc(workbench.wireSectionText(evidence))}</button>`).join("")}</div></div>`;
 }
 function renderComparisonResults() {
+  updateComparisonMarkers();
   const result = comparison.result;
   $("#prev").disabled = !result || result.offset === 0 || comparison.loading || !!backendFailure;
   $("#next").disabled = !result || result.next_offset == null || comparison.loading || !!backendFailure;
@@ -1235,14 +1491,21 @@ function renderComparisonResults() {
     $("#list").innerHTML = `<div class="empty"><span class="empty-icon">${comparison.error ? "⚠" : "⇄"}</span><h3>${comparison.loading ? "Comparing observed states…" : comparison.error ? "Unable to compare" : "What changed between versions?"}</h3><p>${esc(comparison.error || "Choose A and B from the captured version history or the current snapshot, then compare. Original source bytes remain unchanged.")}</p></div>`;
     return;
   }
-  const totals = Object.values(result.summary).reduce((counts, item) => ({ added: counts.added + item.added, removed: counts.removed + item.removed, changed: counts.changed + item.changed }), { added: 0, removed: 0, changed: 0 });
-  $("#list").innerHTML = `<div class="comparison-summary"><strong>A ${num(result.from_packet)} → B ${num(result.to_packet)}</strong><span>All record types: <span class="ok">${num(totals.added)} added</span> · <span class="bad">${num(totals.removed)} removed</span> · ${num(totals.changed)} changed</span><span class="meta">${result.kind === "all" ? "Showing all kinds" : "Showing " + esc(result.kind)} · ${num(result.total_changes)} changes</span></div>${result.changes.length ? result.changes.map((change, index) => {
+  const totals = workbench.comparisonTotals(result), filters = comparison.filters;
+  const changes = result.changes.map((change, index) => ({change, index})).filter(({change}) => workbench.comparisonMatches(change, filters));
+  $("#list").innerHTML = `<div class="comparison-summary"><strong>A ${num(result.from_packet)} → B ${num(result.to_packet)}</strong><div class="comparison-filters" role="group" aria-label="Filter changes on this page">${[["added", "+"], ["removed", "−"], ["changed", "~"]].map(([kind, sign]) => `<button class="btn small diff-${kind}" data-change-filter="${kind}" aria-pressed="${filters.includes(kind)}" title="Toggle ${kind} changes on this page; no active filters shows all changes">${sign}${num(totals[kind])} ${kind}</button>`).join('<span aria-hidden="true">·</span>')}</div><span class="meta">${result.kind === "all" ? "All record types" : esc(result.kind)} · ${num(result.total_changes)} changes · ${num(changes.length)} shown on this page</span></div>${changes.length ? changes.map(({change, index}) => {
     const identity = change.identity, value = change.after?.value || change.before?.value || {};
     const title = change.kind === "services" ? (value.name || "Unnamed service") + " · SID " + hex(identity.service_id)
       : change.kind === "events" ? (value.title || "Untitled event") + " · event " + hex(identity.event_id)
         : (value.name || "Table") + " · PID " + hex(identity.pid) + " · section " + identity.section;
-    return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${change.changed_fields?.length ? `<p class="changed-fields">Changed: ${change.changed_fields.map(esc).join(", ")}</p>${change.changed_fields.includes("payload") ? '<p class="meta">Raw section payload differs. Open source evidence to inspect its bytes.</p>' : ""}` : ""}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div></article>`;
-  }).join("") : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+    return `<article class="comparison-change"><header><span class="change-badge ${change.change}">${esc(change.change)}</span><span class="meta">${esc(change.kind)}</span><h3>${esc(title)}</h3></header>${comparisonDiff(change)}<div class="comparison-sides">${comparisonSide(change.before, "A · before", change, index)}${comparisonSide(change.after, "B · after", change, index)}</div><details class="comparison-raw"><summary aria-label="Raw comparison record for ${esc(title)}">Raw</summary><pre>${esc(JSON.stringify(change, null, 2))}</pre></details></article>`;
+  }).join("") : filters.length && result.changes.length ? '<div class="empty"><h3>No matching changes on this page</h3><p>Toggle the filters to show all changes, or use Previous / Next to visit another page.</p></div>' : '<div class="empty"><h3>No observed changes</h3><p>The selected record type is unchanged between these cutoffs. Repeated identical sections alone are not changes.</p></div>'}`;
+  $("#list").querySelectorAll("[data-change-filter]").forEach((el) => el.onclick = () => {
+    const kind = el.dataset.changeFilter;
+    comparison.filters = filters.includes(kind) ? filters.filter((item) => item !== kind) : [...filters, kind];
+    renderComparisonResults();
+    $(`[data-change-filter="${kind}"]`).focus();
+  });
   $('#list').querySelectorAll('[data-comparison-topology]').forEach(el=>el.onclick=()=>{const [index,letter]=el.dataset.comparisonTopology.split(':');const change=result.changes[Number(index)];openComparisonTopology(letter==='A'?change.before:change.after,letter);});
   $("#list").querySelectorAll("[data-use-comparison]").forEach((el) => {
     el.onclick = () => {
@@ -1293,6 +1556,7 @@ async function runComparison(offset = 0) {
   } finally {
     if (epoch === comparison.epoch) {
       comparison.loading = false;
+      updateComparisonMarkers();
       if (tab === "Changes") renderComparisonResults();
     }
   }
@@ -1312,7 +1576,7 @@ function fieldValue(key, value) {
   }
   return String(value);
 }
-function sectionTree() { return workbench.structure(detail,evidenceScope,selectedService); }
+function sectionTree() { return workbench.structure(detail,evidenceScope,selectedService,inspectionEvidence && inspectionEvidence.atPacket!==workspaceCutoff()?null:data); }
 function nodeMatches(node, needle) {
   return (
     needle.split(/\s+/).every(term=>(node.label + " " + (node.value ?? "")).toLowerCase().includes(term)) ||
@@ -1336,7 +1600,7 @@ function highlightedTreeText(value) {
   }
   return result + esc(text.slice(start));
 }
-let treeNodesRendered = 0;
+let treeNodesRendered = 0, treeReferences = new Map();
 function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1) {
   const path = parent ? parent + "/" + (node.id ?? index) : node.id;
   const needle = treeSearch.trim().toLowerCase();
@@ -1348,8 +1612,11 @@ function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1
   const accessible = `${located?'data-source-highlight="true" ':''}role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
   const kind = ["number", "string", "boolean"].includes(node.kind) ? node.kind : "meta";
   const label = `<span class="node-label ${node.tone || ""}" title="${esc(fieldHelp[node.label] || node.label)}">${highlightedTreeText(node.label)}</span>${node.value !== undefined ? `<span class="node-value" data-value-kind="${kind}">${highlightedTreeText(node.value)}</span>` : ""}`;
-  if (!node.children)
-    return `<div class="tree-leaf" ${accessible}>${label}</div>`;
+  if (!node.children) {
+    if(node.reference)treeReferences.set(path,node.reference);
+    const jump=node.reference?`<button type="button" class="reference-jump" data-reference-path="${esc(path)}" tabindex="-1" aria-label="${esc(node.reference.label)}" title="${esc(node.reference.label+' · '+node.reference.help+' · Ctrl+Enter')}">→</button>`:'';
+    return `<div class="tree-leaf${jump?' has-reference':''}" ${accessible}>${label}${jump}</div>`;
+  }
   const opened = !!needle || openNodes.has(path);
   return `<div class="tree-node" ${accessible} data-path="${esc(path)}" aria-expanded="${opened}"><div class="tree-row">${label}<span class="node-count">${num(node.children.length)}</span></div><div class="tree-children" role="group" ${opened ? "" : "hidden"}>${!opened ? "" : node.children.length ? node.children.map((child, i) => drawNode(child, path, i, ancestorMatch || (!!needle && selfMatch), level + 1)).join("") : '<div class="tree-empty">No decoded fields</div>'}</div></div>`;
 }
@@ -1378,6 +1645,7 @@ function renderTree() {
   const previousPath = area.querySelector('[tabindex="0"]')?.dataset.nodePath;
   const hadFocus = area.contains(document.activeElement);
   treeNodesRendered = 0;
+  treeReferences = new Map();
   area.innerHTML =
     drawNode(sectionTree()) ||
     '<p class="tree-empty">No matching fields or values.</p>';
@@ -1391,6 +1659,7 @@ function renderTree() {
   function setEntry(target, focus = false) {
     area.querySelectorAll('[role="treeitem"]').forEach((el) => {
       el.tabIndex = el === target ? 0 : -1;
+      const jump=el.querySelector(':scope > .reference-jump');if(jump)jump.tabIndex=el===target?0:-1;
     });
     if (focus) focusTreeItem(target);
   }
@@ -1400,10 +1669,12 @@ function renderTree() {
   // every engine. Replace the listener on rerender instead of accumulating it.
   if (area.treeFocusHandler) area.removeEventListener("focusin", area.treeFocusHandler);
   area.treeFocusHandler = (event) => {
-    if (event.target.matches('[role="treeitem"]')) setEntry(event.target);
+    const row=event.target.closest('[role="treeitem"]');if(row)setEntry(row);
   };
   area.addEventListener("focusin", area.treeFocusHandler);
   area.onclick = (event) => {
+    const jump=event.target.closest('[data-reference-path]');
+    if(jump){jumpReference(treeReferences.get(jump.dataset.referencePath),jump.dataset.referencePath);return;}
     const node = event.target.closest('[role="treeitem"]');
     if (!node || !area.contains(node)) return;
     setEntry(node, true);
@@ -1412,6 +1683,13 @@ function renderTree() {
   };
   let typed = "", typedAt = 0;
   area.onkeydown = (e) => {
+    // Modified arrows belong to workbench Back, never to tree folding.
+    if(e.altKey)return;
+    const row=e.target.closest('[role="treeitem"]');
+    if(e.ctrlKey && !e.metaKey && !e.shiftKey && e.key==='Enter' && row) {
+      e.preventDefault();e.stopPropagation();jumpReference(treeReferences.get(row.dataset.nodePath),row.dataset.nodePath);return;
+    }
+    if(e.target.closest('[data-reference-path]'))return;
     const target = e.target;
     if (e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const items = visibleItems();
@@ -1540,13 +1818,35 @@ function referencePanel() {
 }
 function sectionGroupPanel() {
   const group = (data.table_groups || []).find(g => (g.section_ids || []).includes(detail.id));
-  if (!group) return '';
+  if (!group) return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections ? '' : 'hidden'}><p class="meta">${esc(workbench.wireHeaderText(detail))} · No capture-wide group available at this cutoff.</p></div>`;
   const sources = (data.tables || []).filter(r => group.section_ids.includes(r.id));
   const hidden = sources.filter(isBadCrc).length;
-  if(group.versioning_supported===false)return `<details class="section-group" id="section-group" ${sectionGroupOpen?'open':''}><summary>Exact section evidence · ${esc(group.validity)} · map assembly unsupported</summary><p class="meta">${esc(group.coverage_scope || group.coverage_model || detail.header_semantics)}</p><p class="meta">${esc(workbench.wireHeaderText(group))}</p><select id="section-choice" aria-label="Select original section evidence">${sources.map(r=>`<option value="${esc(r.id)}" ${r.id===detail.id?'selected':''}>${esc(r.name)} · CRC ${esc(r.crc?.status || 'unavailable')} · #${num(r.first_packet)}</option>`).join('')}</select></details>`;
-  return `<details class="section-group" id="section-group" ${sectionGroupOpen ? "open" : ""}><summary>▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</summary><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links"><select id="section-choice" aria-label="Select original section evidence">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<option value="${esc(r.id)}" ${r.id === detail.id ? 'selected' : ''}>${esc(workbench.wireSectionText(r))} · CRC ${esc(r.crc?.transmitted_hex || '—')} · ${esc(r.crc?.status || 'unavailable')} · #${r.first_packet}</option>`).join('')}</select></div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</details>`;
+  if(group.versioning_supported===false)return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections?'':'hidden'}><p class="meta">Exact section evidence · ${esc(group.validity)} · map assembly unsupported</p><p class="meta">${esc(group.coverage_scope || group.coverage_model || detail.header_semantics)}</p><p class="meta">${esc(workbench.wireHeaderText(group))}</p><select id="section-choice" aria-label="Select original section evidence">${sources.map(r=>`<option value="${esc(r.id)}" ${r.id===detail.id?'selected':''}>${esc(r.name)} · CRC ${esc(r.crc?.status || 'unavailable')} · #${num(r.first_packet)}</option>`).join('')}</select></div>`;
+  return `<div class="section-group" id="section-group" data-inspector-content="sections" ${inspectorDetails.sections ? "" : "hidden"}><p class="meta">▦ Table sections · ${esc(group.validity)} · ${group.selected_complete ? 'complete selection' : 'incomplete selection'}</p><p class="meta">Capture-wide version coverage; selected completeness is generation-safe.</p><p class="meta">Observed: ${(group.observed_section_numbers || []).join(', ') || 'none'} · Missing: ${(group.missing_section_numbers || []).join(', ') || 'none'} · Missing valid: ${(group.missing_valid_section_numbers || []).join(', ') || 'none'} · Selected missing: ${(group.selected_missing_section_numbers || []).join(', ') || 'none'} · Bad CRC: ${hidden}${showBadCrc ? '' : ' hidden'}</p><div class="section-links"><select id="section-choice" aria-label="Select original section evidence">${sources.filter(r => showBadCrc || !isBadCrc(r)).map(r => `<option value="${esc(r.id)}" ${r.id === detail.id ? 'selected' : ''}>${esc(workbench.wireSectionText(r))} · CRC ${esc(r.crc?.transmitted_hex || '—')} · ${esc(r.crc?.status || 'unavailable')} · #${r.first_packet}</option>`).join('')}</select></div>${hidden ? `<button class="btn small" id="group-show-bad">${showBadCrc ? 'Hide' : 'Show'} ${hidden} bad CRC section(s)</button>` : ''}</div>`;
 }
 let epgLanguage = "", identifierResult = null, satelliteResult = null;
+const lookupState={namespace:"original_network_id",identifier:"",position:"",direction:"E",identifierOpen:false,identifierRaw:false,satelliteRaw:false,identifierNotice:"Enter a decimal or hexadecimal ID.",satelliteNotice:""};
+const lookupFields=[["identifier-kind","namespace","change"],["identifier-value","identifier","input"],["satellite-position","position","input"],["satellite-direction","direction","change"]];
+const lookupDisclosures=[["identifier-lookup","identifierOpen"],["identifier-raw","identifierRaw"],["satellite-raw","satelliteRaw"]];
+function rememberLookupState(panel) {
+  lookupFields.forEach(([id,key])=>{const el=panel.querySelector('#'+id);if(el)lookupState[key]=el.value;});
+  lookupDisclosures.forEach(([id,key])=>{const el=panel.querySelector('#'+id);if(el)lookupState[key]=el.open;});
+}
+function lookupTable(result, label) {
+  const model=workbench.lookupResult(result);
+  return `<table class="lookup-table${model.hasSource?' with-source':''}" aria-label="${esc(label)}"><thead><tr><th scope="col">Key</th><th scope="col">Value</th>${model.hasSource?'<th scope="col">Source</th>':''}</tr></thead><tbody>${model.rows.map(row=>`<tr><th scope="row" title="${esc(row.key+(row.help?' · '+row.help:''))}">${esc(row.label)}</th><td class="lookup-value">${esc(row.value)}</td>${model.hasSource?`<td class="lookup-source" title="${esc(row.sourceTip)}">${esc(row.source || '—')}</td>`:''}</tr>`).join('')}</tbody></table>`;
+}
+function lookupOutput(kind) {
+  const result=kind==='identifier'?identifierResult:satelliteResult;
+  return result?lookupTable(result,kind==='identifier'?'Identifier lookup result':'Satellite lookup result'):`<p class="meta">${esc(lookupState[kind+'Notice'])}</p>`;
+}
+function refreshLookupResult(kind) {
+  const result=kind==='identifier'?identifierResult:satelliteResult,output=$('#'+kind+'-result');
+  if(!output)return;
+  output.innerHTML=lookupOutput(kind);
+  $('#'+kind+'-evidence').textContent=result?JSON.stringify(result,null,2):'';
+  const raw=$('#'+kind+'-raw');raw.hidden=!result;raw.open=lookupState[kind+'Raw'];
+}
 function satelliteText(x) {
   const p=x.raw_parameters || {};
   return "Candidates only · " + (x.status || x.error || "") + "\n" +
@@ -1574,27 +1874,69 @@ function metadataPanel() {
   protocolVisibleSources=[];
   const protocolHtml=protocols.total?`<section aria-label="Protocol summaries"><h3>Protocol summaries</h3><p class="meta">${protocols.offset+1}–${Math.min(protocols.offset+protocols.limit,protocols.total)} of ${protocols.total} cards · original evidence retained</p><div class="metadata-query"><button class="btn small" id="protocol-previous" ${protocols.has_previous?'':'disabled'}>Previous cards</button><button class="btn small" id="protocol-next" ${protocols.has_more?'':'disabled'}>Next cards</button></div>${protocols.cards.map((x,cardIndex)=>{const refs=workbench.protocolCardSources(x),limit=protocolSourceLimits[protocolCardOffset+cardIndex] || 100;return `<div class="protocol-card">`+card(x.title,x.text,x.evidence)+(refs.length?`<details class="protocol-sources"><summary>Source references (${refs.length})</summary>${refs.slice(0,limit).map((item,i)=>{const index=protocolVisibleSources.push(item)-1;return `<button class="btn topology-source" id="protocol-source-${cardIndex}-${i}" data-protocol-source="${index}" ${item.available && !busy && !backendFailure?'':'disabled'}><strong>${esc(item.label)}</strong><span>${esc(item.precision)} · cutoff #${num(item.ref.at_packet)} · revision ${num(item.ref.analysis_revision)}</span><span>${esc(item.ref.section_id || 'Source identity unavailable')}</span></button>`;}).join('')}${refs.length>limit?`<button class="btn" data-protocol-more="${protocolCardOffset+cardIndex}">Show more sources (${limit} / ${refs.length})</button>`:''}</details>`:'')+'</div>';}).join('')}</section>`:'';
   const events = detail.events || [], languages = [...new Set(events.flatMap(e => (e.language_variants || []).map(v => v.language_code)))].sort();
-  return `<div class="metadata-panel" aria-label="Signal metadata"><p class="meta">Selected section only. Reference labels are not verified current operator ownership. Original bytes remain in Hex.</p>
-    ${protocolHtml}<details><summary>Look up an identifier</summary><div class="metadata-query"><select id="identifier-kind" aria-label="Identifier namespace">${["original_network_id","network_id","bouquet_id","ca_system_id","private_data_specifier","registration_id","data_broadcast_id","platform_id","oui"].map(k => `<option>${k}</option>`).join("")}</select><input id="identifier-value" placeholder="0x0001" aria-label="Identifier value"><button class="btn small" id="identifier-query">Look up</button></div><p class="meta">Uses the analyzed standard context; choose an explicit standard and rescan if context is required.</p><pre id="identifier-result">${esc(identifierResult ? JSON.stringify(identifierResult,null,2) : "Enter a decimal or hexadecimal ID.")}</pre></details>
-    <h3>Satellite candidates</h3><div class="satellite-query metadata-query"><input id="satellite-position" placeholder="Degrees: 13.0" aria-label="Orbital position in degrees"><select id="satellite-direction" aria-label="Orbital direction"><option>E</option><option>W</option></select><button class="btn small" id="satellite-query">Candidates</button></div><p class="meta">Nominal GEO slot only. An incomplete reference snapshot; never a confirmed satellite.</p><pre id="satellite-result">${satelliteResult ? esc(satelliteText(satelliteResult)) : ""}</pre><details class="satellite-lookup-evidence"><summary>Satellite lookup evidence</summary><pre id="satellite-evidence">${satelliteResult ? esc(JSON.stringify(satelliteResult,null,2)) : ""}</pre></details>
+  return `<div class="metadata-panel" aria-label="Signal metadata"><section class="metadata-group" aria-label="Section metadata"><h2>Section metadata</h2><p class="meta">Changes with the selected section. Reference labels are not verified current operator ownership. Original bytes remain in Hex.</p>
+    ${protocolHtml}
+    <h3>Satellite associations</h3>
     ${(detail.satellite_associations || []).map(x => card("Satellite candidates · " + (x.transport ? "TS " + hex(x.transport.transport_stream_id) + " / ONID " + hex(x.transport.original_network_id) : "section descriptor") + " · offset " + x.wire_source.section_offset,satelliteText(x),x)).join("") || '<p class="meta">No supported satellite delivery descriptor in this section. S2/S2X-only descriptors do not establish a slot.</p>'}
-    <h3>Multilingual EPG</h3><label for="epg-language">Preferred language</label><select id="epg-language"><option value="">Default (language-code order)</option>${languages.map(l => `<option value="${esc(l)}" ${epgLanguage === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
+    <h3 title="Electronic Programme Guide">Multilingual EPG</h3><label for="epg-language">Preferred language</label><select id="epg-language" title="Electronic Programme Guide language"><option value="">Default (language-code order)</option>${languages.map(l => `<option value="${esc(l)}" ${epgLanguage === l ? "selected" : ""}>${esc(l)}</option>`).join("")}</select>
     ${events.map(e => {const v=eventVariant(e);return card(`Event ${hex(e.id)} · ${v.language_code || "no language"}${epgLanguage && v.language_code !== epgLanguage ? " · fallback" : ""}`, `${eventTitle(e)}\nShort: ${v.short_status || "absent"}\n${v.short_text || ""}\nExtended: ${v.extended_status || "absent"}\n${v.extended_text ?? "No complete extended text"}\n${(v.warnings || []).join("\n")}`, {event_id:e.id,service_id:e.service_id,source_id:e.source_id,variant:v});}).join("") || '<p class="meta">No EIT events in this section.</p>'}
     <h3>ID names and sources</h3>${(detail.identifier_lookups || []).map(x => card(`${x.namespace} · ${x.raw_hex}`, `${x.label || "Unknown"} · ${x.status}\n${x.uncertainty}`, x)).join("") || '<p class="meta">No supported identifiers indexed in this section.</p>'}
-    <h3>Text encoding diagnostics</h3><p class="meta">${esc(detail.text_diagnostic_scope || "")}</p>${(detail.text_diagnostics || []).map(x => card(`${x.field} · ${x.language_code || "no language tag"}`, `${x.status} · ${x.effective_charset || "unknown charset"} · ${x.basis}\n${x.decoded_text}\nSelector: ${x.selector_hex || "none"} · section offset ${x.source.section_offset}\nRaw: ${x.raw_hex}\n${(x.warnings || []).join("\n")}`, x)).join("") || '<p class="meta">No supported text fields in this section.</p>'}</div>`;
+    <h3>Text encoding diagnostics</h3><p class="meta">${esc(detail.text_diagnostic_scope || "")}</p>${(detail.text_diagnostics || []).map(x => card(`${x.field} · ${x.language_code || "no language tag"}`, `${x.status} · ${x.effective_charset || "unknown charset"} · ${x.basis}\n${x.decoded_text}\nSelector: ${x.selector_hex || "none"} · section offset ${x.source.section_offset}\nRaw: ${x.raw_hex}\n${(x.warnings || []).join("\n")}`, x)).join("") || '<p class="meta">No supported text fields in this section.</p>'}</section>
+    <section class="metadata-group metadata-lookup" aria-label="Lookup"><h2>Lookup</h2><p class="meta">Not tied to the selected section</p>
+    <details id="identifier-lookup" ${lookupState.identifierOpen?'open':''}><summary title="Look up an identifier (ID) in the SDK (Software Development Kit) registry">Look up an identifier</summary><div class="metadata-query"><select id="identifier-kind" aria-label="Identifier namespace" title="Choose an identifier (ID) namespace">${workbench.identifierNamespaces.map(x=>`<option value="${x.value}" title="${esc(x.help)} · ${x.value}" ${lookupState.namespace===x.value?'selected':''}>${esc(x.label)}</option>`).join('')}</select><input id="identifier-value" value="${esc(lookupState.identifier)}" placeholder="0x0001" aria-label="Identifier value"><button class="btn small" id="identifier-query">Look up</button></div><p class="meta">Uses the analyzed standard context; choose an explicit standard and rescan if context is required.</p><div id="identifier-result" aria-live="polite">${lookupOutput('identifier')}</div><details class="lookup-raw" id="identifier-raw" ${identifierResult?'':'hidden'} ${lookupState.identifierRaw?'open':''}><summary aria-label="Raw identifier lookup JSON" title="Original JSON (JavaScript Object Notation) with all values and source evidence">Raw</summary><pre id="identifier-evidence" tabindex="0" aria-label="Original identifier lookup JSON">${identifierResult?esc(JSON.stringify(identifierResult,null,2)):''}</pre></details></details>
+    <h3>Satellite lookup</h3><div class="satellite-query metadata-query"><input id="satellite-position" value="${esc(lookupState.position)}" placeholder="Degrees: 13.0" aria-label="Orbital position in degrees"><select id="satellite-direction" aria-label="Orbital direction" title="East or west of the prime meridian"><option value="E" ${lookupState.direction==='E'?'selected':''}>E</option><option value="W" ${lookupState.direction==='W'?'selected':''}>W</option></select><button class="btn small" id="satellite-query">Candidates</button></div><p class="meta" title="Geostationary Earth orbit">Nominal GEO slot only. An incomplete reference snapshot; never a confirmed satellite.</p><div id="satellite-result" aria-live="polite">${lookupOutput('satellite')}</div><details class="satellite-lookup-evidence lookup-raw" id="satellite-raw" ${satelliteResult?'':'hidden'} ${lookupState.satelliteRaw?'open':''}><summary aria-label="Raw satellite lookup JSON" title="Original JSON (JavaScript Object Notation) with all values and source evidence">Raw</summary><pre id="satellite-evidence" tabindex="0" aria-label="Original satellite lookup JSON">${satelliteResult?esc(JSON.stringify(satelliteResult,null,2)):''}</pre></details>
+    </section></div>`;
+}
+function applyInspectorDetails(panel) {
+  const container = panel?.querySelector('#inspector-details');
+  if (!container) return;
+  const areas = [...panel.querySelectorAll('[data-inspector-content]')];
+  areas.forEach(el => { el.hidden = !inspectorDetails[el.dataset.inspectorContent]; });
+  panel.querySelectorAll('[data-inspector-detail]').forEach(el => {
+    el.setAttribute('aria-expanded', String(inspectorDetails[el.dataset.inspectorDetail]));
+  });
+  container.hidden = !areas.some(el => !el.hidden);
+}
+function bindInspectorSummary(panel, scroll) {
+  const chips = panel?.querySelector('.inspector-chips');
+  if (!chips) return;
+  chips.scrollLeft = scroll;
+  panel.querySelectorAll('[data-inspector-detail]').forEach(el => {
+    el.onclick = () => {
+      const key = el.dataset.inspectorDetail;
+      inspectorDetails[key] = !inspectorDetails[key];
+      applyInspectorDetails(panel);
+      const target = panel.querySelector('[data-inspector-content="' + key + '"]');
+      const container = panel.querySelector('#inspector-details');
+      if (target && container && inspectorDetails[key]) container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      saveLayout();
+    };
+  });
+  chips.addEventListener('focusin', event => event.target?.scrollIntoView?.({block:'nearest',inline:'nearest'}));
+  applyInspectorDetails(panel);
+}
+// One reason per blocked state, in the order a user can resolve them.
+function editBlockReason() {
+  if (backendFailure) return "Backend disconnected";
+  if (busy) return "Wait for the analysis to finish";
+  if (comparisonEvidence) return "Unavailable while inspecting comparison evidence; use the snapshot first";
+  if (detail.table_id !== 0x42) return "Rename needs an SDT (Service Description Table) section";
+  if (!detail.valid) return "Rename needs a section with a valid CRC";
+  if (!detail.services?.length) return "This SDT section lists no services";
+  return "";
 }
 function renderInspector() {
+  if(palette.mode)renderPalette();
   const panel = $("#inspector");
+  if (!panel) return;
+  rememberLookupState(panel);
   if (tab === "Topology" && !topology.active) { renderTopologyInspector(); return; }
-  // Read live disclosure state before replacing its DOM. The asynchronous
-  // toggle event may not have fired when a source-section change starts.
-  const previousSectionGroup = panel.querySelector("#section-group");
-  if (previousSectionGroup) sectionGroupOpen = previousSectionGroup.open;
+  const summaryScroll = panel.querySelector(".inspector-chips")?.scrollLeft || 0;
   if (aggregateDiagnostic) {
     panel.innerHTML = `<div class="panel-title">TRANSPORT DIAGNOSTIC <span class="bad">AGGREGATE</span></div><div class="empty"><span class="empty-icon bad">⚠</span><h3>${esc(aggregateDiagnostic.code)}</h3><p>${esc(aggregateDiagnostic.detail)}</p><p>${num(aggregateDiagnostic.count)} observations across monitored SI PIDs. Individual packet locations are not indexed.</p></div>`;
     return;
   }
-  if (loadingDetail || detailError || !detail.name) {
+  if (loadingDetail || detailError || !detail?.name) {
     if (tab === "Changes" && !loadingDetail && !detailError) {
       // Comparison mode replaces the record list, so a "select a record" hint
       // would point at nothing. Describe the workflow that is actually on screen.
@@ -1608,39 +1950,41 @@ function renderInspector() {
     );
     return;
   }
-  const nativeWarnings = Array.isArray(detail.native_decode_warnings)
-    ? detail.native_decode_warnings.filter((warning) => typeof warning === "string")
-    : [];
-  if (detail.native_xml_guarded)
-    nativeWarnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex bytes.");
+  const nativeWarnings = workbench.inspectorWarnings(detail, data);
   const xmlSource = evidenceScope === "section" ? detail.section_tsduck_xml : detail.merged?.complete ? detail.merged.tsduck_xml : null;
   const xmlLabel = detail.native_xml_guarded ? "Guarded SDK XML" : "TSDuck XML";
-  panel.innerHTML = sourceContextHeader()+`<div class="panel-title">SECTION INSPECTOR <span class="${detail.valid ? "ok" : "bad"}">${detail.valid ? "VALID" : "INVALID"}</span></div>${comparisonEvidence && inspectionEvidence?.kind!=='topology' ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading"><h2 ${tip(detail.name)}>${categoryBadge(detail)} <span>/ ${esc(workbench.wireVersionText(detail))}</span></h2><span class="numeric">${hex(detail.pid)} PID</span></div><p class="meta identity-line">TID ${hex(detail.table_id, 2)} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || "unavailable")} (${esc(detail.crc?.status || "unavailable")}) · ${esc(workbench.wireSectionText(detail))} · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? " · " + esc(reportedStandards(detail)) : ""}${selectedService >= 0 ? " · SID " + hex(selectedService) : ""}</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.versioning_supported===false?' · exact section only; map assembly unsupported':detail.merged?.complete ? " · complete merged generation" : " · incomplete / superseded: merged decode unavailable"}</p>` : ""}${nativeWarnings.length ? `<p class="meta" id="native-decode-warnings" role="note"><strong class="bad">Decoder note</strong><br><span class="bad">${nativeWarnings.map(esc).join("<br>")}</span></p>` : ""}${distributionPanel(detail)}${sectionGroupPanel()}<div class="scope-tabs" role="group" aria-label="Decode scope"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === "section"}">Selected section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === "merged"}">Merged table</button><span class="meta">Section: fields + bytes · Merged: SDK tree + XML</span></div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? topologyHexDump(detail.raw_hex) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${detail.table_id === 0x42 && detail.valid && detail.services?.length && !busy && !backendFailure && !comparisonEvidence ? "" : "disabled"}>Rename service…</button></div>`;
+  const summary = workbench.inspectorSummary(detail);
+  const chip = (key, label, id, title) => `<button class="summary-chip" id="${id}" data-inspector-detail="${key}" aria-expanded="${inspectorDetails[key]}" aria-controls="${key === 'sections' ? 'section-group' : key + '-details'}" aria-label="${esc(title)}" title="${esc(title)}">${label}</button>`;
+  panel.innerHTML = sourceContextHeader()+`${comparisonEvidence && inspectionEvidence?.kind!=='topology' ? `<p class="comparison-context">${esc(comparisonEvidence)} · main snapshot unchanged</p>` : ""}<div class="inspector-heading inspector-summary" role="group" aria-label="Section summary">${chip('identity', esc(summary.profile), 'standards-profile-summary-toggle', summary.profileHelp)}<div class="inspector-chips"><h2 ${tip(detail.name)}>${chip('identity', categoryBadge(detail) + (detail.valid ? '' : ' <span class="bad">INVALID</span>'), 'identity-toggle', detail.name + ' · ' + (glossary[detail.name] || detail.name) + ' · section identity and validity')}</h2>${chip('identity', 'PID ' + hex(detail.pid), 'pid-summary-toggle', glossary.PID + ' · TID: Table Identifier ' + hex(detail.table_id, 2) + (selectedService >= 0 ? ' · SID: ' + glossary.SID + ' ' + hex(selectedService) : ''))}${chip('identity', esc(summary.version), 'version-summary-toggle', 'Wire version and current/next state')}${chip('sections', esc(summary.section), 'section-group-toggle', 'Original section evidence and capture-wide table coverage')}${chip('crc', `<span class="${detail.crc?.status === 'invalid' ? 'bad' : detail.crc?.status === 'valid' ? 'ok' : 'muted'}">${esc(summary.crc)}</span>`, 'crc-toggle', glossary.CRC + ': ' + (detail.crc?.status || 'unavailable'))}${detail.distribution ? chip('arrival', num(detail.distribution.observation_count) + ' arrivals', 'arrival-toggle', 'Arrival distribution in packet positions; elapsed seconds only from a supplied bitrate') : ''}</div><div class="scope-tabs" role="group" aria-label="Decode scope" title="Section: fields + bytes · Merged: SDK tree + XML"><button class="btn small" data-scope="section" aria-pressed="${evidenceScope === 'section'}" aria-label="Selected section evidence" title="Section: fields and bytes of this exact section">Section</button><button class="btn small" data-scope="merged" aria-pressed="${evidenceScope === 'merged'}" aria-label="Merged table evidence" title="Merged: SDK (Software Development Kit) tree and XML of the complete table">Merged</button>${chip('scope', 'ⓘ', 'scope-details-toggle', 'Decode scope details and native assembly cutoff')}</div></div>${nativeWarnings.length ? `<button class="inspector-warning summary-chip" id="inspector-warning-toggle" data-inspector-detail="warnings" aria-expanded="${inspectorDetails.warnings}" aria-controls="warnings-details" aria-label="${nativeWarnings.length} truncation and decoder notes" title="Expand truncation and decoder notes"><span aria-hidden="true">⚠</span> ${nativeWarnings.length} ${nativeWarnings.length === 1 ? 'note' : 'notes'}</button>` : ''}<div class="inspector-details" id="inspector-details" hidden><div id="identity-details" data-inspector-content="identity" ${inspectorDetails.identity ? '' : 'hidden'}><p class="meta identity-line">${detail.valid ? 'VALID' : 'INVALID'} · PID ${hex(detail.pid)} · TID ${hex(detail.table_id, 2)} · ${esc(workbench.wireHeaderText(detail))} · CRC ${esc(detail.crc?.transmitted_hex || detail.crc?.status || 'unavailable')} (${esc(detail.crc?.status || 'unavailable')}) · ${num(detail.bytes)} bytes · ${num(detail.count)} observations${reportedStandards(detail) ? ' · ' + esc(reportedStandards(detail)) : ''}${selectedService >= 0 ? ' · SID ' + hex(selectedService) : ''}</p></div><div id="crc-details" data-inspector-content="crc" ${inspectorDetails.crc ? '' : 'hidden'}><p class="meta">Cyclic Redundancy Check: ${esc(detail.crc?.status || 'unavailable')} · transmitted ${esc(detail.crc?.transmitted_hex || '—')} · expected ${esc(detail.crc?.calculated_hex || '—')}</p></div>${distributionPanel(detail)}${sectionGroupPanel()}<div id="scope-details" data-inspector-content="scope" ${inspectorDetails.scope ? '' : 'hidden'}><p class="meta">Section: fields and bytes of this exact section. Merged: SDK tree and XML of the complete table.</p>${detail.native_table_at_packet != null ? `<p class="meta native-evidence" id="native-assembly-evidence">Native assembly cutoff: packet ${num(detail.native_table_at_packet)}${detail.versioning_supported===false?' · exact section only; map assembly unsupported':detail.merged?.complete ? ' · complete merged generation' : ' · incomplete / superseded: merged decode unavailable'}</p>` : ''}<p class="meta">${esc(detail.inspection_scope?.native_table || 'Native table assembly evidence cutoff')} · TSDuck: ${esc(detail.native_decode_status || 'not available')} · First evidence packet: ${num(detail.first_packet)}</p></div>${nativeWarnings.length ? `<div id="warnings-details" data-inspector-content="warnings" ${inspectorDetails.warnings ? '' : 'hidden'}><p class="meta" id="native-decode-warnings" role="note">${nativeWarnings.map(esc).join('<br>')}</p></div>` : ''}</div><div class="view-tabs" role="group" aria-label="Evidence view">${["tree", "hex", "xml", "decoded", "metadata", "references"].map((v) => `<button class="${view === v ? "active" : ""}" data-view="${v}" aria-pressed="${view === v}">${v === "tree" ? "Structure" : v === "hex" ? "Hex bytes" : v === "xml" ? xmlLabel : v === "decoded" ? "Decoded" : v === "metadata" ? "Metadata" : "References"}</button>`).join("")}</div>${view === "tree" ? '<div class="tree-toolbar"><input type="search" id="tree-search" placeholder="Find field or value…" aria-label="Search section structure"><button class="btn small" id="expand-tree" title="Expand all displayed nodes">＋</button><button class="btn small" id="collapse-tree" title="Collapse all nodes">−</button></div><div class="tree-help" id="tree-help">↑ ↓ Navigate · ← → Fold / enter · Home / End · Type to find</div><div class="tree-area" id="tree-area" role="tree" aria-label="Section structure" aria-describedby="tree-help"></div>' : view === "metadata" ? metadataPanel() : view === "references" ? referencePanel() : `<pre class="evidence" tabindex="0" aria-label="${view === "decoded" ? "SDK section display" : view === "hex" ? "Section hex dump" : xmlLabel}">${view === "decoded" ? esc(detail.section_native_text || "Native section display unavailable. Raw bytes remain in Hex.") : view === "hex" ? topologyHexDump(detail.raw_hex) : syntaxXml(xmlSource || "XML unavailable for this scope. Raw bytes remain available.")}</pre>`}<div class="inspector-footer"><span class="meta">Evidence starts at packet ${num(detail.first_packet)}</span><button class="btn" id="edit" ${editBlockReason() ? `disabled title="${esc(editBlockReason())}"` : 'title="Preview and export a renamed service"'}>Rename service…</button></div>`;
   bindTopologySourceHeader();bindProtocolSource();
   $('#protocol-previous')?.addEventListener('click',()=>{protocolCardOffset=Math.max(0,protocolCardOffset-20);renderInspector();($('#protocol-previous')?.disabled?$('#protocol-next'):$('#protocol-previous'))?.focus({preventScroll:true});});
   $('#protocol-next')?.addEventListener('click',()=>{protocolCardOffset+=20;renderInspector();($('#protocol-next')?.disabled?$('#protocol-previous'):$('#protocol-next'))?.focus({preventScroll:true});});
-  $("#section-group")?.addEventListener("toggle", event => { if (event.target.isConnected) sectionGroupOpen = event.target.open; });
-  panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); });
+  bindInspectorSummary(panel, summaryScroll);
+  panel.querySelectorAll("[data-scope]").forEach(el => el.onclick = () => { evidenceScope = el.dataset.scope; renderInspector(); panel.querySelector('[data-scope="' + evidenceScope + '"]').focus({preventScroll:true}); });
   const sectionChoice = panel.querySelector("#section-choice");
   if (sectionChoice) sectionChoice.onchange = () => inspect(sectionChoice.value, -1, "", inspectionEvidence);
-  $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#section-group").open = true; });
+  $("#group-show-bad")?.addEventListener("click", () => { showBadCrc = !showBadCrc; renderList(); renderInspector(); $("#group-show-bad")?.focus({preventScroll:true}); });
   $("#epg-language")?.addEventListener("change", e => { epgLanguage=e.target.value; renderList(); renderInspector(); $("#epg-language")?.focus(); });
+  lookupFields.forEach(([id,key,event])=>$('#'+id)?.addEventListener(event,e=>lookupState[key]=e.target.value));
+  lookupDisclosures.forEach(([id,key])=>$('#'+id)?.addEventListener('toggle',e=>lookupState[key]=e.target.open));
   $("#identifier-query")?.addEventListener("click", async () => {
-    const value=$("#identifier-value").value.trim(), output=$("#identifier-result");
-    if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))){output.textContent="Enter a whole decimal or hexadecimal ID.";return;}
-    try {identifierResult=await call("lookup_identifier",{namespace:$("#identifier-kind").value,value:Number(value),standards:detail.standards_context || "auto"});output.textContent=JSON.stringify(identifierResult,null,2);}
-    catch(error){output.textContent=String(error);}
+    const value=$("#identifier-value").value.trim(),namespace=$("#identifier-kind").value;
+    identifierResult=null;lookupState.identifierRaw=false;lookupState.identifierNotice="Looking up identifier…";
+    if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))){lookupState.identifierNotice="Enter a whole decimal or hexadecimal ID.";refreshLookupResult('identifier');return;}
+    refreshLookupResult('identifier');
+    try {identifierResult=await call("lookup_identifier",{namespace,value:Number(value),standards:data.standards_context || "auto"});}
+    catch(error){lookupState.identifierNotice=String(error);}
+    refreshLookupResult('identifier');
   });
   $("#satellite-query")?.addEventListener("click", async () => {
-    const value=$("#satellite-position").value.trim(), output=$("#satellite-result"), evidence=$("#satellite-evidence");
-    satelliteResult=null; evidence.textContent="";
-    if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180){output.textContent="Enter degrees from 0 to 180.";return;}
-    output.textContent="Looking up candidates…";
+    const value=$("#satellite-position").value.trim(),direction=$("#satellite-direction").value;
+    satelliteResult=null;lookupState.satelliteRaw=false;lookupState.satelliteNotice="Looking up candidates…";
+    if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180){lookupState.satelliteNotice="Enter degrees from 0 to 180.";refreshLookupResult('satellite');return;}
+    refreshLookupResult('satellite');
     try {
-      const result=await call("lookup_satellite",{orbital_position_degrees:Number(value),direction:$("#satellite-direction").value});
-      if(!output.isConnected)return;
-      satelliteResult=result; output.textContent=satelliteText(result);evidence.textContent=JSON.stringify(result,null,2);
-    } catch(error){output.textContent=String(error);}
+      satelliteResult=await call("lookup_satellite",{orbital_position_degrees:Number(value),direction});
+    } catch(error){lookupState.satelliteNotice=String(error);}
+    refreshLookupResult('satellite');
   });
   panel.querySelectorAll("[data-view]").forEach(
     (el) =>
@@ -1771,6 +2115,78 @@ function snapshotAtBin(bin, bins, packets, immediate) {
     snapshot(target);
   }, 140);
 }
+function comparisonPacket(side) {
+  const packet = comparison[side];
+  return Number.isSafeInteger(packet) && packet >= 0 && packet < data.packets ? packet : null;
+}
+function updateComparisonMarkers() {
+  const interactive = data.complete && !busy && !backendFailure && !comparison.loading;
+  for (const side of ["from", "to"]) {
+    const marker = $(`[data-comparison-marker="${side}"]`), packet = comparisonPacket(side);
+    if (!marker) continue;
+    marker.hidden = !data.complete || packet === null;
+    marker.tabIndex = interactive && !marker.hidden ? 0 : -1;
+    marker.setAttribute("aria-disabled", String(!interactive));
+    marker.setAttribute("aria-valuemax", Math.max(0, (data.packets || 1) - 1));
+    if (packet === null) continue;
+    marker.style.left = (data.packets > 1 ? packet / (data.packets - 1) * 100 : 0) + "%";
+    marker.setAttribute("aria-valuenow", packet);
+    marker.setAttribute("aria-valuetext", "Packet " + packet);
+    marker.title = `${side === "from" ? "A" : "B"} · packet ${packet} · drag to change the comparison ${side === "from" ? "start" : "end"}`;
+  }
+}
+function moveComparisonMarker(side, packet) {
+  if (!data.complete || busy || backendFailure || comparison.loading) return;
+  const other = comparisonPacket(side === "from" ? "to" : "from");
+  const lower = side === "to" && other !== null ? other : 0;
+  const upper = side === "from" && other !== null ? other : data.packets - 1;
+  packet = Math.max(lower, Math.min(upper, Math.round(packet)));
+  if (comparison[side] === packet) return;
+  comparison[side] = packet;
+  const input = $("#compare-" + side);
+  if (input) input.value = packet;
+  invalidateComparison();
+}
+function bindComparisonMarkers() {
+  $("#density").querySelectorAll("[data-comparison-marker]").forEach(marker => {
+    const side = marker.dataset.comparisonMarker;
+    let pointer = null, grabOffset = 0;
+    const move = event => {
+      const box = $("#density").getBoundingClientRect();
+      if (box.width) moveComparisonMarker(side, (event.clientX - box.left - grabOffset) / box.width * (data.packets - 1));
+    };
+    marker.onclick = event => { event.preventDefault(); event.stopPropagation(); };
+    marker.onpointerdown = event => {
+      event.stopPropagation();
+      if (pointer !== null || event.button !== 0 || marker.getAttribute("aria-disabled") === "true") return;
+      event.preventDefault();
+      const box = $("#density").getBoundingClientRect();
+      grabOffset = event.clientX - box.left - comparisonPacket(side) / Math.max(1, data.packets - 1) * box.width;
+      pointer = event.pointerId;
+      marker.setPointerCapture(pointer);
+      marker.focus({ preventScroll: true });
+    };
+    marker.onpointermove = event => { if (event.pointerId === pointer) move(event); };
+    marker.onpointerup = event => {
+      if (event.pointerId !== pointer) return;
+      event.preventDefault(); event.stopPropagation();
+      move(event);
+      marker.releasePointerCapture(pointer);
+      pointer = null;
+      if (tab !== "Changes") { changeTab("Changes"); render(); }
+      $("#run-comparison")?.focus({ preventScroll: true });
+    };
+    marker.onpointercancel = marker.onlostpointercapture = () => { pointer = null; };
+    marker.onkeydown = event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault(); event.stopPropagation();
+      const step = event.shiftKey ? 1 : Math.max(1, Math.round((data.packets - 1) / Math.max(1, (data.density || []).length - 1)));
+      const packet = comparisonPacket(side);
+      if (packet !== null) moveComparisonMarker(side, event.key === "Home" ? 0 : event.key === "End" ? data.packets - 1 : packet + (event.key === "ArrowRight" ? step : -step));
+    };
+  });
+  updateComparisonMarkers();
+}
 function renderTimeline() {
   const history=workbench.history(data,detail,allTableHistory);
   historyPage=Math.min(historyPage,Math.max(0,Math.ceil(history.length/40)-1));
@@ -1778,14 +2194,14 @@ function renderTimeline() {
   const packets = Number(data.packets || 0);
   // A query response re-renders the strip and replaces the focused slider, so
   // remember whether the user was operating it and restore focus afterwards.
-  const sliderHadFocus = document.activeElement?.id === "density";
+  const timelineFocus = $("#density")?.contains(document.activeElement) ? document.activeElement.id : "";
   const dense = data.density || Array.from({ length: bins }, () => ({ count: 0, bad: 0 }));
   const at = data.selected_packet === null || data.selected_packet === undefined ? null : Number(data.selected_packet);
   const cursorPercent = at === null ? null : packets > 1 ? Math.min(100, (at / (packets - 1)) * 100) : 100;
   const interactive = data.complete && !busy && !backendFailure;
   const middle = packets > 1 ? Math.round((packets - 1) / 2) : 0;
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1))}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
+    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}${[["from", "a", "A"], ["to", "b", "B"]].map(([side, key, label]) => `<span id="comparison-marker-${key}" class="comparison-marker" data-comparison-marker="${side}" role="slider" tabindex="-1" aria-label="Comparison ${label} packet" aria-valuemin="0" aria-valuemax="0" hidden><span aria-hidden="true">${label}</span></span>`).join("")}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1), data.timing, true)}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
       .slice(historyPage * 40, (historyPage + 1) * 40)
       .map(
         (h, i) =>
@@ -1813,7 +2229,8 @@ function renderTimeline() {
     if (element && element.offsetWidth)
       cursor.style.left = element.offsetLeft + element.offsetWidth / 2 + "px";
   }
-  if (sliderHadFocus) $("#density")?.focus({ preventScroll: true });
+  bindComparisonMarkers();
+  if (timelineFocus) document.getElementById(timelineFocus)?.focus({ preventScroll: true });
   $("#compare-snapshots").onclick = () => { changeTab("Changes"); render(); $("#compare-from").focus(); };
   $("#density").addEventListener("click", (event) => {
     const bin = event.target.closest("[data-bin]");
@@ -1821,7 +2238,7 @@ function renderTimeline() {
     snapshotAtBin(Number(bin.dataset.bin), bins, packets, true);
   });
   $("#density").addEventListener("keydown", (event) => {
-    if (!interactive) return;
+    if (!interactive || event.target !== event.currentTarget) return;
     const keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
     if (!keys.includes(event.key)) return;
     event.preventDefault();
@@ -1874,6 +2291,7 @@ function openEdit() {
 function invalidatePreview() {
   preview = {};
   $("#export").disabled = true;
+  $("#diff").setAttribute("aria-live", "polite");
   $("#diff").textContent = "";
 }
 $("#rename").oninput = invalidatePreview;
@@ -1901,7 +2319,7 @@ $("#preview").onclick = async () => {
       `${result.before} → ${result.after} · version ${result.old_version} → ${result.new_version}`;
     $("#export").disabled = !!backendFailure || exportPending;
   } catch (error) {
-    if (target === editTarget) $("#diff").textContent = String(error);
+    if (target === editTarget) {$("#diff").setAttribute("aria-live", "assertive");$("#diff").textContent = String(error);notice(String(error), "error");}
   } finally {
     if (target === editTarget) $("#preview").disabled = !!backendFailure;
   }
@@ -1946,7 +2364,7 @@ $("#export").onclick = async () => {
     notice("Exported " + num(result.bytes) + " bytes + manifest · " + result.path);
     $("#edit-dialog").close();
   } catch (error) {
-    if (target === editTarget) $("#diff").textContent = String(error);
+    if (target === editTarget) {$("#diff").setAttribute("aria-live", "assertive");$("#diff").textContent = String(error);notice(String(error), "error");}
   } finally {
     exportPending = false;
     $("#export-format").disabled = false;
@@ -2011,20 +2429,71 @@ $("#edit-dialog").addEventListener("close", () => {
   editTarget = null;
   invalidatePreview();
 });
+const palette={mode:"",rows:[],index:0,returnFocus:null};
+function paletteBackendReason() {
+  return backendFailure || (!native?"Backend unavailable":busy?"Wait for the analysis to finish":exportPending?"Wait for the export to finish":"");
+}
+function closePalette(restoreFocus=false) {
+  palette.mode="";palette.rows=[];palette.index=0;
+  $("#command-palette").hidden=true;$("#search").value=search;
+  $("#search").setAttribute("aria-expanded","false");$("#search").removeAttribute("aria-activedescendant");$("#palette-status").textContent="";
+  if(restoreFocus){
+    const previous=palette.returnFocus;palette.returnFocus=null;
+    const target=previous?.isConnected?previous:previous?.id?document.getElementById(previous.id):[...$('#list').querySelectorAll('[data-key]')].find(row=>row.dataset.key===previous?.dataset?.key);
+    (target && target!==document.body && !target.disabled?target:$(".center")).focus({preventScroll:true});
+  }
+}
+function renderPalette(reset=false) {
+  const input=$("#search"),mode=input.value.trimStart()[0];
+  if(mode!==">" && mode!=="#"){closePalette();return;}
+  palette.mode=mode;
+  let message="";
+  if(mode===">") {
+    palette.rows=commandTable.filter(row=>workbench.commandMatches(row.description,input.value.trimStart().slice(1))).map(row=>({...row,reason:row.reason?.() || ""}));
+    message="No matching commands";
+  } else {
+    const result=workbench.paletteIdentifier(input.value.trimStart(),data);
+    palette.rows=result.target?[{id:"identifier",description:result.label,keys:"Return",help:result.help,target:result.target,reason:paletteBackendReason() || (loadingDetail?"Wait for the current inspection to finish":"")}]:[];
+    message=result.message;
+  }
+  palette.index=reset?0:Math.min(palette.index,Math.max(0,palette.rows.length-1));
+  $("#palette-list").innerHTML=palette.rows.map((row,index)=>`<div class="palette-option" id="palette-option-${index}" role="option" aria-selected="${index===palette.index}" aria-disabled="${!!row.reason}" data-palette-index="${index}" data-command="${esc(row.id)}" title="${esc(row.reason || row.help || (row.id==='export'?'Open the SDT (Service Description Table) preview and export workflow':row.description))}"><span>${esc(row.description)}</span><kbd>${esc(row.keys || '—')}</kbd></div>`).join("");
+  $("#palette-empty").textContent=palette.rows.length?"":message;$("#palette-empty").hidden=!!palette.rows.length;
+  $("#command-palette").hidden=false;input.setAttribute("aria-expanded","true");
+  if(palette.rows.length){input.setAttribute("aria-activedescendant","palette-option-"+palette.index);$("#palette-option-"+palette.index).scrollIntoView({block:"nearest"});}
+  else input.removeAttribute("aria-activedescendant");
+  $("#palette-status").textContent=palette.rows.length+" "+(mode===">"?"commands":"identifier targets")+(palette.rows.length?" available":". "+message);
+}
+function executePalette() {
+  renderPalette();
+  const row=palette.rows[palette.index];if(!row || row.reason)return;
+  closePalette(true);
+  if(row.target)jumpReference(row.target,"");else row.run();
+}
+$("#command-palette").onmousedown=event=>event.preventDefault();
+$("#command-palette").onclick=event=>{const row=event.target.closest('[data-palette-index]');if(row){palette.index=Number(row.dataset.paletteIndex);executePalette();}};
+$("#search").addEventListener("focus",event=>{if(event.relatedTarget && !$("#command-palette").contains(event.relatedTarget))palette.returnFocus=event.relatedTarget;});
+$("#search").addEventListener("blur",()=>{if(palette.mode)closePalette();});
 $("#search").oninput = (e) => {
-  search = e.target.value;
+  if(/^[>#]/.test(e.target.value.trimStart())){renderPalette(true);return;}
+  const value=e.target.value;closePalette();search=value;$("#search").value=search;
   if(tab === "Topology") topology.search=search;
-  page = 0;
-  renderList();
+  page = 0;renderList();
 };
 $("#search").onkeydown = (event) => {
-  if (event.key === "Escape") {
+  if(event.isComposing)return;
+  if(palette.mode && ["ArrowUp","ArrowDown","Enter"].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();event.stopPropagation();
+    if(event.key==="Enter")executePalette();
+    else if(palette.rows.length){palette.index=(palette.index+(event.key==="ArrowUp"?-1:1)+palette.rows.length)%palette.rows.length;renderPalette();}
+  } else if (event.key === "Escape") {
+    event.preventDefault();event.stopPropagation();
+    if(palette.mode){closePalette(true);return;}
+    search = "";if(tab === "Topology")topology.search="";
+    event.target.value = "";page = 0;renderList();
+  } else if(event.key==="Enter" && !event.ctrlKey && !event.metaKey && !event.altKey) {
     event.preventDefault();
-    search = "";
-    if(tab === "Topology")topology.search="";
-    event.target.value = "";
-    page = 0;
-    renderList();
+    [...$('#list').querySelectorAll('[tabindex="0"], summary, [role="option"]')].find(row=>row.getClientRects().length)?.focus();
   }
 };
 $("#prev").onclick = () => {
@@ -2039,11 +2508,35 @@ $("#next").onclick = () => {
   renderList();
   $("#list").scrollTop = 0;
 };
+function focusNextRegion(backwards) {
+  const visible = el => el.getClientRects().length && getComputedStyle(el).visibility !== "hidden";
+  const regions = [$(".sourcebar"), $(".sidebar"), $(".center"), $("#inspector")].filter(visible);
+  const current = regions.findIndex(region => region.contains(document.activeElement));
+  const index = current < 0 ? (backwards ? regions.length - 1 : 0) : (current + (backwards ? -1 : 1) + regions.length) % regions.length;
+  const region = regions[index];
+  if (!region) return;
+  const preferred = region.matches(".sidebar") ? region.querySelector('#sidebar [tabindex="0"]')
+    : region.matches(".center") ? region.querySelector('#list [tabindex="0"]')
+    : region.querySelector('#tree-area [tabindex="0"], .evidence[tabindex="0"], .topology-sources button');
+  const candidates = region.matches(".sourcebar") ? [$("#source"), $("#scan-options-toggle")]
+    : [preferred, ...region.querySelectorAll('input, button:not([tabindex="-1"]), select, textarea, summary')];
+  (candidates.find(el => el && !el.disabled && visible(el)) || region).focus();
+}
 document.addEventListener("keydown", (e) => {
-  if(e.altKey && e.key === "ArrowLeft") {
+  if($("#shortcuts-dialog").open)return;
+  const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
+  if (workbenchKeys && e.key === "F6" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault();
+    focusNextRegion(e.shiftKey);
+    return;
+  }
+  if(e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !document.querySelector("dialog[open]") && e.key === "ArrowLeft") {
     if(dvbiWorkspace.getState().active){e.preventDefault();$('#dvbi-back')?.click();return;}
+    const back=topology.history.at(-1);
+    if(back?.kind==='selection' && !(inspectionEvidence?.kind==='protocol' && protocolSourceHistory.length>back.protocolDepth)){e.preventDefault();selectionBack();return;}
     if(inspectionEvidence?.kind==='protocol'){e.preventDefault();$('#protocol-back')?.click();return;}
     if(tab === "Topology" || topology.revealed){e.preventDefault();topologyBack();return;}
+    e.preventDefault(); // No back entry: keep navigation inside the workbench.
   }
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
     if(dvbiWorkspace.getState().active){e.preventDefault();$("#dvbi-search").focus();return;}
@@ -2051,6 +2544,19 @@ document.addEventListener("keydown", (e) => {
     if (tab === "Changes") { changeTab("Services"); render(); }
     $("#search").focus();
     $("#search").select();
+  }
+  // Match the Qt workbench: Ctrl+O opens a source, Ctrl+Enter analyzes it.
+  // Buttons keep their own disabled state; open dialogs keep their keys.
+  const shortcut = (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && workbenchKeys;
+  if (shortcut && (e.key === "." || e.code === "Period")) {
+    e.preventDefault();
+    if (!$("#cancel-scan").hidden && !$("#cancel-scan").disabled) $("#cancel-scan").click();
+  } else if (shortcut && e.key.toLowerCase() === "o") {
+    e.preventDefault();
+    if (!$("#browse").disabled) $("#browse").click();
+  } else if (shortcut && e.key === "Enter" && (e.target === document.body || (e.target.closest?.(".sourcebar") && e.target.id !== "source"))) {
+    e.preventDefault();
+    if (!$("#scan").disabled) $("#scan").click();
   }
 });
 // Persist only explicit size choices. Responsive clamping must not overwrite a
@@ -2061,6 +2567,7 @@ let preferredLayout = {}, layoutStorageAvailable = true;
 function layoutStorageWarning(message) {
   $("#layout-status").textContent = message;
   $("#layout-status").title = message;
+  if (message) notice(message, "warning");
 }
 function readLayout() {
   try {
@@ -2078,8 +2585,10 @@ function readLayout() {
       widths[name] = Math.max(layoutBounds[name][0], Math.min(layoutBounds[name][1], value));
     }
     preferredLayout = widths;
+    inspectorDetails = workbench.inspectorDisclosure(saved.inspectorDetails);
   } catch (error) {
     preferredLayout = {};
+    inspectorDetails = workbench.inspectorDisclosure();
     // Parsing/shape errors recover to defaults; inaccessible storage is also
     // harmless. Do not remove another version or any unrelated application data.
     layoutStorageWarning("Layout defaults restored");
@@ -2088,7 +2597,11 @@ function readLayout() {
 function saveLayout(reset = false) {
   try {
     if (reset) window.localStorage.removeItem(LAYOUT_KEY);
-    else window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ version: 1, widths: preferredLayout }));
+    else {
+      const layout = { version: 1, widths: preferredLayout };
+      if (Object.values(inspectorDetails).some(Boolean)) layout.inspectorDetails = inspectorDetails;
+      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    }
     layoutStorageAvailable = true;
     layoutStorageWarning("");
   } catch (error) {
@@ -2168,6 +2681,7 @@ function splitter(id, name, direction) {
     saveLayout();
   };
   el.onkeydown = (event) => {
+    if (event.altKey) return;
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
     const step = event.shiftKey ? 64 : 16;
@@ -2185,6 +2699,8 @@ splitter("#split-right", "inspector", -1);
 window.addEventListener("resize", applyLayout);
 $("#reset-layout").onclick = () => {
   preferredLayout = {};
+  inspectorDetails = workbench.inspectorDisclosure();
+  renderInspector();
   applyLayout();
   saveLayout(true);
   notice(layoutStorageAvailable ? "Default layout restored" : "Default layout restored for this session");
@@ -2254,7 +2770,7 @@ async function captureUi() {
 }
 $("#save-diagnostics").onclick=async()=>{
   try { const result=await captureUi(); notice("Diagnostics saved: " + result.directory); }
-  catch(error) { notice("Diagnostics failed: " + String(error)); }
+  catch(error) { notice("Diagnostics failed: " + String(error), "error"); }
 };
 async function pollUiAgent() {
   try {
@@ -2305,8 +2821,9 @@ async function boot() {
     else job.resolve(msg.result);
   });
   env = await invoke("environment");
+  await listenForFileDrop();
   if (env.runtime !== "cloud-browser") await native.event.listen("core-close-blocked", () => {
-    notice("An export is still running. Wait for it to finish before closing.", true);
+    notice("An export is still running. Wait for it to finish before closing.", "warning");
   });
   if (env.agent_enabled) pollUiAgent();
   if (env.backend_alive === false)

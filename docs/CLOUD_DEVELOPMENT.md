@@ -211,3 +211,35 @@ status above without erasing the original failure or the initial-head boundary.
 These hosted Qt checks use offscreen rendering. Windows native Save-dialog
 interaction and WebView2 interaction remain unverified, as do macOS builds and
 installers; successful Windows Tauri release compilation is not GUI acceptance.
+
+## Local Windows Qt interaction tests (2026-10-20)
+
+Scripted Qt tests (`tests/test_qt_*.py`) skip unless `SHOWPSISI_QT` names a built
+`showpsisi-qt.exe`; a run that reports only skips is not a pass. On a developer
+Windows machine, four separate environment causes produced "no result/trace"
+failures that looked like application hangs:
+
+1. Missing runtime DLLs. Without the Qt and TSDuck `bin` folders on `PATH`
+   the process exits with `0xC0000135` before QML loads. `scripts/env.ps1` (or
+   the same `PATH` entries) is required, plus `TSPLUGINS_PATH`.
+2. Host write restriction on freshly built unsigned binaries. On one owner
+   machine, the unsigned `showpsisi-qt.exe` could not create files outside the
+   repository tree (`%TEMP%`, profile and Documents all failed, while signed
+   tools could write there). Test results, traces and exports under the default
+   temporary directory therefore never appeared. Pointing `TEMP`/`TMP` at an
+   ignored repository folder such as `build\tmp` avoids it. This is a host
+   policy observation, not an application defect, and must not be "fixed" by
+   changing security settings.
+3. Offscreen fonts. Without `QT_QPA_FONTDIR` (CI uses `%WINDIR%\Fonts`) text may
+   render as missing glyphs, which invalidates screenshot evidence.
+4. Non-UTF-8 console locale. On a GBK (Chinese) Windows locale,
+   `test_protocol_presentation.py` decodes engine output with the locale codec
+   and fails with `UnicodeDecodeError`; set `PYTHONUTF8=1` for local runs.
+
+Build with `cmake --build build --target showpsisi-qt` in an MSVC environment,
+then from the repository root set `PATH`, `TSPLUGINS_PATH`, `TEMP`/`TMP` and
+`SHOWPSISI_QT` and run, for example,
+`python -m unittest discover -s tests -p test_qt_ui.py`.
+`scripts/ci/windows_native_checks.py --qt` lists the full Qt suite set. Local
+passes do not replace the hosted `qt-native` job and do not establish
+interactive Windows UI behaviour.

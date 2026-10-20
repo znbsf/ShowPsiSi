@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
+import QtQml.Models
 import "qrc:/shared/workbench.js" as Shared
 
 ApplicationWindow {
@@ -26,6 +27,8 @@ ApplicationWindow {
     property color controlBorder: lightTheme ? "#6f7b8a" : "#778496"
     property color blue: lightTheme ? "#155fbe" : "#78acfa"
     property color warningColor: lightTheme ? "#805900" : "#e2c16d"
+    property color errorSurface: lightTheme ? "#fbe3e5" : "#5a1d1d"
+    property color errorInk: lightTheme ? "#8f1d2c" : "#ffffff"
     color: surface
     font.family: "Segoe UI"
     font.pixelSize: 12
@@ -52,11 +55,91 @@ ApplicationWindow {
     property color removedColor: lightTheme ? "#b42929" : "#f48771"
     property color changedColor: lightTheme ? "#806000" : "#dcdcaa"
     property var savedLayout: core.loadLayout()
+    property var recentFiles: normalizeRecentFiles(Array.from(core.loadRecentFiles()))
+    readonly property var recordTabs: ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
+    readonly property var commandTable: [
+        {id:"analyze",description:"Analyze",keys:"Ctrl+Return",reason:function(){return paletteBackendReason() || (!source.text.trim()?"Choose a source first":"");},run:function(){analyzeButton.clicked();}},
+        {id:"open",description:"Open…",keys:"Ctrl+O",reason:paletteBackendReason,run:function(){fileDialog.open();}},
+        {id:"export",description:"Export…",keys:"",reason:function(){return !analysisState.complete?"Analyze a source before exporting":paletteBackendReason() || editBlockReason() || (selectedChange?"Return to the workbench selection before exporting":"");},run:function(){renameButton.clicked();}},
+        {id:"compare",description:"Compare snapshots",keys:"",reason:function(){return paletteBackendReason() || (!analysisState.complete?"Analyze a source before comparing snapshots":"");},run:openComparison},
+        {id:"latest",description:"Latest state",keys:"",reason:function(){return paletteBackendReason() || (!analysisState.complete?"Analyze a source to view its latest state":"");},run:function(){snapshot(-1);}},
+        {id:"theme",description:"Toggle theme",keys:"",run:function(){themeToggle.clicked();}},
+        {id:"layout",description:"Reset layout",keys:"",run:resetLayout},
+        {id:"help",description:"Shortcut help",keys:"? / Ctrl+/",run:showShortcutHelp}
+    ].concat(recordTabs.map(function(name){return {id:"tab-"+name.toLowerCase(),description:name,keys:"",run:function(){tab=name;Qt.callLater(function(){(tab==="Topology"?topologyList:recordList).forceActiveFocus();});}};}))
+    readonly property var shortcutTable: [
+        {keys:"↑ ↓ Home End",description:"Move focus in lists and trees"},
+        {keys:"Enter / Space",description:"Select the focused item"},
+        {keys:"Ctrl+K",description:"Search records"},
+        {keys:"Ctrl+Shift+K",description:"Search inspector structure"},
+        commandTable.find(function(row){return row.id==="open";}),
+        commandTable.find(function(row){return row.id==="analyze";}),
+        {keys:"Ctrl+.",description:"Cancel active scan"},
+        {keys:"Alt+Left",description:"Back"},
+        {keys:"Ctrl+Enter (Structure)",description:"Go to the focused field's reference"},
+        {keys:"Ctrl+Alt+← / →",description:"Resize inspector width"},
+        {keys:"Ctrl+Alt+↑ / ↓",description:"Resize timeline height"},
+        {keys:"F6 / Shift+F6",description:"Next / previous region"},
+        commandTable.find(function(row){return row.id==="help";}),
+        {keys:"Esc",description:"Close shortcut help"}
+    ]
+    property var shortcutReturnFocus: null
+    property int shortcutReturnRecent: -1
+    property var paletteInput: null
+    property var paletteReturnFocus: null
+    property var searchPreviousFocus: null
+    onActiveFocusItemChanged: {let item=win.activeFocusItem;if(item && item!==recordSearch && item!==topologySearch)searchPreviousFocus=item;}
+    property int paletteIndex: 0
+    readonly property string paletteMode: paletteInput ? paletteInput.text.replace(/^\s+/,"").charAt(0) : ""
+    readonly property var paletteTarget: paletteMode==="#" ? Shared.workbench.paletteIdentifier(paletteInput.text.replace(/^\s+/,""),analysisState) : ({})
+    readonly property var paletteRows: paletteMode===">" ? commandTable.filter(function(row){return Shared.workbench.commandMatches(row.description,paletteInput.text.replace(/^\s+/,"").slice(1));}).map(function(row){return {id:row.id,description:row.description,keys:row.keys,reason:row.reason?row.reason():"",run:row.run};}) :
+        paletteMode==="#" && paletteTarget.target ? [{id:"identifier",description:paletteTarget.label,keys:"Return",help:paletteTarget.help,target:paletteTarget.target,reason:paletteBackendReason() || (core.inspecting?"Wait for the current inspection to finish":"")}] : []
+    readonly property string paletteStatus: paletteRows.length+" "+(paletteMode===">"?"commands":"identifier targets")+(paletteRows.length?" available":". "+(paletteMode==="#"?paletteTarget.message:"No matching commands"))
+    function paletteBackendReason() {return !core.available?"Backend unavailable":!backendReady?"Wait for the analysis to finish":exporting?"Wait for the export to finish":"";}
+    function closePalette(restoreFocus) {
+        let input=paletteInput,previous=paletteReturnFocus;paletteInput=null;commandPalette.close();
+        if(input)input.text=input.query;
+        if(restoreFocus){paletteReturnFocus=null;if(previous && previous.visible && previous.enabled)previous.forceActiveFocus();else (tab==="Topology"?topologyList:recordList).forceActiveFocus();}
+    }
+    function executePalette() {
+        let row=paletteRows[paletteIndex];if(!row || row.reason)return;
+        closePalette(true);
+        if(row.target)jumpReference({reference:row.target,path:"",palette:true});else row.run();
+    }
+    function recentPathKey(path) {
+        let key=path.replace(/\\/g,"/");
+        return /^(?:[a-z]:\/|\/\/)/i.test(key) ? key.toLowerCase() : key;
+    }
+    function normalizeRecentFiles(paths) {
+        let seen={}, result=[];
+        if(!Array.isArray(paths))return result;
+        paths.forEach(function(path){if(typeof path!=="string" || !path.trim())return;path=path.trim();let key=recentPathKey(path);if(!Object.prototype.hasOwnProperty.call(seen,key)){seen[key]=true;result.push(path);}});
+        return result.slice(0,10);
+    }
+    function saveRecentFiles() {
+        if(!core.saveRecentFiles(recentFiles))showMessage("Recent files saved for this session only.","warning");
+    }
+    function rememberSource(path) {recentFiles=normalizeRecentFiles([path].concat(recentFiles));saveRecentFiles();}
+    function chooseSource(path) {
+        if(!backendReady || exporting || saveDialog.visible || !path)return;
+        inputKind="ts";source.text=path;recentMenu.close();
+        Qt.callLater(function(){analyzeButton.forceActiveFocus();});
+    }
+    function textInputFocused() {
+        let item=win.activeFocusItem;
+        return !!item && (item instanceof TextInput || item instanceof TextEdit);
+    }
+    function showShortcutHelp() {
+        if(shortcutDialog.visible)return;
+        shortcutReturnFocus=win.activeFocusItem;shortcutReturnRecent=recentMenu.visible ? recentMenu.currentIndex : -1;recentMenu.close();shortcutDialog.open();
+    }
     property bool layoutReady: false
     // Keyboard requests precede SplitView polish; preserve intent until saved.
     property real pendingInspectorSize: -1
     property real pendingTimelineSize: -1
     property var comparison: ({})
+    property var comparisonFilters: []
+    property var comparisonCounts: Shared.workbench.comparisonTotals(comparison)
     property var selectedChange: null
     property var comparisonWorkspace: null
     property int comparisonEvidenceIndex: 0
@@ -102,7 +185,7 @@ ApplicationWindow {
     property var topologyNode: (topologyData.nodes || []).concat(topologyData.context_nodes || []).find(function(n) { return n.node_id === topologySelection; }) || null
     property var topologyRelations: (topologyData.edges || []).filter(function(e) { return e.from === topologySelection || e.to === topologySelection; })
     property var topologySources: topologyNode ? Shared.workbench.topologyEvidence(topologyNode, topologyData.edges || []) : []
-    property var topologyRowModel: Shared.workbench.topologyRows ? Shared.workbench.topologyRows(topologyData, topologyFamily, topologySearch.text, topologyExpanded, topologyLimits) : ({rows:[]})
+    property var topologyRowModel: Shared.workbench.topologyRows ? Shared.workbench.topologyRows(topologyData, topologyFamily, topologySearch.query, topologyExpanded, topologyLimits) : ({rows:[]})
     property var topologyRows: (topologyRowModel.rows || []).map(function(r){return r.more ? r : Object.assign({},r,{node_id:r.node.node_id,branch:r.has_children,open:r.expanded});})
     property bool topologySummary: tab === "Topology" && !topologyEvidenceRef && !protocolSourceRef
     property bool topologyStale: topologyFailed || !!topologyData.analysis_revision && (topologyData.analysis_revision !== analysisState.analysis_revision || topologyData.at_packet !== (topologyCutoff === null ? currentPacket() : topologyCutoff))
@@ -158,15 +241,16 @@ ApplicationWindow {
         if(topologySelection && !topologyNode && !(result.page || {}).has_more)topologyError="The previous object is not observed at this cutoff. Choose an available object.";
     }
     function topologyNavigationPoint() {
-        return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,family:topologyFamily,
+        return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.query,family:topologyFamily,
             evidence:topologyEvidenceRef,sectionContext:topologySectionContext,resolution:topologyResolution,view:inspectorView,scope:evidenceScope,tab:tab,
             scroll:topologyList.contentY,revision:analysisState.analysis_revision,cutoff:topologyData.at_packet};
     }
     function pushTopologyBack() { topologyBackStack=topologyBackStack.concat([topologyNavigationPoint()]); }
     function topologyBack() {
+        if(topologyBackStack.length && topologyBackStack[topologyBackStack.length-1].kind==="selection") {selectionBack();return;}
         if(topologyBackStack.length){
             let stack=topologyBackStack.slice(), saved=stack.pop();topologyBackStack=stack;
-            if(saved.revision!==analysisState.analysis_revision || saved.cutoff!==topologyData.at_packet){notice="The saved object belongs to an older observation. Reload Topology.";return;}
+            if(saved.revision!==analysisState.analysis_revision || saved.cutoff!==topologyData.at_packet){showMessage("The saved object belongs to an older observation. Reload Topology.","warning");return;}
             topologySelection=saved.selection;topologyFocus=saved.focus;topologyExpanded=saved.expanded;topologySearch.text=saved.search;topologyFamily=saved.family;
             topologyTablesReveal=false;topologyTransition=true;tab=saved.tab;topologyTransition=false;topologyEvidenceRef=null;topologyResolution={};
             if(saved.evidence){if(saved.sectionContext){topologyEvidenceRef=saved.evidence;openTopologySibling(saved.sectionContext,false);}else openTopologyEvidence(saved.evidence,false);}
@@ -180,6 +264,54 @@ ApplicationWindow {
             inspectChange(origin.row,origin.side,origin.index);return;
         }
         if(topologyEvidenceRef){topologyEvidenceRef=null;topologyResolution={};topologyTablesReveal=false;tab="Topology";focusTopologyRow(topologyFocus);}
+    }
+    function treeFocused() {
+        let item=win.activeFocusItem;while(item){if(item===tree)return true;item=item.parent;}return false;
+    }
+    function jumpReference(row) {
+        if(!row || !row.reference || !backendReady || core.inspecting)return;
+        let target=row.reference;
+        let saved={kind:"selection",id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,packet:currentPacket(),service:selectedService,
+            tab:tab,view:inspectorView,scope:evidenceScope,filter:filter,pid:pidFilter,query:recordSearch.query,page:tablePage,grouped:groupedTables,invalid:showInvalidSections,
+            expanded:expandedTables,explorer:explorerFocusKey,recordIndex:recordList.currentIndex,recordScroll:recordList.contentY,
+            collapsed:collapsed,search:treeSearch.text,path:row.path,treeScroll:tree.contentY,change:selectedChange,workspace:comparisonWorkspace,
+            topologyRef:topologyEvidenceRef,topologyResolution:topologyResolution,sectionContext:topologySectionContext,revealed:topologyTablesReveal,
+            protocolRef:protocolSourceRef,protocolOrigin:protocolSourceOrigin,protocolResolution:protocolSourceResolution,offset:protocolCardOffset,palette:!!row.palette};
+        topologyBackStack=topologyBackStack.concat([saved]).slice(-100);
+        topologyTransition=true;topologyEvidenceRef=null;topologyResolution={};topologyTablesReveal=false;selectedChange=null;
+        recordSearch.clear();treeSearch.clear();inspectorView="Structure";evidenceScope="Section";
+        if(target.kind==="service")tab="Services";
+        else {selectExplorer({pid:target.pid,name:target.name});groupedTables=false;if((analysisState.tables || []).some(function(r){return r.id===target.id && r.crc?.status==="invalid";}))showInvalidSections=true;}
+        let rowIndex=target.kind==="service" ? rows.findIndex(function(r){return r.id===target.sid && r.source_id===target.id;}) : rawTableRows.findIndex(function(r){return r.id===target.id;});
+        if(target.kind!=="service")tablePage=Math.max(0,Math.floor(rowIndex/100));
+        topologyTransition=false;
+        // Use the record activation path, including its normal inspection guards.
+        let record=target.kind==="service" ? rows[rowIndex] : rawTableRows[rowIndex];
+        if(record)activate(record);
+        Qt.callLater(function(){recordList.currentIndex=target.kind==="service"?rowIndex:rowIndex%100;recordList.positionViewAtIndex(recordList.currentIndex,ListView.Contain);tree.forceActiveFocus();});
+    }
+    function selectionBack() {
+        if(!backendReady || core.inspecting)return;
+        let stack=topologyBackStack.slice(),saved=stack.pop();
+        if(!saved || saved.kind!=="selection")return;
+        topologyBackStack=stack;
+        if(saved.revision!==analysisState.analysis_revision || saved.packet!==currentPacket())return;
+        clearProtocolSource();protocolRestoring=true;protocolRestorePending=saved;selected=saved.id;selectedService=saved.service;
+        core.send("inspect",{id:saved.id,analysis_revision:saved.revision,at_packet:saved.cutoff});
+    }
+    function restoreReferenceSelection(saved) {
+        topologyTransition=true;tab=saved.tab;selectedChange=saved.change;comparisonWorkspace=saved.workspace;topologyTransition=false;
+        filter=saved.filter;pidFilter=saved.pid;recordSearch.text=saved.query;groupedTables=saved.grouped;showInvalidSections=saved.invalid;
+        expandedTables=saved.expanded;tablePage=saved.page;explorerFocusKey=saved.explorer;
+        topologyEvidenceRef=saved.topologyRef;topologyResolution=saved.topologyResolution;topologySectionContext=saved.sectionContext;topologyTablesReveal=saved.revealed;
+        protocolSourceRef=saved.protocolRef;protocolSourceOrigin=saved.protocolOrigin;protocolSourceResolution=saved.protocolResolution;protocolCardOffset=saved.offset;
+        inspectorView=saved.view;evidenceScope=saved.scope;collapsed=saved.collapsed;treeSearch.text=saved.search;protocolRestoring=false;
+        Qt.callLater(function(){
+            recordList.currentIndex=saved.recordIndex;recordList.contentY=saved.recordScroll;
+            if(saved.palette)(tab==="Topology"?topologyList:recordList).forceActiveFocus();
+            let index=treeRows.findIndex(function(r){return r.path===saved.path;});
+            if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Contain);tree.forceActiveFocus();tree.contentY=saved.treeScroll;}
+        });
     }
     function focusTopologyRow(id) {
         let index=topologyRows.findIndex(function(r){return r.node_id===id;});
@@ -204,7 +336,7 @@ ApplicationWindow {
         selectTopologyNode(target,true);topologySearch.clear();Qt.callLater(function(){focusTopologyRow(target);});
     }
     function toggleTopologyRow(row) {
-        if(!row || !row.branch || topologySearch.text.trim())return;
+        if(!row || !row.branch || topologySearch.query.trim())return;
         let expanded=Object.assign({},topologyExpanded);expanded[row.node_id]=!row.open;topologyExpanded=expanded;
     }
     function openTopologyEvidence(ref, remember) {
@@ -243,12 +375,21 @@ ApplicationWindow {
         }
         highlightTopologyHex();
     }
+    // One reason per blocked rename state, in the order a user can resolve them.
+    function editBlockReason() {
+        if (!backendReady) return "Backend unavailable";
+        if (!analysisState.complete || core.inspecting) return "Wait for the analysis to finish";
+        if (detail.name !== "SDT") return "Rename needs an SDT (Service Description Table) section";
+        if (!detail.valid) return "Rename needs a section with a valid CRC";
+        if (!chosenService()) return "This SDT section lists no services";
+        return "";
+    }
     function highlightTopologyHex() {
         let range=activeInspectionResolution.byte_range || activeInspectionResolution.range;
         if(!activeInspectionRef || !range || range.offset_scope!=="section_bytes")return;
         let start=range.offset,end=start+range.length-1;
         if(range.length>0 && end<(detail.raw_hex || "").replace(/\s/g,"").length/2){
-            let pos=function(offset){return Math.floor(offset/16)*54+6+(offset%16)*3;};
+            let pos=function(offset){return Math.floor(offset/16)*72+6+(offset%16)*3;};
             Qt.callLater(function(){hexEvidence.select(pos(start),pos(end)+2);});
         }
     }
@@ -275,6 +416,13 @@ ApplicationWindow {
     property string epgLanguage: ""
     property var identifierResult: ({})
     property var satelliteResult: ({})
+    function revealMetadataControl(item) {
+        if(inspectorView!=="Metadata" || !item)return;
+        let scroll=metadataScroll.contentItem,y=item.mapToItem(metadataContent,0,0).y,top=scroll.contentY;
+        if(y<top)top=y;
+        else if(y+Math.min(item.height,metadataScroll.availableHeight)>top+metadataScroll.availableHeight)top=y+Math.min(item.height,metadataScroll.availableHeight)-metadataScroll.availableHeight;
+        scroll.contentY=Math.max(0,Math.min(top,Math.max(0,scroll.contentHeight-metadataScroll.availableHeight)));
+    }
     function satelliteText(x) {
         let p=x.raw_parameters || {};
         return "Candidates only · " + (x.status || x.error || "") + "\n" +
@@ -308,7 +456,7 @@ ApplicationWindow {
     function openProtocolSource(source, remember, cardIndex, sourceIndex) {
         if(!source || !source.available || !backendReady || core.inspecting)return;
         let ref=source.ref;
-        if(ref.analysis_revision!==analysisState.analysis_revision){notice="This metadata source belongs to an older analysis.";return;}
+        if(ref.analysis_revision!==analysisState.analysis_revision){showMessage("This metadata source belongs to an older analysis.","warning");return;}
         if(remember!==false)protocolSourceOrigin={id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,service:selectedService,tab:tab,view:inspectorView,scope:evidenceScope,offset:protocolCardOffset,scroll:metadataScroll.contentItem.contentY,search:treeSearch.text,collapsed:collapsed,card:cardIndex,source:sourceIndex};
         protocolSourceRef=ref;protocolSourceResolution={};selected=ref.section_id;selectedService=-1;preview={};
         treeSearch.clear();collapsed={};evidenceScope="Section";inspectorView="Structure";
@@ -317,7 +465,7 @@ ApplicationWindow {
     function protocolSourceBack() {
         let origin=protocolSourceOrigin;
         if(!origin || !backendReady || core.inspecting)return;
-        if(origin.revision!==analysisState.analysis_revision){clearProtocolSource();notice="The originating metadata belongs to an older analysis.";return;}
+        if(origin.revision!==analysisState.analysis_revision){clearProtocolSource();showMessage("The originating metadata belongs to an older analysis.","warning");return;}
         clearProtocolSource();protocolRestoring=true;protocolRestorePending=origin;selected=origin.id;selectedService=origin.service;
         core.send("inspect",{id:origin.id,analysis_revision:origin.revision,at_packet:origin.cutoff});
     }
@@ -348,8 +496,21 @@ ApplicationWindow {
         });
         return entries.filter(function(x){return x.title.indexOf("Event ")===0;}).concat(entries.filter(function(x){return x.title.indexOf("Event ")!==0;}));
     }
-    property bool arrivalOpen: false
-    property bool sectionGroupOpen: false
+    property var initialInspectorDetails: Shared.workbench.inspectorDisclosure(savedLayout.inspectorDetails)
+    property bool identityOpen: initialInspectorDetails.identity
+    property bool crcOpen: initialInspectorDetails.crc
+    property bool arrivalOpen: initialInspectorDetails.arrival
+    property bool sectionGroupOpen: initialInspectorDetails.sections
+    property bool scopeOpen: initialInspectorDetails.scope
+    property bool warningsOpen: initialInspectorDetails.warnings
+    onIdentityOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(identityOpen)revealInspectorDetail(identityDetails);}
+    onCrcOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(crcOpen)revealInspectorDetail(crcDetails);}
+    onArrivalOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(arrivalOpen)revealInspectorDetail(arrivalDetails);}
+    onSectionGroupOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(sectionGroupOpen)revealInspectorDetail(sectionChoice.visible ? sectionChoice : sectionGroupDetails);}
+    onScopeOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(scopeOpen)revealInspectorDetail(cutoffDetails);}
+    onWarningsOpenChanged: if(layoutReady){layoutSaveTimer.restart();if(warningsOpen)revealInspectorDetail(nativeDecodeWarningLabel);}
+    readonly property var inspectorSummary: Shared.workbench.inspectorSummary(detail)
+    readonly property var inspectorNotes: Shared.workbench.inspectorWarnings(detail,analysisState)
     property bool showInvalidSections: false
     property string evidenceScope: "Merged"
     property var selectedGroup: (analysisState.table_groups || []).find(function(g) { return (g.section_ids || []).indexOf(detail.id) >= 0; }) || ({})
@@ -402,6 +563,25 @@ ApplicationWindow {
     property var expandedTables: ({})
     property var preview: ({})
     property string notice: ""
+    property string messageLevel: "info"
+    property bool messageExpired: false
+    property bool updatingMessage: false
+    property string warningMessage: ""
+    property int warningRepeat: 0
+    property string errorMessage: ""
+    onNoticeChanged: if (!updatingMessage && notice) showMessage(notice)
+    ListModel { id: messagesModel }
+    Timer { id: messageTimer; interval: 4000; onTriggered: messageExpired = true }
+    function showMessage(text, level) {
+        text=String(text || "");if(!text)return;
+        level=level || "info";messageTimer.stop();messageExpired=false;messageLevel=level;
+        updatingMessage=true;notice=text;updatingMessage=false;
+        messagesModel.insert(0,{messageLevel:level,messageTime:Qt.formatTime(new Date(),"HH:mm:ss"),messageText:text});
+        if(messagesModel.count>50)messagesModel.remove(50);
+        if(level==="warning"){warningRepeat=warningMessage===text ? warningRepeat+1 : 1;warningMessage=text;}
+        if(level==="error"){warningMessage="";warningRepeat=0;errorMessage=text;}
+        if(level==="info")messageTimer.restart();
+    }
     function agentState() {
         let diagnostics = core.diagnostics();
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
@@ -413,7 +593,7 @@ ApplicationWindow {
             history: {all:allTableHistory,entries:historyRows,page:historyPage}, evidence_scope:evidenceScope.toLowerCase(), tab: tab, inspector: inspectorView, tree_search: treeSearch.text,
             focused_tree_path: tree.activeFocus && treeRows[tree.currentIndex] ? treeRows[tree.currentIndex].path : "",
             tree: treeRows.slice(0, 2500), tree_limit: 2500, diagnostics: diagnostics,
-            topology: {data:topologyData,family:topologyFamily,selected_node:topologySelection,focused_node:topologyFocus,expanded:topologyExpanded,search:topologySearch.text,rows:topologyRows,loading:topologyLoading,stale:topologyStale,error:topologyError,summary:topologySummary,sources:topologySources,active_evidence:topologyEvidenceRef,section_context:topologySectionContext,resolution:topologyResolution,back_depth:topologyBackStack.length,scope:topologyScopeLabel,can_reveal:topologyCanReveal},
+            topology: {data:topologyData,family:topologyFamily,selected_node:topologySelection,focused_node:topologyFocus,expanded:topologyExpanded,search:topologySearch.query,rows:topologyRows,loading:topologyLoading,stale:topologyStale,error:topologyError,summary:topologySummary,sources:topologySources,active_evidence:topologyEvidenceRef,section_context:topologySectionContext,resolution:topologyResolution,back_depth:topologyBackStack.length,scope:topologyScopeLabel,can_reveal:topologyCanReveal},
             protocol: {scroll:metadataScroll.contentItem.contentY,cards:protocolCardModel,sources:protocolCardModel.cards.map(function(c){return Shared.workbench.protocolCardSources(c);}),active_evidence:protocolSourceRef,resolution:protocolSourceResolution,can_back:!!protocolSourceOrigin},
             comparison_context: {data:comparison,selected:selectedChange,side:comparisonSide,origin:topologyOrigin},
             inspection: {id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,anchors:detail.evidence_anchors || [],hex_selection:hexEvidence.selectedText},
@@ -489,9 +669,9 @@ ApplicationWindow {
     property var serviceRows: analysisState.services || []
     property bool groupedTables: true
     property int tablePage: 0
-    property string tableQuery: recordSearch.text
+    property string tableQuery: recordSearch.query
     onTableQueryChanged: tablePage=0
-    property var tableModel: Shared.workbench.tables(analysisState, pidFilter, filter, showInvalidSections, recordSearch.text)
+    property var tableModel: Shared.workbench.tables(analysisState, pidFilter, filter, showInvalidSections, recordSearch.query)
     property var rawTableRows: tableModel.sections
     property int logicalTableCount: tableModel.groups.length
     property var tableRows: logicalTableRows()
@@ -544,6 +724,11 @@ ApplicationWindow {
         return name && name !== "Private / other" && all.indexOf(name) === index;
     })).concat(["Private / other"])
     property var extraPidsValue: parseExtraPids(extraPids.text)
+    property var pendingScanOptions: null
+    property var completedScanOptions: null
+    property var sourceScanOptions: ({standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue})
+    property string scanOptionsSummary: Shared.workbench.scanOptionsSummary(sourceScanOptions)
+    property bool scanOptionsChanged: !!analysisState.complete && completedScanOptions !== null && Shared.workbench.scanOptionsKey(sourceScanOptions) !== Shared.workbench.scanOptionsKey(completedScanOptions)
     function parseExtraPids(text) {
         let values = text.trim() ? text.trim().split(/[\s,]+/) : [];
         let result = [];
@@ -583,9 +768,10 @@ ApplicationWindow {
     }
     property var eventRows: analysisState.events || []
     property var issues: analysisState.diagnostics || []
+    property var issueCounts: Shared.workbench.issueCounts(issues)
     property var unfilteredRows: tab === "Services" ? serviceRows : tab === "Tables" ? tableRows : tab === "EPG" ? eventRows : tab === "Changes" ? (comparison.changes || []) : issues
     property var rows: unfilteredRows.filter(function (row) {
-        return tab === "Tables" ? true : tab === "Changes" ? searchTerms(recordSearch.text).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.text);
+        return tab === "Tables" ? true : tab === "Changes" ? Shared.workbench.comparisonMatches(row,comparisonFilters) && searchTerms(recordSearch.query).every(function (term) { return JSON.stringify(row).toLowerCase().indexOf(term) >= 0; }) : matchesRecord(row, recordSearch.query);
     })
     property bool selectionHidden: !!selected && !(tab === "Tables" ? rawTableRows : rows).some(function (row) {
         if (tab === "Changes")
@@ -728,14 +914,7 @@ ApplicationWindow {
         // QVariantList arrives as a QML sequence, not a JavaScript Array.
         return Array.isArray(value) || (value !== null && typeof value === "object" && Number.isInteger(value.length) && value.length >= 0 && typeof value.forEach === "function" && typeof value.splice === "function");
     }
-    function nativeWarningsText() {
-        let warnings = [], reported = detail.native_decode_warnings || [];
-        for (let i = 0; isList(reported) && i < reported.length; ++i)
-            if (typeof reported[i] === "string") warnings.push(reported[i]);
-        if (detail.native_xml_guarded)
-            warnings.push("Guarded SDK XML: " + (detail.native_xml_guard_reason || "ambiguous descriptor interpretation") + ". Original wire bytes remain authoritative in Hex.");
-        return warnings.join("\n");
-    }
+    function nativeWarningsText() { return inspectorNotes.join("\n"); }
     function valueText(key, value) {
         if (value === null || value === undefined)
             return "—";
@@ -758,10 +937,11 @@ ApplicationWindow {
             let path=canonical.replace(/^section\//,"").replace(/^assembly(?=\/|$)/,"provenance");
             let branch=!!node.children;
             let closed=branch && !expandAll && (hidden[path]===undefined ? !Shared.workbench.defaultOpen(canonical) : !!hidden[path]);
-            result.push({path:path,label:node.label,value:node.value || "",depth:depth,branch:branch,closed:closed,kind:node.kind || "meta"});
+            result.push({path:path,label:node.label,value:node.value || "",depth:depth,branch:branch,closed:closed,kind:node.kind || "meta",reference:node.reference || null});
             if(branch && !closed) node.children.forEach(function(child){visit(child,canonical,depth+1);});
         }
-        visit(Shared.workbench.structure(section,evidenceScope.toLowerCase(),sid),"",0);
+        let referenceState=activeInspectionRef && activeInspectionRef.at_packet!==currentPacket() || selectedChange && selectedChange[comparisonSide] && selectedChange[comparisonSide].at_packet!==currentPacket() ? null : analysisState;
+        visit(Shared.workbench.structure(section,evidenceScope.toLowerCase(),sid,referenceState),"",0);
         return result;
     }
     function toggle(path) {
@@ -774,27 +954,36 @@ ApplicationWindow {
         next[path] = row ? !row.closed : !next[path];
         collapsed = next;
     }
+    function revealInspectorDetail(item) {
+        Qt.callLater(function() {
+            let point=item.mapToItem(inspectorDetailsColumn,0,0);
+            inspectorDetailsScroll.contentItem.contentY=Math.max(0,Math.min(point.y,Math.max(0,inspectorDetailsScroll.contentHeight-inspectorDetailsScroll.availableHeight)));
+        });
+    }
     function rememberLayout() {
         if (!layoutReady)
             return;
         let value = { version: 1, explorer: explorerPane.width,
             inspector: pendingInspectorSize >= 0 ? pendingInspectorSize : inspectorPane.width,
             timeline: pendingTimelineSize >= 0 ? pendingTimelineSize : timelinePane.height };
+        value.inspectorDetails = {identity:identityOpen,crc:crcOpen,arrival:arrivalOpen,sections:sectionGroupOpen,scope:scopeOpen,warnings:warningsOpen};
         if (!core.saveLayout(value)) {
-            notice = "Layout could not be saved. The current layout remains usable.";
+            showMessage("Layout could not be saved. The current layout remains usable.", "warning");
         } else {
             pendingInspectorSize = -1;
             pendingTimelineSize = -1;
         }
     }
     function resetLayout() {
+        identityOpen=false;crcOpen=false;arrivalOpen=false;sectionGroupOpen=false;scopeOpen=false;warningsOpen=false;
         layoutSaveTimer.stop();
         pendingInspectorSize = -1;
         pendingTimelineSize = -1;
         explorerPane.SplitView.preferredWidth = 180;
         inspectorPane.SplitView.preferredWidth = 520;
         timelinePane.SplitView.preferredHeight = 105;
-        notice = core.resetLayout() ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.";
+        let saved=core.resetLayout();
+        showMessage(saved ? "Default layout restored" : "Layout reset for this session; preferences could not be saved.", saved ? "info" : "warning");
     }
     function resizeInspector(delta) {
         pendingInspectorSize = Math.max(330, Math.min(workspace.width - explorerPane.width - 322,
@@ -826,6 +1015,10 @@ ApplicationWindow {
     function validPacket(text) {
         return /^\d+$/.test(text) && Number.isSafeInteger(Number(text)) && Number(text) < Number(analysisState.packets || 0);
     }
+    function focusComparisonAction() {
+        tab = "Changes";
+        Qt.callLater(function() { comparisonRun.highlighted = true; if (comparisonRun.enabled) comparisonRun.forceActiveFocus(); });
+    }
     function compareSnapshots(offset) {
         if (!backendReady || core.comparing || !analysisState.complete || !validPacket(fromPacket.text) || !validPacket(toPacket.text))
             return;
@@ -845,22 +1038,9 @@ ApplicationWindow {
         return row.change.toUpperCase() + " · " + row.kind + " · " + (value.name || value.title || (row.kind === "tables" ? "Table " + hex(value.table_id, 2) : "SID " + hex(value.service_id === undefined ? value.id : value.service_id)));
     }
     function changeFields(row, full) {
-        if (!row)
-            return "";
-        return (row.changed_fields || []).map(function (field) {
-            if (field === "payload" && row.kind === "tables")
-                return "Raw section bytes changed · compare A / B in Hex";
-            let before = row.before ? row.before.value[field] : undefined;
-            let after = row.after ? row.after.value[field] : undefined;
-            let render = function (value) {
-                if (value === undefined) return "—";
-                if (value !== null && typeof value === "object" && !full)
-                    return Array.isArray(value) ? value.length + " entries" : "structured metadata";
-                return typeof value === "object" ? JSON.stringify(value) : valueText(field, value);
-            };
-            return field + ": " + render(before) + " → " + render(after);
-        }).join("\n");
+        return Shared.workbench.comparisonRows(row,{}).map(function(field){return Shared.workbench.comparisonFieldText(field);}).join("\n");
     }
+    function changeColor(kind) { return kind === "added" ? addedColor : kind === "removed" ? removedColor : kind === "changed" ? changedColor : muted; }
     function restoreComparisonWorkspace() {
         let saved = comparisonWorkspace;
         comparisonWorkspace = null;
@@ -940,6 +1120,7 @@ ApplicationWindow {
         let destination = core.exportDestination(url, intent.format);
         if (destination.error) {
             exportFeedback = destination.error;
+            showMessage(exportFeedback, "error");
             exportButton.forceActiveFocus();
             return;
         }
@@ -961,6 +1142,7 @@ ApplicationWindow {
         preview = {};
         comparison = {};
         selectedChange = null;
+        comparisonFilters = [];
         comparisonWorkspace = null;
         previewIntent = {};
         comparisonError = "";
@@ -982,18 +1164,31 @@ ApplicationWindow {
     function scan() {
         if (metadataMode || !backendReady || !source.text.trim() || extraPidsValue === null)
             return;
+        recentMenu.close();
         clearWorkspaceIntentions();
         filter = ""; pidFilter = -1; expandedTables = {};
         recordSearch.clear();
         treeSearch.clear();
         tab = "Services";
         notice = "Scanning source…";
+        pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
+        rememberSource(source.text.trim());
         core.send("analyze", {
             path: source.text.trim(),
-            standards: standardChoice.currentValue,
-            default_charset: defaultCharset.text.trim(),
-            extra_pids: extraPidsValue
+            standards: pendingScanOptions.standards,
+            default_charset: pendingScanOptions.default_charset,
+            extra_pids: pendingScanOptions.extra_pids
         });
+    }
+    function focusNextRegion(backwards) {
+        let regions=[sourceBar,explorerPane,recordPane,inspectorPane], current=-1;
+        for(let item=win.activeFocusItem;item;item=item.parent){let index=regions.indexOf(item);if(index>=0){current=index;break;}}
+        let next=current<0 ? (backwards ? 3 : 0) : (current+(backwards ? -1 : 1)+4)%4;
+        if(next===0){if(source.enabled)source.forceActiveFocus();else scanOptionsToggle.forceActiveFocus();}
+        else if(next===1)explorerList.forceActiveFocus();
+        else if(next===2){if(tab==="Topology")topologyList.forceActiveFocus();else recordList.forceActiveFocus();}
+        else if(topologySummary)topologySourcesList.forceActiveFocus();
+        else {inspectorView="Structure";tree.forceActiveFocus();}
     }
     function activateHistory(entry) {
         selectExplorer({pid:entry.pid,name:entry.name});
@@ -1064,6 +1259,152 @@ ApplicationWindow {
     component PlainLabel: Label {
         textFormat: Text.PlainText
     }
+    component ComparisonDiff: Column {
+        id: diff
+        property var change: null
+        property var expanded: ({})
+        // Compact lists cap each change at a few field lines so a whole row stays visible.
+        property int maxRows: 0
+        property bool showAll: false
+        // Capped lists also keep each field on one elided line; the tooltip carries the full text.
+        readonly property bool singleLine: maxRows > 0
+        readonly property var allRows: Shared.workbench.comparisonRows(diff.change,diff.expanded)
+        readonly property int hiddenRows: maxRows > 0 && !showAll ? Math.max(0, allRows.length - maxRows) : 0
+        // Toggling a nested field also selects its change, like the rest of the row.
+        signal fieldActivated()
+        spacing: 2
+        onChangeChanged: { expanded = ({}); showAll = false; }
+        function toggleField(path) {
+            let next=Object.assign({},expanded);next[path]=!next[path];expanded=next;
+            Qt.callLater(function(){for(let i=0;i<diffRows.count;i++){let item=diffRows.itemAt(i);if(item && item.modelData.path===path){item.focusBranch();break;}}});
+        }
+        Repeater {
+            id: diffRows
+            model: diff.hiddenRows ? diff.allRows.slice(0, diff.maxRows) : diff.allRows
+            delegate: Item {
+                required property var modelData
+                width: diff.width
+                height: branch.visible ? branch.implicitHeight : scalar.implicitHeight
+                function focusBranch() { branch.forceActiveFocus(); }
+                Action {
+                    id: branch
+                    visible: modelData.children.length > 0
+                    width: parent.width
+                    leftPadding: 4 + modelData.depth * 12
+                    rightPadding: 4
+                    implicitHeight: Math.max(24,contentItem.implicitHeight + 8)
+                    checkable: true
+                    checked: !!diff.expanded[modelData.path]
+                    text: (checked ? "▾ " : "▸ ") + Shared.workbench.comparisonFieldText(modelData)
+                    Accessible.name: Shared.workbench.comparisonFieldText(modelData)
+                    Accessible.description: Shared.workbench.comparisonHelp(modelData.key) + (checked ? ", expanded" : ", collapsed")
+                    contentItem: PlainLabel { text:branch.text; color:changeColor(modelData.change); wrapMode:diff.singleLine ? Text.NoWrap : Text.WrapAnywhere; elide:diff.singleLine ? Text.ElideRight : Text.ElideNone; font.family:"monospace"; font.pixelSize:11 }
+                    background: Rectangle { color:branch.hovered ? hoverSurface : "transparent"; border.color:branch.activeFocus ? blue : "transparent"; border.width:branch.activeFocus ? focusWidth : 0; radius:2 }
+                    onClicked: { const owner=diff, path=modelData.path; owner.fieldActivated(); owner.toggleField(path); } // toggling rebuilds this delegate
+                    SafeTip { visible:anchorHovered; text:(diff.singleLine ? Shared.workbench.comparisonFieldText(modelData) + "
+" : "") + Shared.workbench.comparisonHelp(modelData.key) + " · Expand nested A / B fields; array labels are positions" }
+                }
+                PlainLabel {
+                    id: scalar
+                    visible: !branch.visible
+                    width: parent.width
+                    leftPadding: 4 + modelData.depth * 12
+                    topPadding: 3
+                    bottomPadding: 3
+                    text: Shared.workbench.comparisonFieldText(modelData)
+                    color: changeColor(modelData.change)
+                    wrapMode: diff.singleLine ? Text.NoWrap : Text.WrapAnywhere
+                    elide: diff.singleLine ? Text.ElideRight : Text.ElideNone
+                    font.family: "monospace"
+                    font.pixelSize: 11
+                    HoverHandler { id: fieldHover }
+                    SafeTip { visible:fieldHover.hovered; text:(diff.singleLine ? scalar.text + "
+" : "") + Shared.workbench.comparisonHelp(modelData.key) }
+                }
+            }
+        }
+        Action {
+            visible: diff.hiddenRows > 0
+            width: diff.width
+            implicitHeight: 22
+            leftPadding: 4
+            text: "+" + diff.hiddenRows + (diff.hiddenRows === 1 ? " more field" : " more fields")
+            Accessible.name: "Show " + diff.hiddenRows + " more changed fields"
+            contentItem: PlainLabel { text:parent.text; color:muted; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
+            onClicked: { const owner=diff; owner.fieldActivated(); owner.showAll=true; }
+        }
+    }
+    component LookupTable: ColumnLayout {
+        id: lookupTable
+        property var result: ({})
+        property string label: "Lookup result"
+        readonly property var presentation: Shared.workbench.lookupResult(result)
+        readonly property real keyWidth: width * (presentation.hasSource ? 0.32 : 0.40)
+        readonly property real sourceWidth: width * 0.30
+        visible: Object.keys(result).length > 0
+        Layout.fillWidth: true
+        spacing: 0
+        Accessible.role: Accessible.Table
+        Accessible.name: label
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            PlainLabel { text: "Key"; color: muted; font.bold: true; Layout.preferredWidth: lookupTable.keyWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.keyWidth }
+            PlainLabel { text: "Value"; color: muted; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0 }
+            PlainLabel { text: "Source"; color: muted; font.bold: true; visible: lookupTable.presentation.hasSource; Layout.preferredWidth: lookupTable.sourceWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.sourceWidth }
+        }
+        Repeater {
+            model: lookupTable.presentation.rows
+            ColumnLayout {
+                id: lookupRow
+                required property var modelData
+                Layout.fillWidth: true
+                spacing: 0
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: dividerColor }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    PlainLabel {
+                        id: keyCell
+                        text: lookupRow.modelData.label
+                        Layout.preferredWidth: lookupTable.keyWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.keyWidth; Layout.alignment: Qt.AlignTop
+                        padding: 4; wrapMode: Text.WrapAnywhere; color: muted; font.pixelSize: 11
+                        activeFocusOnTab: true
+                        onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(keyCell);})
+                        Accessible.name: text
+                        Accessible.description: "Raw key: " + lookupRow.modelData.key + (lookupRow.modelData.help ? " · " + lookupRow.modelData.help : "")
+                        background: Rectangle { color: surface; border.color: blue; border.width: keyCell.activeFocus ? focusWidth : 0 }
+                        HoverHandler { id: keyHover }
+                        SafeTip { visible: keyHover.hovered || keyCell.activeFocus; text: keyCell.Accessible.description }
+                    }
+                    TextArea {
+                        id: valueCell
+                        text: lookupRow.modelData.value
+                        Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.alignment: Qt.AlignTop
+                        padding: 4; readOnly: true; selectByMouse: true; activeFocusOnTab: true
+                        textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; font.family: "monospace"; font.pixelSize: 12; color: ink
+                        onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(valueCell);})
+                        Accessible.name: lookupTable.label + " · " + lookupRow.modelData.label
+                        background: Rectangle { color: surface; border.color: blue; border.width: valueCell.activeFocus ? focusWidth : 0 }
+                    }
+                    TextArea {
+                        id: sourceCell
+                        visible: lookupTable.presentation.hasSource
+                        text: lookupRow.modelData.source || "—"
+                        Layout.preferredWidth: lookupTable.sourceWidth; Layout.minimumWidth: 0; Layout.maximumWidth: lookupTable.sourceWidth; Layout.alignment: Qt.AlignTop
+                        padding: 4; readOnly: true; selectByMouse: true; activeFocusOnTab: true
+                        textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; font.pixelSize: 11; color: muted
+                        onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(sourceCell);})
+                        Accessible.name: "Source for " + lookupRow.modelData.label
+                        Accessible.description: lookupRow.modelData.sourceTip
+                        background: Rectangle { color: surface; border.color: blue; border.width: sourceCell.activeFocus ? focusWidth : 0 }
+                        HoverHandler { id: sourceHover }
+                        SafeTip { visible: sourceHover.hovered || sourceCell.activeFocus; text: lookupRow.modelData.sourceTip }
+                    }
+                }
+            }
+        }
+    }
     component SafeTip: ToolTip {
         id: tip
         property var anchorControl: parent
@@ -1082,6 +1423,35 @@ ApplicationWindow {
             border.color: dividerColor
             radius: 2
         }
+    }
+    component PaletteInput: FieldInput {
+        id: paletteField
+        // Prefixes leave the normal record/topology filter unchanged.
+        property string query: ""
+        Accessible.role: Accessible.ComboBox
+        Accessible.description: "Search records · > commands · # PID: Packet Identifier / SID: Service Identifier. " + (paletteInput===paletteField ? paletteStatus + ". " + (paletteRows[paletteIndex] ? paletteRows[paletteIndex].description + ". " + paletteRows[paletteIndex].reason : "") : "")
+        onTextChanged: {
+            if(/^[>#]/.test(text.replace(/^\s+/,""))){
+                paletteInput=paletteField;paletteIndex=0;
+                Qt.callLater(function(){if(paletteField.activeFocus && paletteInput===paletteField)commandPalette.open();});
+            }else {query=text;if(paletteInput===paletteField)closePalette(false);}
+        }
+        onActiveFocusChanged: {
+            if(activeFocus){paletteReturnFocus=searchPreviousFocus;if(/^[>#]/.test(text.replace(/^\s+/,""))){paletteInput=paletteField;commandPalette.open();}}
+            else if(paletteInput===paletteField)closePalette(false);
+        }
+        Keys.onPressed: function(event) {
+            if(paletteInput!==paletteField || event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier))return;
+            if(event.key===Qt.Key_Up || event.key===Qt.Key_Down){
+                event.accepted=true;if(paletteRows.length){paletteIndex=(paletteIndex+(event.key===Qt.Key_Up?-1:1)+paletteRows.length)%paletteRows.length;paletteList.positionViewAtIndex(paletteIndex,ListView.Contain);}
+            }else if(event.key===Qt.Key_Return || event.key===Qt.Key_Enter){event.accepted=true;executePalette();}
+        }
+        Keys.onEscapePressed: function(event) {event.accepted=true;if(paletteInput===paletteField)closePalette(true);else clear();}
+        onAccepted: {
+            let list=paletteField===topologySearch?topologyList:recordList;
+            list.forceActiveFocus();if(list.count)list.currentIndex=0;
+        }
+        SafeTip { visible:anchorHovered; text:"Search records · > commands · # PID: Packet Identifier / SID: Service Identifier · #table: Table Identifier" }
     }
     component FieldInput: TextField {
         id: fieldInput
@@ -1151,6 +1521,88 @@ ApplicationWindow {
             border.width: control.activeFocus ? focusWidth : 1
         }
     }
+    component ComparisonMarker: Slider {
+        id: marker
+        property bool startMarker: true
+        readonly property bool packetValid: validPacket(startMarker ? fromPacket.text : toPacket.text)
+        objectName: startMarker ? "comparisonMarkerA" : "comparisonMarkerB"
+        from: 0
+        to: Math.max(0, Number(analysisState.packets || 1) - 1)
+        stepSize: 1
+        value: packetValid ? Number(startMarker ? fromPacket.text : toPacket.text) : 0
+        visible: !!analysisState.complete && packetValid
+        enabled: densityStrip.interactive && !core.comparing
+        focusPolicy: Qt.StrongFocus
+        activeFocusOnTab: enabled && visible
+        width: 20; height: 14; padding: 0; z: 2
+        x: (to > 0 ? value / to * densityStrip.width : 0) - width / 2
+        y: startMarker ? 0 : 14
+        Accessible.role: Accessible.Slider
+        Accessible.name: "Comparison " + (startMarker ? "A" : "B") + " packet"
+        Accessible.description: "Packet " + value + ". Drag to change the comparison " + (startMarker ? "start" : "end")
+        onMoved: densityStrip.moveComparisonMarker(startMarker, value)
+        Keys.onPressed: function(event) {
+            // Explicit order: density strip, A, B; the strip is the markers' parent.
+            const back = event.key === Qt.Key_Backtab || event.key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier);
+            if (back) { (!startMarker && comparisonMarkerA.visible && comparisonMarkerA.enabled ? comparisonMarkerA : densityStrip).forceActiveFocus(Qt.BacktabFocusReason); event.accepted = true; return; }
+            if (event.key === Qt.Key_Tab && startMarker && comparisonMarkerB.visible && comparisonMarkerB.enabled) { comparisonMarkerB.forceActiveFocus(Qt.TabFocusReason); event.accepted = true; return; }
+            if ([Qt.Key_Left, Qt.Key_Right, Qt.Key_Home, Qt.Key_End].indexOf(event.key) < 0) return;
+            let step = event.modifiers & Qt.ShiftModifier ? 1 : Math.max(1, Math.round(to / Math.max(1, densityStrip.binCount - 1)));
+            densityStrip.moveComparisonMarker(startMarker, event.key === Qt.Key_Home ? 0 : event.key === Qt.Key_End ? to : value + (event.key === Qt.Key_Right ? step : -step));
+            event.accepted = true;
+        }
+        handle: null
+        background: Rectangle { color: surface; radius: 2; border.color: marker.startMarker ? removedColor : addedColor }
+        contentItem: PlainLabel { text: marker.startMarker ? "A" : "B"; color: marker.startMarker ? removedColor : addedColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; font.pixelSize: 11 }
+        Rectangle { x: marker.width / 2 - 1; y: marker.startMarker ? 0 : -14; width: 2; height: densityStrip.height; z: -1; color: marker.startMarker ? removedColor : addedColor }
+        Rectangle { anchors.fill: parent; anchors.margins: -2; visible: marker.activeFocus; color: "transparent"; border.color: blue; border.width: focusWidth; radius: 2 }
+        MouseArea {
+            id: markerMouse
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton
+            hoverEnabled: true
+            preventStealing: true
+            cursorShape: Qt.SizeHorCursor
+            property real grabOffset: 0
+            function moveTo(mouse) {
+                let point = mapToItem(densityStrip, mouse.x, mouse.y);
+                densityStrip.moveComparisonMarker(marker.startMarker, (point.x - grabOffset) / Math.max(1, densityStrip.width) * marker.to);
+            }
+            onPressed: function(mouse) { marker.forceActiveFocus(Qt.MouseFocusReason); grabOffset = mapToItem(densityStrip, mouse.x, mouse.y).x - marker.x - marker.width / 2; }
+            onPositionChanged: function(mouse) { if (pressed) moveTo(mouse); }
+            onReleased: function(mouse) { moveTo(mouse); focusComparisonAction(); }
+        }
+        SafeTip { visible: markerMouse.containsMouse; text: (marker.startMarker ? "A" : "B") + " · packet " + marker.value + " · drag to change the comparison " + (marker.startMarker ? "start" : "end") }
+    }
+    component RecentMenuItem: MenuItem {
+        id: entry
+        implicitHeight: 28
+        leftPadding: 8
+        rightPadding: 8
+        Accessible.name: text
+        contentItem: PlainLabel {text:entry.text;color:entry.enabled?ink:muted;elide:Text.ElideMiddle;verticalAlignment:Text.AlignVCenter;font.pixelSize:11}
+        background: Rectangle {color:entry.highlighted?hoverSurface:panel;border.color:entry.activeFocus?blue:dividerColor;border.width:entry.activeFocus?focusWidth:0;radius:2}
+    }
+    component SummaryChip: Action {
+        id: chip
+        property string help: ""
+        property bool disclosure: true
+        property var scrollHost: null
+        implicitHeight: 26
+        leftPadding: 4
+        rightPadding: 4
+        checkable: true
+        Accessible.name: text + (disclosure ? (checked ? ", expanded" : ", collapsed") : "")
+        Accessible.description: help
+        onActiveFocusChanged: if(activeFocus && scrollHost)scrollHost.reveal(chip)
+        background: Rectangle {
+            radius: 2
+            color: chip.checked ? selectionSurface : chip.hovered ? hoverSurface : panel
+            border.color: chip.activeFocus ? blue : chip.checked ? dividerColor : "transparent"
+            border.width: chip.activeFocus ? focusWidth : 1
+        }
+        SafeTip { visible: anchorHovered; text: chip.help }
+    }
     component NavItem: ItemDelegate {
         id: nav
         property bool keyboardCurrent: false
@@ -1174,19 +1626,64 @@ ApplicationWindow {
         color: panel
         border.color: dividerColor
     }
+    component StatBadge: Button {
+        id: stat
+        property string label: ""
+        property string value: ""
+        property string detailText: ""
+        property var counts: null
+        // Narrow windows keep the value and counts; secondary detail stays in the accessible name.
+        property bool compact: false
+        implicitHeight: 28
+        topPadding: 3
+        bottomPadding: 3
+        leftPadding: 4
+        rightPadding: 4
+        focusPolicy: Qt.StrongFocus
+        contentItem: RowLayout {
+            spacing: 8
+            PlainLabel { text:stat.label; color:muted; font.pixelSize:11 }
+            PlainLabel { visible:!stat.counts || !stat.counts.hasSeverity; text:stat.value; color:ink; font.pixelSize:15; font.family:"monospace" }
+            PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity; text:stat.counts ? num(stat.counts.errors)+" errors" : ""; color:removedColor; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity; text:stat.counts ? num(stat.counts.warnings)+" warnings" : ""; color:warningColor; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.counts && stat.counts.hasSeverity && stat.counts.other>0; text:stat.counts ? num(stat.counts.other)+" other" : ""; color:muted; font.pixelSize:11 }
+            PlainLabel { visible:!!stat.detailText && !stat.compact; text:stat.detailText; color:muted; font.pixelSize:11 }
+        }
+        background: Rectangle {
+            color:stat.hovered ? hoverSurface : "transparent"
+            border.color:stat.activeFocus ? blue : "transparent"
+            border.width:stat.activeFocus ? focusWidth : 0
+            radius:2
+        }
+        Keys.onReturnPressed: clicked()
+        Keys.onEnterPressed: clicked()
+    }
+    Connections {
+        target: dvbiWorkspace
+        function onErrorChanged() { if(dvbiWorkspace.error && !core.error)showMessage(dvbiWorkspace.error,"error"); }
+        function onBusyChanged() {
+            if(metadataMode && !dvbiWorkspace.error && !core.error)
+                showMessage(dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document");
+        }
+    }
     Connections {
         target: core
+        function onErrorChanged() { if(core.error)showMessage(core.error, "error"); }
         function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
         function onAvailabilityChanged() {
             if (core.availability === "disconnected") {
+                pendingScanOptions=null;
                 autoTimer.stop();
                 protocolRestoreTimer.stop();protocolRestoring=false;protocolRestorePending=null;
                 fileDialog.close();
                 topologyLoading=false;topologyError="Backend disconnected. Restart the application to continue.";
-                notice = "Backend disconnected. Restart the application to continue.";
             }
         }
         function onResponse(method, result) {
+            if(method === "analyze") {
+                if(result.complete && pendingScanOptions !== null)completedScanOptions=pendingScanOptions;
+                pendingScanOptions=null;
+            }
             if (method === "query_topology") { acceptTopology(result); return; }
             if(method==="inspect"){
                 if(protocolSourceRef)resolveProtocolInspection(result);
@@ -1194,9 +1691,12 @@ ApplicationWindow {
                 if(protocolRestorePending){
                     let origin=protocolRestorePending;protocolRestorePending=null;
                     if(!result.message && result.id===origin.id && result.analysis_revision===origin.revision && result.native_table_at_packet===origin.cutoff){
-                        topologyTransition=true;tab=origin.tab;topologyTransition=false;inspectorView=origin.view;evidenceScope=origin.scope;collapsed=origin.collapsed;treeSearch.text=origin.search;
-                        protocolCardOffset=origin.offset;protocolRestoreTimer.origin=origin;protocolRestoreTimer.restart();
-                    }else {protocolRestoring=false;notice=result.message || "The originating metadata context could not be restored.";}
+                        if(origin.kind==="selection")restoreReferenceSelection(origin);
+                        else {
+                            topologyTransition=true;tab=origin.tab;topologyTransition=false;inspectorView=origin.view;evidenceScope=origin.scope;collapsed=origin.collapsed;treeSearch.text=origin.search;
+                            protocolCardOffset=origin.offset;protocolRestoreTimer.origin=origin;protocolRestoreTimer.restart();
+                        }
+                    }else {protocolRestoring=false;let message=result.message || "The originating metadata context could not be restored.";if(notice!==message || messageLevel!=="error")showMessage(message,"error");}
                 }
             }
             if (method === "lookup_identifier") identifierResult=result;
@@ -1211,7 +1711,7 @@ ApplicationWindow {
             }
             if (method === "fixture_late_frames") { lifecycleTestTimer.lateFramesAcknowledged = true; return; }
             if (method === "analyze" && result.code === "analysis_cancelled") {
-                notice = "Scan cancelled · source unchanged · analyze again when ready";
+                showMessage("Scan cancelled · source unchanged · analyze again when ready", "warning");
                 return;
             }
             if (result.message) {
@@ -1220,7 +1720,7 @@ ApplicationWindow {
                     exportFeedback = result.message;
                     exportButton.forceActiveFocus();
                 }
-                notice = result.message;
+                if(notice!==result.message || messageLevel!=="error")showMessage(result.message, "error");
                 if (method === "diff_snapshots")
                     comparisonError = result.message;
                 return;
@@ -1232,7 +1732,8 @@ ApplicationWindow {
                 }
                 defaultInspect();
                 inspected = true;
-                notice = "Scan complete · source unchanged";
+                let truncated=(result.demux || {}).truncated_sections || 0;
+                showMessage("Scan complete · source unchanged" + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
             }
             if (method === "query") {
                 if (snapshotTarget)
@@ -1633,6 +2134,7 @@ ApplicationWindow {
                 checks.epg_hint = tab === "EPG" && eventRows.length === 0 && recordEmptyHint.visible && recordEmptyHint.text.indexOf("an empty projection does not mean decoding failed") >= 0;
                 checks.epg_selection = selected === savedId && detail.raw_hex === savedRaw;
                 checks.tables_click = core.click("tab_Tables");
+                warningsOpen=guarded;
                 phase++;
             } else if (phase === 3) {
                 checks.tables_selection = tab === "Tables" && rows.length > 0 && selected === savedId;
@@ -1705,6 +2207,7 @@ ApplicationWindow {
         property real originalInspector: 0
         property real originalTimeline: 0
         property bool dragged: false
+        property bool navigationKeysDidNotResize: true
         property int acknowledgementAttempts: 0
         onTriggered: {
             let mode = core.env("SHOWPSISI_SCRIPT");
@@ -1714,10 +2217,10 @@ ApplicationWindow {
                 if (mode === "layout-close") {
                     let expectedInspector = inspectorPane.width + 48;
                     let expectedTimeline = timelinePane.height + 48;
-                    core.key("Alt+Left");
-                    core.key("Alt+Left");
-                    core.key("Alt+Up");
-                    core.key("Alt+Up");
+                    core.key("Ctrl+Alt+Left");
+                    core.key("Ctrl+Alt+Left");
+                    core.key("Ctrl+Alt+Up");
+                    core.key("Ctrl+Alt+Up");
                     win.close();
                     let saved = core.loadLayout();
                     core.testResult(JSON.stringify({passed: saved.inspector === expectedInspector && saved.timeline === expectedTimeline,
@@ -1726,8 +2229,8 @@ ApplicationWindow {
                     return;
                 }
                 if (mode === "layout-key-drag" || mode === "layout-key-reset") {
-                    core.key("Alt+Left");
-                    core.key("Alt+Up");
+                    core.key("Ctrl+Alt+Left");
+                    core.key("Ctrl+Alt+Up");
                     if (mode === "layout-key-drag") {
                         core.drag("inspectorDivider", -40, 0);
                         core.drag("timelineDivider", 0, -30);
@@ -1736,6 +2239,9 @@ ApplicationWindow {
                     win.width = 1000;
                     win.height = 680;
                 } else if (mode === "layout-set") {
+                    core.key("Alt+Left");core.key("Alt+Right");core.key("Alt+Up");core.key("Alt+Down");
+                    navigationKeysDidNotResize = pendingInspectorSize < 0 && pendingTimelineSize < 0
+                        && inspectorPane.width === originalInspector && timelinePane.height === originalTimeline;
                     core.drag("inspectorDivider", -60, 0);
                     core.drag("timelineDivider", 0, -40);
                 } else if (mode === "layout-reset") {
@@ -1754,7 +2260,7 @@ ApplicationWindow {
                 if (mode === "layout-key-constrained") {
                     expectedInspector = Math.max(330, workspace.width - explorerPane.width - 322);
                     expectedTimeline = Math.max(105, Math.min(350, verticalWorkspace.height - 306));
-                    for (let index = 0; index < 40; ++index) { core.key("Alt+Left"); core.key("Alt+Up"); }
+                    for (let index = 0; index < 40; ++index) { core.key("Ctrl+Alt+Left"); core.key("Ctrl+Alt+Up"); }
                     cleared = true;
                 }
                 win.close();
@@ -1766,8 +2272,8 @@ ApplicationWindow {
             }
             if (phase === 1 && mode === "layout-set") {
                 dragged = inspectorPane.width > originalInspector + 30 && timelinePane.height > originalTimeline + 20;
-                core.key("Alt+Left");
-                core.key("Alt+Up");
+                core.key("Ctrl+Alt+Left");
+                core.key("Ctrl+Alt+Up");
                 phase++;
                 return;
             }
@@ -1777,7 +2283,8 @@ ApplicationWindow {
             if (mode === "layout-set" && !acknowledged && ++acknowledgementAttempts < 20) return;
             if (core.env("SHOWPSISI_SCREENSHOT")) core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             core.testResult(JSON.stringify({
-                passed: (mode !== "layout-set" || acknowledged) && recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                passed: navigationKeysDidNotResize && (mode !== "layout-set" || acknowledged) && recordPane.width >= 310 && inspectorPane.width >= 330 && explorerPane.width >= 150 && timelinePane.height >= 105 && workspace.height >= 300 && (mode !== "layout-set" || dragged),
+                navigationKeysDidNotResize: navigationKeysDidNotResize,
                 explorer: explorerPane.width, inspector: inspectorPane.width, timeline: timelinePane.height,
                 records: recordPane.width, workspace: workspace.width, dragged: dragged,
                 windowWidth: win.width, windowHeight: win.height, savePending: layoutSaveTimer.running,
@@ -1946,11 +2453,16 @@ ApplicationWindow {
                 recordSearch.clear();
                 let index = comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
                 recordList.positionViewAtIndex(index, ListView.Contain);
+                phase = 3.25;
+            } else if (phase === 3.25) {
+                // Change rows size to their field diffs; position again once the rebuilt rows are laid out.
+                recordList.positionViewAtIndex(comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; }), ListView.Contain);
                 phase = 3.5;
             } else if (phase === 3.5) {
                 let name = "record_" + comparison.changes.findIndex(function (row) { return row.kind === changedService.kind && row.key === changedService.key; });
                 checks.change_row_exposed = core.isExposed(name);
                 checks.change_row_click = core.click(name);
+                scopeOpen=true;
                 core.click("inspectBefore");
                 phase = 4;
             } else if (phase === 4) {
@@ -1958,6 +2470,7 @@ ApplicationWindow {
                 checks.before_name = chosenService().name === changedService.before.value.name;
                 checks.no_snapshot_mutation = analysisState.selected_packet === initialPacket;
                 checks.inspector_controls_exposed = ["inspectBefore", "inspectAfter", "inspectionCutoff", "useComparisonSnapshot"].every(function (name) { return core.isExposed(name); });
+                scopeOpen=false;
                 core.click("inspectAfter");
                 phase++;
             } else if (phase === 5) {
@@ -1973,7 +2486,7 @@ ApplicationWindow {
                         return {type: item.toString(), x:item.x, y:item.y, width:item.width, height:item.height,
                             implicitHeight:item.implicitHeight, text:item.text || ""};
                     })};
-                core.key("F6");
+                core.key("Shift+F6");
                 checks.inspector_to_results = recordList.activeFocus;
                 core.key("F6");
                 checks.results_to_tree = tree.activeFocus;
@@ -2076,6 +2589,117 @@ ApplicationWindow {
             core.capture(core.env("SHOWPSISI_SCREENSHOT"));
             core.testResult(JSON.stringify(report));
             stop();
+        }
+    }
+    Timer {
+        id: comparisonMarkersTimer
+        interval: 100
+        repeat: true
+        property int phase: 0
+        property int marked: -1
+        property int waited: 0
+        property var checks: ({})
+        property var initialPacket: null
+        property real expectedA: 0
+        property real expectedB: 0
+        property real targetPacket: -1
+        // A pointer drag resolves to whole pixels; one pixel spans several packets in long captures.
+        function nearPacket(text, expected) { return Math.abs(Number(text) - expected) <= Math.ceil((Number(analysisState.packets) - 1) / Math.max(1, densityStrip.width)); }
+        function synced() {
+            let maximum = Number(analysisState.packets) - 1;
+            return comparisonMarkerA.visible && comparisonMarkerB.visible
+                && comparisonMarkerA.value === Number(fromPacket.text) && comparisonMarkerB.value === Number(toPacket.text)
+                && Math.abs(comparisonMarkerA.x + comparisonMarkerA.width / 2 - densityStrip.width * Number(fromPacket.text) / maximum) < 1
+                && Math.abs(comparisonMarkerB.x + comparisonMarkerB.width / 2 - densityStrip.width * Number(toPacket.text) / maximum) < 1;
+        }
+        function finish() {
+            stop();
+            core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(key){return checks[key];}),checks:checks,phase:phase}));
+        }
+        onTriggered: {
+            if (marked !== phase) { marked = phase; waited = 0; }
+            else if (++waited > 80) { checks["timeout_phase_" + phase] = false; finish(); return; }
+            if (!analysisState.complete || core.busy || core.inspecting || core.comparing) return;
+            let maximum = Number(analysisState.packets) - 1;
+            let step = Math.max(1, Math.round(maximum / Math.max(1, densityStrip.binCount - 1)));
+            if (phase === 0) {
+                checks.initial_hidden = !comparisonMarkerA.visible && !comparisonMarkerB.visible;
+                initialPacket = analysisState.selected_packet;
+                openComparison(); fromPacket.text = String(Math.floor(maximum / 5)); toPacket.text = String(Math.floor(maximum * 4 / 5));
+                phase = 1; return;
+            }
+            if (phase === 1) {
+                checks.input_sync = synced();
+                expectedA = Math.round(maximum * 0.3);
+                checks.drag_a = core.drag("comparisonMarkerA", densityStrip.width * (expectedA - Number(fromPacket.text)) / maximum, 0);
+                phase = 2; return;
+            }
+            if (phase === 2) {
+                checks.drag_a = checks.drag_a && nearPacket(fromPacket.text, expectedA) && synced();
+                checks.compare_focus_a = comparisonRun.activeFocus;
+                expectedB = Math.round(maximum * 0.7);
+                checks.drag_b = core.drag("comparisonMarkerB", densityStrip.width * (expectedB - Number(toPacket.text)) / maximum, 0);
+                phase = 3; return;
+            }
+            if (phase === 3) {
+                checks.drag_b = checks.drag_b && nearPacket(toPacket.text, expectedB) && synced();
+                expectedB = Number(toPacket.text);
+                checks.compare_focus_b = comparisonRun.activeFocus;
+                checks.clamp_a = core.drag("comparisonMarkerA", densityStrip.width * 0.6, 0) && Number(fromPacket.text) === expectedB && Number(toPacket.text) === expectedB;
+                checks.clamp_b = core.drag("comparisonMarkerB", -densityStrip.width * 0.6, 0) && Number(toPacket.text) === expectedB && Number(fromPacket.text) === expectedB;
+                phase = 4; return;
+            }
+            if (phase === 4) {
+                fromPacket.text = String(step * 2); toPacket.text = String(maximum - step * 2);
+                densityStrip.forceActiveFocus(); core.key("Tab"); let aTab = comparisonMarkerA.activeFocus;
+                core.key("Tab"); let bTab = comparisonMarkerB.activeFocus;
+                core.key("Shift+Tab"); let aBack = comparisonMarkerA.activeFocus;
+                core.key("Shift+Tab"); checks.tab_order = aTab && bTab && aBack && densityStrip.activeFocus;
+                comparisonMarkerA.forceActiveFocus();
+                core.key("Right"); let aBin = Number(fromPacket.text) === step * 3;
+                core.key("Shift+Left"); let aPacket = Number(fromPacket.text) === step * 3 - 1;
+                core.key("Left"); let aLeft = Number(fromPacket.text) === step * 2 - 1;
+                core.key("Home"); let aHome = fromPacket.text === "0";
+                core.key("End"); checks.keyboard_a = aBin && aPacket && aLeft && aHome && fromPacket.text === toPacket.text && synced() && comparisonMarkerA.activeFocus;
+                comparisonMarkerB.forceActiveFocus();
+                core.key("Shift+Right"); let bPacket = Number(toPacket.text) === maximum - step * 2 + 1;
+                core.key("Right"); let bBin = Number(toPacket.text) === maximum - step + 1;
+                core.key("End"); let bEnd = Number(toPacket.text) === maximum;
+                core.key("Home"); core.key("Left");
+                checks.keyboard_b = bPacket && bBin && bEnd && toPacket.text === fromPacket.text && synced() && comparisonMarkerB.activeFocus;
+                phase = 5; return;
+            }
+            if (phase === 5) {
+                fromPacket.text = "1.5"; let fractional = !comparisonMarkerA.visible;
+                fromPacket.text = "-1"; let negative = !comparisonMarkerA.visible;
+                fromPacket.text = String(maximum + 1); let overflow = !comparisonMarkerA.visible;
+                fromPacket.clear(); densityStrip.forceActiveFocus(); core.key("Tab"); let onlyB = comparisonMarkerB.activeFocus;
+                core.key("Shift+Tab"); let fromB = densityStrip.activeFocus;
+                toPacket.clear(); densityStrip.forceActiveFocus(); core.key("Tab");
+                checks.partial_tab_order = onlyB && fromB && !densityStrip.activeFocus;
+                checks.invalid_hidden = fractional && negative && overflow && !comparisonMarkerA.visible && !comparisonMarkerB.visible;
+                fromPacket.text = String(Math.floor(maximum / 5)); toPacket.text = String(Math.floor(maximum * 4 / 5)); tab = "Services";
+                phase = 6; return;
+            }
+            if (phase === 6) {
+                checks.retained_markers = synced();
+                expectedA = Math.round(maximum * 0.3);
+                checks.retained_drag = core.drag("comparisonMarkerA", densityStrip.width * (expectedA - Number(fromPacket.text)) / maximum, 0);
+                phase = 7; return;
+            }
+            if (phase === 7) {
+                checks.retained_drag = checks.retained_drag && nearPacket(fromPacket.text, expectedA) && synced() && tab === "Changes" && comparisonRun.activeFocus;
+                checks.no_auto_requests = analysisState.selected_packet === initialPacket && !comparison.source && !core.comparing;
+                let bin = Math.floor(densityStrip.binCount / 2); targetPacket = densityStrip.packetAtBin(bin);
+                checks.density_snapshot = core.click("densityBin" + bin);
+                phase = 8; return;
+            }
+            if (phase === 8) {
+                if (analysisState.selected_packet !== targetPacket) return;
+                checks.density_snapshot = checks.density_snapshot && densityCursor.visible;
+                checks.snapshot_sync = synced();
+                finish();
+            }
         }
     }
     // UI/UX refresh self-check: family order, record column headers and the
@@ -2186,7 +2810,110 @@ ApplicationWindow {
             if(phase===10) {checks.first=logicalTableCount===101 && tableRows.length===100;checks.next_click=core.click("tableNext");phase=1;return;}
             if(phase===1) {checks.last=tablePage===1 && tableRows.length===1;target=tableRows[0].id;recordList.currentIndex=0;recordList.forceActiveFocus();core.key("Return");phase=2;return;}
             if(phase===2) {checks.selected=detail.id===target && historyRows.length===1;snapshot(0);phase=3;return;}
+            // Wait for the requested snapshot response; the tick limit still reports a missing clamp.
+            if(phase===3 && analysisState.selected_packet!==0 && ticks<140) return;
             if(phase===3) {checks.clamped=analysisState.selected_packet===0 && tablePage===0 && logicalTableCount===1 && tableRows.length===1;core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));}
+        }
+    }
+    // Script-only driver: real sample, actual controls and core-backed selection.
+    Timer {
+        id: referenceJumpsTimer
+        interval:100; repeat:true
+        property int phase:0
+        property int ticks:0
+        property string path:""
+        property string target:""
+        property string origin:""
+        property var checks:({})
+        function finish() {stop();core.testResult(JSON.stringify({passed:phase===9 && Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks}));}
+        function restored() {return detail.id===origin && selected===origin && selectedService===-1 && tab==="Tables" && filter==="PAT" && pidFilter===0 && groupedTables && evidenceScope==="Merged" && inspectorView==="Structure" && treeSearch.text==="pmt_pid";}
+        function focusedRow() {let index=treeRows.findIndex(function(r){return r.path===path;});tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Center);tree.forceActiveFocus();}
+        onTriggered: {
+            if(++ticks>180){finish();return;}
+            if(!analysisState.complete || !backendReady || core.inspecting || protocolRestoring)return;
+            if(phase===0){checks.pat_explorer=core.click("explorerRow:0:PAT");phase=1;return;}
+            if(phase===1){checks.pat_record=core.click("record_0");phase=2;return;}
+            if(phase===2){
+                if(detail.name!=="PAT")return;
+                origin=detail.id;inspectorView="Structure";evidenceScope="Merged";treeSearch.text="pmt_pid";
+                let row=treeRows.find(function(r){return r.label==="pmt_pid" && r.reference && r.reference.pid===0x100;});
+                checks.pat_link=!!row && row.reference.label==="Go to PMT · PID 0x0100 (256)";
+                if(!row){finish();return;}path=row.path;target=row.reference.id;focusedRow();phase=21;return;
+            }
+            // The filtered tree is laid out after this tick; position the row again before a pointer click.
+            if(phase===21){focusedRow();phase=3;return;}
+            if(phase===3){checks.reference_exposed=core.isExposed("reference:"+path);checks.click_control=core.click("reference:"+path);phase=4;return;}
+            if(phase===4){
+                checks.click_jump=detail.id===target && selected===target && detail.name==="PMT" && detail.pid===0x100 && tab==="Tables" && !groupedTables && pidFilter===0x100;
+                tree.forceActiveFocus();core.key("Alt+Left");phase=5;return;
+            }
+            if(phase===5){checks.click_back=restored();focusedRow();core.key("Ctrl+Return");phase=6;return;}
+            if(phase===6){checks.keyboard_jump=detail.id===target && selected===target && detail.name==="PMT";core.key("Alt+Left");phase=7;return;}
+            if(phase===7){checks.keyboard_back=restored();focusedRow();core.key("Tab");checks.tab_reachable=!!win.activeFocusItem && win.activeFocusItem.objectName==="reference:"+path;core.key("Return");phase=8;return;}
+            if(phase===8){checks.tab_jump=detail.id===target && selected===target;core.key("Alt+Left");phase=80;return;}
+            if(phase===80){checks.tab_back=restored();tab="Services";phase=81;return;}
+            if(phase===81){checks.service_click=core.click("service_101");phase=82;return;}
+            if(phase===82){
+                if(detail.name!=="SDT")return;
+                treeSearch.text="logical_channel_number";
+                let privateRows=treeRows.filter(function(r){return r.label==="logical_channel_number" && r.path.indexOf("descriptors/")>=0;});
+                checks.private_no_link=privateRows.length>0 && privateRows.every(function(r){return !r.reference;});tab="EPG";phase=83;return;
+            }
+            if(phase===83){checks.event_click=core.click("record_0");phase=84;return;}
+            if(phase===84){
+                if(detail.name!=="EIT")return;
+                origin=detail.id;treeSearch.text="service_id";
+                let row=treeRows.find(function(r){return r.reference && r.reference.kind==="service";});
+                checks.service_link=!!row;if(!row){finish();return;}path=row.path;target=row.reference.id;focusedRow();phase=85;return;
+            }
+            if(phase===85){checks.service_jump_control=core.click("reference:"+path);phase=86;return;}
+            if(phase===86){checks.service_jump=tab==="Services" && selected===target && selectedService===101 && detail.name==="SDT";core.key("Alt+Left");phase=87;return;}
+            if(phase===87){checks.service_back=tab==="EPG" && detail.id===origin && selected===origin && selectedService===-1 && treeSearch.text==="service_id";phase=9;finish();}
+        }
+    }
+    Timer {
+        id: commandPaletteTimer
+        interval: 100
+        repeat: true
+        property int phase: 0
+        property int ticks: 0
+        property bool oldTheme: false
+        property string origin: ""
+        property int originService: -1
+        property var checks: ({})
+        function finish() {stop();core.testResult(JSON.stringify({passed:phase===10 && Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks}));}
+        onTriggered: {
+            if(++ticks>180){checks.timeout=false;finish();return;}
+            if(!backendReady || core.inspecting || protocolRestoring)return;
+            if(phase===0){source.forceActiveFocus();core.key("Ctrl+K");recordSearch.text=">export";phase=1;return;}
+            if(phase===1){
+                checks.export_disabled=commandPalette.visible && paletteRows.length===1 && !!paletteRows[0].reason;
+                core.key("Return");checks.export_guard=!renameDialog.visible && !core.busy;
+                core.key("Escape");checks.export_escape=source.activeFocus && recordSearch.text==="";
+                scan();phase=2;return;
+            }
+            if(!analysisState.complete)return;
+            if(phase===2){
+                origin=detail.id;originService=selectedService;oldTheme=lightTheme;
+                source.forceActiveFocus();core.key("Ctrl+K");checks.search_focus=recordSearch.activeFocus;
+                recordSearch.text="Sports UHD";checks.plain_filter=rows.length===1 && rows[0].id===103;
+                recordSearch.text=">ThEmE";phase=3;return;
+            }
+            if(phase===3){checks.theme_suggestion=commandPalette.visible && paletteRows.length===1 && paletteRows[0].id==="theme" && rows.length===1;core.key("Return");phase=4;return;}
+            if(phase===4){
+                checks.theme_command=lightTheme!==oldTheme && recordSearch.text==="Sports UHD" && source.activeFocus;
+                core.key("Ctrl+K");recordSearch.text="#0x0000";phase=5;return;
+            }
+            if(phase===5){checks.pid_suggestion=commandPalette.visible && paletteRows.length===1 && paletteRows[0].description==="PID 0x0000 (0)";core.key("Return");phase=6;return;}
+            if(phase===6){checks.pid_jump=detail.name==="PAT" && detail.pid===0 && tab==="Tables" && pidFilter===0 && selected===detail.id;core.key("Alt+Left");phase=7;return;}
+            if(phase===7){checks.pid_back=tab==="Services" && detail.id===origin && selectedService===originService && recordSearch.text==="Sports UHD";core.key("Ctrl+K");recordSearch.text="#pid 8190";phase=8;return;}
+            if(phase===8){
+                checks.unknown_pid=commandPalette.visible && !paletteRows.length && paletteTarget.message==="No PID 0x1FFE in this stream";
+                core.key("Return");checks.unknown_unchanged=selected===origin && detail.id===origin;
+                core.key("Escape");checks.escape_focus=!commandPalette.visible && recordList.activeFocus && recordSearch.text==="Sports UHD";
+                core.key("Ctrl+K");recordSearch.text="Sports UHD";core.key("Return");phase=9;return;
+            }
+            if(phase===9){checks.plain_search=recordList.activeFocus && recordList.currentIndex===0 && rows.length===1 && rows[0].id===103;phase=10;finish();}
         }
     }
     // Real shared-PID wire fixture, actual mouse/key delivery, no fabricated state.
@@ -2465,6 +3192,10 @@ ApplicationWindow {
                 checks.arrivals = detail.distribution?.observation_count >= 2 && detail.distribution?.first_packet === 0 && detail.distribution?.last_packet > 0;
                 checks.merged_sources = detail.merged?.complete === true && detail.native_table_sources.length === 2 && selectedGroup.validity === "mixed";
                 checks.sources_visible = siblingSections.length === 2;
+                // The section choice becomes visible with this detail; check exposure after its layout pass.
+                phase=11; return;
+            }
+            if (phase === 11) {
                 checks.scope_control = core.isExposed("evidenceScope") && core.isExposed("sectionChoice");
                 checks.toggle_click = core.click("toggleInvalidSections"); phase=2; return;
             }
@@ -2512,7 +3243,11 @@ ApplicationWindow {
             }
             if (phase === 5) {
                 checks.section_scope = !treeRows.some(function(r) { return r.path.indexOf("native/")===0 || r.path === "provenance"; }) && !!detail.section_native_text;
-                inspectorView="XML"; checks.merged_scope_click=core.click("mergedScope"); phase=6; return;
+                // Show XML first; a newly visible view is laid out before the next scripted click.
+                inspectorView="XML"; phase=51; return;
+            }
+            if (phase === 51) {
+                checks.merged_scope_click=core.click("mergedScope"); phase=6; return;
             }
             if (phase === 6) {
                 checks.xml_plain = xmlEvidence.textFormat === TextEdit.PlainText && xmlEvidence.text === detail.tsduck_xml;
@@ -2612,12 +3347,14 @@ ApplicationWindow {
             if(phase===3){
                 checks.encoding=detail.text_diagnostics.some(function(x){return x.basis==="wire_selector" && x.selector_hex==="15";});
                 checks.english=metadataEntries().some(function(x){return x.text.indexOf("First second")>=0;});
+                if(!core.isExposed("epgLanguage")){revealMetadataControl(epgLanguageChoice);return;}
                 checks.language_control=core.click("epgLanguage");core.key("End");core.key("Return");phase=4;return;
             }
             if(phase===4){
                 checks.chinese=epgLanguage==="zho" && rowTitle(rows[0])==="新闻";
                 checks.incomplete=metadataEntries().some(function(x){return x.text.indexOf("incomplete")>=0 && x.text.indexOf("No complete extended text")>=0;});
                 identifierKind.currentIndex=3;identifierValue.text="0x0500";
+                if(!core.isExposed("identifierQuery")){revealMetadataControl(identifierQuery);return;}
                 checks.lookup_click=core.click("identifierQuery");phase=5;return;
             }
             if(phase===5){
@@ -2649,6 +3386,7 @@ ApplicationWindow {
                 checks.wire=!!x && x.raw_parameters.frequency_hz===11538000000 && x.wire_source.section_id===detail.id && !!x.raw_descriptor_hex;
                 checks.colocated=!!x && x.candidates.length===2 && x.confirmed_satellite===null;
                 checks.presentation=metadataEntries().some(function(e){return e.text.indexOf("HOTBIRD 13F")>=0 && e.text.indexOf("not checked")>=0 && e.evidence.indexOf("reviewed_at")>=0;});
+                if(!core.isExposed("satelliteQuery")){revealMetadataControl(satelliteQuery);return;}
                 satellitePosition.text="122";checks.lookup_click=core.click("satelliteQuery");phase=4;return;
             }
             if(phase===4){
@@ -2673,6 +3411,7 @@ ApplicationWindow {
         }
     }
     Component.onCompleted: {
+        if(core.error)showMessage(core.error,"error");
         core.mark("ui_ready");
         if (core.env("SHOWPSISI_TEST_SIZE") === "compact") {
             width = 1000;
@@ -2711,19 +3450,22 @@ ApplicationWindow {
             operationsParityTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "comparison")
             comparisonTestTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "comparison-markers") comparisonMarkersTimer.start();
         if (core.env("SHOWPSISI_SCRIPT").indexOf("lifecycle-") === 0)
             lifecycleTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "refresh")
             refreshTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "workbench-paging") workbenchPagingTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "reference-jumps") referenceJumpsTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "command-palette") commandPaletteTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "explorer-parity")
             explorerParityTimer.start();
     }
     onClosing: function(close) {
-        if (dvbiWorkspace.busy) {close.accepted=false;notice="A bounded metadata operation is still finishing. Wait before closing.";return;}
+        if (dvbiWorkspace.busy) {close.accepted=false;showMessage("A bounded metadata operation is still finishing. Wait before closing.", "warning");return;}
         if (core.exportPending) {
             close.accepted = false;
-            notice = "An export is still writing. Wait for its result before closing ShowPsiSi.";
+            showMessage("An export is still writing. Wait for its result before closing ShowPsiSi.", "warning");
             return;
         }
         if (layoutSaveTimer.running || pendingInspectorSize >= 0 || pendingTimelineSize >= 0) rememberLayout();
@@ -2734,31 +3476,93 @@ ApplicationWindow {
         lightTheme: win.lightTheme
     }
 
+    Popup {
+        id: commandPalette
+        objectName: "commandPalette"
+        parent: paletteInput || recordPane
+        y: parent ? parent.height : 0
+        width: parent ? parent.width : 300
+        padding: 1
+        focus: false
+        closePolicy: Popup.NoAutoClose
+        background: Rectangle { color:panel; border.color:controlBorder; radius:3 }
+        contentItem: Column {
+            ListView {
+                id: paletteList
+                objectName: "paletteList"
+                width: parent.width
+                height: Math.min(8,paletteRows.length)*32
+                clip: true
+                model: paletteRows
+                currentIndex: paletteIndex
+                boundsBehavior: Flickable.StopAtBounds
+                Accessible.role: Accessible.List
+                Accessible.name: "Commands and identifier targets · " + paletteStatus
+                ScrollBar.vertical: ScrollBar {}
+                delegate: ItemDelegate {
+                    required property var modelData
+                    required property int index
+                    width: ListView.view.width
+                    height: 32
+                    padding: 8
+                    focusPolicy: Qt.NoFocus
+                    enabled: !modelData.reason
+                    Accessible.role: Accessible.ListItem
+                    Accessible.name: modelData.description + (modelData.keys ? " · " + modelData.keys : "")
+                    Accessible.description: modelData.reason || modelData.help || "Execute command"
+                    Accessible.selectable: true
+                    Accessible.selected: index===paletteIndex
+                    contentItem: RowLayout {
+                        PlainLabel { text:modelData.description; color:modelData.reason?muted:ink; elide:Text.ElideRight; Layout.fillWidth:true }
+                        PlainLabel { text:modelData.keys || "—"; color:muted; font.pixelSize:11; Layout.alignment:Qt.AlignRight }
+                    }
+                    background: Rectangle { color:index===paletteIndex?selectionSurface:panel; border.color:blue; border.width:index===paletteIndex?focusWidth:0 }
+                    onClicked: {paletteIndex=index;executePalette();}
+                    SafeTip { visible:anchorHovered || !!modelData.reason && index===paletteIndex && commandPalette.visible; text:modelData.reason || modelData.help || (modelData.id==="export"?"Open the SDT (Service Description Table) preview and export workflow":modelData.description) }
+                }
+            }
+            PlainLabel {
+                objectName: "paletteStatus"
+                width: parent.width
+                padding: 8
+                text: paletteStatus
+                wrapMode: Text.Wrap
+                color: muted
+                Accessible.role: Accessible.StaticText
+                Accessible.name: text
+            }
+        }
+    }
+    Shortcut { sequence:"?"; enabled:!shortcutDialog.visible && !textInputFocused(); onActivated:showShortcutHelp() }
+    Shortcut { sequence:"Ctrl+/"; enabled:!shortcutDialog.visible; onActivated:showShortcutHelp() }
     Shortcut {
         sequence: "Ctrl+K"
+        enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
-            if(tab === "Topology"){topologySearch.forceActiveFocus();topologySearch.selectAll();}
-            else {recordSearch.forceActiveFocus();recordSearch.selectAll();}
+            let field=tab==="Topology"?topologySearch:recordSearch;
+            if(win.activeFocusItem!==field)paletteReturnFocus=win.activeFocusItem;
+            field.forceActiveFocus();field.selectAll();
         }
     }
-    Shortcut { sequence: "Alt+Left"; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack();else resizeInspector(24); } }
-    Shortcut { sequence: "Alt+Right"; onActivated: resizeInspector(-24) }
-    Shortcut { sequence: "Alt+Up"; onActivated: resizeTimeline(24) }
-    Shortcut { sequence: "Alt+Down"; onActivated: resizeTimeline(-24) }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
+    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(24) }
+    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
+        enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
-            if(tab === "Topology" && topologySummary){topologySourcesList.forceActiveFocus();return;}
-            if (recordList.activeFocus || recordSearch.activeFocus || topologyList.activeFocus || topologySearch.activeFocus) {
-                inspectorView = "Structure";
-                tree.forceActiveFocus();
-            } else if(tab === "Topology")topologyList.forceActiveFocus();else recordList.forceActiveFocus();
+            focusNextRegion(false);
         }
     }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:focusNextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
+        enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
             inspectorView = "Structure";
@@ -2768,16 +3572,17 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+O"
-        enabled: backendReady
+        enabled: backendReady && !shortcutDialog.visible
         onActivated: metadataMode ? dvbiWorkspace.openDialog() : fileDialog.open()
     }
     Shortcut {
         sequence: "Ctrl+Return"
-        onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : scan()
+        enabled: !shortcutDialog.visible
+        onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : inspectorView==="Structure" && treeFocused() && !!treeRows[tree.currentIndex]?.reference ? jumpReference(treeRows[tree.currentIndex]) : scan()
     }
     Shortcut {
         sequence: "Ctrl+."
-        enabled: core.available && core.busy && !core.cancelling
+        enabled: core.available && core.busy && !core.cancelling && !shortcutDialog.visible
         onActivated: cancelScan()
     }
     FileDialog {
@@ -2876,6 +3681,7 @@ ApplicationWindow {
                 font.pixelSize: 11
             }
             Action {
+                id: themeToggle
                 objectName: "themeToggle"
                 text: lightTheme ? "Dark" : "Light"
                 Accessible.name: "Switch to " + (lightTheme ? "dark" : "light") + " theme"
@@ -2887,7 +3693,7 @@ ApplicationWindow {
                 onClicked: resetLayout()
                 SafeTip {
                     visible: anchorHovered
-                    text: "Drag the dividers to resize. Alt+Left/Right resizes the inspector; Alt+Up/Down resizes the timeline. Changes are saved on this computer."
+                    text: "Drag the dividers to resize. Ctrl+Alt+Left/Right resizes the inspector; Ctrl+Alt+Up/Down resizes the timeline. Alt+Left navigates back. Changes are saved on this computer."
                 }
             }
             Action {
@@ -2905,7 +3711,7 @@ ApplicationWindow {
                 objectName: "saveDiagnostics"
                 text: "Save diagnostics"
                 enabled: !core.busy && !core.inspecting && !core.comparing
-                onClicked: notice = uiAgent.saveBundle()
+                onClicked: {let result=uiAgent.saveBundle();showMessage(result,result.indexOf("Diagnostics failed:")===0 ? "error" : "info");}
                 SafeTip { visible: anchorHovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
             }
         }
@@ -2913,126 +3719,242 @@ ApplicationWindow {
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
-        RowLayout {
+        Rectangle {
+            objectName: "errorBanner"
+            visible: !metadataMode && !!errorMessage
+            Layout.fillWidth: true
+            implicitHeight: errorBannerRow.implicitHeight + 12
+            color: errorSurface
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: "Error: " + errorMessage
+            RowLayout {
+                id: errorBannerRow
+                anchors.fill: parent
+                anchors.margins: 6
+                spacing: 8
+                PlainLabel {
+                    Layout.fillWidth: true
+                    text: errorMessage
+                    color: errorInk
+                    wrapMode: Text.WrapAnywhere
+                    maximumLineCount: 3
+                    elide: Text.ElideRight
+                    SafeTip { visible: errorHover.hovered; text: anchorText }
+                    HoverHandler { id: errorHover }
+                }
+                Action {
+                    objectName: "dismissError"
+                    text: "Dismiss"
+                    Accessible.name: "Dismiss error message"
+                    onClicked: {errorMessage="";messagesButton.forceActiveFocus();}
+                }
+            }
+        }
+        ColumnLayout {
+            id: sourceBar
             visible: !metadataMode
             Layout.fillWidth: true
             Layout.margins: 10
-            spacing: 8
+            spacing: 6
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                PlainLabel {
+                    text: "SOURCE"
+                    color: muted
+                    font.pixelSize: 11
+                }
+                FieldInput {
+                    id: source
+                    enabled: backendReady
+                    Layout.fillWidth: true
+                    text: core.sample
+                    selectByMouse: true
+                    implicitHeight: 30
+                    Accessible.name: "Transport stream source path"
+                    onAccepted: scan()
+                }
+                Action {
+                    objectName: "openSource"
+                    text: "Open…"
+                    Accessible.name: "Open transport stream"
+                    enabled: backendReady
+                    onClicked: fileDialog.open()
+                    SafeTip {
+                        visible: anchorHovered
+                        text: "Open transport stream (Ctrl+O)"
+                    }
+                }
+                Action {
+                    id: recentButton
+                    objectName: "recentFiles"
+                    text: "Recent ▾"
+                    enabled: backendReady
+                    Accessible.name: "Recent transport streams"
+                    Accessible.description: "Choose a recent source without analyzing it"
+                    onClicked: recentMenu.open()
+                    Menu {
+                        id: recentMenu
+                        y: recentButton.height
+                        width: 320
+                        padding: 4
+                        background: Rectangle {color:panel;border.color:dividerColor;radius:4}
+                        Instantiator {
+                            model: recentFiles
+                            delegate: RecentMenuItem {
+                                required property string modelData
+                                text: modelData.split(/[\\/]/).pop()
+                                Accessible.description: modelData
+                                onTriggered: chooseSource(modelData)
+                                SafeTip {visible:anchorHovered; text:anchorControl ? anchorControl.modelData : ""}
+                            }
+                            onObjectAdded: function(index, object) {recentMenu.insertItem(index,object);}
+                            onObjectRemoved: function(index, object) {recentMenu.removeItem(object);}
+                        }
+                        RecentMenuItem {text:"No recent files";enabled:false;visible:recentFiles.length===0;height:visible?implicitHeight:0}
+                        MenuSeparator {visible:recentFiles.length>0;contentItem:Rectangle {implicitHeight:1;color:dividerColor}}
+                        RecentMenuItem {
+                            text: "Clear recent"
+                            enabled: recentFiles.length>0
+                            onTriggered: {recentFiles=[];saveRecentFiles();recentButton.forceActiveFocus();}
+                        }
+                    }
+                    SafeTip {visible:anchorHovered;text:"Recently analyzed sources · choosing a file does not start analysis"}
+                }
+                FieldChoice {
+                    id: standardChoice
+                    objectName: "standards"
+                    Layout.preferredWidth: 136
+                    implicitHeight: 30
+                    enabled: backendReady
+                    textRole: "label"
+                    valueRole: "value"
+                    model: [
+                        {
+                            label: "Standards: Auto",
+                            value: "auto"
+                        },
+                        {
+                            label: "DVB",
+                            value: "dvb"
+                        },
+                        {
+                            label: "ATSC",
+                            value: "atsc"
+                        },
+                        {
+                            label: "ISDB",
+                            value: "isdb"
+                        },
+                        {
+                            label: "ISDB Japan",
+                            value: "isdb-japan"
+                        },
+                        {
+                            label: "ISDB Brazil",
+                            value: "isdb-brazil"
+                        },
+                        {
+                            label: "SCTE",
+                            value: "scte"
+                        },
+                        {
+                            label: "DTMB",
+                            value: "dtmb"
+                        },
+                        {label:"J.94 System B",value:"j94-system-b"}
+                    ]
+                    Accessible.name: "Broadcast standard context for next scan"
+                    SafeTip {
+                        visible: anchorHovered
+                        text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
+                    }
+                }
+                Action {
+                    id: scanOptionsToggle
+                    objectName: "scanOptionsToggle"
+                    checkable: true
+                    text: "Scan options " + (checked ? "▾" : "▸") + (!checked && scanOptionsSummary ? " · " + scanOptionsSummary : "")
+                    Layout.minimumWidth: 118
+                    Layout.maximumWidth: 280
+                    Layout.preferredWidth: Math.min(implicitWidth, 280)
+                    Accessible.name: "Scan options"
+                    Accessible.description: (checked ? "Expanded" : "Collapsed") + " · Default charset and extra packet identifiers for the next scan" + (scanOptionsSummary ? " · " + scanOptionsSummary : "")
+                    contentItem: PlainLabel { text:scanOptionsToggle.text; color:ink; elide:Text.ElideRight; verticalAlignment:Text.AlignVCenter; horizontalAlignment:Text.AlignHCenter; font.pixelSize:11 }
+                    SafeTip { visible:anchorHovered; text:"Default charset and extra Packet Identifiers (PIDs) for the next scan" + (scanOptionsSummary ? " · " + scanOptionsSummary : "") }
+                }
+                Action {
+                    id: analyzeButton
+                    objectName: "analyzeSource"
+                    text: "Analyze"
+                    Accessible.name: "Analyze transport stream"
+                    Accessible.description: scanOptionsChanged ? "Options changed — re-analyze to apply" : ""
+                    primary: true
+                    visible: !core.busy
+                    enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null
+                    onClicked: scan()
+                }
+                Action {
+                    id: cancelButton
+                    objectName: "cancelAnalysis"
+                    text: core.cancelling ? "Cancelling…" : "Cancel"
+                    visible: core.busy
+                    enabled: core.available && !core.cancelling
+                    onClicked: cancelScan()
+                    Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
+                    SafeTip { visible: anchorHovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
+                }
+            }
             PlainLabel {
-                text: "SOURCE"
+                objectName: "scanOptionsChanged"
+                visible: scanOptionsChanged
+                Layout.alignment: Qt.AlignRight
+                text: "Options changed — re-analyze to apply"
                 color: muted
                 font.pixelSize: 11
             }
-            FieldChoice {
-                id: standardChoice
-                objectName: "standards"
-                Layout.preferredWidth: 136
-                implicitHeight: 30
-                enabled: backendReady
-                textRole: "label"
-                valueRole: "value"
-                model: [
-                    {
-                        label: "Standards: Auto",
-                        value: "auto"
-                    },
-                    {
-                        label: "DVB",
-                        value: "dvb"
-                    },
-                    {
-                        label: "ATSC",
-                        value: "atsc"
-                    },
-                    {
-                        label: "ISDB",
-                        value: "isdb"
-                    },
-                    {
-                        label: "ISDB Japan",
-                        value: "isdb-japan"
-                    },
-                    {
-                        label: "ISDB Brazil",
-                        value: "isdb-brazil"
-                    },
-                    {
-                        label: "SCTE",
-                        value: "scte"
-                    },
-                    {
-                        label: "DTMB",
-                        value: "dtmb"
-                    },
-                    {label:"J.94 System B",value:"j94-system-b"}
-                ]
-                Accessible.name: "Broadcast standard context for next scan"
-                SafeTip {
-                    visible: anchorHovered
-                    text: "Select the broadcast context for the next analysis. Auto uses TSDuck detection; explicit context resolves reused table identifiers."
-                }
-            }
-            FieldInput {
-                id: extraPids
-                objectName: "extraPids"
-                Layout.preferredWidth: 160
-                implicitHeight: 30
-                placeholderText: "Extra PIDs: 0x30, 100"
-                placeholderTextColor: muted
-                selectByMouse: true
-                enabled: backendReady
-                Accessible.name: "Additional packet identifiers, comma separated"
-                SafeTip {
-                    visible: anchorHovered
-                    text: "Optional extra packet identifiers, decimal or hexadecimal, from 0 to 8191."
-                }
-                onAccepted: scan()
-            }
-            FieldInput {
-                id: source
-                enabled: backendReady
+            RowLayout {
+                visible: scanOptionsToggle.checked
                 Layout.fillWidth: true
-                text: core.sample
-                selectByMouse: true
-                implicitHeight: 30
-                Accessible.name: "Transport stream source path"
-                onAccepted: scan()
-            }
-            Action {
-                objectName: "openSource"
-                text: "Open…"
-                enabled: backendReady
-                onClicked: fileDialog.open()
-                SafeTip {
-                    visible: anchorHovered
-                    text: "Open transport stream (Ctrl+O)"
+                spacing: 8
+                PlainLabel { text:"Default charset"; color:muted; font.pixelSize:11 }
+                FieldInput {
+                    id: defaultCharset
+                    objectName: "defaultCharset"
+                    Layout.fillWidth: true
+                    implicitHeight: 30
+                    placeholderText: "Default charset (optional)"
+                    placeholderTextColor: muted
+                    selectByMouse: true
+                    enabled: backendReady
+                    Accessible.name: "Default input charset for next scan"
+                    onAccepted: scan()
+                    SafeTip { visible: anchorHovered; text: "Optional TSDuck character set, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen. Original bytes are preserved." }
+                }
+                PlainLabel { text:"Extra PIDs"; color:muted; font.pixelSize:11 }
+                FieldInput {
+                    id: extraPids
+                    objectName: "extraPids"
+                    Layout.fillWidth: true
+                    implicitHeight: 30
+                    placeholderText: "Extra PIDs: 0x30, 100"
+                    placeholderTextColor: muted
+                    selectByMouse: true
+                    enabled: backendReady
+                    Accessible.name: "Additional packet identifiers, comma separated"
+                    SafeTip {
+                        visible: anchorHovered
+                        text: "Optional extra Packet Identifiers (PIDs), decimal or hexadecimal, from 0 to 8191."
+                    }
+                    onAccepted: scan()
                 }
             }
-            Action {
-                objectName: "analyzeSource"
-                text: "Analyze"
-                primary: true
-                visible: !core.busy
-                enabled: backendReady && source.text.trim().length > 0 && extraPidsValue !== null
-                onClicked: scan()
+            PlainLabel {
+                visible: extraPidsValue === null
+                text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
+                color: removedColor
+                font.pixelSize: 11
             }
-            Action {
-                id: cancelButton
-                objectName: "cancelAnalysis"
-                text: core.cancelling ? "Cancelling…" : "Cancel"
-                visible: core.busy
-                enabled: core.available && !core.cancelling
-                onClicked: cancelScan()
-                Accessible.name: core.cancelling ? "Waiting for scan cancellation" : "Cancel active scan"
-                SafeTip { visible: anchorHovered; text: "Cancel this scan (Ctrl+.). Wait for it to stop before analyzing again." }
-            }
-        }
-        PlainLabel {
-            Layout.leftMargin: 12
-            visible: !metadataMode && extraPidsValue === null
-            text: "Extra PIDs must be decimal or 0x-prefixed hexadecimal values from 0 to 8191."
-            color: removedColor
-            font.pixelSize: 11
         }
         ProgressBar {
             Layout.fillWidth: true
@@ -3046,27 +3968,44 @@ ApplicationWindow {
             Layout.leftMargin: 12
             Layout.rightMargin: 12
             Layout.bottomMargin: 8
-            spacing: 20
-            PlainLabel {
-                text: serviceRows.length + " services"
-                color: ink
-                font.pixelSize: 11
+            // The stats row must never set a minimum width wider than a compact window.
+            readonly property bool compactStats: win.width < 1180
+            spacing: compactStats ? 12 : 20
+            StatBadge {
+                objectName: "statsServices"
+                compact: parent.compactStats
+                label: "SERVICES"
+                value: num(serviceRows.length)
+                Accessible.name: "Show Services · " + value + " services"
+                onClicked: tab="Services"
             }
-            PlainLabel {
-                text: num(analysisState.observations) + " section observations"
-                color: muted
-                font.pixelSize: 11
+            StatBadge {
+                objectName: "statsSections"
+                compact: parent.compactStats
+                label: "SECTIONS"
+                value: num(analysisState.observations)
+                detailText: num((analysisState.tables || []).length) + " distinct payloads"
+                Accessible.name: "Show Tables · " + value + " section observations · " + detailText
+                onClicked: tab="Tables"
             }
-            PlainLabel {
-                text: issues.length + " issues · " + num(analysisState.crc_errors) + " cyclic redundancy check failures"
-                color: issues.length ? warningColor : muted
-                font.pixelSize: 11
+            StatBadge {
+                objectName: "statsIssues"
+                compact: parent.compactStats
+                label: "ISSUES"
+                value: num(issues.length)
+                counts: issueCounts
+                detailText: num(analysisState.crc_errors) + " CRC failures"
+                Accessible.name: "Show Issues · " + (issueCounts.hasSeverity ? issueCounts.errors + " errors · " + issueCounts.warnings + " warnings" + (issueCounts.other ? " · " + issueCounts.other + " other" : "") : value + " issues") + " · " + detailText
+                onClicked: tab="Issues"
+                SafeTip { visible:anchorHovered; text:"CRC: Cyclic Redundancy Check. A failed CRC means the section bytes were damaged or truncated." }
             }
             Item {
                 Layout.fillWidth: true
             }
             PlainLabel {
                 text: analysisState.metrics ? Number(analysisState.metrics.scan_ms).toFixed(1) + " ms scan" : "Awaiting source"
+                Layout.minimumWidth: 0
+                elide: Text.ElideRight
                 color: muted
                 font.pixelSize: 11
             }
@@ -3172,7 +4111,22 @@ ApplicationWindow {
                             SafeTip { visible:anchorHovered; text: (modelData.pid < 0 ? "All tables" : "PID " + hex(modelData.pid) + " · " + modelData.name) + " · " + modelData.count + " logical tables, including hidden bad-CRC evidence" }
                         }
                     }
-                    TinyLabel { text: "↑ ↓ Home End · focus\nEnter / Space · select"; Layout.margins: 7 }
+                    Action {
+                        id: keyboardShortcuts
+                        objectName: "keyboardShortcuts"
+                        text: "Keyboard shortcuts " + (checked ? "▾" : "▸")
+                        checkable: true
+                        Layout.fillWidth: true
+                        Accessible.name: "Keyboard shortcuts"
+                    }
+                    PlainLabel {
+                        visible: keyboardShortcuts.checked
+                        text: shortcutTable.map(function(row){return row.keys+" · "+row.description;}).join("\n") + "\nSource → Explorer → Records → Inspector"
+                        color: muted
+                        font.pixelSize: 11
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                    }
                     TinyLabel {
                         text: "EXTENSION"
                         Layout.margins: 7
@@ -3205,7 +4159,7 @@ ApplicationWindow {
                         Layout.preferredHeight: implicitHeight
                         spacing: 0
                         Repeater {
-                            model: ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"]
+                            model: recordTabs
                             NavItem {
                                 required property string modelData
                                 objectName: "tab_" + modelData
@@ -3234,7 +4188,7 @@ ApplicationWindow {
                         Layout.fillWidth:true
                         Layout.leftMargin:8
                         Action {objectName:"topologyBack";text:"← Back";onClicked:topologyBack()}
-                        PlainLabel {text:topologyTablesReveal ? "Topology source · current workbench cutoff unchanged" : topologyScopeLabel;Layout.fillWidth:true;elide:Text.ElideRight;color:muted;font.pixelSize:11}
+                        PlainLabel {text:topologyBackStack.length && topologyBackStack[topologyBackStack.length-1].kind==="selection" ? "Reference jump · Alt+Left to return" : topologyTablesReveal ? "Topology source · current workbench cutoff unchanged" : topologyScopeLabel;Layout.fillWidth:true;elide:Text.ElideRight;color:muted;font.pixelSize:11}
                     }
                     ColumnLayout {
                         id: topologyPanel
@@ -3268,19 +4222,17 @@ ApplicationWindow {
                             }
                             Action { objectName:"topologyRetry"; text:topologyLoading ? "Loading…" : "Reload"; enabled:backendReady && !!analysisState.complete && !topologyLoading; onClicked:loadTopology(false) }
                         }
-                        FieldInput {
+                        PaletteInput {
                             id: topologySearch
                             objectName: "topologySearch"
                             Layout.fillWidth: true
                             Layout.leftMargin: 8
                             Layout.rightMargin: 8
                             implicitHeight: 30
-                            placeholderText: "Find objects, IDs, types or states… Ctrl+K"
+                            placeholderText: "Search records · > commands · # PID/SID"
                             placeholderTextColor: muted
-                            Accessible.name: "Search loaded topology objects, names, decimal or hexadecimal identities, types and states"
+                            Accessible.name: "Search loaded topology objects" + (paletteInput===topologySearch ? " · " + paletteStatus : "")
                             selectByMouse: true
-                            Keys.onEscapePressed: clear()
-                            onAccepted: {topologyList.forceActiveFocus();if(topologyRows.length)topologyList.currentIndex=0;}
                         }
                         PlainLabel {
                             objectName: "topologyContext"
@@ -3290,7 +4242,7 @@ ApplicationWindow {
                             font.pixelSize: 11
                             wrapMode: Text.Wrap
                             color: muted
-                            text: topologyScopeLabel + " · observed through packet #" + num(topologyData.at_packet === undefined ? currentPacket() : topologyData.at_packet) + "\n" + (topologyData.nodes || []).length + " / " + ((topologyData.page || {}).total || 0) + " objects loaded" + (topologySearch.text.trim() ? " · search covers loaded objects only" : "") + " · ↑ ↓ focus · Enter select"
+                            text: topologyScopeLabel + " · observed through packet #" + num(topologyData.at_packet === undefined ? currentPacket() : topologyData.at_packet) + "\n" + (topologyData.nodes || []).length + " / " + ((topologyData.page || {}).total || 0) + " objects loaded" + (topologySearch.query.trim() ? " · search covers loaded objects only" : "") + " · ↑ ↓ focus · Enter select"
                         }
                         PlainLabel {
                             objectName:"topologyStatus"
@@ -3345,7 +4297,7 @@ ApplicationWindow {
                             }
                             Keys.onLeftPressed: {
                                 let row=topologyRows[currentIndex];if(!row)return;
-                                if(row.branch && row.open && !topologySearch.text.trim())toggleTopologyRow(row);
+                                if(row.branch && row.open && !topologySearch.query.trim())toggleTopologyRow(row);
                                 else for(let i=currentIndex-1;i>=0;--i)if(topologyRows[i].depth<row.depth){currentIndex=i;break;}
                             }
                             Keys.onPressed: function(event){if(event.key===Qt.Key_Home || event.key===Qt.Key_End){if(count)currentIndex=event.key===Qt.Key_Home?0:count-1;event.accepted=true;}}
@@ -3397,7 +4349,7 @@ ApplicationWindow {
                                 horizontalAlignment: Text.AlignHCenter
                                 wrapMode: Text.Wrap
                                 visible: !topologyRows.length && !topologyLoading
-                                text: !analysisState.complete ? "Analyze a source to derive semantic objects." : topologyError ? "Topology is unavailable. Raw evidence remains in Tables." : topologySearch.text.trim() ? "No loaded objects match. Clear search or load more objects." : "Retained " + ((topologyData.counts || {}).raw_sections || (analysisState.tables || []).length) + " raw sections. No semantic relationships can be established in this context. Open Tables for the original evidence."
+                                text: !analysisState.complete ? "Analyze a source to derive semantic objects." : topologyError ? "Topology is unavailable. Raw evidence remains in Tables." : topologySearch.query.trim() ? "No loaded objects match. Clear search or load more objects." : "Retained " + ((topologyData.counts || {}).raw_sections || (analysisState.tables || []).length) + " raw sections. No semantic relationships can be established in this context. Open Tables for the original evidence."
                                 color:muted
                             }
                         }
@@ -3411,7 +4363,7 @@ ApplicationWindow {
                             onClicked:loadTopology(true)
                         }
                     }
-                    FieldInput {
+                    PaletteInput {
                         id: recordSearch
                         visible: tab !== "Topology"
                         objectName: "recordSearch"
@@ -3420,16 +4372,10 @@ ApplicationWindow {
                         Layout.rightMargin: 8
                         Layout.topMargin: 8
                         implicitHeight: 30
-                        placeholderText: tab === "Changes" ? "Search this change page…  Ctrl+K" : "Search names, PID or SID…  Ctrl+K"
+                        placeholderText: "Search records · > commands · # PID/SID"
                         placeholderTextColor: muted
                         selectByMouse: true
-                        Accessible.name: "Search records by name, packet identifier or service identifier"
-                        Keys.onEscapePressed: clear()
-                        onAccepted: {
-                            recordList.forceActiveFocus();
-                            if (rows.length)
-                                recordList.currentIndex = 0;
-                        }
+                        Accessible.name: "Search records by name, packet identifier or service identifier" + (paletteInput===recordSearch ? " · " + paletteStatus : "")
                     }
                     RowLayout {
                         visible: tab === "Tables"
@@ -3454,7 +4400,7 @@ ApplicationWindow {
                         visible: tab === "Changes"
                         Layout.fillWidth: true
                         Layout.margins: 8
-                        spacing: 6
+                        spacing: 4
                         RowLayout {
                             Layout.fillWidth: true
                             PlainLabel { text: "A"; color: muted; Layout.preferredWidth: 14 }
@@ -3466,7 +4412,7 @@ ApplicationWindow {
                                 placeholderText: "Packet cutoff"
                                 enabled: backendReady && !core.comparing
                                 selectByMouse: true
-                                onTextChanged: comparison = {}
+                                onTextChanged: { comparison = {}; comparisonFilters = []; comparisonRun.highlighted = false; }
                                 Accessible.name: "Snapshot A inclusive packet cutoff"
                                 onAccepted: compareSnapshots(0)
                                 Keys.onEscapePressed: recordList.forceActiveFocus()
@@ -3490,7 +4436,7 @@ ApplicationWindow {
                                 placeholderText: "Packet cutoff"
                                 enabled: backendReady && !core.comparing
                                 selectByMouse: true
-                                onTextChanged: comparison = {}
+                                onTextChanged: { comparison = {}; comparisonFilters = []; comparisonRun.highlighted = false; }
                                 Accessible.name: "Snapshot B inclusive packet cutoff"
                                 onAccepted: compareSnapshots(0)
                                 Keys.onEscapePressed: recordList.forceActiveFocus()
@@ -3540,7 +4486,7 @@ ApplicationWindow {
                                 valueRole: "value"
                                 model: [{label:"All changes",value:"all"},{label:"Services",value:"services"},{label:"Tables",value:"tables"},{label:"Events",value:"events"}]
                                 enabled: backendReady && !core.comparing
-                                onActivated: comparison = {}
+                                onActivated: { comparison = {}; comparisonFilters = []; }
                                 Accessible.name: "Snapshot change category"
                             }
                             Action {
@@ -3550,14 +4496,19 @@ ApplicationWindow {
                                 onClicked: { let before = fromPacket.text; fromPacket.text = toPacket.text; toPacket.text = before; }
                             }
                             Action {
+                                id: comparisonRun
                                 objectName: "runComparison"
                                 text: core.comparing ? "Comparing…" : "Compare"
                                 primary: true
                                 enabled: backendReady && !core.comparing && !!analysisState.complete && validPacket(fromPacket.text) && validPacket(toPacket.text)
-                                onClicked: compareSnapshots(0)
+                                onClicked: { highlighted = false; compareSnapshots(0); }
+                                onActiveFocusChanged: if (activeFocus) highlighted = false
+                                Rectangle { anchors.fill: parent; anchors.margins: -2; visible: comparisonRun.highlighted; color: "transparent"; border.color: blue; border.width: focusWidth; radius: 2 }
                             }
                         }
                         PlainLabel {
+                            // Compact panes show the loaded A → B context inline with the filter chips.
+                            visible: !compactComparison || !!comparisonError || !comparison.summary
                             Layout.fillWidth: true
                             wrapMode: Text.Wrap
                             font.pixelSize: 11
@@ -3576,16 +4527,37 @@ ApplicationWindow {
                             SafeTip { visible: sourceHover.hovered; text: comparison.source || "" }
                             HoverHandler { id: sourceHover }
                         }
-                        PlainLabel {
+                        Flow {
                             visible: !!comparison.summary
                             Layout.fillWidth: true
-                            wrapMode: compactComparison ? Text.NoWrap : Text.Wrap
-                            elide: Text.ElideRight
+                            spacing: 4
+                            Repeater {
+                                model: ["added","removed","changed"]
+                                SummaryChip {
+                                    id: changeFilter
+                                    required property string modelData
+                                    objectName: "comparisonFilter_" + modelData
+                                    implicitHeight: 24
+                                    disclosure: false
+                                    text: (modelData === "added" ? "+" : modelData === "removed" ? "−" : "~") + num(comparisonCounts[modelData]) + (compactComparison ? "" : " " + modelData)
+                                    checked: comparisonFilters.indexOf(modelData) >= 0
+                                    Accessible.name: num(comparisonCounts[modelData]) + " " + modelData + " changes on this page"
+                                    help: "A " + num(comparison.from_packet) + " → B " + num(comparison.to_packet) + " · toggle " + modelData + " changes on this page. No active filters shows all changes."
+                                    contentItem: PlainLabel { text:changeFilter.text; color:changeColor(changeFilter.modelData); horizontalAlignment:Text.AlignHCenter; verticalAlignment:Text.AlignVCenter; font.pixelSize:11 }
+                                    onClicked: {
+                                        comparisonFilters = comparisonFilters.indexOf(modelData)>=0 ? comparisonFilters.filter(function(kind){return kind!==modelData;}) : comparisonFilters.concat([modelData]);
+                                        recordList.currentIndex = rows.length ? 0 : -1;
+                                    }
+                                }
+                            }
+                        }
+                        PlainLabel {
+                            visible: !!comparison.summary && (comparisonFilters.length > 0 || comparison.total_changes > 100)
+                            Layout.fillWidth: true
                             font.pixelSize: 11
-                            color: changedColor
-                            text: Object.keys(comparison.summary || {}).map(function (kind) { let count = comparison.summary[kind]; return kind + ": +" + count.added + " / −" + count.removed + " / ~" + count.changed; }).join("  ·  ")
-                            SafeTip { visible: comparisonSummaryHover.hovered; text: anchorText }
-                            HoverHandler { id: comparisonSummaryHover }
+                            color: muted
+                            wrapMode: Text.Wrap
+                            text: rows.length + " shown · filters apply to this page"
                         }
                         PlainLabel {
                             visible: !!comparison.source && !compactComparison
@@ -3606,13 +4578,15 @@ ApplicationWindow {
                         }
                     }
                     RowLayout {
+                        // Compact comparison chips already carry the counts; an empty row would take spare height.
+                        visible: !(tab === "Changes" && compactComparison && !!comparison.summary)
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
                         Layout.rightMargin: 8
                         PlainLabel {
                             id: recordCountLabel
                             visible: tab !== "Topology"
-                            text: tab === "Tables" ? tableModel.count_text : tab + " · " + rows.length + (recordSearch.text.trim() ? " / " + unfilteredRows.length : "")
+                            text: tab === "Tables" ? tableModel.count_text : tab + " · " + rows.length + (recordSearch.query.trim() ? " / " + unfilteredRows.length : "")
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             elide: Text.ElideRight
@@ -3638,7 +4612,7 @@ ApplicationWindow {
                         Action { objectName:"tableNext"; text:"Next"; enabled:(tablePage+1)*100<parent.total; onClicked:tablePage++ }
                     }
                     PlainLabel {
-                        visible: tab !== "Topology" && selectionHidden && (tab === "Tables" || !!recordSearch.text.trim())
+                        visible: tab !== "Topology" && selectionHidden && (tab === "Tables" || !!recordSearch.query.trim())
                         text: "Selected evidence is retained; its record is hidden by this filter."
                         Layout.fillWidth: true
                         Layout.leftMargin: 10
@@ -3680,7 +4654,7 @@ ApplicationWindow {
                             required property int index
                             objectName: tab === "Services" ? "service_" + modelData.id : tab === "Issues" ? "issue_" + modelData.code : "record_" + index
                             width: ListView.view.width
-                            height: tab === "Issues" ? 88 : tab === "Services" ? 94 : modelData.logical ? 100 : 58
+                            height: tab === "Changes" ? Math.max(58,contentItem.implicitHeight + topPadding + bottomPadding) : tab === "Issues" ? 88 : tab === "Services" ? 72 : modelData.logical ? 100 : 58
                             focusPolicy: Qt.StrongFocus
                             Keys.onSpacePressed: { if(tab === "Tables" && modelData.logical) toggleTableGroup(modelData); else activate(modelData); }
                             Keys.onRightPressed: { if(tab === "Tables" && modelData.logical && !expandedTables[modelData.group.id]) toggleTableGroup(modelData); }
@@ -3694,45 +4668,57 @@ ApplicationWindow {
                                 color: recordDelegate.highlighted ? selectionSurface : recordDelegate.hovered ? hoverSurface : "transparent"
                                 border.color: recordDelegate.activeFocus ? blue : "transparent"
                             }
-                            contentItem: RowLayout {
-                                spacing: 8
-                                Item {
-                                    Layout.preferredWidth: tab === "Services" ? 38 : 20
-                                    Layout.fillHeight: true
-                                    PlainLabel {
-                                        anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
-                                        text: tab === "Services" ? (modelData.logical_channel_number === null || modelData.logical_channel_number === undefined ? "—" : modelData.logical_channel_number) : tab === "Tables" ? (modelData.logical ? (expandedTables[modelData.group.id] ? "▾" : "▸") : "·") : ""
-                                        color: tab === "Tables" ? tableColor(modelData.name) : muted
-                                        font.family: "monospace"
-                                    }
-                                    MouseArea { anchors.fill:parent; enabled:tab === "Tables" && !!modelData.logical; onClicked:toggleTableGroup(modelData) }
-                                }
-                                Column {
+                            contentItem: ColumnLayout {
+                                spacing: 6
+                                RowLayout {
                                     Layout.fillWidth: true
-                                    spacing: 5
-                                    PlainLabel {
-                                        text: tab === "Services" ? (modelData.name || "Unnamed service") : rowTitle(modelData)
-                                        width: parent.width
-                                        color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? warningColor : ink
-                                        elide: Text.ElideRight
-                                        font.pixelSize: 12
+                                    spacing: 8
+                                    Item {
+                                        Layout.preferredWidth: tab === "Services" ? 38 : 20
+                                        Layout.fillHeight: true
+                                        PlainLabel {
+                                            anchors.top: parent.top; anchors.horizontalCenter: parent.horizontalCenter
+                                            text: tab === "Services" ? (modelData.logical_channel_number === null || modelData.logical_channel_number === undefined ? "—" : modelData.logical_channel_number) : tab === "Tables" ? (modelData.logical ? (expandedTables[modelData.group.id] ? "▾" : "▸") : "·") : ""
+                                            color: tab === "Tables" ? tableColor(modelData.name) : muted
+                                            font.family: "monospace"
+                                        }
+                                        MouseArea { anchors.fill:parent; enabled:tab === "Tables" && !!modelData.logical; onClicked:toggleTableGroup(modelData) }
                                     }
-                                    PlainLabel {
-                                        text: rowSubtitle(modelData)
-                                        width: parent.width; color: muted; font.pixelSize: 11
-                                        elide: Text.ElideRight
-                                        wrapMode: Text.Wrap
-                                        maximumLineCount: tab === "Issues" || modelData.logical ? 3 : 1
+                                    Column {
+                                        Layout.fillWidth: true
+                                        spacing: 5
+                                        PlainLabel {
+                                            text: tab === "Services" ? (modelData.name || "Unnamed service") : rowTitle(modelData)
+                                            width: parent.width
+                                            color: tab === "Tables" ? tableColor(modelData.name) : tab === "Changes" ? (modelData.change === "added" ? addedColor : modelData.change === "removed" ? removedColor : changedColor) : modelData.valid === false ? removedColor : tab === "Issues" ? warningColor : ink
+                                            elide: Text.ElideRight
+                                            font.pixelSize: 12
+                                        }
+                                        PlainLabel {
+                                            // Field diffs below already name each changed field.
+                                            visible: tab !== "Changes" || !(modelData.changed_fields || []).length
+                                            text: rowSubtitle(modelData)
+                                            width: parent.width; color: muted; font.pixelSize: 11
+                                            elide: Text.ElideRight
+                                            wrapMode: Text.Wrap
+                                            maximumLineCount: tab === "Issues" || modelData.logical ? 3 : 1
+                                        }
+                                        // Type and media PIDs share one line; the tooltip keeps the full text.
+                                        PlainLabel {
+                                            visible: tab === "Services"
+                                            text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type") + " · V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
+                                            width: parent.width; color: muted; font.pixelSize:11; elide:Text.ElideRight
+                                        }
                                     }
-                                    PlainLabel {
-                                        visible: tab === "Services"
-                                        text: "Type " + hex(modelData.service_type, 2) + " · " + (modelData.service_type_name || "Unknown service type")
-                                        width: parent.width; color: muted; font.pixelSize:11; elide:Text.ElideRight
-                                    }
-                                    PlainLabel {
-                                        visible: tab === "Services"
-                                        text: "V " + pidList(modelData.video_pids, modelData.media_status) + " · A " + pidList(modelData.audio_pids, modelData.media_status)
-                                        width: parent.width; color: muted; font.family:"monospace"; font.pixelSize:10; elide:Text.ElideRight
+                                }
+                                ComparisonDiff {
+                                    visible: tab === "Changes"
+                                    Layout.fillWidth: true
+                                    change: visible ? recordDelegate.modelData : null
+                                    maxRows: compactComparison ? 3 : 0
+                                    onFieldActivated: {
+                                        recordList.currentIndex = recordDelegate.index;
+                                        if (!recordDelegate.highlighted) activate(recordDelegate.modelData);
                                     }
                                 }
                             }
@@ -3753,7 +4739,7 @@ ApplicationWindow {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.Wrap
                             visible: rows.length === 0
-                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.text.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
+                            text: core.availability === "starting" ? "Starting backend…" : !core.available ? "Backend disconnected. Restart the application to continue." : core.cancelling ? "Cancelling scan… Waiting for the worker to stop." : core.busy ? "Scanning source…" : analysisState.analysis_status === "cancelled" ? "Scan cancelled. Analyze a source to start again." : core.comparing && tab === "Changes" ? "Comparing observed snapshots…" : core.error ? "Unable to load data. See the error below." : !analysisState.source ? "Open a transport stream to inspect PSI / SI tables." : recordSearch.query.trim() ? "No records match this search. Press Escape in the search box to clear it." : tab === "Changes" ? comparisonFilters.length ? "No matching changes on this page. Toggle the filters or use Previous / Next." : comparison.source ? "No changes between these cutoffs in this category." : "Set A and B to investigate a version change." : (tab === "Services" || tab === "EPG") && (analysisState.tables || []).length ? "No derived " + (tab === "Services" ? "services" : "programme events") + " in this view. Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "No " + tab.toLowerCase() + " in this view."
                             color: muted
                         }
                     }
@@ -3855,20 +4841,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     anchors.margins: 10
                     spacing: spaceUnit
-                    RowLayout {
-                        Layout.fillWidth: true
-                        TinyLabel {
-                            text: activeInspectionRef ? "SOURCE EVIDENCE" : "SECTION INSPECTOR"
-                            Layout.fillWidth: true
-                        }
-                        Action { text:(arrivalOpen?"▾ ":"▸ ")+"Arrival"; objectName:"arrivalToggle"; visible:!!detail.id; implicitHeight:20; onClicked:arrivalOpen=!arrivalOpen }
-                        Action { text:(sectionGroupOpen?"▾ ":"▸ ")+"Sections"; objectName:"sectionGroupToggle"; visible:(selectedGroup.section_ids || []).length>1 || selectedGroup.last_section>0; implicitHeight:20; onClicked:sectionGroupOpen=!sectionGroupOpen }
-                        PlainLabel {
-                            text: core.inspecting ? "LOADING…" : detail.valid === false ? "INVALID" : "RAW + DECODED"
-                            color: detail.valid === false ? removedColor : muted
-                            font.pixelSize: 11
-                        }
-                    }
+                    TinyLabel { visible:core.inspecting || !detail.id; text:core.inspecting ? "LOADING SECTION…" : "Select a section"; Layout.fillWidth:true }
                     ColumnLayout {
                         visible: !!topologyEvidenceRef && !protocolSourceRef
                         Layout.fillWidth:true
@@ -3915,51 +4888,36 @@ ApplicationWindow {
                     ColumnLayout {
                         visible: !!selectedChange
                         Layout.fillWidth: true
-                        spacing: 5
+                        spacing: 4
                         RowLayout {
                             Layout.fillWidth: true
-                            Action {
+                            SummaryChip {
                                 objectName: "inspectBefore"
                                 text: compactInspector ? "A" : "A · Before"
                                 Accessible.name: "A · Before"
-                                primary: comparisonSide === "before"
+                                disclosure: false
+                                checked: comparisonSide === "before"
                                 enabled: backendReady && !!selectedChange && !!selectedChange.before
+                                help: "Inspect source evidence at snapshot A; the workbench snapshot stays unchanged"
                                 onClicked: inspectChange(selectedChange, "before")
                             }
-                            Action {
+                            SummaryChip {
                                 objectName: "inspectAfter"
                                 text: compactInspector ? "B" : "B · After"
                                 Accessible.name: "B · After"
-                                primary: comparisonSide === "after"
+                                disclosure: false
+                                checked: comparisonSide === "after"
                                 enabled: backendReady && !!selectedChange && !!selectedChange.after
+                                help: "Inspect source evidence at snapshot B; the workbench snapshot stays unchanged"
                                 onClicked: inspectChange(selectedChange, "after")
                             }
-                            FieldChoice {
-                                id: comparisonSource
-                                objectName: "comparisonSource"
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 65
-                                implicitHeight: 28
-                                textRole: "label"
-                                model: selectedChange && selectedChange[comparisonSide] ? (selectedChange[comparisonSide].evidence || []).map(function(e) {return {label:e.name + " · PID " + hex(e.pid) + " · §" + e.section + " · " + e.id};}) : []
-                                currentIndex: comparisonEvidenceIndex
-                                enabled: backendReady && count > 0
-                                Accessible.name: "Comparison source evidence"
-                                onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
-                                SafeTip { visible: anchorHovered; text: comparisonSource.currentText }
-                            }
-                            Action {
-                                objectName:"comparisonTopology"
-                                text:compactInspector ? "Tree" : "Topology"
-                                Accessible.name:"Topology at the selected comparison cutoff"
-                                enabled:backendReady && !!selectedChange && !core.inspecting
-                                onClicked:openComparisonTopology()
-                                SafeTip {visible:anchorHovered;text:"Inspect semantic objects at this comparison cutoff without changing the workbench snapshot"}
-                            }
+                            Item { Layout.fillWidth: true }
                             Action {
                                 objectName: "useComparisonSnapshot"
                                 text: "Use snapshot"
-                                enabled: backendReady && !!selectedChange && !core.inspecting
+                                primary: true
+                                Accessible.name: "Use snapshot " + (comparisonSide === "before" ? "A" : "B")
+                                enabled: backendReady && !!selectedChange && !!selectedChange[comparisonSide] && (selectedChange[comparisonSide].evidence || []).length > 0 && !core.inspecting
                                 onClicked: {
                                     let row = selectedChange, side = row[comparisonSide];
                                     selectedChange = null;
@@ -3971,6 +4929,33 @@ ApplicationWindow {
                                 SafeTip { visible: anchorHovered; text: "Switch the workbench to this cutoff. Editing and export will then use this snapshot." }
                             }
                         }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            PlainLabel { text:"Source"; color:muted; font.pixelSize:11 }
+                            FieldChoice {
+                                id: comparisonSource
+                                objectName: "comparisonSource"
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 65
+                                implicitHeight: 26
+                                textRole: "label"
+                                model: selectedChange && selectedChange[comparisonSide] ? (selectedChange[comparisonSide].evidence || []).map(function(e) {return {label:e.name + " · PID " + hex(e.pid) + " · §" + e.section + " · " + e.id};}) : []
+                                currentIndex: comparisonEvidenceIndex
+                                enabled: backendReady && count > 0
+                                Accessible.name: "Comparison source evidence"
+                                onActivated: inspectChange(selectedChange, comparisonSide, currentIndex)
+                                SafeTip { visible: anchorHovered; text: "PID: Packet Identifier · " + comparisonSource.currentText }
+                            }
+                            Action {
+                                objectName:"comparisonTopology"
+                                text:"Topology"
+                                Accessible.name:"Topology at the selected comparison cutoff"
+                                implicitHeight:26
+                                enabled:backendReady && !!selectedChange && !core.inspecting
+                                onClicked:openComparisonTopology()
+                                SafeTip {visible:anchorHovered;text:"Inspect semantic objects at this comparison cutoff without changing the workbench snapshot"}
+                            }
+                        }
                         PlainLabel {
                             text: changeFields(selectedChange) || "Section presence changed between A and B. Inspect the available side."
                             Layout.fillWidth: true
@@ -3978,118 +4963,209 @@ ApplicationWindow {
                             wrapMode: Text.WrapAnywhere
                             elide: Text.ElideRight
                             font.pixelSize: 11
-                            color: changedColor
+                            color: changeColor(selectedChange ? selectedChange.change : "context")
                             SafeTip { visible: changeHover.hovered; text: changeFields(selectedChange, true) }
                             HoverHandler { id: changeHover }
                         }
                     }
-                    PlainLabel {
-                        id: sectionTitle
-                        text: detail.name ? tableLabel(detail.name) + (tableLabel(detail.name) === detail.name ? " · " + explanation(detail.name) : "") : "Select a section"
-                        SafeTip { id: sectionTitleTip; visible: sectionTitleHover.hovered; text: detail.name + " · " + explanation(detail.name) }
-                        HoverHandler { id: sectionTitleHover }
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        color: tableColor(detail.name)
-                        font.weight: Font.DemiBold
-                    }
-                    PlainLabel {
-                        text: detail.pid !== undefined ? "PID " + hex(detail.pid) + " · TID " + hex(detail.table_id, 2) + " · " + Shared.workbench.wireHeaderText(detail) + " · " + detail.bytes + " B" : "Select a row to view fields and source bytes"
-                        color: muted
-                        font.pixelSize: 11
-                        Layout.fillWidth: true
-                        elide: Text.ElideRight
-                    }
-                    PlainLabel {
-                        objectName: "sectionCrc"
-                        text: crcText(detail) + ((detail.crc || {}).calculated_hex ? " · expected " + detail.crc.calculated_hex : "")
+                    RowLayout {
+                        objectName: "inspectorSummary"
                         visible: !!detail.id
                         Layout.fillWidth: true
-                        color: detail.valid === false ? removedColor : muted
-                        font.family: "monospace"
-                        font.pixelSize: 11
-                        elide: Text.ElideRight
-                    }
-                    PlainLabel {
-                        objectName: "sectionArrivals"
-                        text: arrivalText(detail)
-                        visible: !!text
-                        Layout.fillWidth: true
-                        color: muted
-                        font.pixelSize: 11
-                        elide: Text.ElideRight
-                        HoverHandler { id: arrivalsHover }
-                        SafeTip { visible: arrivalsHover.hovered; text: "Packet-position distribution; not wall-clock timing. " + ((detail.distribution || {}).basis || "") + "\nGap packets min / mean / max: " + detail.distribution?.min_gap_packets + " / " + detail.distribution?.mean_gap_packets + " / " + detail.distribution?.max_gap_packets + (detail.distribution?.first_seconds !== null && detail.distribution?.first_seconds !== undefined ? "\nSeconds from supplied bitrate: " + detail.distribution.first_seconds + " → " + detail.distribution.last_seconds : "\nSeconds unavailable without a bitrate. No PCR-derived clock.") }
-                    }
-                    Row {
-                        visible: !!detail.distribution && arrivalOpen
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 12
-                        spacing: 1
-                        Repeater {
-                            model: detail.distribution?.bins || []
-                            Rectangle {
-                                required property var modelData
-                                width: Math.max(1, (inspectorPane.width - 22) / Math.max(1, detail.distribution.bins.length) - 1)
-                                height: 12
-                                color: modelData.bad ? removedColor : tableColor(detail.name)
-                                opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / Math.max(1, detail.distribution.observation_count) * 8) : 0.08
-                                HoverHandler { id: arrivalBinHover }
-                                SafeTip { visible: arrivalBinHover.hovered; text: "Packets " + modelData.from_packet + "–" + modelData.to_packet + ": " + modelData.count + " arrivals; " + modelData.bad + " invalid" }
+                        Layout.preferredHeight: 32
+                        // The chip Flickable fills this row; never let the row take the field tree's height.
+                        Layout.maximumHeight: 32
+                        spacing: 2
+                        SummaryChip { objectName:"standardsProfileToggle"; text:inspectorSummary.profile; checked:identityOpen; help:inspectorSummary.profileHelp; onClicked:identityOpen=!identityOpen }
+                        Flickable {
+                            id: summaryChips
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            contentWidth: summaryChipRow.implicitWidth
+                            contentHeight: height
+                            flickableDirection: Flickable.HorizontalFlick
+                            boundsBehavior: Flickable.StopAtBounds
+                            clip: true
+                            function reveal(item) {
+                                let point=item.mapToItem(contentItem,0,0);
+                                contentX=Math.max(0,Math.min(Math.max(0,contentWidth-width),Math.max(point.x+item.width-width,Math.min(contentX,point.x))));
+                            }
+                            ScrollBar.horizontal: ScrollBar { height:4 }
+                            Row {
+                                id: summaryChipRow
+                                spacing: 2
+                                SummaryChip {
+                                    id: identityChip
+                                    objectName: "identityToggle"
+                                    text: tableLabel(detail.name)
+                                    checked: identityOpen
+                                    help: detail.name + " · " + explanation(detail.name) + " · section identity and validity"
+                                    scrollHost: summaryChips
+                                    onClicked: identityOpen=!identityOpen
+                                    contentItem: PlainLabel {
+                                        id: sectionTitle
+                                        text: identityChip.text
+                                        color: tableColor(detail.name)
+                                        font.weight: Font.DemiBold
+                                        font.pixelSize: 11
+                                        verticalAlignment: Text.AlignVCenter
+                                        SafeTip { id:sectionTitleTip; visible:sectionTitleHover.hovered; text:detail.name + " · " + explanation(detail.name) }
+                                        HoverHandler { id:sectionTitleHover }
+                                    }
+                                }
+                                PlainLabel { visible:detail.valid===false; text:"INVALID"; color:removedColor; font.pixelSize:11; anchors.verticalCenter:parent.verticalCenter }
+                                SummaryChip { objectName:"pidSummaryToggle"; text:"PID " + hex(detail.pid); checked:identityOpen; help:"PID: Packet Identifier (13 bits) · TID: Table Identifier " + hex(detail.table_id,2) + (selectedService>=0 ? " · SID: Service Identifier " + hex(selectedService) : ""); scrollHost:summaryChips; onClicked:identityOpen=!identityOpen }
+                                SummaryChip { objectName:"versionSummaryToggle"; text:inspectorSummary.version; checked:identityOpen; help:"Wire version and current/next state"; scrollHost:summaryChips; onClicked:identityOpen=!identityOpen }
+                                SummaryChip { objectName:"sectionGroupToggle"; text:inspectorSummary.section; checked:sectionGroupOpen; help:"Original section evidence and capture-wide table coverage"; scrollHost:summaryChips; onClicked:sectionGroupOpen=!sectionGroupOpen }
+                                SummaryChip {
+                                    id: crcChip
+                                    objectName:"crcToggle"; text:inspectorSummary.crc; checked:crcOpen; help:"CRC: Cyclic Redundancy Check · " + (detail.crc?.status || "unavailable"); scrollHost:summaryChips; onClicked:crcOpen=!crcOpen
+                                    contentItem: PlainLabel { text:crcChip.text; color:detail.crc?.status==="invalid" ? removedColor : detail.crc?.status==="valid" ? addedColor : muted; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
+                                }
+                                SummaryChip { objectName:"arrivalToggle"; visible:!!detail.distribution; text:num(detail.distribution?.observation_count) + " arrivals"; checked:arrivalOpen; help:"Arrival distribution in packet positions; elapsed seconds only from a supplied bitrate"; scrollHost:summaryChips; onClicked:arrivalOpen=!arrivalOpen }
                             }
                         }
-                    }
-
-                    RowLayout {
-                        visible: sectionGroupOpen && !!selectedGroup.id
-                        Layout.fillWidth: true
-                        spacing: 4
-                        FieldChoice {
-                            id: sectionChoice
-                            objectName: "sectionChoice"
-                            Layout.fillWidth: true
-                            implicitHeight: 28
-                            model: siblingSections.map(function(r) { return Shared.workbench.wireSectionText(r) + " · " + crcText(r) + " · #" + r.first_packet; })
-                            currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
-                            onActivated: { let r=siblingSections[currentIndex]; if(r){if(topologyEvidenceRef)openTopologySibling(r);else inspect(r.id, -1, detail.native_table_at_packet);} }
-                            Accessible.name: "Select original section evidence"
+                        Row {
+                            objectName: "evidenceScope"
+                            spacing: 0
+                            ButtonGroup { id:inspectorScopeGroup }
+                            SummaryChip { ButtonGroup.group:inspectorScopeGroup; objectName:"sectionScope"; text:"Section"; checked:evidenceScope==="Section"; disclosure:false; help:"Section: fields and bytes of this exact section"; Accessible.name:"Selected section evidence"; onClicked:evidenceScope="Section" }
+                            SummaryChip { ButtonGroup.group:inspectorScopeGroup; objectName:"mergedScope"; text:"Merged"; checked:evidenceScope==="Merged"; disclosure:false; help:"Merged: SDK (Software Development Kit) tree and XML of the complete table"; Accessible.name:"Merged table evidence"; onClicked:evidenceScope="Merged" }
+                            SummaryChip { objectName:"scopeDetailsToggle"; text:"ⓘ"; checked:scopeOpen; help:"Decode scope details and native assembly cutoff"; Accessible.name:"Decode scope details, " + (scopeOpen ? "expanded" : "collapsed"); onClicked:scopeOpen=!scopeOpen }
                         }
                     }
-                    PlainLabel {
-                        objectName: "sectionCoverage"
-                        text: groupSummary()
-                        visible: !!text && sectionGroupOpen
+                    SummaryChip {
+                        id: inspectorWarningChip
+                        objectName: "inspectorWarningToggle"
+                        visible: !!detail.id && inspectorNotes.length>0
                         Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        font.pixelSize: 11
-                        color: selectedGroup.validity === "valid" ? muted : changedColor
+                        implicitHeight: 24
+                        checked: warningsOpen
+                        text: "⚠ " + inspectorNotes.length + (inspectorNotes.length===1 ? " note" : " notes") + (warningsOpen ? " ▾" : " ▸")
+                        help: "Expand truncation and decoder notes"
+                        onClicked: warningsOpen=!warningsOpen
+                        contentItem: PlainLabel { text:inspectorWarningChip.text; color:warningColor; font.pixelSize:11; verticalAlignment:Text.AlignVCenter }
                     }
-                    Action { visible:sectionGroupOpen && !!selectedGroup.id; text:(showInvalidSections?"Hide":"Show")+" bad CRC sections"; implicitHeight:24; onClicked:showInvalidSections=!showInvalidSections }
-                    PlainLabel {
-                        objectName: "inspectionCutoff"
-                        visible: detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
-                        text: (detail.merged?.complete ? "Merged assembly" : "No complete merged assembly") + " · cutoff #" + num(detail.native_table_at_packet)
+                    ScrollView {
+                        id: inspectorDetailsScroll
+                        objectName: "inspectorDetails"
+                        visible: !!detail.id && (identityOpen || crcOpen || arrivalOpen && !!detail.distribution || sectionGroupOpen || scopeOpen || warningsOpen && inspectorNotes.length>0)
                         Layout.fillWidth: true
-                        elide: Text.ElideRight
-                        color: muted
-                        font.pixelSize: 11
-                        HoverHandler {
-                            id: cutoffHover
+                        Layout.preferredHeight: Math.min(inspectorDetailsColumn.implicitHeight, Math.max(72,inspectorPane.height*0.28))
+                        contentWidth: availableWidth
+                        clip: true
+                        ColumnLayout {
+                            id: inspectorDetailsColumn
+                            width: inspectorDetailsScroll.availableWidth
+                            spacing: 4
+                            PlainLabel {
+                                id: identityDetails
+                                objectName: "sectionIdentity"
+                                visible: identityOpen
+                                text: (detail.valid ? "VALID" : "INVALID") + " · PID " + hex(detail.pid) + " · TID " + hex(detail.table_id,2) + " · " + Shared.workbench.wireHeaderText(detail) + " · " + detail.bytes + " B" + (selectedService>=0 ? " · SID " + hex(selectedService) : "")
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                id: crcDetails
+                                objectName: "sectionCrc"
+                                text: crcText(detail) + ((detail.crc || {}).calculated_hex ? " · expected " + detail.crc.calculated_hex : "")
+                                visible: crcOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: detail.valid === false ? removedColor : muted
+                                font.family: "monospace"
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                id: arrivalDetails
+                                objectName: "sectionArrivals"
+                                text: arrivalText(detail)
+                                visible: arrivalOpen && !!text
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                visible: arrivalOpen && !!detail.distribution
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                                text: "Packet-position distribution; not wall-clock timing. " + ((detail.distribution || {}).basis || "") + "\nGap packets min / mean / max: " + detail.distribution?.min_gap_packets + " / " + detail.distribution?.mean_gap_packets + " / " + detail.distribution?.max_gap_packets + (detail.distribution?.first_seconds !== null && detail.distribution?.first_seconds !== undefined ? "\nSeconds from supplied bitrate: " + detail.distribution.first_seconds + " → " + detail.distribution.last_seconds : "\nSeconds unavailable without a bitrate. No PCR-derived clock.")
+                            }
+                            Row {
+                                visible: !!detail.distribution && arrivalOpen
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 12
+                                spacing: 1
+                                Repeater {
+                                    model: detail.distribution?.bins || []
+                                    Rectangle {
+                                        required property var modelData
+                                        width: Math.max(1, (inspectorDetailsColumn.width - 2) / Math.max(1, detail.distribution.bins.length) - 1)
+                                        height: 12
+                                        color: modelData.bad ? removedColor : tableColor(detail.name)
+                                        opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / Math.max(1, detail.distribution.observation_count) * 8) : 0.08
+                                        HoverHandler { id:arrivalBinHover }
+                                        SafeTip { visible:arrivalBinHover.hovered; text:"Packets " + modelData.from_packet + "–" + modelData.to_packet + ": " + modelData.count + " arrivals; " + modelData.bad + " invalid" }
+                                    }
+                                }
+                            }
+                            FieldChoice {
+                                id: sectionChoice
+                                objectName: "sectionChoice"
+                                visible: sectionGroupOpen && !!selectedGroup.id
+                                Layout.fillWidth: true
+                                implicitHeight: 28
+                                model: siblingSections.map(function(r) { return Shared.workbench.wireSectionText(r) + " · " + crcText(r) + " · #" + r.first_packet; })
+                                currentIndex: siblingSections.findIndex(function(r) { return r.id === detail.id; })
+                                onActivated: { let r=siblingSections[currentIndex]; if(r){if(topologyEvidenceRef)openTopologySibling(r);else inspect(r.id,-1,detail.native_table_at_packet);} }
+                                Accessible.name: "Select original section evidence"
+                            }
+                            PlainLabel {
+                                id: sectionGroupDetails
+                                objectName: "sectionCoverage"
+                                text: groupSummary() || Shared.workbench.wireHeaderText(detail) + " · No capture-wide group available at this cutoff."
+                                visible: sectionGroupOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                font.pixelSize: 11
+                                color: selectedGroup.validity === "valid" ? muted : changedColor
+                            }
+                            Action { visible:sectionGroupOpen && !!selectedGroup.id; text:(showInvalidSections?"Hide":"Show")+" bad CRC sections"; implicitHeight:24; onClicked:showInvalidSections=!showInvalidSections }
+                            PlainLabel {
+                                id: cutoffDetails
+                                objectName: "inspectionCutoff"
+                                visible: scopeOpen && detail.native_table_at_packet !== undefined && detail.native_table_at_packet !== null
+                                text: (detail.merged?.complete ? "Merged assembly" : "No complete merged assembly") + " · cutoff #" + num(detail.native_table_at_packet)
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                            }
+                            PlainLabel {
+                                visible: scopeOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: muted
+                                font.pixelSize: 11
+                                text: "Section: fields and bytes of this exact section. Merged: SDK tree and XML of the complete table.\n" + (detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff") + "\nTSDuck: " + (detail.native_decode_status || "not available") + "\nFirst evidence packet: " + num(detail.first_packet)
+                            }
+                            PlainLabel {
+                                id: nativeDecodeWarningLabel
+                                objectName: "nativeDecodeWarnings"
+                                text: nativeWarningsText()
+                                visible: !!text && warningsOpen
+                                Layout.fillWidth: true
+                                wrapMode: Text.Wrap
+                                color: warningColor
+                                font.pixelSize: 11
+                            }
                         }
-                        SafeTip {
-                            visible: cutoffHover.hovered
-                            text: (detail.inspection_scope ? detail.inspection_scope.native_table : "Native table assembly evidence cutoff") + "\nTSDuck: " + (detail.native_decode_status || "not available") + "\nFirst evidence packet: " + num(detail.first_packet)
-                        }
-                    }
-                    PlainLabel {
-                        id: nativeDecodeWarningLabel
-                        objectName: "nativeDecodeWarnings"
-                        text: nativeWarningsText()
-                        visible: !!text
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        color: warningColor
-                        font.pixelSize: 11
                     }
                     Flow {
                         Layout.fillWidth: true
@@ -4106,25 +5182,6 @@ ApplicationWindow {
                                 text: modelData === "XML" && detail.native_xml_guarded ? "Guarded XML" : modelData
                                 highlighted: inspectorView === modelData
                                 onClicked: inspectorView = modelData
-                            }
-                        }
-                        Row {
-                            objectName: "evidenceScope"
-                            width: 100
-                            height: 28
-                            Action {
-                                objectName: "sectionScope"
-                                text: "Section"; width: 50; height: 28
-                                highlighted: evidenceScope === "Section"
-                                onClicked: evidenceScope = "Section"
-                                Accessible.name: "Selected section evidence"
-                            }
-                            Action {
-                                objectName: "mergedScope"
-                                text: "Merged"; width: 50; height: 28
-                                highlighted: evidenceScope === "Merged"
-                                onClicked: evidenceScope = "Merged"
-                                Accessible.name: "Merged table evidence"
                             }
                         }
                     }
@@ -4168,7 +5225,7 @@ ApplicationWindow {
                         objectName: "fieldTree"
                         Accessible.role: Accessible.List
                         Accessible.name: "Decoded PSI / SI fields"
-                        Accessible.description: "Hierarchical fields. Use arrow keys to navigate and expand, Home and End to jump. Search with Control Shift K."
+                        Accessible.description: "Hierarchical fields. Use arrow keys to navigate and expand, Home and End to jump. Control Enter follows a reference; Alt Left returns. Search with Control Shift K."
                         onCountChanged: {
                             if (count && (currentIndex < 0 || currentIndex >= count)) currentIndex = 0;
                         }
@@ -4181,7 +5238,8 @@ ApplicationWindow {
                         activeFocusOnTab: true
                         keyNavigationEnabled: true
                         ScrollBar.vertical: ScrollBar {}
-                        Keys.onRightPressed: {
+                        Keys.onRightPressed: function(event) {
+                            if(event.modifiers & Qt.AltModifier){event.accepted=false;return;}
                             let r = treeRows[currentIndex];
                             if (r && r.branch) {
                                 if (r.closed) win.toggle(r.path);
@@ -4195,7 +5253,8 @@ ApplicationWindow {
                                 event.accepted = true;
                             }
                         }
-                        Keys.onLeftPressed: {
+                        Keys.onLeftPressed: function(event) {
+                            if(event.modifiers & Qt.AltModifier){event.accepted=false;return;}
                             let r = treeRows[currentIndex];
                             if (r && r.branch && !r.closed && !treeSearch.text.trim())
                                 win.toggle(r.path);
@@ -4207,8 +5266,9 @@ ApplicationWindow {
                                     }
                             }
                         }
-                        Keys.onReturnPressed: {
+                        Keys.onReturnPressed: function(event) {
                             let r = treeRows[currentIndex];
+                            if(event.modifiers & Qt.ControlModifier){jumpReference(r);event.accepted=true;return;}
                             if (r && r.branch)
                                 win.toggle(r.path);
                         }
@@ -4254,6 +5314,26 @@ ApplicationWindow {
                                     elide: Text.ElideRight
                                     Layout.maximumWidth: Math.max(90, tree.width * 0.48)
                                 }
+                                Action {
+                                    id: referenceJump
+                                    objectName: "reference:" + modelData.path
+                                    visible: !!modelData.reference
+                                    enabled: backendReady && !core.inspecting
+                                    Layout.preferredWidth: 22
+                                    Layout.preferredHeight: 24
+                                    leftPadding: 0; rightPadding: 0
+                                    activeFocusOnTab: tree.currentIndex===index
+                                    text: "→"
+                                    Accessible.name: modelData.reference ? modelData.reference.label : "Reference unavailable"
+                                    Accessible.description: modelData.reference ? modelData.reference.help + " · Ctrl+Enter; Alt+Left returns" : ""
+                                    onActiveFocusChanged: if(activeFocus)tree.currentIndex=index
+                                    onClicked: jumpReference(modelData)
+                                    Keys.onReturnPressed: clicked()
+                                    Keys.onEnterPressed: clicked()
+                                    contentItem: PlainLabel {text:referenceJump.text;color:referenceJump.hovered || referenceJump.activeFocus ? blue : muted;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
+                                    background: Rectangle {color:"transparent";radius:2;border.color:referenceJump.activeFocus ? blue : "transparent";border.width:referenceJump.activeFocus ? focusWidth : 0}
+                                    SafeTip {visible:anchorHovered;text:modelData.reference ? modelData.reference.label + " · " + modelData.reference.help + " · Ctrl+Enter" : ""}
+                                }
                             }
                             onClicked: {
                                 tree.currentIndex = index;
@@ -4290,9 +5370,12 @@ ApplicationWindow {
                             text: {
                                 let raw = (detail.raw_hex || "").replace(/\s/g, "");
                                 let lines = [];
+                                // Fixed 72-character lines (offset, 16 bytes, ASCII) keep
+                                // highlightTopologyHex() character positions exact.
                                 for (let i = 0; i < raw.length; i += 32) {
                                     let bytes = raw.slice(i, i + 32).match(/.{1,2}/g) || [];
-                                    lines.push((i / 2).toString(16).toUpperCase().padStart(4, "0") + "  " + bytes.join(" "));
+                                    let ascii = bytes.map(function(b) { let c = parseInt(b, 16); return c >= 32 && c < 127 ? String.fromCharCode(c) : "."; }).join("");
+                                    lines.push((i / 2).toString(16).toUpperCase().padStart(4, "0") + "  " + bytes.join(" ").padEnd(47, " ") + "  " + ascii);
                                 }
                                 return lines.join("\n");
                             }
@@ -4323,10 +5406,12 @@ ApplicationWindow {
                         clip: true
                         contentWidth: availableWidth
                         ColumnLayout {
+                            id: metadataContent
                             width: metadataScroll.availableWidth
                             spacing: 8
+                            PlainLabel { text: "Section metadata"; Layout.fillWidth: true; font.bold: true; font.pixelSize: 13; color: ink }
                             PlainLabel {
-                                text: "Selected section: ID names, text encoding and multilingual EPG. Reference labels do not verify current ownership."
+                                text: "Changes with the selected section. Reference labels do not verify current ownership."
                                 Layout.fillWidth: true
                                 wrapMode: Text.Wrap
                                 color: muted
@@ -4359,15 +5444,7 @@ ApplicationWindow {
                                     TextArea { visible: protocolEvidenceToggle.checked; text: JSON.stringify(modelData.evidence,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
                             }
-                            FieldInput {
-                                id: defaultCharset
-                                objectName: "defaultCharset"
-                                Layout.fillWidth: true
-                                placeholderText: "Next scan default charset (e.g. UTF-8)"
-                                enabled: backendReady
-                                Accessible.name: "Default input charset for next scan"
-                                SafeTip { visible: anchorHovered; text: "Optional SDK charset. DVB charsets honor explicit selectors; RAW charsets ignore them. Original bytes are preserved." }
-                            }
+                            PlainLabel { text: "Multilingual EPG"; Layout.fillWidth: true; font.bold: true; color: ink }
                             FieldChoice {
                                 id: epgLanguageChoice
                                 objectName: "epgLanguage"
@@ -4377,71 +5454,9 @@ ApplicationWindow {
                                 currentIndex: Math.max(0, model.indexOf(epgLanguage || "Default"))
                                 onActivated: epgLanguage=currentIndex === 0 ? "" : currentText
                                 Accessible.name: "Preferred EPG language"
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(epgLanguageChoice);})
+                                SafeTip { visible: anchorHovered; text: "Preferred Electronic Programme Guide language; unavailable languages explicitly fall back." }
                             }
-                            FieldChoice {
-                                id: identifierKind
-                                objectName: "identifierKind"
-                                Layout.fillWidth: true
-                                implicitHeight: 30
-                                model: ["original_network_id","network_id","bouquet_id","ca_system_id","private_data_specifier","registration_id","data_broadcast_id","platform_id","oui"]
-                                Accessible.name: "Identifier namespace"
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                FieldInput { id: identifierValue; objectName: "identifierValue"; Layout.fillWidth: true; placeholderText: "ID: decimal or 0x hexadecimal"; Accessible.name: "Identifier value" }
-                                Action {
-                                    objectName: "identifierQuery"
-                                    text: "Look up"
-                                    enabled: backendReady
-                                    onClicked: {
-                                        let value=identifierValue.text.trim();
-                                        if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))) {identifierResult={error:"Enter a whole decimal or hexadecimal ID"};return;}
-                                        core.send("lookup_identifier",{namespace:identifierKind.currentText,value:Number(value),standards:detail.standards_context || standardChoice.currentValue});
-                                    }
-                                }
-                            }
-                            Action {
-                                id: identifierEvidence
-                                visible: Object.keys(identifierResult).length > 0
-                                text: checked ? "Hide lookup evidence" : "Show lookup evidence"
-                                checkable: true
-                                Layout.fillWidth: true
-                            }
-                            PlainLabel {
-                                visible: Object.keys(identifierResult).length > 0
-                                text: (identifierResult.label || identifierResult.error || identifierResult.status || "") + " · " + (identifierResult.raw_hex || "") + "\n" + (identifierResult.uncertainty || "")
-                                Layout.fillWidth: true
-                                wrapMode: Text.Wrap
-                            }
-                            TextArea {
-                                visible: identifierEvidence.checked && Object.keys(identifierResult).length > 0
-                                Layout.fillWidth: true
-                                readOnly: true
-                                selectByMouse: true
-                                textFormat: TextEdit.PlainText
-                                wrapMode: TextEdit.WrapAnywhere
-                                text: JSON.stringify(identifierResult,null,2)
-                            }
-                            PlainLabel { text: "Satellite candidates · nominal GEO slot"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: blue }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                FieldInput { id: satellitePosition; objectName: "satellitePosition"; Layout.fillWidth: true; placeholderText: "Degrees: 13.0"; Accessible.name: "Orbital position in degrees" }
-                                FieldChoice { id: satelliteDirection; objectName: "satelliteDirection"; model: ["E","W"]; implicitWidth: 65; Accessible.name: "Orbital direction" }
-                                Action {
-                                    objectName: "satelliteQuery"
-                                    text: "Candidates"
-                                    enabled: backendReady
-                                    onClicked: {
-                                        let value=satellitePosition.text.trim();
-                                        satelliteResult={};
-                                        if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180) {satelliteResult={error:"Enter degrees from 0 to 180"};return;}
-                                        core.send("lookup_satellite",{orbital_position_degrees:Number(value),direction:satelliteDirection.currentText});
-                                    }
-                                }
-                            }
-                            TextArea { objectName: "satelliteResult"; visible: Object.keys(satelliteResult).length > 0; text: satelliteText(satelliteResult); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
-                            Action { id: satelliteEvidence; visible: Object.keys(satelliteResult).length > 0; text: checked ? "Hide satellite lookup evidence" : "Satellite lookup evidence"; checkable: true; Layout.fillWidth: true }
-                            TextArea { visible: satelliteEvidence.checked && Object.keys(satelliteResult).length > 0; text: JSON.stringify(satelliteResult,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                             PlainLabel { text: detail.text_diagnostic_scope || "Analyze a stream to inspect metadata."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
                             Repeater {
                                 model: metadataEntries()
@@ -4455,6 +5470,90 @@ ApplicationWindow {
                                     TextArea { visible: evidenceToggle.checked; text: modelData.evidence; Layout.fillWidth: true; readOnly: true; selectByMouse: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere }
                                 }
                             }
+                            Rectangle { Layout.fillWidth: true; Layout.topMargin: 12; Layout.bottomMargin: 8; implicitHeight: 1; color: dividerColor }
+                            PlainLabel { text: "Lookup"; Layout.fillWidth: true; font.bold: true; font.pixelSize: 13; color: ink }
+                            PlainLabel { text: "Not tied to the selected section"; Layout.fillWidth: true; color: muted }
+                            PlainLabel { text: "Identifier lookup"; Layout.fillWidth: true; font.bold: true; color: ink }
+                            FieldChoice {
+                                id: identifierKind
+                                objectName: "identifierKind"
+                                Layout.fillWidth: true
+                                implicitHeight: 30
+                                model: Shared.workbench.identifierNamespaces
+                                textRole: "label"
+                                valueRole: "value"
+                                Accessible.name: "Identifier namespace"
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierKind);})
+                                SafeTip { visible: anchorHovered; text: (Shared.workbench.identifierNamespaces[identifierKind.currentIndex] || {}).help + " · " + identifierKind.currentValue }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                FieldInput { id: identifierValue; objectName: "identifierValue"; Layout.fillWidth: true; placeholderText: "ID: decimal or 0x hexadecimal"; Accessible.name: "Identifier value"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierValue);}) }
+                                Action {
+                                    id: identifierQuery
+                                    objectName: "identifierQuery"
+                                    text: "Look up"
+                                    Accessible.name: "Look up identifier"
+                                    onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierQuery);})
+                                    enabled: backendReady
+                                    onClicked: {
+                                        let value=identifierValue.text.trim();
+                                        identifierResult={};identifierEvidence.checked=false;
+                                        if(!/^(?:0x[0-9a-f]+|[0-9]+)$/i.test(value) || !Number.isSafeInteger(Number(value))) {identifierResult={error:"Enter a whole decimal or hexadecimal ID"};return;}
+                                        core.send("lookup_identifier",{namespace:identifierKind.currentValue,value:Number(value),standards:analysisState.standards_context || "auto"});
+                                    }
+                                }
+                            }
+                            PlainLabel { text: "Uses the analyzed standard context; choose an explicit standard and rescan if context is required."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
+                            LookupTable { objectName: "identifierResult"; result: identifierResult; label: "Identifier lookup result" }
+                            Action {
+                                id: identifierEvidence
+                                visible: Object.keys(identifierResult).length > 0
+                                text: "Raw"
+                                checkable: true
+                                Layout.fillWidth: true
+                                Accessible.name: "Raw identifier lookup JSON, " + (checked ? "expanded" : "collapsed")
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierEvidence);})
+                                SafeTip { visible: anchorHovered; text: "Original JavaScript Object Notation (JSON), including all values and source evidence." }
+                            }
+                            TextArea {
+                                id: identifierRawText
+                                visible: identifierEvidence.checked && Object.keys(identifierResult).length > 0
+                                Layout.fillWidth: true
+                                readOnly: true
+                                selectByMouse: true
+                                textFormat: TextEdit.PlainText
+                                wrapMode: TextEdit.WrapAnywhere
+                                text: JSON.stringify(identifierResult,null,2)
+                                font.family: "monospace"
+                                activeFocusOnTab: true
+                                Accessible.name: "Original identifier lookup JSON"
+                                onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(identifierRawText);})
+                            }
+                            PlainLabel { text: "Satellite lookup"; Layout.fillWidth: true; wrapMode: Text.Wrap; font.bold: true; color: ink }
+                            PlainLabel { text: "Nominal GEO slot only. An incomplete reference snapshot; never a confirmed satellite."; Layout.fillWidth: true; wrapMode: Text.Wrap; color: muted }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                FieldInput { id: satellitePosition; objectName: "satellitePosition"; Layout.fillWidth: true; placeholderText: "Degrees: 13.0"; Accessible.name: "Orbital position in degrees"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satellitePosition);}) }
+                                FieldChoice { id: satelliteDirection; objectName: "satelliteDirection"; model: ["E","W"]; implicitWidth: 65; Accessible.name: "Orbital direction"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteDirection);}); SafeTip { visible: anchorHovered; text: "East or west of the prime meridian · nominal geostationary Earth orbit (GEO) slot" } }
+                                Action {
+                                    id: satelliteQuery
+                                    objectName: "satelliteQuery"
+                                    text: "Candidates"
+                                    Accessible.name: "Look up satellite candidates"
+                                    onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteQuery);})
+                                    enabled: backendReady
+                                    onClicked: {
+                                        let value=satellitePosition.text.trim();
+                                        satelliteResult={};satelliteEvidence.checked=false;
+                                        if(!/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value) || Number(value)>180) {satelliteResult={error:"Enter degrees from 0 to 180"};return;}
+                                        core.send("lookup_satellite",{orbital_position_degrees:Number(value),direction:satelliteDirection.currentText});
+                                    }
+                                }
+                            }
+                            LookupTable { objectName: "satelliteResult"; result: satelliteResult; label: "Satellite lookup result" }
+                            Action { id: satelliteEvidence; visible: Object.keys(satelliteResult).length > 0; text: "Raw"; checkable: true; Layout.fillWidth: true; Accessible.name: "Raw satellite lookup JSON, " + (checked ? "expanded" : "collapsed"); onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteEvidence);}); SafeTip { visible: anchorHovered; text: "Original JavaScript Object Notation (JSON), including all values and source evidence." } }
+                            TextArea { id: satelliteRawText; visible: satelliteEvidence.checked && Object.keys(satelliteResult).length > 0; text: JSON.stringify(satelliteResult,null,2); Layout.fillWidth: true; readOnly: true; selectByMouse: true; activeFocusOnTab: true; textFormat: TextEdit.PlainText; wrapMode: TextEdit.WrapAnywhere; font.family: "monospace"; Accessible.name: "Original satellite lookup JSON"; onActiveFocusChanged: if(activeFocus)Qt.callLater(function(){revealMetadataControl(satelliteRawText);}) }
                         }
                     }
                     ListView {
@@ -4500,7 +5599,7 @@ ApplicationWindow {
                     }
                     GridLayout {
                         Layout.fillWidth: true
-                        columns: compactInspector ? 2 : 1
+                        columns: 2
                         columnSpacing: spaceUnit * 2
                         rowSpacing: spaceUnit
                         Action {
@@ -4511,6 +5610,7 @@ ApplicationWindow {
                             onClicked: specificationDialog.open()
                         }
                         Action {
+                            id: renameButton
                             objectName: "rename"
                             visible: !selectedChange
                             text: "Rename service…"
@@ -4523,6 +5623,15 @@ ApplicationWindow {
                                 renameDialog.open();
                             }
                         }
+                    }
+                    PlainLabel {
+                        objectName: "renameBlockedReason"
+                        visible: !selectedChange && !!detail.name && text !== ""
+                        text: editBlockReason()
+                        color: muted
+                        font.pixelSize: 11
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
                     }
                 }
             }
@@ -4539,8 +5648,11 @@ ApplicationWindow {
                 RowLayout {
                     Layout.fillWidth: true
                     TinyLabel {
-                        text: "ALL ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "PACKET INDEX · NO CLOCK")
+                        objectName: "timelineAxisLabel"
+                        text: "ALL ARRIVALS · " + (analysisState.timing?.seconds_per_packet > 0 ? "SECONDS · SUPPLIED BITRATE" : "Axis: packet index")
                         Layout.fillWidth: true
+                        HoverHandler { id: timelineAxisHover }
+                        SafeTip { visible:timelineAxisHover.hovered; text:analysisState.timing?.seconds_per_packet > 0 ? "Estimated elapsed seconds from the supplied bitrate; not PCR time" : "No PCR/TDT clock is used; positions are packet indices." }
                     }
                     FieldChoice { objectName:"historyScope"; Layout.preferredWidth:180; Layout.minimumWidth:180; model:["Selected table history","All table history"]; currentIndex:allTableHistory?1:0; onActivated:allTableHistory=currentIndex===1; implicitHeight:24 }
                     PlainLabel { text:historyRows.length+" transitions"; color:muted; Layout.fillWidth:true; elide:Text.ElideRight }
@@ -4569,10 +5681,41 @@ ApplicationWindow {
                 Item {
                     id: densityStrip
                     Layout.fillWidth: true
-                    height: 20
+                    Layout.leftMargin: 8
+                    Layout.rightMargin: 8
+                    height: 28
                     readonly property int binCount: (analysisState.density || []).length
                     readonly property real binWidth: Math.max(1, (width - Math.max(0, binCount - 1) * 2) / Math.max(1, binCount))
                     readonly property bool interactive: backendReady && !!analysisState.complete
+                    // Keyboard parity with the Web slider: arrows step one bin,
+                    // Page keys step a tenth, Home/End jump to the ends.
+                    objectName: "densityStrip"
+                    activeFocusOnTab: interactive
+                    KeyNavigation.tab: comparisonMarkerA.visible && comparisonMarkerA.enabled ? comparisonMarkerA : comparisonMarkerB.visible && comparisonMarkerB.enabled ? comparisonMarkerB : null
+                    Accessible.role: Accessible.Slider
+                    Accessible.name: "Section occurrence density; arrow keys load a packet position"
+                    function stepBin(delta) {
+                        if (!interactive || !binCount) return;
+                        let current = binForPacket(analysisState.selected_packet);
+                        snapshot(packetAtBin(Math.max(0, Math.min(binCount - 1, current + delta))));
+                    }
+                    Keys.onLeftPressed: stepBin(-1)
+                    Keys.onRightPressed: stepBin(1)
+                    Keys.onPressed: function(event) {
+                        if (event.key === Qt.Key_Home) { stepBin(-binCount); event.accepted = true; }
+                        else if (event.key === Qt.Key_End) { stepBin(binCount); event.accepted = true; }
+                        else if (event.key === Qt.Key_PageUp) { stepBin(-Math.max(1, Math.round(binCount / 10))); event.accepted = true; }
+                        else if (event.key === Qt.Key_PageDown) { stepBin(Math.max(1, Math.round(binCount / 10))); event.accepted = true; }
+                    }
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -3
+                        color: "transparent"
+                        visible: densityStrip.activeFocus
+                        border.color: blue
+                        border.width: focusWidth
+                        radius: 2
+                    }
                     function packetAtBin(index) {
                         let packets = Number(analysisState.packets || 0);
                         if (!packets) return 0;
@@ -4584,6 +5727,14 @@ ApplicationWindow {
                         if (packet === null || packet === undefined || packets <= 1) return binCount - 1;
                         return Math.max(0, Math.min(binCount - 1, Math.round(packet / (packets - 1) * (binCount - 1))));
                     }
+                    function moveComparisonMarker(start, packet) {
+                        if (!interactive || core.comparing) return;
+                        let other = start ? toPacket.text : fromPacket.text;
+                        let lower = !start && validPacket(other) ? Number(other) : 0;
+                        let upper = start && validPacket(other) ? Number(other) : Number(analysisState.packets) - 1;
+                        let input = start ? fromPacket : toPacket;
+                        input.text = String(Math.max(lower, Math.min(upper, Math.round(packet))));
+                    }
                     Row {
                         anchors.fill: parent
                         spacing: 2
@@ -4594,8 +5745,8 @@ ApplicationWindow {
                                 required property int index
                                 objectName: "densityBin" + index
                                 width: densityStrip.binWidth
-                                height: 20
-                                color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : "#3794ff"
+                                height: densityStrip.height
+                                color: modelData.bad && modelData.count && modelData.bad >= modelData.count ? removedColor : blue
                                 opacity: modelData.count ? 0.35 + Math.min(0.65, modelData.count / 50) : 0.12
                                 // Partially invalid bins keep the section colour and
                                 // add the invalid share instead of hiding the count.
@@ -4631,13 +5782,15 @@ ApplicationWindow {
                         width: 2
                         height: parent.height
                         color: ink
-                        border.color: "#181818"
+                        border.color: surface
                         x: {
                             let index = densityStrip.binForPacket(analysisState.selected_packet);
                             if (index < 0) return 0;
                             return Math.max(0, index * (densityStrip.binWidth + 2) + densityStrip.binWidth / 2 - 1);
                         }
                     }
+                    ComparisonMarker { id: comparisonMarkerA; startMarker: true; KeyNavigation.tab: comparisonMarkerB.visible && comparisonMarkerB.enabled ? comparisonMarkerB : null; KeyNavigation.backtab: densityStrip }
+                    ComparisonMarker { id: comparisonMarkerB; startMarker: false; KeyNavigation.backtab: comparisonMarkerA.visible && comparisonMarkerA.enabled ? comparisonMarkerA : densityStrip }
                 }
                 RowLayout {
                     objectName: "arrivalAxis"
@@ -4677,16 +5830,21 @@ ApplicationWindow {
         }
         }
         Rectangle {
+            id: statusFooter
+            readonly property bool errorStatus: metadataMode ? !!dvbiWorkspace.error : messageLevel === "error"
             Layout.fillWidth: true
-            height: 26
-            color: core.error ? "#5a1d1d" : surface
+            height: 28
+            color: errorStatus ? errorSurface : surface
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 PlainLabel {
-                    text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : core.error || (core.availability === "starting" ? "Starting backend…" : notice) || "Ready · all processing stays on this machine"
-                    color: core.error ? "#ffffff" : muted
+                    objectName: "statusMessage"
+                    text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : notice || (core.availability === "starting" ? "Starting backend…" : "Ready · all processing stays on this machine")
+                    color: statusFooter.errorStatus ? errorInk : !metadataMode && messageLevel === "warning" ? warningColor : muted
+                    opacity: !metadataMode && messageLevel === "info" && messageExpired ? 0 : 1
+                    Accessible.ignored: !metadataMode && messageLevel === "info" && messageExpired
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle
@@ -4699,12 +5857,153 @@ ApplicationWindow {
                         id: statusHover
                     }
                 }
+                RowLayout {
+                    visible: !metadataMode && !!warningMessage
+                    Layout.maximumWidth: win.width * 0.4
+                    PlainLabel {
+                        Layout.fillWidth: true
+                        text: "⚠ " + (notice === warningMessage ? "" : warningMessage + " ") + "×" + warningRepeat
+                        color: warningColor
+                        font.pixelSize: 11
+                        elide: Text.ElideRight
+                        Accessible.name: "Warning: " + warningMessage + " · " + warningRepeat + " occurrences"
+                        SafeTip { visible: warningHover.hovered; text: win.warningMessage + " · " + warningRepeat + " occurrences" }
+                        HoverHandler { id: warningHover }
+                    }
+                    Action {
+                        objectName: "dismissWarning"
+                        text: "Dismiss"
+                        implicitHeight: 22
+                        Accessible.name: "Dismiss warning message"
+                        onClicked: {if(notice===warningMessage){messageLevel="info";messageExpired=true;}warningMessage="";warningRepeat=0;messagesButton.forceActiveFocus();}
+                    }
+                }
                 PlainLabel {
                     text: metadataMode ? "Independent document · C++ / Expat" : num(analysisState.packets) + " packets · C++ / TSDuck"
-                    color: muted
+                    color: statusFooter.errorStatus ? errorInk : muted
                     font.pixelSize: 11
                 }
+                Action {
+                    id: messagesButton
+                    objectName: "messagesButton"
+                    visible: !metadataMode
+                    text: "Messages"
+                    implicitHeight: 22
+                    Accessible.name: "Messages · " + messagesModel.count + " recent messages"
+                    onClicked: messagesDialog.open()
+                }
             }
+        }
+    }
+    DropArea {
+        objectName: "sourceDropArea"
+        anchors.fill: parent
+        z: 10
+        enabled: backendReady && !exporting && !saveDialog.visible && !renameDialog.visible && !apiDialog.visible && !specificationDialog.visible && !messagesDialog.visible && !shortcutDialog.visible && !updateDialog.visible
+        onEntered: function(drag) {drag.accepted=drag.hasUrls && drag.urls.length===1 && !!core.localPath(drag.urls[0]);if(drag.accepted)drag.action=Qt.CopyAction;}
+        onDropped: function(drop) {
+            let path=drop.hasUrls && drop.urls.length===1 ? core.localPath(drop.urls[0]) : "";
+            if(!path){drop.accepted=false;return;}
+            chooseSource(path);drop.accept(Qt.CopyAction);
+        }
+    }
+    Dialog {
+        id: shortcutDialog
+        objectName: "shortcutHelp"
+        title: "Keyboard shortcuts"
+        anchors.centerIn: parent
+        width: Math.min(640,win.width-80)
+        height: Math.min(540,win.height-100)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        Accessible.name: "Keyboard shortcuts"
+        background: Rectangle {color:panel;border.color:dividerColor;radius:4}
+        onOpened: closeShortcutHelp.forceActiveFocus()
+        onClosed: {
+            let item=shortcutReturnFocus;shortcutReturnFocus=null;
+            if(shortcutReturnRecent>=0){let index=shortcutReturnRecent;shortcutReturnRecent=-1;recentMenu.open();recentMenu.currentIndex=index;let entry=recentMenu.itemAt(index);if(entry)entry.forceActiveFocus();}
+            else if(item && item.visible && item.enabled)item.forceActiveFocus();
+            else if(analyzeButton.visible && analyzeButton.enabled)analyzeButton.forceActiveFocus();
+            else messagesButton.forceActiveFocus();
+        }
+        contentItem: ScrollView {
+            id: shortcutScroll
+            clip: true
+            contentWidth: availableWidth
+            ColumnLayout {
+                width: shortcutScroll.availableWidth
+                spacing: 0
+                Repeater {
+                    model: shortcutTable
+                    delegate: RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: 12
+                        PlainLabel {text:modelData.keys;color:ink;font.family:"monospace";Layout.preferredWidth:210;Layout.topMargin:8;Layout.bottomMargin:8}
+                        PlainLabel {text:modelData.description;color:muted;wrapMode:Text.Wrap;Layout.fillWidth:true}
+                    }
+                }
+            }
+        }
+        footer: DialogButtonBox {
+            background: Rectangle {color:panel}
+            Action {id:closeShortcutHelp;text:"Close";Accessible.name:"Close shortcut help";DialogButtonBox.buttonRole:DialogButtonBox.RejectRole;onClicked:shortcutDialog.close()}
+        }
+    }
+    Dialog {
+        id: messagesDialog
+        objectName: "messagesDialog"
+        title: "Messages"
+        anchors.centerIn: parent
+        width: Math.min(720, win.width - 80)
+        height: Math.min(460, win.height - 100)
+        modal: true
+        focus: true
+        closePolicy: Popup.CloseOnEscape
+        standardButtons: Dialog.Close
+        onClosed: messagesButton.forceActiveFocus()
+        ListView {
+            id: messageList
+            anchors.fill: parent
+            clip: true
+            model: messagesModel
+            focus: true
+            activeFocusOnTab: true
+            Accessible.role: Accessible.List
+            Accessible.name: "Last 50 messages, newest first"
+            ScrollBar.vertical: ScrollBar {}
+            delegate: Rectangle {
+                id: messageEntry
+                required property string messageLevel
+                required property string messageTime
+                required property string messageText
+                width: messageList.width
+                height: messageRow.implicitHeight + 16
+                color: panel
+                border.color: messageList.activeFocus && ListView.isCurrentItem ? blue : dividerColor
+                border.width: messageList.activeFocus && ListView.isCurrentItem ? focusWidth : 1
+                Accessible.role: Accessible.ListItem
+                Accessible.name: messageEntry.messageLevel + " · " + messageEntry.messageTime + " · " + messageEntry.messageText
+                RowLayout {
+                    id: messageRow
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 8
+                    spacing: 8
+                    PlainLabel {
+                        text: messageEntry.messageLevel
+                        color: messageEntry.messageLevel === "error" ? errorInk : messageEntry.messageLevel === "warning" ? warningColor : muted
+                        padding: 3
+                        background: Rectangle {color: messageEntry.messageLevel === "error" ? errorSurface : panel}
+                        Layout.alignment: Qt.AlignTop
+                    }
+                    PlainLabel {text: messageEntry.messageTime;color: muted;Layout.alignment: Qt.AlignTop}
+                    PlainLabel {text: messageEntry.messageText;color: ink;wrapMode: Text.WrapAnywhere;Layout.fillWidth: true}
+                }
+            }
+            PlainLabel {anchors.centerIn: parent;visible: messagesModel.count === 0;text: "No messages yet.";color: muted}
         }
     }
     Dialog {

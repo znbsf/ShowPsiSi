@@ -263,11 +263,46 @@ function selectTopology(id,remember=true) {
   renderList();renderInspector();
 }
 function topologyBack() {
+  if(topology.history.at(-1)?.kind==='selection') {selectionBack();return;}
   if(topology.revealed) {topology.revealed=false;tab='Topology';search=topology.search;$('#search').value=search;render();$('#list').scrollTop=topology.scroll;$('#topology-show-table')?.focus({preventScroll:true});return;}
   if(topology.active) {const ref=topology.active,node=topologyNode(),index=node?workbench.topologyEvidence(node,topology.snapshot.edges).findIndex(item=>item.ref===ref):-1;++inspectEpoch;loadingDetail=false;topology.active=null;topology.resolution=null;renderInspector();if(index>=0)$('#inspector [data-topology-source="'+index+'"]')?.focus({preventScroll:true});return;}
   const previous=topology.history.pop();
   if(previous) {Object.assign(topology,{selected:previous.selected,focused:previous.focused,active:previous.active,resolution:previous.resolution,expanded:previous.expanded,limits:previous.limits,search:previous.search,family:previous.family});search=topology.search;$('#search').value=search;restoreInspectionState(previous.inspection);renderList();renderInspector();$('#list').scrollTop=previous.scroll;}
   else if(topology.origin==='Changes') {changeTab('Changes');render();}
+}
+// Reference selections share the existing navigation stack and Alt+Left route.
+function selectionBack() {
+  if(busy || loadingDetail || backendFailure)return;
+  const saved=topology.history.pop();if(!saved || saved.kind!=='selection')return;
+  if(saved.inspection.analysisRevision!==data.revision || saved.inspection.workspacePacket!==workspaceCutoff())return;
+  ({tab,filter,pidFilter,search,page,groupedTables,showBadCrc,explorerFocusKey,historyPage,historyIdentity}=saved);
+  Object.assign(topology,saved.topology);
+  savedWorkspace=saved.workspace;protocolResolution=saved.protocolResolution;
+  restoreInspectionState(saved.inspection);$('#search').value=search;render();
+  $('#list').scrollTop=saved.listScroll;$('#inspector').scrollTop=saved.inspectorScroll;
+  const row=[...$('#tree-area')?.querySelectorAll('[role="treeitem"]') || []].find(el=>el.dataset.nodePath===saved.path);
+  if(row)focusTreeItem(row);if($('#tree-area'))$('#tree-area').scrollTop=saved.treeScroll;
+}
+async function jumpReference(target,path) {
+  if(!target || busy || loadingDetail || backendFailure)return;
+  const saved={kind:'selection',inspection:inspectionState(),tab,filter,pidFilter,search,page,groupedTables,showBadCrc,explorerFocusKey,historyPage,historyIdentity,
+    workspace:savedWorkspace,protocolResolution,protocolDepth:protocolSourceHistory.length,
+    topology:{active:topology.active,resolution:topology.resolution,revealed:topology.revealed,sourceWorkspace:topology.sourceWorkspace},
+    listScroll:$('#list').scrollTop,inspectorScroll:$('#inspector').scrollTop,treeScroll:$('#tree-area').scrollTop,path};
+  changeTab(target.kind==='service'?'Services':'Tables');
+  topology.history.push(saved);if(topology.history.length>100)topology.history.shift();
+  topology.active=null;topology.resolution=null;topology.revealed=false;
+  search='';$('#search').value='';page=0;view='tree';evidenceScope='section';
+  let key=target.id;
+  if(target.kind==='service') {
+    const service=data.services.find(s=>s.id===target.sid && s.source_id===target.id && s.key===target.key);
+    key=rowIdentity(service);page=Math.max(0,Math.floor(recordRows().findIndex(s=>rowIdentity(s)===key)/PAGE_SIZE));
+  } else {
+    selectExplorer({pid:target.pid,name:target.name});groupedTables=false;
+    page=Math.max(0,Math.floor(recordRows().findIndex(r=>r.id===target.id)/PAGE_SIZE));
+  }
+  await inspect(target.id,target.sid,key);
+  render();$('#tree-area [role="treeitem"][tabindex="0"]')?.focus({preventScroll:true});
 }
 async function inspectTopologyEvidence(ref) {
   if(busy || backendFailure || topology.stale || !topology.snapshot)return;
@@ -386,6 +421,7 @@ const shortcutTable = [
   {keys:"Ctrl+.",description:"Cancel active scan"},
   {keys:"F6 / Shift+F6",description:"Next / previous region"},
   {keys:"Alt ←",description:"Back"},
+  {keys:"Ctrl+Enter (Structure)",description:"Go to the focused field's reference"},
   {keys:"← → on divider",description:"Resize focused pane"},
   {keys:"? / Ctrl+/",description:"Show shortcut help (? outside text inputs)"},
   {keys:"Esc",description:"Close shortcut help"}
@@ -1532,7 +1568,7 @@ function fieldValue(key, value) {
   }
   return String(value);
 }
-function sectionTree() { return workbench.structure(detail,evidenceScope,selectedService); }
+function sectionTree() { return workbench.structure(detail,evidenceScope,selectedService,inspectionEvidence && inspectionEvidence.atPacket!==workspaceCutoff()?null:data); }
 function nodeMatches(node, needle) {
   return (
     needle.split(/\s+/).every(term=>(node.label + " " + (node.value ?? "")).toLowerCase().includes(term)) ||
@@ -1556,7 +1592,7 @@ function highlightedTreeText(value) {
   }
   return result + esc(text.slice(start));
 }
-let treeNodesRendered = 0;
+let treeNodesRendered = 0, treeReferences = new Map();
 function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1) {
   const path = parent ? parent + "/" + (node.id ?? index) : node.id;
   const needle = treeSearch.trim().toLowerCase();
@@ -1568,8 +1604,11 @@ function drawNode(node, parent = "", index = 0, ancestorMatch = false, level = 1
   const accessible = `${located?'data-source-highlight="true" ':''}role="treeitem" tabindex="-1" aria-level="${level}" data-node-path="${esc(path)}" aria-label="${esc(node.label + (node.value !== undefined ? ": " + node.value : ""))}"`;
   const kind = ["number", "string", "boolean"].includes(node.kind) ? node.kind : "meta";
   const label = `<span class="node-label ${node.tone || ""}" title="${esc(fieldHelp[node.label] || node.label)}">${highlightedTreeText(node.label)}</span>${node.value !== undefined ? `<span class="node-value" data-value-kind="${kind}">${highlightedTreeText(node.value)}</span>` : ""}`;
-  if (!node.children)
-    return `<div class="tree-leaf" ${accessible}>${label}</div>`;
+  if (!node.children) {
+    if(node.reference)treeReferences.set(path,node.reference);
+    const jump=node.reference?`<button type="button" class="reference-jump" data-reference-path="${esc(path)}" tabindex="-1" aria-label="${esc(node.reference.label)}" title="${esc(node.reference.label+' · '+node.reference.help+' · Ctrl+Enter')}">→</button>`:'';
+    return `<div class="tree-leaf${jump?' has-reference':''}" ${accessible}>${label}${jump}</div>`;
+  }
   const opened = !!needle || openNodes.has(path);
   return `<div class="tree-node" ${accessible} data-path="${esc(path)}" aria-expanded="${opened}"><div class="tree-row">${label}<span class="node-count">${num(node.children.length)}</span></div><div class="tree-children" role="group" ${opened ? "" : "hidden"}>${!opened ? "" : node.children.length ? node.children.map((child, i) => drawNode(child, path, i, ancestorMatch || (!!needle && selfMatch), level + 1)).join("") : '<div class="tree-empty">No decoded fields</div>'}</div></div>`;
 }
@@ -1598,6 +1637,7 @@ function renderTree() {
   const previousPath = area.querySelector('[tabindex="0"]')?.dataset.nodePath;
   const hadFocus = area.contains(document.activeElement);
   treeNodesRendered = 0;
+  treeReferences = new Map();
   area.innerHTML =
     drawNode(sectionTree()) ||
     '<p class="tree-empty">No matching fields or values.</p>';
@@ -1611,6 +1651,7 @@ function renderTree() {
   function setEntry(target, focus = false) {
     area.querySelectorAll('[role="treeitem"]').forEach((el) => {
       el.tabIndex = el === target ? 0 : -1;
+      const jump=el.querySelector(':scope > .reference-jump');if(jump)jump.tabIndex=el===target?0:-1;
     });
     if (focus) focusTreeItem(target);
   }
@@ -1620,10 +1661,12 @@ function renderTree() {
   // every engine. Replace the listener on rerender instead of accumulating it.
   if (area.treeFocusHandler) area.removeEventListener("focusin", area.treeFocusHandler);
   area.treeFocusHandler = (event) => {
-    if (event.target.matches('[role="treeitem"]')) setEntry(event.target);
+    const row=event.target.closest('[role="treeitem"]');if(row)setEntry(row);
   };
   area.addEventListener("focusin", area.treeFocusHandler);
   area.onclick = (event) => {
+    const jump=event.target.closest('[data-reference-path]');
+    if(jump){jumpReference(treeReferences.get(jump.dataset.referencePath),jump.dataset.referencePath);return;}
     const node = event.target.closest('[role="treeitem"]');
     if (!node || !area.contains(node)) return;
     setEntry(node, true);
@@ -1632,6 +1675,13 @@ function renderTree() {
   };
   let typed = "", typedAt = 0;
   area.onkeydown = (e) => {
+    // Modified arrows belong to workbench Back, never to tree folding.
+    if(e.altKey)return;
+    const row=e.target.closest('[role="treeitem"]');
+    if(e.ctrlKey && !e.metaKey && !e.shiftKey && e.key==='Enter' && row) {
+      e.preventDefault();e.stopPropagation();jumpReference(treeReferences.get(row.dataset.nodePath),row.dataset.nodePath);return;
+    }
+    if(e.target.closest('[data-reference-path]'))return;
     const target = e.target;
     if (e.key.length === 1 && e.key !== " " && !e.ctrlKey && !e.metaKey && !e.altKey) {
       const items = visibleItems();
@@ -2349,6 +2399,8 @@ document.addEventListener("keydown", (e) => {
   }
   if(e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !document.querySelector("dialog[open]") && e.key === "ArrowLeft") {
     if(dvbiWorkspace.getState().active){e.preventDefault();$('#dvbi-back')?.click();return;}
+    const back=topology.history.at(-1);
+    if(back?.kind==='selection' && !(inspectionEvidence?.kind==='protocol' && protocolSourceHistory.length>back.protocolDepth)){e.preventDefault();selectionBack();return;}
     if(inspectionEvidence?.kind==='protocol'){e.preventDefault();$('#protocol-back')?.click();return;}
     if(tab === "Topology" || topology.revealed){e.preventDefault();topologyBack();return;}
     e.preventDefault(); // No back entry: keep navigation inside the workbench.

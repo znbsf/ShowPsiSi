@@ -1523,6 +1523,60 @@ class BrowserTests(unittest.TestCase):
         self.assertIn('validation artifacts directory',blocked)
         self.assertEqual(hashlib.sha256(self.sample.read_bytes()).hexdigest(),self.original_hash)
 
+    def test_structure_reference_jump_click_keyboard_and_back(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT"')
+        p.locator('#sidebar [data-pid="0"][data-filter="PAT"]').click()
+        p.locator('#list .table-branch > summary').first.click()
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="PAT" && window.showpsisi.getUiState().settled')
+        p.locator('#tree-search').fill('pmt_pid')
+        row=p.locator('[data-node-path="section/fields/programs/0/pmt_pid"]')
+        jump=row.locator('.reference-jump')
+        self.assertEqual(jump.get_attribute('aria-label'),'Go to PMT · PID 0x0100 (256)')
+        self.assertIn('Program Map Table',jump.get_attribute('title'))
+        origin=p.evaluate('()=>{const s=window.showpsisi.getUiState();return {id:s.selected,sid:s.selected_service,tab:s.tab,view:s.inspector,scope:s.evidence_scope,filter:s.table_filter,grouped:s.records.grouped,search:s.tree_search};}')
+        for activation in ('click','Control+Enter','tab'):
+            row=p.locator('[data-node-path="section/fields/programs/0/pmt_pid"]');jump=row.locator('.reference-jump')
+            if activation=='click':jump.click()
+            elif activation=='tab':
+                row.focus();row.press('Tab')
+                self.assertTrue(jump.evaluate('(el)=>el===document.activeElement'))
+                p.keyboard.press('Enter')
+            else:row.focus();row.press(activation)
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().name==="PMT" && window.showpsisi.getDetail().pid===256')
+            state=p.evaluate('window.showpsisi.getUiState()')
+            self.assertEqual(state['tab'],'Tables');self.assertEqual(state['selected'],p.evaluate('window.showpsisi.getDetail().id'))
+            self.assertEqual(state['selected_service'],-1)
+            self.assertEqual(p.locator('#list [aria-selected="true"]').get_attribute('data-key'),state['selected'])
+            # Back from a focused tree row must not fold it or fall through to Analyze.
+            p.locator('#tree-area [role="treeitem"]').first.focus();p.keyboard.press('Alt+ArrowLeft')
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().name==="PAT"')
+            restored=p.evaluate('()=>{const s=window.showpsisi.getUiState();return {id:s.selected,sid:s.selected_service,tab:s.tab,view:s.inspector,scope:s.evidence_scope,filter:s.table_filter,grouped:s.records.grouped,search:s.tree_search};}')
+            self.assertEqual(restored,origin)
+            self.assertEqual(p.locator(':focus').get_attribute('data-node-path'),'section/fields/programs/0/pmt_pid')
+        # A service reference crosses tabs and must restore the EIT event selection.
+        p.locator('[data-tab="EPG"]').click();p.locator('#list [data-row]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getDetail().name==="EIT"')
+        event=p.evaluate('window.showpsisi.getDetail().id');p.locator('#tree-search').fill('service_id')
+        p.locator('#tree-area .reference-jump[aria-label^="Go to Service"]').first.click()
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().tab==="Services" && window.showpsisi.getDetail().name==="SDT"')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().selected_service'),101)
+        p.keyboard.press('Alt+ArrowLeft')
+        p.wait_for_function('()=>window.showpsisi.getUiState().settled && window.showpsisi.getUiState().tab==="EPG"')
+        self.assertEqual(p.evaluate('window.showpsisi.getUiState().selected'),event)
+        self.assertEqual(p.evaluate('window.showpsisi.getDetail().id'),event)
+        self.assertEqual(p.locator('#tree-search').input_value(),'service_id')
+
+    def test_structure_private_descriptor_fields_have_no_jump(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>window.showpsisi.getDetail().name==="SDT" && window.showpsisi.getUiState().settled')
+        p.locator('#tree-search').fill('logical_channel_number')
+        fields=p.locator('#tree-area .tree-leaf').filter(has=p.locator('.node-label',has_text='logical_channel_number'))
+        self.assertGreater(fields.count(),0,'The real sample must expose its decoded private descriptor fields')
+        self.assertEqual(fields.locator('.reference-jump').count(),0)
+        # The service summary repeats the value; the descriptor's own decoded field must be among the unlinked rows.
+        paths=fields.evaluate_all('(rows)=>rows.map(r=>r.dataset.nodePath)');self.assertTrue(any('/descriptors/' in path for path in paths),paths)
+
     def test_tree_composite_focus_states_and_keyboard_contract(self):
         self.analyze()
         self.page.wait_for_function('() => window.showpsisi.getDetail().name === "SDT"')

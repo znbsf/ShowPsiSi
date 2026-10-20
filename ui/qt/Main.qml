@@ -65,6 +65,7 @@ ApplicationWindow {
         {keys:"Ctrl+Return",description:"Analyze source"},
         {keys:"Ctrl+.",description:"Cancel active scan"},
         {keys:"Alt+Left",description:"Back"},
+        {keys:"Ctrl+Enter (Structure)",description:"Go to the focused field's reference"},
         {keys:"Ctrl+Alt+← / →",description:"Resize inspector width"},
         {keys:"Ctrl+Alt+↑ / ↓",description:"Resize timeline height"},
         {keys:"F6 / Shift+F6",description:"Next / previous region"},
@@ -214,6 +215,7 @@ ApplicationWindow {
     }
     function pushTopologyBack() { topologyBackStack=topologyBackStack.concat([topologyNavigationPoint()]); }
     function topologyBack() {
+        if(topologyBackStack.length && topologyBackStack[topologyBackStack.length-1].kind==="selection") {selectionBack();return;}
         if(topologyBackStack.length){
             let stack=topologyBackStack.slice(), saved=stack.pop();topologyBackStack=stack;
             if(saved.revision!==analysisState.analysis_revision || saved.cutoff!==topologyData.at_packet){showMessage("The saved object belongs to an older observation. Reload Topology.","warning");return;}
@@ -230,6 +232,53 @@ ApplicationWindow {
             inspectChange(origin.row,origin.side,origin.index);return;
         }
         if(topologyEvidenceRef){topologyEvidenceRef=null;topologyResolution={};topologyTablesReveal=false;tab="Topology";focusTopologyRow(topologyFocus);}
+    }
+    function treeFocused() {
+        let item=win.activeFocusItem;while(item){if(item===tree)return true;item=item.parent;}return false;
+    }
+    function jumpReference(row) {
+        if(!row || !row.reference || !backendReady || core.inspecting)return;
+        let target=row.reference;
+        let saved={kind:"selection",id:detail.id,revision:detail.analysis_revision,cutoff:detail.native_table_at_packet,packet:currentPacket(),service:selectedService,
+            tab:tab,view:inspectorView,scope:evidenceScope,filter:filter,pid:pidFilter,query:recordSearch.text,page:tablePage,grouped:groupedTables,invalid:showInvalidSections,
+            expanded:expandedTables,explorer:explorerFocusKey,recordIndex:recordList.currentIndex,recordScroll:recordList.contentY,
+            collapsed:collapsed,search:treeSearch.text,path:row.path,treeScroll:tree.contentY,change:selectedChange,workspace:comparisonWorkspace,
+            topologyRef:topologyEvidenceRef,topologyResolution:topologyResolution,sectionContext:topologySectionContext,revealed:topologyTablesReveal,
+            protocolRef:protocolSourceRef,protocolOrigin:protocolSourceOrigin,protocolResolution:protocolSourceResolution,offset:protocolCardOffset};
+        topologyBackStack=topologyBackStack.concat([saved]).slice(-100);
+        topologyTransition=true;topologyEvidenceRef=null;topologyResolution={};topologyTablesReveal=false;selectedChange=null;
+        recordSearch.clear();treeSearch.clear();inspectorView="Structure";evidenceScope="Section";
+        if(target.kind==="service")tab="Services";
+        else {selectExplorer({pid:target.pid,name:target.name});groupedTables=false;}
+        let rowIndex=target.kind==="service" ? rows.findIndex(function(r){return r.id===target.sid && r.source_id===target.id;}) : rawTableRows.findIndex(function(r){return r.id===target.id;});
+        if(target.kind!=="service")tablePage=Math.max(0,Math.floor(rowIndex/100));
+        topologyTransition=false;
+        // Use the record activation path, including its normal inspection guards.
+        let record=target.kind==="service" ? rows[rowIndex] : rawTableRows[rowIndex];
+        if(record)activate(record);
+        Qt.callLater(function(){recordList.currentIndex=target.kind==="service"?rowIndex:rowIndex%100;recordList.positionViewAtIndex(recordList.currentIndex,ListView.Contain);tree.forceActiveFocus();});
+    }
+    function selectionBack() {
+        if(!backendReady || core.inspecting)return;
+        let stack=topologyBackStack.slice(),saved=stack.pop();
+        if(!saved || saved.kind!=="selection")return;
+        topologyBackStack=stack;
+        if(saved.revision!==analysisState.analysis_revision || saved.packet!==currentPacket())return;
+        clearProtocolSource();protocolRestoring=true;protocolRestorePending=saved;selected=saved.id;selectedService=saved.service;
+        core.send("inspect",{id:saved.id,analysis_revision:saved.revision,at_packet:saved.cutoff});
+    }
+    function restoreReferenceSelection(saved) {
+        topologyTransition=true;tab=saved.tab;selectedChange=saved.change;comparisonWorkspace=saved.workspace;topologyTransition=false;
+        filter=saved.filter;pidFilter=saved.pid;recordSearch.text=saved.query;groupedTables=saved.grouped;showInvalidSections=saved.invalid;
+        expandedTables=saved.expanded;tablePage=saved.page;explorerFocusKey=saved.explorer;
+        topologyEvidenceRef=saved.topologyRef;topologyResolution=saved.topologyResolution;topologySectionContext=saved.sectionContext;topologyTablesReveal=saved.revealed;
+        protocolSourceRef=saved.protocolRef;protocolSourceOrigin=saved.protocolOrigin;protocolSourceResolution=saved.protocolResolution;protocolCardOffset=saved.offset;
+        inspectorView=saved.view;evidenceScope=saved.scope;collapsed=saved.collapsed;treeSearch.text=saved.search;protocolRestoring=false;
+        Qt.callLater(function(){
+            recordList.currentIndex=saved.recordIndex;recordList.contentY=saved.recordScroll;
+            let index=treeRows.findIndex(function(r){return r.path===saved.path;});
+            if(index>=0){tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Contain);tree.forceActiveFocus();tree.contentY=saved.treeScroll;}
+        });
     }
     function focusTopologyRow(id) {
         let index=topologyRows.findIndex(function(r){return r.node_id===id;});
@@ -855,10 +904,11 @@ ApplicationWindow {
             let path=canonical.replace(/^section\//,"").replace(/^assembly(?=\/|$)/,"provenance");
             let branch=!!node.children;
             let closed=branch && !expandAll && (hidden[path]===undefined ? !Shared.workbench.defaultOpen(canonical) : !!hidden[path]);
-            result.push({path:path,label:node.label,value:node.value || "",depth:depth,branch:branch,closed:closed,kind:node.kind || "meta"});
+            result.push({path:path,label:node.label,value:node.value || "",depth:depth,branch:branch,closed:closed,kind:node.kind || "meta",reference:node.reference || null});
             if(branch && !closed) node.children.forEach(function(child){visit(child,canonical,depth+1);});
         }
-        visit(Shared.workbench.structure(section,evidenceScope.toLowerCase(),sid),"",0);
+        let referenceState=activeInspectionRef && activeInspectionRef.at_packet!==currentPacket() || selectedChange && selectedChange[comparisonSide] && selectedChange[comparisonSide].at_packet!==currentPacket() ? null : analysisState;
+        visit(Shared.workbench.structure(section,evidenceScope.toLowerCase(),sid,referenceState),"",0);
         return result;
     }
     function toggle(path) {
@@ -1522,8 +1572,11 @@ ApplicationWindow {
                 if(protocolRestorePending){
                     let origin=protocolRestorePending;protocolRestorePending=null;
                     if(!result.message && result.id===origin.id && result.analysis_revision===origin.revision && result.native_table_at_packet===origin.cutoff){
-                        topologyTransition=true;tab=origin.tab;topologyTransition=false;inspectorView=origin.view;evidenceScope=origin.scope;collapsed=origin.collapsed;treeSearch.text=origin.search;
-                        protocolCardOffset=origin.offset;protocolRestoreTimer.origin=origin;protocolRestoreTimer.restart();
+                        if(origin.kind==="selection")restoreReferenceSelection(origin);
+                        else {
+                            topologyTransition=true;tab=origin.tab;topologyTransition=false;inspectorView=origin.view;evidenceScope=origin.scope;collapsed=origin.collapsed;treeSearch.text=origin.search;
+                            protocolCardOffset=origin.offset;protocolRestoreTimer.origin=origin;protocolRestoreTimer.restart();
+                        }
                     }else {protocolRestoring=false;let message=result.message || "The originating metadata context could not be restored.";if(notice!==message || messageLevel!=="error")showMessage(message,"error");}
                 }
             }
@@ -2527,7 +2580,65 @@ ApplicationWindow {
             if(phase===10) {checks.first=logicalTableCount===101 && tableRows.length===100;checks.next_click=core.click("tableNext");phase=1;return;}
             if(phase===1) {checks.last=tablePage===1 && tableRows.length===1;target=tableRows[0].id;recordList.currentIndex=0;recordList.forceActiveFocus();core.key("Return");phase=2;return;}
             if(phase===2) {checks.selected=detail.id===target && historyRows.length===1;snapshot(0);phase=3;return;}
+            // Wait for the requested snapshot response; the tick limit still reports a missing clamp.
+            if(phase===3 && analysisState.selected_packet!==0 && ticks<140) return;
             if(phase===3) {checks.clamped=analysisState.selected_packet===0 && tablePage===0 && logicalTableCount===1 && tableRows.length===1;core.capture(core.env("SHOWPSISI_SCREENSHOT"));stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),checks:checks}));}
+        }
+    }
+    // Script-only driver: real sample, actual controls and core-backed selection.
+    Timer {
+        id: referenceJumpsTimer
+        interval:100; repeat:true
+        property int phase:0
+        property int ticks:0
+        property string path:""
+        property string target:""
+        property string origin:""
+        property var checks:({})
+        function finish() {stop();core.testResult(JSON.stringify({passed:phase===9 && Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks}));}
+        function restored() {return detail.id===origin && selected===origin && selectedService===-1 && tab==="Tables" && filter==="PAT" && pidFilter===0 && groupedTables && evidenceScope==="Merged" && inspectorView==="Structure" && treeSearch.text==="pmt_pid";}
+        function focusedRow() {let index=treeRows.findIndex(function(r){return r.path===path;});tree.currentIndex=index;tree.positionViewAtIndex(index,ListView.Center);tree.forceActiveFocus();}
+        onTriggered: {
+            if(++ticks>180){finish();return;}
+            if(!analysisState.complete || !backendReady || core.inspecting || protocolRestoring)return;
+            if(phase===0){checks.pat_explorer=core.click("explorerRow:0:PAT");phase=1;return;}
+            if(phase===1){checks.pat_record=core.click("record_0");phase=2;return;}
+            if(phase===2){
+                if(detail.name!=="PAT")return;
+                origin=detail.id;inspectorView="Structure";evidenceScope="Merged";treeSearch.text="pmt_pid";
+                let row=treeRows.find(function(r){return r.label==="pmt_pid" && r.reference && r.reference.pid===0x100;});
+                checks.pat_link=!!row && row.reference.label==="Go to PMT · PID 0x0100 (256)";
+                if(!row){finish();return;}path=row.path;target=row.reference.id;focusedRow();phase=21;return;
+            }
+            // The filtered tree is laid out after this tick; position the row again before a pointer click.
+            if(phase===21){focusedRow();phase=3;return;}
+            if(phase===3){checks.reference_exposed=core.isExposed("reference:"+path);checks.click_control=core.click("reference:"+path);phase=4;return;}
+            if(phase===4){
+                checks.click_jump=detail.id===target && selected===target && detail.name==="PMT" && detail.pid===0x100 && tab==="Tables" && !groupedTables && pidFilter===0x100;
+                tree.forceActiveFocus();core.key("Alt+Left");phase=5;return;
+            }
+            if(phase===5){checks.click_back=restored();focusedRow();core.key("Ctrl+Return");phase=6;return;}
+            if(phase===6){checks.keyboard_jump=detail.id===target && selected===target && detail.name==="PMT";core.key("Alt+Left");phase=7;return;}
+            if(phase===7){checks.keyboard_back=restored();focusedRow();core.key("Tab");checks.tab_reachable=!!win.activeFocusItem && win.activeFocusItem.objectName==="reference:"+path;core.key("Return");phase=8;return;}
+            if(phase===8){checks.tab_jump=detail.id===target && selected===target;core.key("Alt+Left");phase=80;return;}
+            if(phase===80){checks.tab_back=restored();tab="Services";phase=81;return;}
+            if(phase===81){checks.service_click=core.click("service_101");phase=82;return;}
+            if(phase===82){
+                if(detail.name!=="SDT")return;
+                treeSearch.text="logical_channel_number";
+                let privateRows=treeRows.filter(function(r){return r.label==="logical_channel_number" && r.path.indexOf("descriptors/")>=0;});
+                checks.private_no_link=privateRows.length>0 && privateRows.every(function(r){return !r.reference;});tab="EPG";phase=83;return;
+            }
+            if(phase===83){checks.event_click=core.click("record_0");phase=84;return;}
+            if(phase===84){
+                if(detail.name!=="EIT")return;
+                origin=detail.id;treeSearch.text="service_id";
+                let row=treeRows.find(function(r){return r.reference && r.reference.kind==="service";});
+                checks.service_link=!!row;if(!row){finish();return;}path=row.path;target=row.reference.id;focusedRow();phase=85;return;
+            }
+            if(phase===85){checks.service_jump_control=core.click("reference:"+path);phase=86;return;}
+            if(phase===86){checks.service_jump=tab==="Services" && selected===target && selectedService===101 && detail.name==="SDT";core.key("Alt+Left");phase=87;return;}
+            if(phase===87){checks.service_back=tab==="EPG" && detail.id===origin && selected===origin && selectedService===-1 && treeSearch.text==="service_id";phase=9;finish();}
         }
     }
     // Real shared-PID wire fixture, actual mouse/key delivery, no fabricated state.
@@ -3069,6 +3180,7 @@ ApplicationWindow {
         if (core.env("SHOWPSISI_SCRIPT") === "refresh")
             refreshTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "workbench-paging") workbenchPagingTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "reference-jumps") referenceJumpsTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "explorer-parity")
             explorerParityTimer.start();
     }
@@ -3131,7 +3243,7 @@ ApplicationWindow {
     Shortcut {
         sequence: "Ctrl+Return"
         enabled: !shortcutDialog.visible
-        onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : scan()
+        onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : inspectorView==="Structure" && treeFocused() && !!treeRows[tree.currentIndex]?.reference ? jumpReference(treeRows[tree.currentIndex]) : scan()
     }
     Shortcut {
         sequence: "Ctrl+."
@@ -3740,7 +3852,7 @@ ApplicationWindow {
                         Layout.fillWidth:true
                         Layout.leftMargin:8
                         Action {objectName:"topologyBack";text:"← Back";onClicked:topologyBack()}
-                        PlainLabel {text:topologyTablesReveal ? "Topology source · current workbench cutoff unchanged" : topologyScopeLabel;Layout.fillWidth:true;elide:Text.ElideRight;color:muted;font.pixelSize:11}
+                        PlainLabel {text:topologyBackStack.length && topologyBackStack[topologyBackStack.length-1].kind==="selection" ? "Reference jump · Alt+Left to return" : topologyTablesReveal ? "Topology source · current workbench cutoff unchanged" : topologyScopeLabel;Layout.fillWidth:true;elide:Text.ElideRight;color:muted;font.pixelSize:11}
                     }
                     ColumnLayout {
                         id: topologyPanel
@@ -4782,7 +4894,7 @@ ApplicationWindow {
                         objectName: "fieldTree"
                         Accessible.role: Accessible.List
                         Accessible.name: "Decoded PSI / SI fields"
-                        Accessible.description: "Hierarchical fields. Use arrow keys to navigate and expand, Home and End to jump. Search with Control Shift K."
+                        Accessible.description: "Hierarchical fields. Use arrow keys to navigate and expand, Home and End to jump. Control Enter follows a reference; Alt Left returns. Search with Control Shift K."
                         onCountChanged: {
                             if (count && (currentIndex < 0 || currentIndex >= count)) currentIndex = 0;
                         }
@@ -4795,7 +4907,8 @@ ApplicationWindow {
                         activeFocusOnTab: true
                         keyNavigationEnabled: true
                         ScrollBar.vertical: ScrollBar {}
-                        Keys.onRightPressed: {
+                        Keys.onRightPressed: function(event) {
+                            if(event.modifiers & Qt.AltModifier){event.accepted=false;return;}
                             let r = treeRows[currentIndex];
                             if (r && r.branch) {
                                 if (r.closed) win.toggle(r.path);
@@ -4809,7 +4922,8 @@ ApplicationWindow {
                                 event.accepted = true;
                             }
                         }
-                        Keys.onLeftPressed: {
+                        Keys.onLeftPressed: function(event) {
+                            if(event.modifiers & Qt.AltModifier){event.accepted=false;return;}
                             let r = treeRows[currentIndex];
                             if (r && r.branch && !r.closed && !treeSearch.text.trim())
                                 win.toggle(r.path);
@@ -4821,8 +4935,9 @@ ApplicationWindow {
                                     }
                             }
                         }
-                        Keys.onReturnPressed: {
+                        Keys.onReturnPressed: function(event) {
                             let r = treeRows[currentIndex];
+                            if(event.modifiers & Qt.ControlModifier){jumpReference(r);event.accepted=true;return;}
                             if (r && r.branch)
                                 win.toggle(r.path);
                         }
@@ -4867,6 +4982,26 @@ ApplicationWindow {
                                     font.pixelSize: fieldFontSize
                                     elide: Text.ElideRight
                                     Layout.maximumWidth: Math.max(90, tree.width * 0.48)
+                                }
+                                Action {
+                                    id: referenceJump
+                                    objectName: "reference:" + modelData.path
+                                    visible: !!modelData.reference
+                                    enabled: backendReady && !core.inspecting
+                                    Layout.preferredWidth: 22
+                                    Layout.preferredHeight: 24
+                                    leftPadding: 0; rightPadding: 0
+                                    activeFocusOnTab: tree.currentIndex===index
+                                    text: "→"
+                                    Accessible.name: modelData.reference ? modelData.reference.label : "Reference unavailable"
+                                    Accessible.description: modelData.reference ? modelData.reference.help + " · Ctrl+Enter; Alt+Left returns" : ""
+                                    onActiveFocusChanged: if(activeFocus)tree.currentIndex=index
+                                    onClicked: jumpReference(modelData)
+                                    Keys.onReturnPressed: clicked()
+                                    Keys.onEnterPressed: clicked()
+                                    contentItem: PlainLabel {text:referenceJump.text;color:referenceJump.hovered || referenceJump.activeFocus ? blue : muted;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
+                                    background: Rectangle {color:"transparent";radius:2;border.color:referenceJump.activeFocus ? blue : "transparent";border.width:referenceJump.activeFocus ? focusWidth : 0}
+                                    SafeTip {visible:anchorHovered;text:modelData.reference ? modelData.reference.label + " · " + modelData.reference.help + " · Ctrl+Enter" : ""}
                                 }
                             }
                             onClicked: {

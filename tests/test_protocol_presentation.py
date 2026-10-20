@@ -1,4 +1,5 @@
 """Shared Qt/Web protocol-card formatting; positive summaries use the real core."""
+import copy
 import json
 import subprocess
 import sys
@@ -174,6 +175,91 @@ class ProtocolPresentationTests(unittest.TestCase):
     def test_no_protocol_data_does_not_fabricate_a_card(self):
         self.assertEqual(cards({})['cards'], [])
         self.assertEqual(cards({})['total'], 0)
+
+
+class ReferenceResolverTests(unittest.TestCase):
+    """Pure allowlist tests; constructed objects are not UI/engine acceptance."""
+    def fixture(self, name='PAT', tid=0):
+        detail={'id':'source','name':name,'table_id':tid,'pid':0,'extension':0x1001,'version':1,'section':0,
+                'valid':True,'current':True,'analysis_revision':1,'native_table_at_packet':90}
+        pmt=dict(detail,id='pmt',name='PMT',table_id=2,pid=0x100,extension=101)
+        sdt=dict(detail,id='sdt',name='SDT',table_id=0x42,pid=0x11)
+        state={'complete':True,'revision':1,'packets':100,'selected_packet':None,
+               'tables':[detail,pmt,sdt], 'table_groups':[{'selected_section_ids':['source','pmt','sdt']}],
+               'services':[{'id':101,'ts_id':0x1001,'onid':0x2001,'source_id':'sdt','key':'8193:4097:101','pmt_pid':0x100}]}
+        field={'path':'application/fields/programs/0/pmt_pid','value':256,'attributes':{'service_id':101}}
+        return {'detail':detail,'state':state,'field':field}
+
+    def js(self, cases, expression='x.map(p=>w.resolveReference(p.field,p.detail,p.state))'):
+        script="const fs=require('fs'),vm=require('vm'),c={};vm.createContext(c);vm.runInContext(fs.readFileSync(process.argv[1],'utf8'),c);const x=JSON.parse(fs.readFileSync(0,'utf8')),w=c.workbench;process.stdout.write(JSON.stringify("+expression+"));"
+        result=subprocess.run(['node','-e',script,str(ROOT/'ui/tauri/web/workbench.js')],input=json.dumps(cases),encoding='utf-8',capture_output=True,check=True,timeout=10)
+        return json.loads(result.stdout)
+
+    def test_pat_pmt_exact_decoded_names_and_existing_target(self):
+        application=self.fixture();native=copy.deepcopy(application)
+        native['field']['path']='native/PAT/service/program_map_pid';native['field']['value']='0x0100'
+        for target in self.js([application,native]):
+            self.assertEqual((target['kind'],target['id'],target['pid']),('section','pmt',256))
+            self.assertEqual(target['label'],'Go to PMT · PID 0x0100 (256)')
+            self.assertIn('Program Map Table',target['help'])
+
+    def test_missing_private_unknown_reserved_stale_and_ambiguous_are_unlinked(self):
+        cases=[]
+        for change in ('missing','private','unknown','null-pid','reserved','wrong-table','next','unselected','stale','cutoff','ambiguous'):
+            p=self.fixture()
+            if change=='missing':p['state']['tables']=p['state']['tables'][:1]
+            elif change=='private':p['field']['path']='native/PAT/private_descriptor/program_map_pid'
+            elif change=='unknown':p['field']['path']='application/fields/programs/0/unknown_pid'
+            elif change=='null-pid':p['field']['value']='0x1FFF'
+            elif change=='reserved':p['field']['value']=0
+            elif change=='wrong-table':p['detail']['table_id']=0x80
+            elif change=='next':p['state']['tables'][1]['current']=False
+            elif change=='unselected':p['state']['table_groups'][0]['selected_section_ids']=['source']
+            elif change=='stale':p['detail']['analysis_revision']=2
+            elif change=='cutoff':p['state']['selected_packet']=95
+            else:
+                p['state']['tables'].append(dict(p['state']['tables'][1],id='other-pmt',version=2))
+                p['state']['table_groups'][0]['selected_section_ids'].append('other-pmt')
+            cases.append(p)
+        self.assertEqual(self.js(cases),[None]*len(cases))
+
+    def test_service_identity_and_ca_descriptor_require_complete_context(self):
+        service=self.fixture('EIT',0x4e)
+        service['field']={'path':'native/EIT/service_id','value':'101','root':{'transport_stream_id':'0x1001','original_network_id':'0x2001'}}
+        missing_identity=copy.deepcopy(service);del missing_identity['field']['root']['original_network_id']
+        wrong_identity=copy.deepcopy(service);wrong_identity['field']['root']['transport_stream_id']='0x1002'
+        ca=self.fixture('CAT',0x01)
+        ca['field']={'path':'native/CAT/CA_descriptor/ca_pid','value':'0x0100'}
+        ca['detail']['descriptors']=[{'tag':9,'native_decoded':True,'decode_status':'decoded','native':{'name':'CA_descriptor','attributes':{'ca_pid':'0x0100'}}}]
+        private=copy.deepcopy(ca);private['detail']['descriptors'][0]['tag']=0xe1
+        unknown=copy.deepcopy(ca);unknown['detail']['descriptors'][0]['decode_status']='context_guarded'
+        result=self.js([service,missing_identity,wrong_identity,ca,private,unknown])
+        self.assertEqual((result[0]['kind'],result[0]['sid'],result[0]['id']),('service',101,'sdt'))
+        self.assertEqual(result[1:3],[None,None]);self.assertEqual(result[3]['id'],'pmt');self.assertEqual(result[4:],[None,None])
+
+    def test_network_program_and_pmt_stream_fields_only_use_loaded_pids(self):
+        cases=[]
+        for field in ({'path':'native/PAT/network_pid','value':'0x0010'},
+                      {'path':'application/fields/programs/0/pmt_pid','value':16,'attributes':{'service_id':0}},
+                      {'path':'application/fields/programs/0/service_id','value':0,'attributes':{'pmt_pid':16}}):
+            p=self.fixture();p['field']=field
+            p['state']['tables'].append(dict(p['detail'],id='nit',name='NIT',table_id=0x40,pid=16))
+            p['state']['table_groups'][0]['selected_section_ids'].append('nit');cases.append(p)
+        for path in ('native/PMT/pcr_pid','native/PMT/component/elementary_pid','application/fields/streams/0/pid'):
+            p=self.fixture('PMT',2);p['field']={'path':path,'value':'0x0100'};cases.append(p)
+        self.assertEqual([r['id'] for r in self.js(cases)],['nit']*3+['pmt']*3)
+        for p in cases:p['field']['value']='0x1FFF'
+        self.assertEqual(self.js(cases),[None]*6)
+
+    def test_structure_never_links_private_fields_even_when_names_match(self):
+        p=self.fixture('PMT',2)
+        p['detail']['fields']={'pcr_pid':256,'streams':[{'pid':256}]}
+        p['detail']['merged']={'native_table':{'name':'PMT','attributes':{'pcr_pid':'0x0100'},'children':[
+            {'name':'private_descriptor','attributes':{'pcr_pid':'0x0100','elementary_pid':'0x0100'},'children':[]}]}}
+        result=self.js(p,"(()=>{const nodes=[];function visit(n){if(n.label==='pcr_pid' || n.label==='elementary_pid')nodes.push(n);(n.children || []).forEach(visit);}visit(w.structure(x.detail,'merged',-1,x.state));return nodes;})()")
+        self.assertTrue(any(n['reference'] for n in result))
+        self.assertEqual(sum(bool(n['reference']) for n in result),2)
+        self.assertTrue(all(n['reference'] is None for n in result if n['label']=='elementary_pid'))
 
 
 if __name__ == '__main__':

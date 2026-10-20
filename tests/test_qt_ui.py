@@ -43,6 +43,15 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_structure_reference_jump_and_back(self):
+        for theme in ('dark','light'):
+            with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-reference-') as directory:
+                report=self.run_script('reference-jumps',directory,overrides={'SHOWPSISI_THEME':theme,'SHOWPSISI_STANDARDS':'dvb'})
+                self.assertEqual(report['phase'],9,report)
+                self.assertTrue(all(report['checks'].values()),report)
+                for check in ('pat_link','click_jump','click_back','keyboard_jump','keyboard_back','tab_reachable','tab_jump','tab_back','private_no_link','service_jump','service_back'):
+                    self.assertTrue(report['checks'][check],report)
+
     def test_workbench_paging_and_snapshot_clamping(self):
         sys.path.insert(0,str(ROOT/'scripts'))
         from make_fixture import section, word

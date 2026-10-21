@@ -2,10 +2,53 @@
 
 2026-10-21 update. **Complete Windows application now builds and runs; native
 synthetic-stream workflow and five screenshots reviewed at verified 150% DPI.**
-Same-owner-stream and some acceptance cases remain pending. No remote push,
+Same-owner-stream and original Library reference pixel access remain pending. No remote push,
 PR, release, installation or replacement of the owner's application occurred.
 
 ## Current runnable result (supersedes earlier blocked checkpoints below)
+
+### Final SDT name association acceptance
+
+The legal synthetic PAT/PMT/SDT fixture now covers two named services, a service
+without a name descriptor, a PAT service absent from SDT, the same SID in another
+TSID, and the same TSID/SID in another ONID. Every section passes CRC validation.
+The conflicting identities are deliberate test observations, not a claim that
+multiple actual transport identities represent a normal single broadcast.
+
+This exposed two defects. The summary's unqualified `state` resolved to the
+TextLabel's inherited QQuickItem state, so the full GUI could not find service
+names even when engine and JavaScript tests passed. It now explicitly reads
+`view.state`. The engine now marks whether a nonempty name came from a decoded
+descriptor; internal fallback `Service 103` is no longer presented as a wire
+name in the PAT summary. Existing SDT source IDs and ONID/TSID/SID are retained,
+and extensions cannot override the provenance flag. Ambiguous ONIDs remain
+explicitly ambiguous because PAT does not provide an ONID to disambiguate them.
+
+Validation: native service-name scenarios **4/4 pass**, real engine identity and
+source-descriptor assertions pass, model identity assertions pass, section tests
+**18/18**, unified engine test **1/1**, existing model **43 assertions**, and full
+native application **24/24**. The existing resume-state wait is now recorded as
+an explicit assertion; earlier reports described 24 but stored 23 named checks.
+No scan behavior was changed. The final two native application logs are empty.
+
+Evidence under `artifacts/unified-inspector`: `service-identity-evidence.json`,
+`service-engine-test.log`, `service-model-test.log`, `service-native-test.log`,
+`service-final-regression.log`, `service-section-tests.log`,
+`service-unified-test.log`, `service-existing-model.log`.
+Final native runs: `service-visual-1792593649263583200` and
+`full-app-keyboard-1792593652693953200`.
+Four pixel-reviewed 150% screenshots from the same final executable are copied
+as `service-distinct-4097-150.png`, `service-distinct-4098-150.png`,
+`service-ambiguous-4097-150.png`, `service-ambiguous-4098-150.png`.
+They show Alpha News/Beta Music, transport-separated Other Transport, explicit
+ambiguity and unknown names without clipping or an additional selection pane.
+
+The last build exited zero. All six authorized Qt tools were restored to exact
+original full security descriptors with unchanged hashes (`approved-six-operation.json`).
+No additional tools, parent directories, DACLs, owners or protection settings
+were changed. No Library retry, push, publication or installation was made.
+Only the unavailable owner stream and original Library reference pixels remain
+external acceptance boundaries; earlier checkpoint limits below are historical.
 
 ### Layout feedback repair
 
@@ -39,7 +82,7 @@ two advanced-test screenshots were also inspected. Copies are named
 `layout-fixed-<scene>-150.png`. This iteration made no Library upload attempt.
 The six approved build tools again have their original full security descriptors
 and hashes, recorded in `approved-six-operation.json`. Original stream/reference
-availability and the missing SDT-name visual fixture remain the acceptance limits.
+availability remain the external acceptance limits; SDT-name visual coverage is now complete below.
 
 ### Baseline correction and latest-main integration
 

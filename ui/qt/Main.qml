@@ -634,7 +634,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            unified: {visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            unified: {services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},

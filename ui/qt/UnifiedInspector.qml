@@ -123,7 +123,7 @@ SplitView {
         ColumnLayout {
             anchors.fill:parent;anchors.margins:12;spacing:8
             TextLabel {objectName:'unifiedTitle';text:detail.id?Model.inspector.title(detail):'Open a transport stream';font.pixelSize:16;font.bold:true;Layout.fillWidth:true;wrapMode:Text.Wrap}
-            TextLabel {visible:!!detail.id;text:Model.inspector.summary(detail,state);Layout.fillWidth:true;wrapMode:Text.Wrap;color:host.blue}
+            TextLabel {objectName:'unifiedSummary';visible:!!detail.id;text:Model.inspector.summary(view.detail,view.state);Layout.fillWidth:true;wrapMode:Text.Wrap;color:host.blue}
             TextLabel {visible:!!detail.id;text:'Exact section · '+detail.bytes+' bytes · CRC '+((detail.crc || {}).status || 'unavailable')+' · packets '+detail.first_packet+'–'+detail.last_packet;Layout.fillWidth:true;wrapMode:Text.Wrap;color:host.muted}
             Rectangle {Layout.fillWidth:true;implicitHeight:1;color:host.dividerColor}
             RowLayout {

@@ -445,7 +445,9 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 if(p+5>end){issue(r,"service_loop_truncated",p,"Incomplete SDT service header");break;}
                 int sid=u16(b,p); size_t n=u16(b,p+3)&0xfff;
                 J s={{"id",sid},{"name","Service "+std::to_string(sid)},{"provider",""},{"group","Unassigned"},{"logical_channel_number",nullptr},{"source_id",r.id},{"ts_id",r.ext},{"onid",u16(b,8)},{"encrypted",(b[p+3]&0x10)!=0}};
-                J decoded=descriptors(r,p+5,p+5+n,sid); s.update(decoded); r.services.push_back(s); p+=5+n;
+                J decoded=descriptors(r,p+5,p+5+n,sid); s.update(decoded);
+                s["name_from_descriptor"]=decoded.contains("name") && decoded["name"].is_string() && !decoded["name"].get<std::string>().empty();
+                r.services.push_back(s); p+=5+n;
             }
         } else if(r.tid==0&&b.size()>=12) {
             r.fields["programs"]=J::array();
@@ -1420,7 +1422,7 @@ public:
             require(candidate.is_object()&&candidate.contains("id")&&candidate["id"].is_string()&&!candidate["id"].get<std::string>().empty(),"nonempty string id required");
             require(candidate.contains("descriptors")&&candidate["descriptors"].is_array(),"descriptors must be an array");
             std::set<std::tuple<uint64_t,unsigned,unsigned>> descriptorScopes;
-            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_list_candidates","lcn_list_status","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
+            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","name_from_descriptor","lcn_status","lcn_candidates","lcn_list_candidates","lcn_list_status","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
             for(const auto& d:candidate["descriptors"]){
                 require(d.is_object(),"descriptor must be an object");
                 require(d.contains("tag")&&integer(d["tag"],255),"tag must be 0..255");

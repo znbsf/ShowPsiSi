@@ -87,7 +87,7 @@ var inspector = {
             var sid=p.service_id===undefined?p.program_number:p.service_id;
             var services=(state.services || []).filter(function(s){return s.id===sid && s.ts_id===d.extension;});
             // TSID + SID may still match multiple ONIDs: never choose an arbitrary name.
-            text.push('Program '+sid+' → PMT '+inspector.hex(p.pmt_pid)+(services.length===1?' · '+services[0].name:services.length>1?' · ambiguous service identity':''));
+            text.push('Program '+sid+' → PMT '+inspector.hex(p.pmt_pid)+(services.length>1?' · ambiguous service identity':services.length===1 && services[0].name_from_descriptor===true?' · '+services[0].name:' · name unknown'));
         });
         if(d.name==='PMT')text.push('Program '+d.extension+' · PCR '+(f.pcr_pid!==undefined?this.hex(f.pcr_pid):f.PCR_PID!==undefined?this.hex(f.PCR_PID):'unavailable')+' · '+(f.streams || []).length+' streams');
         if(d.name==='TDT' || d.name==='TOT')text.push('UTC '+(f.utc_time || d.utc_time || 'unavailable')+' · '+(d.name==='TDT'?'No CRC in TDT':'TOT CRC: '+((d.crc || {}).status || 'unavailable')));

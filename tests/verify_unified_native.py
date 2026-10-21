@@ -52,7 +52,8 @@ try:
     time.sleep(1);s=request(session,'snapshot')
     report['checks']['paused_frozen']=s['scan']['paused'] and s['scan']['progress'].get('packets')==frozen
     report['checks']['resume_click']=action('scan_control',value='pauseAnalysis')['accepted']
-    wait_state(lambda s:not s['scan']['paused'] and not s['scan']['pause_pending'])
+    s=wait_state(lambda s:not s['scan']['paused'] and not s['scan']['pause_pending'])
+    report['checks']['resumed']=not s['scan']['paused'] and not s['scan']['pause_pending']
     action('scan_control',value='pauseAnalysis');wait_state(lambda s:s['scan']['paused'])
     action('cancel_scan');s=wait_state(lambda s:s['analysis_status']=='cancelled' and s['settled'])
     report['checks']['cancel']=s['analysis_status']=='cancelled'

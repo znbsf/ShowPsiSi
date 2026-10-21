@@ -20,8 +20,7 @@ SplitView {
     property bool hexOpen: false
     property var records: (state.tables || []).filter(function(r){return (family==="All tables" || r.name===family) && (!query || Model.inspector.title(r).toLowerCase().indexOf(query.toLowerCase())>=0);}).slice().sort(function(a,b){return a.pid-b.pid || a.table_id-b.table_id || a.first_packet-b.first_packet;})
     property var nodes: Model.inspector.flatten(root,closed,0,limits)
-    property var allNodes: Model.inspector.flatten(root,{},0)
-    property var selectedNode: allNodes.find(function(n){return n.path===selectedPath;}) || root
+    property var selectedNode: Model.inspector.find(root,selectedPath) || root
     property var fieldRows: selectedNode ? selectedNode.fields : []
     property var navigation: {
         var out=[];
@@ -34,16 +33,16 @@ SplitView {
     onFamilyChanged: page=0
     onQueryChanged: page=0
     property string sourceIdentity: (state.source || '')+':'+(state.analysis_revision || '')
-    onSourceIdentityChanged: {history=[];selectedPath='section';closed={};page=0;}
+    onSourceIdentityChanged: {history=[];selectedPath='section';closed={};limits={};page=0;}
     function selectRecord(r) {
-        if(!host.backendReady || host.coreInspecting)return;
-        if(detail.id && r.id!==detail.id && !restoring)history=history.concat([{id:detail.id,path:selectedPath,closed:closed,page:page,family:family,query:query}]).slice(-100);
+        if(!r || !host.backendReady || host.coreInspecting)return;
+        if(detail.id && r.id!==detail.id && !restoring)history=history.concat([{id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query}]).slice(-100);
         selectedPath='section';host.inspect(r.id,-1);
     }
     function back() {
-        if(!history.length || !host.backendReady)return;
+        if(!history.length || !host.backendReady || host.coreInspecting)return;
         var h=history[history.length-1];history=history.slice(0,-1);restoring=true;
-        family=h.family;query=h.query;page=h.page;closed=h.closed;host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
+        family=h.family;query=h.query;page=h.page;closed=h.closed;limits=h.limits;host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
     }
     function activate(row) {
         if(!row)return;

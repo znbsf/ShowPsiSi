@@ -106,3 +106,22 @@ stream comparison remains pending until its authorized path is accessible.
 
 The existing compiled engine can be run at `build/bin/showpsisi-core.exe`.
 There is **no validated new GUI launch path** in this checkpoint.
+
+## Read-only permission diagnosis and independent review follow-up
+
+The pre-existing Qt tools have an inherited Low/NoWriteUp mandatory label from
+the original repository root. A formally elevated Medium parent was measured
+starting a Low Qt child. Targets have ordinary integrity. Vendor signatures for
+moc, qmlimportscanner and qmltestrunner are valid (The Qt Company Oy, 6.7.3.0).
+No labels or permissions were changed. The exact baseline and limited approval
+proposal are in ignored `artifacts/unified-inspector/qt-security-readonly-baseline.json`
+and `qt-label-approval-plan.md`. Changing shared tool files cannot be scoped to
+this task's callers alone. Other required build tools are not implicitly included.
+
+Independent code review fixed Back while inspection is pending (history is no
+longer consumed), preserves expanded-page limits on Back, resets limits for a
+new source, guards missing selections, and uses path lookup rather than flattening
+the entire decoded tree to select one node. Model assertions now total 43.
+Native non-capture component tests at 150% DPI pass (5 including setup/cleanup).
+No denied screenshot or build write was retried during this follow-up. This does
+not resolve the pending complete-app and visual acceptance gates.

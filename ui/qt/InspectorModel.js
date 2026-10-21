@@ -62,6 +62,15 @@ var inspector = {
         }
         return root;
     },
+    find: function(root,path) {
+        if(!root)return null;
+        if(root.path===path)return root;
+        if(path.indexOf(root.path+'/')!==0)return null;
+        for(var i=0;i<(root.children || []).length;i++){
+            var match=inspector.find(root.children[i],path);if(match)return match;
+        }
+        return null;
+    },
     flatten: function(root,closed,depth,limits) {
         if(!root)return [];
         var out=[Object.assign({},root,{depth:depth || 0})];

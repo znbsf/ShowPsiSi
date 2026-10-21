@@ -38,7 +38,7 @@ Item {
             var original=host.detail.id;
             inspector.selectRecord(inspector.findRecord('PMT'));
             compare(host.detail.name,'PMT');
-            verify(inspector.allNodes.some(function(n){return n.label.indexOf('descriptor')>=0;}));
+            verify(inspector.nodes.some(function(n){return n.label.indexOf('descriptor')>=0;}));
             inspector.back();compare(host.detail.id,original);
             inspector.family='TDT';compare(inspector.records.length,2);
             inspector.selectRecord(inspector.records[0]);
@@ -54,6 +54,17 @@ Item {
             var nav=findChild(inspector,'unifiedTree');compare(nav.currentIndex,nav.count-1);
             keyClick(Qt.Key_Home);compare(nav.currentIndex,0);
             verify(findChild(inspector,'unifiedFields').width>400);
+        }
+        function test_pending_inspection_preserves_back_and_limits() {
+            inspector.family='All tables';inspector.selectRecord(inspector.findRecord('PAT'));
+            inspector.limits={'section/decoded':200};
+            inspector.selectRecord(inspector.findRecord('BAT'));
+            var before=inspector.history.length;
+            host.coreInspecting=true;inspector.back();
+            compare(inspector.history.length,before);compare(host.detail.name,'BAT');
+            host.coreInspecting=false;inspector.back();
+            compare(host.detail.name,'PAT');compare(inspector.limits['section/decoded'],200);
+            inspector.selectRecord(null);compare(host.detail.name,'PAT');
         }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';

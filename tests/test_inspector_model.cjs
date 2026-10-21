@@ -23,6 +23,8 @@ assert.equal(model.flatten(large,{},0,{}).length,102);checks++;
 assert.equal(model.flatten(large,{},0,{root:200}).length,202);checks++;
 assert.equal(model.flatten(large,{},0,{root:300}).length,231);checks++;
 assert.equal(model.flatten(large,{root:true},0,{}).length,1);checks++;
+assert.equal(model.find(large,'root/229').label,'229');checks++;
+assert.equal(model.find(large,'root/23/missing'),null);checks++;
 const otherSource=Object.assign({},pat,{section_native_table:undefined,native_table_complete:true,native_table_sources:[{id:'other-section'}]});
 assert.equal(model.structure(otherSource).children[0].label,'Decoded fields');checks++;
 const multipleSources=Object.assign({},otherSource,{native_table_sources:[{id:pat.id},{id:'another-section'}]});

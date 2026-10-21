@@ -546,6 +546,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 {"name",nativeTableName(r)},{"version",(data[1]&0x80)?J(ver):J()}, {"section",num},{"current",r.current},{"valid",r.valid},
                 {"first_packet",first},{"at_packet",last},{"last_packet",last},{"observations",1}});
             if(r.j94){auto& item=tableHistory.back();for(const auto* field:{"extension","version","section","current"})item[field]=nullptr;item["versioning_supported"]=false;item["header_semantics"]="J.94 exact section observation; no wire version/section numbering";}
+            if(r.tid==0x70||r.tid==0x73){auto& item=tableHistory.back();for(const auto* field:{"extension","version","section","current"})item[field]=nullptr;item["versioning_supported"]=false;item["header_semantics"]="DVB short syntax; exact time observation";if(r.fields.contains("utc_time"))item["utc_time"]=r.fields["utc_time"];}
         } else {
             auto& entry=tableHistory[slot->second]; entry["last_packet"]=last;
             entry["observations"]=entry["observations"].get<uint64_t>()+1;
@@ -582,6 +583,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         return out;
     }
     J evidenceIdentity(const Record& r) const {
+        if(r.tid==0x70||r.tid==0x73)return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",nullptr},{"version",nullptr},{"current_next",nullptr},{"section_number",nullptr},{"last_section_number",nullptr},{"versioning_supported",false},{"header_semantics","DVB short syntax; exact section observation"}};
         if(r.j94)return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",nullptr},{"version",nullptr},{"current_next",nullptr},{"section_number",nullptr},{"last_section_number",nullptr},{"versioning_supported",false},{"header_semantics","J.94 short envelope; exact section observation, not an assembled map"}};
         return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"current_next",r.current},{"section_number",r.number},{"last_section_number",r.last}};
     }
@@ -611,6 +613,11 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         J out={{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
         if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){out["segment_last_section_number"]=r.raw[12];out["last_table_id"]=r.raw[13];}
         if(r.j94){for(const auto* key:{"extension","version","section","last_section","current"})out[key]=nullptr;out["versioning_supported"]=false;out["header_semantics"]="J.94 short envelope; no wire version/section numbering";}
+        if(r.tid==0x70||r.tid==0x73){
+            for(const auto* key:{"extension","version","section","last_section","current"})out[key]=nullptr;
+            out["versioning_supported"]=false;out["header_semantics"]="DVB short syntax; no wire version/current-next/section numbering";
+            if(r.fields.contains("utc_time"))out["utc_time"]=r.fields["utc_time"];
+        }
         out["identity"]=evidenceIdentity(r);out["crc"]=crcEvidence(r);out["distribution"]=distribution({&r},at,control);
         return out;
     }
@@ -640,8 +647,9 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             for(const auto* key:{"extension","version","last_section","current"})group[key]=nullptr;
             for(const auto* key:{"observed_section_numbers","valid_section_numbers","invalid_section_numbers","missing_section_numbers","missing_valid_section_numbers","selected_missing_section_numbers","expected_section_numbers"})group[key]=J::array();
             group["versioning_supported"]=false;group["selected_complete"]=false;
-            group["coverage_model"]="exact J.94 section observation; map assembly unsupported";
-            group["coverage_scope"]="No inferred version, missing ranges or complete network/channel map";
+            const bool dvbTime=group["table_id"]==0x70||group["table_id"]==0x73;
+            group["coverage_model"]=dvbTime?"exact DVB time section observation; no section numbering":"exact J.94 section observation; map assembly unsupported";
+            group["coverage_scope"]=dvbTime?"Content observations; no inferred wire version or numbered-section coverage":"No inferred version, missing ranges or complete network/channel map";
         }
         return result;
     }

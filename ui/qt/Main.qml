@@ -14,6 +14,8 @@ ApplicationWindow {
     visible: true
     title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : "ShowPsiSi · Transport stream inspector"
     property string inputKind: "ts"
+    property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
+    readonly property bool coreInspecting: core.inspecting
     readonly property bool metadataMode: inputKind === "dvbi"
     property bool lightTheme: core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
     property color surface: lightTheme ? "#f5f6f8" : "#181a1f"
@@ -1215,6 +1217,11 @@ ApplicationWindow {
     }
     function defaultInspect() {
         if (!backendReady || !analysisState.complete) return;
+        if (!advancedMode) {
+            let first=(analysisState.tables || []).find(function(r){return r.name==="PAT" && r.valid;}) || (analysisState.tables || [])[0];
+            if(first)inspect(first.id,-1);
+            return;
+        }
         let first = serviceRows[0];
         if (first) {
             inspect(first.source_id, first.id);
@@ -3540,31 +3547,34 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            if(!advancedMode){unifiedInspector.focusSearch();return;}
             let field=tab==="Topology"?topologySearch:recordSearch;
             if(win.activeFocusItem!==field)paletteReturnFocus=win.activeFocusItem;
             field.forceActiveFocus();field.selectAll();
         }
     }
-    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
     // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
-    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
-    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
-    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(24) }
-    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(24) }
+    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
+            if(!advancedMode){unifiedInspector.nextRegion();return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:focusNextRegion(true) }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:advancedMode?focusNextRegion(true):unifiedInspector.nextRegion() }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            if(!advancedMode){unifiedInspector.focusSearch();return;}
             inspectorView = "Structure";
             treeSearch.forceActiveFocus();
             treeSearch.selectAll();
@@ -3689,6 +3699,7 @@ ApplicationWindow {
             }
             Action {
                 objectName: "resetLayout"
+                visible: advancedMode
                 text: "Reset layout"
                 onClicked: resetLayout()
                 SafeTip {
@@ -3702,13 +3713,20 @@ ApplicationWindow {
                 onClicked: updateDialog.open()
             }
             Action {
+                objectName: "workspaceMode"
+                text: advancedMode ? "Inspector" : "Advanced workspace"
+                onClicked: advancedMode = !advancedMode
+            }
+            Action {
                 objectName: "agentApi"
+                visible: advancedMode
                 text: "Agent API"
                 enabled: backendReady
                 onClicked: core.send("capabilities", {})
             }
             Action {
                 objectName: "saveDiagnostics"
+                visible: advancedMode
                 text: "Save diagnostics"
                 enabled: !core.busy && !core.inspecting && !core.comparing
                 onClicked: {let result=uiAgent.saveBundle();showMessage(result,result.indexOf("Diagnostics failed:")===0 ? "error" : "info");}
@@ -3963,7 +3981,7 @@ ApplicationWindow {
             indeterminate: true
         }
         RowLayout {
-            visible: !metadataMode
+            visible: !metadataMode && advancedMode
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
@@ -4017,9 +4035,16 @@ ApplicationWindow {
             Layout.fillWidth:true
             Layout.fillHeight:true
         }
+        UnifiedInspector {
+            id: unifiedInspector
+            host: win
+            visible: !metadataMode && !advancedMode
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
         SplitView {
             id: verticalWorkspace
-            visible: !metadataMode
+            visible: !metadataMode && advancedMode
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical

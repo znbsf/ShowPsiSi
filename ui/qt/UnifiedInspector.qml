@@ -32,6 +32,14 @@ SplitView {
     onRecordsChanged: page=Math.min(page,Math.max(0,Math.ceil(records.length/100)-1))
     onFamilyChanged: page=0
     onQueryChanged: page=0
+    onNavigationChanged: Qt.callLater(revealSelection)
+    onSelectedPathChanged: Qt.callLater(revealSelection)
+    function revealSelection() {
+        var key=detail.id+':'+selectedPath;
+        var index=navigation.findIndex(function(r){return r.key===key;});
+        if(index<0)index=navigation.findIndex(function(r){return r.key===detail.id;});
+        if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,ListView.Contain);}
+    }
     property string sourceIdentity: (state.source || '')+':'+(state.analysis_revision || '')
     onSourceIdentityChanged: {history=[];selectedPath='section';closed={};limits={};page=0;}
     function selectRecord(r) {

@@ -125,3 +125,42 @@ the entire decoded tree to select one node. Model assertions now total 43.
 Native non-capture component tests at 150% DPI pass (5 including setup/cleanup).
 No denied screenshot or build write was retried during this follow-up. This does
 not resolve the pending complete-app and visual acceptance gates.
+
+## Authorized build and visual iteration (2026-10-21)
+
+The user subsequently approved temporary Medium/NoWriteUp labels for exactly
+the original SDK's moc.exe, qmlimportscanner.exe and qmltestrunner.exe. Baseline
+hashes, full security descriptors and valid Qt signatures were checked before
+execution. Only the label was changed; parent directories, DACLs and owners
+were not changed. All three original descriptors and hashes were restored and
+verified in a finally block, including after the failed application build.
+`approved-qt-operation-first.json` records this cycle. A second capture-only
+cycle changed only qmltestrunner and again restored its exact original state;
+`approved-qt-operation.json` records that cycle.
+
+The full GUI build still exits 1: unapproved tools under the same original SDK
+bin directory, `rcc.exe` and `cmake_automoc_parser.exe`, cannot write generated
+resource sources and the metatype timestamp in this worktree. Their inherited
+Low/NoWriteUp labels remain untouched. Both signatures are valid Qt 6.7.3.0.
+`approved-gui-build.log` preserves complete commands and errors. This is a
+Windows file-write denial, not an automatic approval rejection. Authorization
+was not expanded to either tool or any later build tool.
+
+The real native Qt component suite passes 6 tests (including setup/cleanup).
+Five synthetic-parser-data screenshots were saved and visually inspected.
+The first images exposed DPI cropping and offscreen selected navigation nodes.
+The second iteration uses whole-item QQuickItem capture and scrolls the selected
+node into view. All five `PAT-review2.png`, `PMT-review2.png`, `BAT-review2.png`,
+`TDT-review2.png`, and `TOT-review2.png` were inspected as pixels: complete field
+tables, exact BAT hex, PMT descriptor, PAT current/next versions, and distinct UTC
+observations are visible. Short syntax does not display invented version/current
+or section identities. The fixture lacks SDT names, so PAT service-name visual
+acceptance remains uncovered. The capture log is `approved-component-capture.log`.
+
+These are **component screenshots, not a completed full-application run**.
+Opening/reopening files, pause/resume/cancel, full bridge interaction, and the
+owner's same-stream comparison remain NOT RUN. User reference image pixels
+remain unavailable through the failed official Library helper. There is still
+no validated new GUI executable/launch path. The next step requires a separately
+approved, precisely scoped resolution for the remaining build-tool write
+denials; the existing three-tool approval does not cover those tools.

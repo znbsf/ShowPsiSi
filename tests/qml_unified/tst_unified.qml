@@ -73,8 +73,11 @@ Item {
                 inspector.selectedPath=name==='PMT'?'section/descriptors/0/decoded':name==='PAT'?'section/decoded':'section';
                 inspector.hexOpen=name==='BAT';
                 wait(150);
-                var path=Qt.resolvedUrl('../../artifacts/unified-inspector/'+name+'.png').toString().replace(/^file:\/\/\//,'');
-                grabImage(inspector).save(path);
+                var path=Qt.resolvedUrl('../../artifacts/unified-inspector/'+name+'-review2.png').toString().replace(/^file:\/\/\//,'');
+                var done=false,saved=false;
+                verify(inspector.grabToImage(function(result){saved=result.saveToFile(path);done=true;}));
+                tryVerify(function(){return done;},5000);
+                verify(saved,'Native whole-item screenshot must be saved');
             });
         }
     }

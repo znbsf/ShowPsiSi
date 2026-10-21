@@ -7,6 +7,40 @@ PR, release, installation or replacement of the owner's application occurred.
 
 ## Current runnable result (supersedes earlier blocked checkpoints below)
 
+### Layout feedback repair
+
+The remaining layout warnings are now resolved in the tested paths. With
+`QT_LOGGING_RULES=qt.quick.layouts.debug=true`, each warning was preceded by
+`QQuickGridLayoutBase::rearrange 2 LookupTable` for `satelliteResult` or
+`identifierResult`. All four combinations of basic/advanced and empty/auto-load
+produced exactly two warnings before the fix, proving a startup lookup-layout
+issue independent of scanning or the unified inspector.
+
+LookupTable was itself a ColumnLayout whose implicit width came from child
+preferred widths calculated as fractions of LookupTable.width. The resulting
+width feedback occurred even while the lookup results were hidden. The root is
+now an Item with width assigned by its containing layout; its inner ColumnLayout
+is anchored to that width and only supplies implicit height. Column proportions,
+wrapping, focus and accessibility are retained. No warning filter or timer was
+used to conceal the problem.
+
+After rebuilding, all four diagnostic runs have zero recursive-layout warnings;
+the full 24-check native run and both existing identifier/satellite lookup tests
+pass. The final native application log is empty. Reproducer:
+`tests/verify_lookup_layout.py`. Evidence under `artifacts/unified-inspector`:
+`layout-after.log`, `lookup-visible-tests.log`, `layout-final-regression.log`,
+before debug logs in `full-app-keyboard-1792592690806945500`, after debug logs in
+`full-app-keyboard-1792592858868958500`, and full-app log in
+`full-app-keyboard-1792592873295417200/application.log`.
+
+The final 150% PAT/PMT/BAT/TDT/TOT PNG hashes exactly match the previously
+pixel-reviewed integrated screenshots. New pagination and EIT captures and the
+two advanced-test screenshots were also inspected. Copies are named
+`layout-fixed-<scene>-150.png`. This iteration made no Library upload attempt.
+The six approved build tools again have their original full security descriptors
+and hashes, recorded in `approved-six-operation.json`. Original stream/reference
+availability and the missing SDT-name visual fixture remain the acceptance limits.
+
 ### Baseline correction and latest-main integration
 
 The initial choice of owner branch e80dabb was incorrect for the requirement to

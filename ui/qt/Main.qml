@@ -1415,7 +1415,7 @@ ApplicationWindow {
             onClicked: { const owner=diff; owner.fieldActivated(); owner.showAll=true; }
         }
     }
-    component LookupTable: ColumnLayout {
+    component LookupTable: Item {
         id: lookupTable
         property var result: ({})
         property string label: "Lookup result"
@@ -1424,9 +1424,16 @@ ApplicationWindow {
         readonly property real sourceWidth: width * 0.30
         visible: Object.keys(result).length > 0
         Layout.fillWidth: true
-        spacing: 0
+        // Width belongs to the containing layout. Do not derive an implicit
+        // width from columns whose preferred widths are fractions of this width.
+        implicitHeight: lookupContents.implicitHeight
         Accessible.role: Accessible.Table
         Accessible.name: label
+        ColumnLayout {
+        id: lookupContents
+        anchors.left: parent.left
+        anchors.right: parent.right
+        spacing: 0
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
@@ -1485,6 +1492,7 @@ ApplicationWindow {
                 }
             }
         }
+    }
     }
     component SafeTip: ToolTip {
         id: tip

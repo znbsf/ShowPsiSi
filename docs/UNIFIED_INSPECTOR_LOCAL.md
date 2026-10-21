@@ -7,6 +7,61 @@ PR, release, installation or replacement of the owner's application occurred.
 
 ## Current runnable result (supersedes earlier blocked checkpoints below)
 
+### Baseline correction and latest-main integration
+
+The initial choice of owner branch e80dabb was incorrect for the requirement to
+retain latest-main analysis features: `merge-base HEAD origin/main` was e80dabb,
+meaning that branch was an ancestor of main, not that it contained main. The
+earlier ancestry conclusion and statement that the baseline lacked pause/resume
+must not be used as final acceptance. Read-only `git ls-remote` confirmed both
+main and v0.3.1 at ae2c82e37f7bc56f6e60fcec4c945d57b14cec26. Main includes PR28
+and its compact result hydration, in-process pause/resume, full/prefix/range/
+distributed analysis and percentage coverage.
+
+Main was merged into this independent branch, preserving every previous local
+commit. Only core summary and QML diagnostic dispatch conflicted. Resolution
+retains both short-syntax TDT/TOT truthfulness and main's includeDistribution
+optimization and busy/presentation guards. The Qt bridge and Web app are
+unchanged from main. No parser rewrite or removal of sampling functionality.
+
+Final real Windows app report: `artifacts/unified-inspector/main-integrated-final.log`.
+All 24 checks pass, including observed paused state with a frozen packet count,
+resume, pause again and cancel, reopen, prefix/distributed 10% exact budgets,
+range coverage, all 101 compact-hydrated records, second-page keyboard selection,
+and separate EIT sections 0 and 8. The initial integrated test failed because
+the old test watched stale analysisState rather than main's separate scanProgress;
+that failed log is retained, and the test was corrected without changing the
+engine contract. A null-packet source avoids creating millions of artificial
+history transitions merely to test pause.
+
+Native file-picker testing also passed using the actual Windows #32770 dialog
+owned by the test application: enter a new synthetic TS filename in control
+1148, invoke Open, then verify the selected file was loaded. Reproducer:
+`tests/verify_native_picker.py`; result:
+`artifacts/unified-inspector/native-picker-1792592386665696100/report.json`.
+Core section-evidence 18 tests, unified engine regression 1 test and presentation
+model 43 assertions pass after the merge.
+
+Seven final 150% screenshots were pixel reviewed, including pagination and EIT:
+`integrated-PAT-150.png`, `integrated-PMT-150.png`, `integrated-BAT-150.png`,
+`integrated-TDT-150.png`, `integrated-TOT-150.png`, `integrated-page2-150.png`,
+`integrated-EIT-150.png`. A stale cancellation warning after a successful rescan
+was fixed and rechecked. The invalid Accessible attachment was removed and its
+warning is absent; two recursive layout warnings per launch remain unresolved.
+The fixture still has no SDT service names; original same-stream acceptance and
+original Library reference pixel access remain unavailable.
+
+All approved six-tool build cycles restored exact original security descriptors
+and hashes, including the latest `approved-six-operation.json`; no new tool was
+modified. The five new integrated full-app images were offered once to the
+current official Library prepared uploader. Preparation failed with
+`library upload failed: prepare_uploads failed`; no confirmed IDs, no alternate
+transfer and no blind retry. These are distinct from the earlier component
+upload whose outcome was unconfirmed.
+
+The following earlier checkpoint details are retained as history; the integrated
+results above supersede its missing-pause, pagination and file-picker limitations.
+
 Launch `scripts/run-unified-local.ps1`, optionally with `-Sample <absolute TS path>`.
 It runs this worktree's `build/bin/showpsisi-qt.exe` with separate settings and
 the original shared SDK runtime, without modifying installed application files.

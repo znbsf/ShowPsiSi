@@ -9,6 +9,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 import urllib.error
@@ -1356,6 +1357,30 @@ class ArtifactIdentityTests(TemporaryTest):
 
 
 class ProjectVersionTests(TemporaryTest):
+    def test_product_manifests_match_canonical_release_version(self):
+        tauri_root = ROOT / 'ui/tauri/src-tauri'
+        cargo = tomllib.loads((tauri_root / 'Cargo.toml').read_text())
+        locked = tomllib.loads((tauri_root / 'Cargo.lock').read_text())
+        config = json.loads((tauri_root / 'tauri.conf.json').read_text())
+        application = [item for item in locked['package']
+                       if item['name'] == cargo['package']['name']]
+        self.assertEqual(len(application), 1)
+        self.assertEqual(release.VERSION, release.project_version(ROOT))
+        self.assertEqual(cargo['package']['version'], release.VERSION)
+        self.assertEqual(application[0]['version'], release.VERSION)
+        self.assertEqual(config['version'], release.VERSION)
+
+    def test_reviewed_notes_and_generated_body_match_current_version(self):
+        notes = (ROOT / f'docs/releases/{release.TAG}.md').read_text(encoding='utf-8').strip()
+        self.assertTrue(notes.startswith(f'# ShowPsiSi {release.TAG}\n'))
+        for filename in (release.SETUP, release.PORTABLE, release.CORRESPONDING_SOURCE):
+            self.assertIn(filename, notes)
+        body = release.release_body(ROOT, REQUEST)
+        self.assertTrue(body.startswith(notes + '\n\n'))
+        self.assertTrue(body.endswith(
+            f'Source: https://github.com/{release.REPOSITORY}/commit/{SOURCE}\n'
+            f'CI: https://github.com/{release.REPOSITORY}/actions/runs/{REQUEST["ci_run_id"]}\n'))
+
     def test_version_follows_only_canonical_reviewed_cmake(self):
         path = self.work / 'CMakeLists.txt'
         path.write_text('project(ShowPsiSi VERSION 1.2.3 LANGUAGES CXX)\n')

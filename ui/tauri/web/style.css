@@ -1746,3 +1746,15 @@ dialog h2 { font-size: 16px; font-weight: 600; }
 .shortcut-row span { color: var(--muted); }
 .sidebar-help .shortcut-row { display: block; padding: 0; }
 .sidebar-help summary:focus-visible { outline: var(--focus-width) solid var(--accent); outline-offset: 2px; }
+
+/* Bounded scan status and result navigation remain wrapping at narrow widths. */
+#scan-status, #scan-coverage, #result-pages { margin: 0; padding: 4px 12px; overflow-wrap: anywhere; min-width: 0; }
+#result-pages { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+#result-pages[hidden] { display: none; }
+.result-page { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+#scan-options input[type=number] { min-width: 0; width: 110px; flex: 0 0 110px; }
+.scan-options-fields [hidden] { display: none; }
+
+#app[data-input-kind="dvbi"] > #scan-status, #app[data-input-kind="dvbi"] > #scan-coverage, #app[data-input-kind="dvbi"] > #result-pages { display: none; }
+
+.bin.unobserved { background-image: repeating-linear-gradient(135deg, transparent 0 3px, var(--muted) 3px 4px); opacity: .55; }

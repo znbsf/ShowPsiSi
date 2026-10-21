@@ -43,15 +43,47 @@ try:
     action('topology_key',value='F6');action('topology_key',value='Home');action('topology_key',value='Return');s=settled()
     report['checks']['keyboard_home_enter']=s['inspection']['id']==pat['id']
     large=out/'cancel-fixture.ts'
-    chunk=(root/'artifacts/unified-inspector/fixture.ts').read_bytes()*1024
+    chunk=(bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184)*8192
     with large.open('wb') as f:
         for _ in range(512):f.write(chunk)
-    action('open_source',path=str(large));wait_state(lambda s:s['analysis_status']!='complete' and not s['settled'])
+    action('open_source',path=str(large));wait_state(lambda s:s['scan']['busy'] and not s['scan']['presentation'])
+    report['checks']['pause_click']=action('scan_control',value='pauseAnalysis')['accepted']
+    s=wait_state(lambda s:s['scan']['paused']);frozen=s['scan']['progress'].get('packets')
+    time.sleep(1);s=request(session,'snapshot')
+    report['checks']['paused_frozen']=s['scan']['paused'] and s['scan']['progress'].get('packets')==frozen
+    report['checks']['resume_click']=action('scan_control',value='pauseAnalysis')['accepted']
+    wait_state(lambda s:not s['scan']['paused'] and not s['scan']['pause_pending'])
+    action('scan_control',value='pauseAnalysis');wait_state(lambda s:s['scan']['paused'])
     action('cancel_scan');s=wait_state(lambda s:s['analysis_status']=='cancelled' and s['settled'])
     report['checks']['cancel']=s['analysis_status']=='cancelled'
     action('open_source',path=str(root/'artifacts/unified-inspector/fixture.ts'));s=settled()
     report['checks']['reopen_after_cancel']=len(s['unified']['records'])==len(rows)
-    report['pause_resume']='NOT RUN: no pause/resume API in checked baseline'
+    for mode in ['prefix','range','distributed']:
+        action('scan_mode',value=mode);action('rescan');s=settled();coverage=s['scan']['coverage']
+        report['checks'][mode+'_coverage']=coverage['scanned_packets']==(6 if mode=='range' else 1)
+    action('scan_mode',value='full')
+    from make_fixture import section,word,crc
+    packets=[]
+    for i in range(101):
+        raw=section(0,i+1,1,word(100)+word(0xe100))
+        packets.append(bytes([0x47,0x40,0,0x10+(i%16),0])+raw+b'\xff'*(183-len(raw)))
+    pages=out/'pages.ts';pages.write_bytes(b''.join(packets));action('open_source',path=str(pages));s=settled()
+    report['checks']['all_101_hydrated']=len(s['unified']['records'])==101
+    report['checks']['next_page_click']=action('scan_control',value='unifiedNext')['accepted']
+    action('topology_key',value='F6');action('topology_key',value='Home');action('topology_key',value='Return');s=settled()
+    report['checks']['page2_select']=s['inspection']['id']==s['unified']['records'][100]['id']
+    report['captures']['page2']=request(session,'capture')
+    packets=[]
+    for i in [0,8]:
+        raw=bytearray(section(0x50,1,1,word(1)+word(2)+bytes([i,0x50])))
+        raw[6]=i;raw[7]=8;raw[-4:]=crc(raw[:-4]).to_bytes(4,'big')
+        packets.append(bytes([0x47,0x40,0x12,0x10+(i%16),0])+raw+b'\xff'*(183-len(raw)))
+    eit=out/'eit.ts';eit.write_bytes(b''.join(packets));action('open_source',path=str(eit));s=settled()
+    report['checks']['eit_two_sections']=len(s['unified']['records'])==2 and {r['section'] for r in s['unified']['records']}=={0,8}
+    for row in s['unified']['records']:
+        action('unified_select',id=row['id']);ss=settled()
+        report['checks']['eit_section_'+str(row['section'])]=ss['inspection']['id']==row['id']
+    action('unified_hex',value=True);report['captures']['EIT']=request(session,'capture')
 except Exception as e:report['error']=repr(e)
 finally:
     proc.terminate()

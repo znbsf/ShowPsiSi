@@ -37,8 +37,12 @@ var workbench = {
   sort: function(a,b) { return a.pid-b.pid || a.table_id-b.table_id || a.extension-b.extension || a.version-b.version || Number(b.current)-Number(a.current) || a.section-b.section || String(a.id).localeCompare(String(b.id)); },
   tables: function(state, pid, name, bad, query) {
     var all = (state.tables || []).filter(function(r) { return workbench.scope(r,pid,name); }).sort(workbench.sort);
+    // A section is matched once, not once for every logical group. Preserve
+    // group-wide results when either metadata or any scoped sibling matches.
+    var hasQuery=!!query.trim(), matchedIds=Object.create(null);
+    if(hasQuery)all.forEach(function(r) {if(workbench.matches(r,query))matchedIds[r.id]=true;});
     var groups = (state.table_groups || []).filter(function(g) {
-      return workbench.scope(g,pid,name) && (!query.trim() || workbench.matches(g,query) || all.some(function(r) { return g.section_ids.indexOf(r.id)>=0 && workbench.matches(r,query); }));
+      return workbench.scope(g,pid,name) && (!hasQuery || workbench.matches(g,query) || g.section_ids.some(function(id) {return matchedIds[id];}));
     }).sort(workbench.sort);
     var ids = {};
     groups.forEach(function(g) { g.section_ids.forEach(function(id) { ids[id]=true; }); });
@@ -274,10 +278,17 @@ workbench.resolveReference = function(field, detail, state) {
   if(!rule || rule.ids.indexOf(detail.table_id)<0 || !Object.prototype.hasOwnProperty.call(rule.paths,path))return null;
   var kind=rule.paths[path],number=workbench.referenceNumber(field.value),attrs=field.attributes || {},root=field.root || {},sid;
   if(number===null)return null;
-  var selected={};
-  (state.table_groups || []).forEach(function(g){(g.selected_section_ids || []).forEach(function(id){selected[id]=true;});});
+  // structure() owns this cache for one synchronous tree construction only.
+  // Context copies share it; independent resolver/structure calls stay fresh.
+  var selection=field.referenceSelection, selected, tables;
+  if(selection && selection.rows) {selected=selection.selected;tables=selection.rows;}
+  else {
+    selected={};
+    (state.table_groups || []).forEach(function(g){(g.selected_section_ids || []).forEach(function(id){selected[id]=true;});});
+    tables=(state.tables || []).filter(function(r){return selected[r.id] && r.valid===true && r.current===true && (!r.crc || r.crc.status!=='invalid');});
+    if(selection) {selection.selected=selected;selection.rows=tables;}
+  }
   if(!selected[detail.id])return null;
-  var tables=(state.tables || []).filter(function(r){return selected[r.id] && r.valid===true && r.current===true && (!r.crc || r.crc.status!=='invalid');});
   function identifier(n) {return workbench.hex(n,4).toUpperCase().replace('0X','0x')+' ('+n+')';}
   function target(rows, suffix) {
     if(!rows.length)return null;
@@ -310,6 +321,7 @@ workbench.resolveReference = function(field, detail, state) {
   if(tsid===null || onid===null || !tsid || tsid>=0xffff || !onid || onid>=0xffff)return null;
   if(kind==='transport' && number!==(path.endsWith('/transport_stream_id')?tsid:onid))return null;
   var services=(state.services || []).filter(function(s){return s.ts_id===tsid && s.onid===onid && (kind!=='service' || s.id===number) && tables.some(function(r){return r.id===s.source_id;});});
+  if(!services.length)return null;
   if(kind==='service') {
     if(!number || number>=0xffff || services.length!==1)return null;
     var service=services[0];
@@ -350,7 +362,7 @@ workbench.descriptorNode = function(d, context) {
   return {id:String(d.offset),label:(d.native_decoded || d.extension?'◆ ':'? ')+(d.name || 'opaque_descriptor')+' · '+workbench.hex(d.tag,2),tone:d.malformed || (d.decode_status && d.decode_status!=='decoded')?'bad':d.extension?'private':'',value:d.length+' B @ '+d.offset,children:children};
 };
 workbench.structure = function(detail, scope, sid, state) {
-  var context={detail:detail,state:state,path:'native'};
+  var context={detail:detail,state:state,path:'native',referenceSelection:{}};
   var header={};
   ['pid','table_id','extension','version','current','section','last_section','versioning_supported','header_semantics','bytes','valid','crc','detected_standards'].forEach(function(k) {if(detail[k]!==undefined) header[k]=detail[k];});
   if(detail.versioning_supported===false)['extension','version','current','section','last_section'].forEach(function(k){delete header[k];});
@@ -358,7 +370,7 @@ workbench.structure = function(detail, scope, sid, state) {
   var sdk=scope==='section'?detail.section_native_table:(detail.merged || {}).native_table;
   children.push({id:'native',label:(detail.application_decoder?'Application decoded structure':'TSDuck decoded structure')+' · '+(scope==='section'?'selected section':'merged table'),value:sdk?(detail.application_decoder?'Application evidence':'SDK evidence'):scope==='section'?'No standalone SDK structure; section-local display in Decoded':'No complete selected generation; no merged decode',children:sdk && sdk.name===detail.name?[workbench.sdkNode(sdk,sid,context)]:sdk?[workbench.sdkNode(sdk,sid)]:[]});
   if(scope==='merged' && (detail.native_table_sources || []).length) children.push(workbench.objectNode('assembly',detail.merged && detail.merged.complete?'Merged table source sections':'Candidate sections · no completed merge',detail.native_table_sources));
-  children.push(workbench.objectNode('fields','Application decoded fields',detail.fields || {},{detail:detail,state:state,path:'application',root:detail.fields || {}}));
+  children.push(workbench.objectNode('fields','Application decoded fields',detail.fields || {},Object.assign({},context,{path:'application',root:detail.fields || {}})));
   var services=(detail.services || []).filter(function(s){return sid<0 || s.id===sid;});
   if(services.length) children.push({id:'services',label:'Services',children:services.map(function(s) {return {id:String(s.id),label:s.name || 'Service',value:'SID '+workbench.hex(s.id),children:[workbench.objectNode('fields','Service fields',s),{id:'descriptors',label:'Descriptors',children:(detail.descriptors || []).filter(function(d){return d.service_id===s.id;}).map(function(d){return workbench.descriptorNode(d);})}]};})});
   if((detail.events || []).length) children.push(workbench.objectNode('events','Events',detail.events));
@@ -372,7 +384,8 @@ workbench.structure = function(detail, scope, sid, state) {
     unresolved:detail.descriptors.filter(function(d){return !d.native_decoded && !d.extension;}).length,
     warnings:detail.descriptors.filter(function(d){return d.malformed || d.native_decode_warning;})}));
   if((detail.issues || []).length) children.push(workbench.objectNode('issues','Validation issues',detail.issues));
-  children.push(workbench.objectNode('evidence','Source evidence',{first_packet:detail.first_packet,last_packet:detail.last_packet,first_file_offset:detail.first_file_offset,offset_note:detail.offset_note,native_table_at_packet:detail.native_table_at_packet,inspection_scope:detail.inspection_scope,identity:detail.identity,occurrences:(detail.occurrences || []).slice(0,500),display_note:(detail.occurrences || []).length>500?'First 500 occurrences; full list available through Agent API':'All indexed occurrences'}));
+  var visibleOccurrences=(detail.occurrences || []).slice(0,500), occurrenceTotal=detail.occurrence_total == null ? (detail.occurrences || []).length : detail.occurrence_total;
+  children.push(workbench.objectNode('evidence','Source evidence',{first_packet:detail.first_packet,last_packet:detail.last_packet,first_file_offset:detail.first_file_offset,offset_note:detail.offset_note,native_table_at_packet:detail.native_table_at_packet,inspection_scope:detail.inspection_scope,identity:detail.identity,occurrences:visibleOccurrences,occurrence_total:occurrenceTotal,display_note:occurrenceTotal>visibleOccurrences.length?'Showing '+visibleOccurrences.length+' of '+occurrenceTotal+' occurrences; further pages available through Agent API':'All indexed occurrences'}));
   if((detail.evidence_anchors || []).length) children.splice(1,0,{id:'anchors',label:'Source evidence anchors · exact section',children:detail.evidence_anchors.map(function(anchor,i){return {id:String(i),label:anchor.label || anchor.display_path || anchor.field_id || anchor.container_id || 'Source anchor',value:anchor.value==null?(anchor.byte_range?'Section bytes '+anchor.byte_range.offset+'–'+(anchor.byte_range.offset+anchor.byte_range.length-1):'No byte range supplied'):workbench.value(anchor.label || '',anchor.value),children:[workbench.objectNode('locator','Engine source locator',anchor)]};})});
   return {id:'section',label:detail.name+' section',value:workbench.wireVersionText(detail)+' · '+(detail.valid?'valid':'invalid'),children:children};
 };

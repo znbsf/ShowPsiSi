@@ -187,6 +187,9 @@ let selected = "",
   scanEpoch = 0,
   cancelling = false,
   activeAnalyze = null;
+let pausePending = "", pauseSequence = 0, progressFrame = null, queuedProgress = null;
+let resultPages = {}, resultPageEpoch = 0, resultLoading = false;
+const resultCollections = ["tables", "table_groups", "services", "events", "diagnostics", "history", "table_history", "density"];
 const recentResponses = [];
 const messages = [];
 let messageTimer = null, activeWarning = null;
@@ -451,9 +454,9 @@ const invoke = (...args) =>
       );
 $("#app").innerHTML = `
 <header class="titlebar"><span class="app-mark" aria-hidden="true">≋</span><strong>ShowPsiSi</strong><span class="title-separator">/</span><select id="input-kind" aria-label="Input kind"><option value="ts">Transport stream</option><option value="dvbi">DVB-I XML</option></select><span class="workspace-name">Transport stream workbench</span><span class="spacer"></span><span class="runtime" id="runtime">Connecting backend</span><span id="layout-status" class="layout-status" role="status"></span><span class="toolbar-group" role="group" aria-label="View"><button class="btn quiet" id="theme-toggle" aria-label="Switch color theme">Light theme</button><button class="btn quiet" id="reset-layout" title="Restore default pane widths. Focus a divider and use arrow keys to resize; Alt+Left navigates back.">Reset layout</button></span><span class="toolbar-group tertiary" role="group" aria-label="Help and diagnostics"><button class="btn quiet" id="about">About</button><button class="btn quiet" id="api" title="Show the local JSONL agent API description">Agent API</button><button class="btn quiet" id="save-diagnostics" title="Save screenshot and UI state, including visible metadata and source paths">Save diagnostics</button></span></header>
-<div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button><div class="recent-files"><button class="btn" id="recent" aria-label="Recent transport streams" aria-haspopup="menu" aria-expanded="false" aria-controls="recent-menu" title="Choose a recently analyzed source without starting analysis">Recent ▾</button><div id="recent-menu" role="menu" aria-label="Recent transport streams" tabindex="-1" hidden></div></div></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
+<div class="sourcebar" role="region" aria-label="Scan source and options" tabindex="-1"><div class="source-input"><label for="source">SOURCE</label><input id="source" placeholder="Open a local .ts, .mts or .m2ts file" spellcheck="false"><button class="btn" id="browse" aria-label="Open transport stream" title="Open transport stream (Ctrl+O)">Open…</button><div class="recent-files"><button class="btn" id="recent" aria-label="Recent transport streams" aria-haspopup="menu" aria-expanded="false" aria-controls="recent-menu" title="Choose a recently analyzed source without starting analysis">Recent ▾</button><div id="recent-menu" role="menu" aria-label="Recent transport streams" tabindex="-1" hidden></div></div></div><select id="standards" aria-label="Signalling standards context" title="Explicit native decoder context; auto uses detected signalling, not RF delivery system"><option value="auto">Standards: Auto</option><option value="dvb">DVB</option><option value="atsc">ATSC</option><option value="isdb">ISDB</option><option value="isdb-japan">ISDB Japan</option><option value="isdb-brazil">ISDB Brazil</option><option value="scte">SCTE</option><option value="j94-system-b">J.94 (2016) System B</option><option value="dtmb">DTMB</option></select><button class="btn" id="scan-options-toggle" aria-expanded="false" aria-controls="scan-options" aria-label="Scan options"><span>Scan options <span id="scan-options-arrow" aria-hidden="true">▸</span></span><span id="scan-options-summary" hidden></span></button><div class="scan-actions"><button class="btn primary" id="scan">Analyze</button><button class="btn" id="pause-scan" hidden title="Pause without discarding evidence; Resume continues the same scan">Pause</button><button class="btn" id="cancel-scan" hidden title="Cancel active analysis (Ctrl+.); the source file stays unchanged">Cancel</button></div><p id="scan-options-changed" role="status" hidden>Options changed — re-analyze to apply</p><div class="scan-options-fields" id="scan-options" role="group" aria-label="Options for the next scan" hidden><label for="scan-mode">Analysis mode</label><select id="scan-mode" aria-label="Analysis mode"><option value="full">Full scan</option><option value="prefix">Quick preview · prefix</option><option value="range">Quick preview · packet range</option><option value="distributed">Quick preview · distributed windows</option></select><label for="scan-budget-unit">Preview budget</label><select id="scan-budget-unit" aria-label="Preview budget unit"><option value="percent">Percent of source</option><option value="packets">Packet count</option></select><label for="scan-percent">Percent (1–100)</label><input id="scan-percent" type="number" min="1" max="100" step="1" value="10"><label for="scan-budget">Packet budget</label><input id="scan-budget" type="number" min="1" step="1" value="250000"><label for="scan-start">Start packet (inclusive)</label><input id="scan-start" type="number" min="0" step="1" value="0"><label for="scan-end">End packet (exclusive)</label><input id="scan-end" type="number" min="1" step="1" value="250000"><label for="scan-windows">Contiguous windows</label><input id="scan-windows" type="number" min="1" max="16" step="1" value="4"><p class="meta">Preview results are partial and read-only. Distributed mode reads a few large contiguous windows to limit seeks on a mechanical disk.</p><label for="default-charset">Default charset</label><input id="default-charset" placeholder="Default charset" aria-label="Default input charset" title="Optional TSDuck character set for the next scan, e.g. ISO-8859-5 or UTF-8. Digital Video Broadcasting (DVB) selectors take precedence unless a RAW character set is chosen."><label for="extra-pids" title="Additional Packet Identifiers">Extra PIDs</label><input id="extra-pids" placeholder="Extra PIDs (optional)" aria-label="Additional monitored packet identifiers (PIDs), decimal or hexadecimal, comma separated" aria-describedby="extra-pids-error" title="Additional monitored Packet Identifiers (PIDs), decimal or hexadecimal, separated by commas"></div></div>
 <div class="sourcebar-feedback" id="source-feedback"><p class="field-error" id="extra-pids-error" hidden></p></div>
-<div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
+<p id="scan-status" class="meta" role="status" hidden></p><p id="scan-coverage" class="meta" hidden></p><div id="result-pages" class="meta" hidden></div><div class="scan-progress" id="scan-progress" role="progressbar" aria-label="Analysis in progress" aria-valuetext="Analyzing" hidden></div>
 <div class="stats" id="stats"></div>
 <div id="error-banner" role="region" aria-label="Error message" hidden><span id="error-message" tabindex="0" aria-label="Error details"></span><button class="btn small" id="dismiss-error" aria-label="Dismiss error message">Dismiss</button></div>
 <main class="panes" id="panes"><nav class="sidebar" aria-label="Table library" tabindex="-1"><div class="panel-title">EXPLORER <span class="muted" title="Program Specific Information / Service Information">PSI / SI</span></div><div id="sidebar"></div><div class="extension" id="extension"></div><details class="sidebar-help"><summary title="Show shortcut help with ? or Ctrl+/">Keyboard shortcuts</summary>${shortcutRows()}</details></nav><div class="splitter" id="split-left" aria-controls="sidebar" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize explorer" aria-orientation="vertical" tabindex="0"></div><section class="center" aria-label="Stream records" tabindex="-1"><div class="tabs" id="tabs" role="tablist" aria-label="Record type"></div><div class="searchbar"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Search records · &gt; commands · # PID/SID" aria-label="Search records" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded="false" aria-controls="palette-list" title="Search records · &gt; commands · # PID: Packet Identifier / SID: Service Identifier"><div id="command-palette" hidden><div id="palette-list" role="listbox" aria-label="Commands and identifier targets"></div><p id="palette-empty" class="muted"></p></div><span id="palette-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></span><span id="result-count"></span><div id="table-filter-tools" class="table-controls"></div></div><div id="service-head"></div><div class="list" id="list" role="listbox" aria-label="Stream records"></div><div class="pagination"><span id="page-label"></span><span class="spacer"></span><button class="btn small" id="prev" aria-label="Previous page">←</button><button class="btn small" id="next" aria-label="Next page">→</button></div></section><div class="splitter" id="split-right" aria-controls="inspector" title="Drag or use arrow keys to resize. Double-click to reset." role="separator" aria-label="Resize inspector" aria-orientation="vertical" tabindex="0"></div><aside class="inspector" aria-label="Section inspector" id="inspector" tabindex="-1"></aside></main>
@@ -666,15 +669,24 @@ function parseExtraPids(text) {
 function currentScanOptions() {
   let pids = null;
   try { pids = [...new Set(parseExtraPids($("#extra-pids").value))]; } catch (_) {}
-  return {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:pids};
+  return {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:pids,scan_mode:$("#scan-mode").value,budget_unit:$("#scan-budget-unit").value,sample_percent:Number($("#scan-percent").value),max_packets:Number($("#scan-budget").value),start_packet:Number($("#scan-start").value),end_packet:Number($("#scan-end").value),window_count:Number($("#scan-windows").value)};
+}
+function scanIntentKey(options) {
+  return JSON.stringify([workbench.scanOptionsKey(options),options.scan_mode,
+    ["prefix","distributed"].includes(options.scan_mode) ? [options.budget_unit, options.budget_unit === "percent" ? options.sample_percent : options.max_packets] : null,
+    options.scan_mode === "range" ? [options.start_packet,options.end_packet] : null,
+    options.scan_mode === "distributed" ? options.window_count : null]);
 }
 function updateScanOptions() {
   const options = currentScanOptions(), toggle = $("#scan-options-toggle"), summary = $("#scan-options-summary");
-  const text = workbench.scanOptionsSummary(options);
+  for (const [id,hidden] of [["scan-budget",options.budget_unit === "percent"],["scan-percent",options.budget_unit !== "percent"]]) {
+    $("#"+id).hidden = hidden; $('label[for="'+id+'"]').hidden = hidden;
+  }
+  const text = [workbench.scanOptionsSummary(options), options.scan_mode !== "full" ? options.scan_mode + " preview" + (["prefix","distributed"].includes(options.scan_mode) ? " · " + (options.budget_unit === "percent" ? options.sample_percent + "%" : num(options.max_packets) + " packets") : "") : ""].filter(Boolean).join(" · ");
   summary.textContent = text;
   summary.hidden = !$("#scan-options").hidden || !text;
   toggle.title = "Default charset and extra packet identifiers (PIDs) for the next scan" + (text ? " · " + text : "");
-  const changed = data.complete && completedScanOptions && workbench.scanOptionsKey(options) !== workbench.scanOptionsKey(completedScanOptions);
+  const changed = data.complete && completedScanOptions && scanIntentKey(options) !== scanIntentKey(completedScanOptions);
   $("#scan-options-changed").hidden = !changed;
   if (changed) $("#scan").setAttribute("aria-describedby", "scan-options-changed");
   else $("#scan").removeAttribute("aria-describedby");
@@ -689,11 +701,12 @@ $("#scan-options-toggle").onclick = () => setScanOptionsOpen($("#scan-options").
 $("#standards").addEventListener("change", updateScanOptions);
 $("#default-charset").addEventListener("input", updateScanOptions);
 $("#extra-pids").addEventListener("input", updateScanOptions);
+for (const id of ["scan-mode","scan-budget-unit","scan-percent","scan-budget","scan-start","scan-end","scan-windows"]) $("#"+id).addEventListener("change", updateScanOptions);
 function disableBackendActions() {
   if (!backendFailure) return;
   document
     .querySelectorAll(
-      "#scan,#cancel-scan,#browse,#recent,#api,#source,#standards,#default-charset,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
+      "#scan,#pause-scan,#cancel-scan,#browse,#recent,#api,#source,#standards,#default-charset,#extra-pids,#edit,#preview,#export,#latest,#compare-snapshots,#run-comparison,#compare-from,#compare-to,#compare-kind,#swap-comparison,[data-preset],[data-comparison-evidence],[data-history]",
     )
     .forEach((element) => {
       element.disabled = true;
@@ -711,6 +724,7 @@ function disconnectBackend(reason) {
     (exportPending
       ? " An in-flight export may have completed; check its destination before retrying after restart."
       : "");
+  clearProgress(); pausePending = ""; ++resultPageEpoch; resultLoading = false;
   busy = false;
   cancelling = false;
   loadingDetail = false;
@@ -785,15 +799,136 @@ function resetAnalysisViews() {
   if (tab === "Changes") tab = "Services";
   comparison = { from: null, to: null, kind: "all", filters: [], result: null, error: "", loading: false, epoch: comparison.epoch + 1 };
   ++queryEpoch;
+  ++resultPageEpoch; resultPages = {}; resultLoading = false;
+  clearProgress(); pausePending = ""; ++pauseSequence;
   selectionReset();
   editTarget = null;
   invalidatePreview();
   $("#preview").disabled = !!backendFailure;
   if ($("#edit-dialog").open) $("#edit-dialog").close();
 }
-async function cancelScan() {
-  if (!busy || cancelling || activeAnalyze === null || backendFailure) return;
+// Progress is deliberately a tiny DOM update, never a workbench/tree rebuild.
+// Keep only the newest frame for the active generation; terminal and cancel
+// clear the scheduled frame before replacing evidence.
+function clearProgress() {
+  if (progressFrame !== null) cancelAnimationFrame(progressFrame);
+  progressFrame = null; queuedProgress = null;
+}
+function queueProgress(state) {
+  queuedProgress = {state, epoch:scanEpoch, requestId:activeAnalyze};
+  if (progressFrame !== null) return;
+  progressFrame = requestAnimationFrame(() => {
+    progressFrame = null;
+    const update = queuedProgress; queuedProgress = null;
+    if (!update || update.epoch !== scanEpoch || update.requestId !== activeAnalyze || !busy || cancelling || backendFailure) return;
+    data = update.state;
+    if ((pausePending === "pause" && data.analysis_status === "paused") ||
+        (pausePending === "resume" && ["analyzing","finalizing"].includes(data.analysis_status))) pausePending = "";
+    renderScanProgress();
+  });
+}
+function renderScanProgress() {
+  const paused = data.analysis_status === "paused", button = $("#pause-scan");
+  button.hidden = !busy || activeAnalyze === null;
+  button.disabled = cancelling || !!pausePending || activeAnalyze === null || !!backendFailure;
+  button.textContent = pausePending === "pause" ? "Pausing…" : pausePending === "resume" ? "Resuming…" : paused ? "Resume" : "Pause";
+  button.setAttribute("aria-busy", String(!!pausePending));
+  if (resultLoading && activeAnalyze === null) {
+    $("#cancel-scan").hidden = false; $("#cancel-scan").disabled = false; $("#cancel-scan").textContent = "Stop loading";
+  }
+  const status = cancelling ? "Cancelling analysis" : pausePending === "pause" ? "Pause requested; waiting for a safe checkpoint" : pausePending === "resume" ? "Resume requested" : paused ? "Paused · evidence retained · Resume continues this scan · detailed inspection after completion" : resultLoading ? "Loading bounded evidence pages" : busy ? "Analyzing" : "";
+  const fraction = Number(data.progress_fraction);
+  const progress = $("#scan-progress");
+  progress.hidden = !busy;
+  progress.setAttribute("aria-valuetext", status);
+  if (Number.isFinite(fraction)) {progress.setAttribute("aria-valuemin","0");progress.setAttribute("aria-valuemax","100");progress.setAttribute("aria-valuenow",String(Math.round(Math.max(0,Math.min(1,fraction))*100)));}
+  else progress.removeAttribute("aria-valuenow");
+  $("#scan-status").hidden = !busy;
+  $("#scan-status").textContent = status + (busy ? " · " + num(data.coverage?.scanned_packets ?? data.packets) + " packets" + (Number.isFinite(fraction) ? " · " + (100*fraction).toFixed(1) + "%" : "") : "");
+  const coverage = data.coverage;
+  $("#scan-coverage").hidden = !coverage;
+  if (coverage) $("#scan-coverage").textContent = (coverage.partial ? "PARTIAL PREVIEW · READ-ONLY · " : "Coverage · ") + coverage.mode + " · " + num(coverage.scanned_packets) + " / " + num(coverage.source_packets) + " packets · " + (data.complete ? "observed" : "planned") + " ranges [start, end): " + (coverage.ranges || []).map(r => "[" + num(r.start_packet) + ", " + num(r.end_packet) + ")").join("; ") + (coverage.partial ? " · Unread gaps are unknown, not absent. Full scan required to edit/export." : "");
+}
+async function pauseScan() {
+  if (!busy || cancelling || pausePending || activeAnalyze === null || backendFailure) return;
   const epoch = scanEpoch, requestId = activeAnalyze;
+  const controlSequence = ++pauseSequence;
+  const action = data.analysis_status === "paused" ? "resume" : "pause";
+  pausePending = action; renderScanProgress();
+  try {
+    const result = await call(action + "_analysis", {request_id:requestId});
+    if (epoch !== scanEpoch || requestId !== activeAnalyze || controlSequence !== pauseSequence) return;
+    if (!result.requested) {pausePending = "";notice("Analysis is finishing; waiting for its terminal result");}
+    // ACK is not a reached pause checkpoint. Owner progress is authoritative.
+  } catch (error) {
+    if (epoch !== scanEpoch || requestId !== activeAnalyze || controlSequence !== pauseSequence) return;
+    pausePending = ""; notice("Could not confirm " + action + ": " + String(error), true);
+  }
+  renderScanProgress();
+}
+async function hydrateResult(result, valid) {
+  const epoch = ++resultPageEpoch;
+  resultPages = {};
+  if (result.response_mode !== "compact") return;
+  resultLoading = true;
+  renderScanProgress();
+  try {
+    for (const collection of resultCollections) {
+      result[collection] = [];
+      let offset = 0, expectedTotal = null;
+      if (result.result_counts?.[collection] === 0) continue;
+      do {
+        if (!valid() || epoch !== resultPageEpoch || backendFailure) return;
+        const response = await call("query_result", {analysis_revision:result.revision,collection,offset,limit:200,...(result.selected_packet != null ? {at_packet:result.selected_packet} : {})});
+        if (!valid() || epoch !== resultPageEpoch || backendFailure) return;
+        if (response.analysis_revision !== result.revision || response.collection !== collection || (response.at_packet ?? null) !== (result.selected_packet ?? null) || !Array.isArray(response.items) ||
+            (response.next_offset != null && (!Number.isSafeInteger(response.next_offset) || response.next_offset <= offset))) throw new Error("Result page identity or cursor mismatch");
+        if (!Number.isSafeInteger(response.total) || response.total < 0 || (expectedTotal !== null && response.total !== expectedTotal) ||
+            offset + response.items.length > response.total || (response.next_offset != null && response.next_offset !== offset + response.items.length) ||
+            (response.next_offset == null && offset + response.items.length !== response.total)) throw new Error("Result page count mismatch");
+        expectedTotal = response.total;
+        result[collection].push(...response.items);
+        result.result_counts[collection] = response.total;
+        resultPages[collection] = {offset:0,next:response.next_offset,total:response.total,count:result[collection].length};
+        offset = response.next_offset;
+        renderResultPages();
+        // Decode and consume bounded batches, yielding input between each. Full
+        // hydration preserves global search/count/history semantics; this is not
+        // an on-disk index or an overall memory bound for captured evidence.
+        await new Promise(resolve => setTimeout(resolve,0));
+      } while (offset != null);
+    }
+    const memberships = new Map();
+    for (const row of result.tables || []) {
+      if (!row.table_group_id) continue;
+      if (!memberships.has(row.table_group_id)) memberships.set(row.table_group_id,{all:[],selected:[]});
+      const members = memberships.get(row.table_group_id); members.all.push(row.id);
+      if (row.selected_in_snapshot) members.selected.push(row.id);
+    }
+    for (const group of result.table_groups || []) {
+      if (!group.member_ids_truncated) continue;
+      const members = memberships.get(group.id);
+      if (members) {group.section_ids = members.all;group.selected_section_ids = members.selected;group.member_ids_truncated = false;}
+    }
+  } finally {if (epoch === resultPageEpoch) {resultLoading = false;renderResultPages();}}
+}
+function renderResultPages() {
+  const host = $("#result-pages");
+  host.hidden = !resultLoading;
+  if (!resultLoading) return;
+  host.textContent = "Loading evidence in bounded pages · " + Object.entries(resultPages).map(([key,p]) => key + " " + num(p.count) + "/" + num(p.total)).join(" · ") + ". Search and complete counts become available after loading.";
+}
+
+async function cancelScan() {
+  if (resultLoading && activeAnalyze === null) {
+    const source = data.source;
+    ++scanEpoch; resetAnalysisViews(); busy = false; cancelling = false;
+    data = {source,complete:false,analysis_status:"loading_cancelled"};
+    render(); notice("Result loading stopped · incomplete displayed evidence cleared · source unchanged", "warning");
+    $("#scan").focus(); return;
+  }
+  if (!busy || cancelling || activeAnalyze === null || backendFailure) return;
+  const epoch = scanEpoch, requestId = activeAnalyze, wasPaused = data.analysis_status === "paused";
   cancelling = true;
   resetAnalysisViews();
   data = {};
@@ -809,6 +944,7 @@ async function cancelScan() {
   } catch (error) {
     if (epoch !== scanEpoch || activeAnalyze !== requestId) return;
     cancelling = false;
+    if (wasPaused) data.analysis_status = "paused";
     render();
     notice("Cancellation was not confirmed: " + String(error) + ". Analysis is still pending.", true);
   }
@@ -832,7 +968,13 @@ async function scan() {
     return;
   }
   setExtraPidsError("");
-  const options = {standards:$("#standards").value,default_charset:$("#default-charset").value.trim(),extra_pids:[...new Set(extraPids)]};
+  const options = currentScanOptions();
+  const integer = (value, min) => Number.isSafeInteger(value) && value >= min;
+  if ((["prefix","distributed"].includes(options.scan_mode) && (options.budget_unit === "percent" ? (!integer(options.sample_percent,1) || options.sample_percent > 100) : !integer(options.max_packets, 1))) ||
+      (options.scan_mode === "range" && (!integer(options.start_packet,0) || !integer(options.end_packet,1) || options.end_packet <= options.start_packet)) ||
+      (options.scan_mode === "distributed" && (!integer(options.window_count,1) || options.window_count > 16))) {
+    notice("Choose 1–100 percent or a positive integer packet budget, an increasing packet range, and 1–16 windows.", true); return;
+  }
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
@@ -846,12 +988,16 @@ async function scan() {
   firstPaint = false;
   completePaint = false;
   render();
-  notice("Analyzing stream… incremental results appear below");
+  notice("Analyzing stream… progress updates stay lightweight; evidence loads in bounded pages");
   let succeeded = false;
   try {
     recentFiles=normalizeRecentFiles([path,...recentFiles]);saveRecentFiles();closeRecentFiles();renderRecentFiles();
     const operation = call("analyze", {
       path,
+      response_mode: "compact", scan_mode: options.scan_mode,
+      ...(["prefix","distributed"].includes(options.scan_mode) ? (options.budget_unit === "percent" ? {sample_percent:options.sample_percent} : {max_packets:options.max_packets}) : {}),
+      ...(options.scan_mode === "range" ? {start_packet:options.start_packet,end_packet:options.end_packet} : {}),
+      ...(options.scan_mode === "distributed" ? {window_count:options.window_count} : {}),
       standards: options.standards,
       default_charset: options.default_charset,
       ...(options.extra_pids.length ? { extra_pids: options.extra_pids } : {}),
@@ -859,10 +1005,13 @@ async function scan() {
     render();
     const result = await operation;
     if (epoch !== scanEpoch) return;
+    clearProgress(); activeAnalyze = null; pausePending = "";
+    data = {...result,complete:false,analysis_status:"loading_results"};
+    await hydrateResult(result, () => epoch === scanEpoch);
+    if (epoch !== scanEpoch) return;
     data = result;
     if (result.complete) completedScanOptions = options;
     succeeded = true;
-    render();
     notice(
       (cancelling ? "Analysis completed before cancellation took effect · " : "Analysis complete · ") +
         num(data.packets) +
@@ -883,6 +1032,7 @@ async function scan() {
   } finally {
     if (epoch === scanEpoch) {
       const returnFocus = cancelling && (document.activeElement === $("#cancel-scan") || document.activeElement === document.body);
+      clearProgress(); pausePending = "";
       busy = false;
       cancelling = false;
       activeAnalyze = null;
@@ -916,7 +1066,7 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
   else $("#list").querySelectorAll("[data-comparison-evidence]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.evidenceKey === selectedKey)));
   try {
     const result = await call("inspect", {
-      id,
+      id, occurrence_offset:0, occurrence_limit:200,
       ...(atPacket != null ? { at_packet: atPacket } : {}),
       ...(['topology','protocol'].includes(evidence?.kind) ? {analysis_revision:evidence.ref.analysis_revision} : {}),
     });
@@ -983,10 +1133,14 @@ function activateHistory(entry) {
   if(!entry.valid) showBadCrc=true;
   snapshot(entry.at_packet,entry.id);
 }
+function packetWasObserved(packet) {
+  return !data.coverage?.partial || (data.coverage.ranges || []).some(range => packet >= range.start_packet && packet < range.end_packet);
+}
 async function snapshot(packet, id, sid = -1) {
   clearTimeout(pendingSnapshotTimer);
   pendingSnapshotTimer = null;
   if (busy || backendFailure) return;
+  if (packet >= 0 && !packetWasObserved(packet)) {notice("That packet was not scanned. The gap is unknown; choose an observed range or run a full scan.", "warning");return;}
   if (tab === "Changes") changeTab("Services");
   const epoch = ++queryEpoch;
   editTarget = null;
@@ -997,7 +1151,12 @@ async function snapshot(packet, id, sid = -1) {
   renderInspector();
   notice("Loading packet snapshot…");
   try {
-    const result = await call("query", packet < 0 ? {} : { at_packet: packet });
+    const result = await call("query", {response_mode:"compact", ...(packet < 0 ? {} : {at_packet:packet})});
+    if (epoch !== queryEpoch) return;
+    // Publish the new cutoff only with its hydrated evidence and rendered
+    // slider. Early metadata would let the next key reuse an old slider step.
+    data = {...result,selected_packet:data.selected_packet,complete:false,analysis_status:"loading_results"};
+    await hydrateResult(result, () => epoch === queryEpoch);
     if (epoch !== queryEpoch) return;
     data = result;
     page = 0;
@@ -1011,7 +1170,13 @@ async function snapshot(packet, id, sid = -1) {
         : "Snapshot through packet " + num(packet),
     );
   } catch (error) {
-    if (epoch === queryEpoch) notice(String(error), true);
+    if (epoch === queryEpoch) {
+      if (data.analysis_status === "loading_results") {
+        const source = data.source;
+        resetAnalysisViews(); data = {source,complete:false,analysis_status:"failed"}; render();
+      }
+      notice(String(error), true);
+    }
   }
 }
 function isOtherTable(t) {
@@ -1093,6 +1258,7 @@ function renderExplorer() {
   if (restoreFocus) buttons.find(el => el.dataset.explorerKey === explorerFocusKey)?.focus();
 }
 function render() {
+  renderScanProgress(); renderResultPages();
   dvbiWorkspace?.update();
   updateScanOptions();
   const issues = workbench.issueCounts(data.diagnostics || []);
@@ -1114,7 +1280,7 @@ function render() {
     [
       "SCAN",
       data.metrics ? Number(data.metrics.scan_ms).toFixed(1) + " ms" : "—",
-      cancelling ? "Cancelling…" : busy ? "Analyzing…" : data.analysis_status === "cancelled" ? "Cancelled" : data.analysis_status === "failed" ? "Failed" : data.complete ? "Complete" : "No source",
+      cancelling ? "Cancelling…" : busy ? "Analyzing…" : ["cancelled","loading_cancelled"].includes(data.analysis_status) ? "Cancelled" : data.analysis_status === "failed" ? "Failed" : data.complete ? "Complete" : "No source",
     ],
   ];
   $("#stats").innerHTML = stats
@@ -1130,16 +1296,13 @@ function render() {
   $("#scan").disabled = busy || !native || !!backendFailure;
   $("#browse").disabled = busy || !native || !!backendFailure;
   $("#recent").disabled = busy || !native || !!backendFailure;
-  $("#scan").textContent = busy ? "Analyzing…" : "Analyze";
-  $("#cancel-scan").hidden = !busy;
-  $("#cancel-scan").disabled = cancelling || activeAnalyze === null || !!backendFailure;
-  $("#cancel-scan").textContent = cancelling ? "Cancelling…" : "Cancel";
+  $("#scan").textContent = busy ? (resultLoading ? "Loading…" : data.analysis_status === "paused" ? "Paused" : "Analyzing…") : "Analyze";
+  $("#cancel-scan").hidden = !busy && !resultLoading;
+  $("#cancel-scan").disabled = cancelling || (activeAnalyze === null && !resultLoading) || !!backendFailure;
+  $("#cancel-scan").textContent = cancelling ? "Cancelling…" : resultLoading ? "Stop loading" : "Cancel";
   $("#cancel-scan").setAttribute("aria-busy", String(cancelling));
-  $("#scan-progress").hidden = !busy;
-  $("#scan-progress").setAttribute(
-    "aria-valuetext",
-    cancelling ? "Cancelling analysis" : busy ? "Analyzing transport stream" : "Idle",
-  );
+  renderScanProgress();
+  for (const id of ["scan-mode","scan-budget-unit","scan-percent","scan-budget","scan-start","scan-end","scan-windows"]) $("#"+id).disabled = busy;
   $("#source").disabled = busy;
   $("#standards").disabled = busy;
   $("#extra-pids").disabled = busy;
@@ -1207,7 +1370,8 @@ function render() {
     );
   }
 }
-function recordRows() {
+function recordRows(tableModel = null) {
+  if (tab === "Tables") return (tableModel || workbench.tables(data,pidFilter,filter,showBadCrc,search)).sections;
   let rows =
     tab === "Services"
       ? data.services || []
@@ -1216,7 +1380,6 @@ function recordRows() {
         : tab === "EPG"
           ? data.events || []
           : data.diagnostics || [];
-  if (tab === "Tables") return workbench.tables(data,pidFilter,filter,showBadCrc,search).sections;
   rows = rows.filter(row=>workbench.matches(row,search));
   return tab === "Tables" ? [...rows].sort((a,b) => a.pid-b.pid || a.table_id-b.table_id || a.extension-b.extension || a.version-b.version || a.section-b.section) : rows;
 }
@@ -1248,8 +1411,8 @@ function renderList() {
     return;
   }
   if (tab === "Topology") { renderTopology(); return; }
-  const rows = recordRows();
-  const tableModel = workbench.tables(data,pidFilter,filter,showBadCrc,search);
+  const tableModel = tab === "Tables" ? workbench.tables(data,pidFilter,filter,showBadCrc,search) : {groups:[],sections:[]};
+  const rows = recordRows(tableModel);
   const groups = tab === "Tables" && groupedTables ? tableModel.groups : [];
   const total = tab === "Tables" && groupedTables ? groups.length : rows.length;
   page = Math.max(0, Math.min(page, Math.ceil(total / PAGE_SIZE) - 1));
@@ -1267,8 +1430,10 @@ function renderList() {
   });
   $("#table-group-toggle")?.addEventListener("click", () => { groupedTables = !groupedTables; page = 0; renderList(); });
   $("#show-bad-crc")?.addEventListener("change", e => { showBadCrc = e.target.checked; page = 0; renderList(); });
-  $("#list").innerHTML = rows
-    .slice(tab === "Tables" && groupedTables ? 0 : start, tab === "Tables" && groupedTables ? rows.length : start + PAGE_SIZE)
+  const displayedGroups = groups.slice(start,start+PAGE_SIZE);
+  const displayedIds = new Set(displayedGroups.flatMap(group => group.section_ids));
+  const visibleRows = tab === "Tables" && groupedTables ? rows.filter(row => displayedIds.has(row.id)) : rows.slice(start,start+PAGE_SIZE);
+  $("#list").innerHTML = visibleRows
     .map((r, i) => {
       const key = rowIdentity(r, start + i);
       let body = "";
@@ -1285,8 +1450,8 @@ function renderList() {
     .join("");
   if (!rows.length)
     $("#list").innerHTML =
-      `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${cancelling ? "Cancelling analysis…" : busy ? "Reading transport stream…" : data.analysis_status === "cancelled" ? "Analysis cancelled" : data.analysis_status === "failed" ? "Analysis failed" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${cancelling ? "Waiting for the engine to stop. The source file stays unchanged." : ["cancelled", "failed"].includes(data.analysis_status) ? "Partial results were cleared. Analyze again when you are ready." : !data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : ["Services", "EPG"].includes(tab) && (data.tables || []).length ? "This view shows derived " + (tab === "Services" ? "services" : "programme events") + ". Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "Choose another table family or packet snapshot."}</p></div>`;
-  const visible = tab === "Tables" && groupedTables ? rows : rows.slice(start, start + PAGE_SIZE);
+      `<div class="empty"><span class="empty-icon">${busy ? "◌" : data.source ? "⌕" : "▦"}</span><h3>${cancelling ? "Cancelling analysis…" : busy ? "Reading transport stream…" : data.analysis_status === "loading_cancelled" ? "Result loading stopped" : data.analysis_status === "cancelled" ? "Analysis cancelled" : data.analysis_status === "failed" ? "Analysis failed" : !data.source ? "Explore your transport stream" : search ? "No matching records" : "No " + tab.toLowerCase() + " in this state"}</h3><p>${cancelling ? "Waiting for the engine to stop. The source file stays unchanged." : ["cancelled", "loading_cancelled", "failed"].includes(data.analysis_status) ? "Partial results were cleared. Analyze again when you are ready." : !data.source ? "Open a TS file to inspect PSI/SI tables, decoded fields and their original bytes." : search ? "Try another name, decimal identifier or hexadecimal value." : ["Services", "EPG"].includes(tab) && (data.tables || []).length ? "This view shows derived " + (tab === "Services" ? "services" : "programme events") + ". Open Tables for native signalling fields and raw evidence; an empty projection does not mean decoding failed." : "Choose another table family or packet snapshot."}</p></div>`;
+  const visible = visibleRows;
   $("#list")
     .querySelectorAll("[data-row]")
     .forEach((el) => {
@@ -1918,6 +2083,7 @@ function bindInspectorSummary(panel, scroll) {
 // One reason per blocked state, in the order a user can resolve them.
 function editBlockReason() {
   if (backendFailure) return "Backend disconnected";
+  if (data.coverage?.partial) return "Partial preview is read-only; run a full scan to edit or export";
   if (busy) return "Wait for the analysis to finish";
   if (comparisonEvidence) return "Unavailable while inspecting comparison evidence; use the snapshot first";
   if (detail.table_id !== 0x42) return "Rename needs an SDT (Service Description Table) section";
@@ -2191,7 +2357,7 @@ function renderTimeline() {
   const history=workbench.history(data,detail,allTableHistory);
   historyPage=Math.min(historyPage,Math.max(0,Math.ceil(history.length/40)-1));
   const bins = (data.density || []).length || 80;
-  const packets = Number(data.packets || 0);
+  const packets = Number(data.coverage?.source_packets || data.packets || 0);
   // A query response re-renders the strip and replaces the focused slider, so
   // remember whether the user was operating it and restore focus afterwards.
   const timelineFocus = $("#density")?.contains(document.activeElement) ? document.activeElement.id : "";
@@ -2200,8 +2366,13 @@ function renderTimeline() {
   const cursorPercent = at === null ? null : packets > 1 ? Math.min(100, (at / (packets - 1)) * 100) : 100;
   const interactive = data.complete && !busy && !backendFailure;
   const middle = packets > 1 ? Math.round((packets - 1) / 2) : 0;
+  const observedBin = index => {
+    if (!data.coverage?.partial) return true;
+    const start = Math.floor(index*packets/bins), end = Math.ceil((index+1)*packets/bins);
+    return (data.coverage.ranges || []).some(range => range.start_packet <= start && range.end_packet >= end);
+  };
   $("#timeline").innerHTML =
-    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}${[["from", "a", "A"], ["to", "b", "B"]].map(([side, key, label]) => `<span id="comparison-marker-${key}" class="comparison-marker" data-comparison-marker="${side}" role="slider" tabindex="-1" aria-label="Comparison ${label} packet" aria-valuemin="0" aria-valuemax="0" hidden><span aria-hidden="true">${label}</span></span>`).join("")}<div class="bins">${dense.map((b, index) => `<div class="bin ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1), data.timing, true)}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
+    `<div class="timeline-top"><span class="panel-title">ALL TABLE ARRIVALS</span><span class="meta">${num(bins)} packet-position bins${data.coverage?.partial ? " · hatched: unread / partly read (unknown)" : ""} <span class="legend-valid">■</span> sections <span class="neg">■</span> invalid</span><span class="spacer"></span><button class="btn small" id="compare-snapshots" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Compare snapshots</button><button class="btn small" id="latest" ${busy || backendFailure || !data.complete ? "disabled" : ""}>Latest state</button></div><div class="density" id="density" role="slider" tabindex="${interactive ? 0 : -1}" aria-label="Snapshot position in this transport stream" aria-valuemin="0" aria-valuemax="${Math.max(0, packets - 1)}" aria-valuenow="${at === null ? 0 : at}" aria-valuetext="${at === null ? "Latest observed state" : "Snapshot at packet " + num(at)}" ${interactive ? "" : 'aria-disabled="true"'}>${cursorPercent === null ? "" : `<span class="bin-cursor" style="left:${cursorPercent}%" aria-hidden="true"></span>`}${[["from", "a", "A"], ["to", "b", "B"]].map(([side, key, label]) => `<span id="comparison-marker-${key}" class="comparison-marker" data-comparison-marker="${side}" role="slider" tabindex="-1" aria-label="Comparison ${label} packet" aria-valuemin="0" aria-valuemax="0" hidden><span aria-hidden="true">${label}</span></span>`).join("")}<div class="bins">${dense.map((b, index) => `<div class="bin ${observedBin(index) ? "" : "unobserved"} ${b.bad && b.count && b.bad >= b.count ? "invalid" : ""}" data-bin="${index}" style="--density-alpha:${b.count ? 0.35 + Math.min(0.65, b.count / 50) : 0.12}${b.bad && b.count ? `;--invalid:${Math.min(1, b.bad / b.count)}` : ""}" title="Bin ${index + 1}${observedBin(index) ? "" : " · unread/partly read: absence unknown"} · ${num(b.count)} sections · ${num(b.bad)} invalid${interactive ? " · click to load this position" : ""}">${b.bad ? '<span class="bin-invalid" aria-hidden="true"></span>' : ""}</div>`).join("")}</div>${arrivalAxis(0, Math.max(0, packets - 1), data.timing, true)}</div><div class="history-scope"><select id="history-scope" aria-label="Table history scope"><option value="selected" ${allTableHistory?"":"selected"}>Selected table history</option><option value="all" ${allTableHistory?"selected":""}>All table history</option></select><span class="meta">${history.length} section transitions · first completed packet</span></div><div class="history">${history
       .slice(historyPage * 40, (historyPage + 1) * 40)
       .map(
         (h, i) =>
@@ -2373,6 +2544,7 @@ $("#export").onclick = async () => {
 };
 $("#scan").onclick = scan;
 $("#cancel-scan").onclick = cancelScan;
+$("#pause-scan").onclick = pauseScan;
 $("#source").onkeydown = (e) => {
   if (e.key === "Enter") scan();
 };
@@ -2720,8 +2892,9 @@ function uiState() {
   });
   return {schema_version:1,frontend:env.runtime === "cloud-browser" ? "web" : "tauri",captured_at:new Date().toISOString(),
     input_kind:dvbiWorkspace.getState().active?"dvbi":"ts",dvbi:dvbiWorkspace.getState(),
-    settled:!dvbiWorkspace.getState().loading && !dvbiWorkspace.getState().importing && !dvbiWorkspace.getState().inspectLoading && !busy && !loadingDetail && !comparison.loading && pending.size === 0 && !pendingSnapshotTimer,
+    settled:!resultLoading && !dvbiWorkspace.getState().loading && !dvbiWorkspace.getState().importing && !dvbiWorkspace.getState().inspectLoading && !busy && !loadingDetail && !comparison.loading && pending.size === 0 && !pendingSnapshotTimer,
     runtime:{driver:env.driver,user_agent:navigator.userAgent},viewport:{width:innerWidth,height:innerHeight,device_pixel_ratio:devicePixelRatio},
+    scan_control:{busy,cancelling,pause_pending:pausePending,request_id:activeAnalyze,coverage:data.coverage,result_loading:resultLoading,result_pages:resultPages},
     source:data.source || "",analysis_status:data.analysis_status || "idle",selected,selected_service:selectedService,packet:data.selected_packet,
     theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
     records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
@@ -2801,8 +2974,7 @@ async function boot() {
     if (backendFailure) return;
     if (msg.event) {
       if (msg.event === "progress" && busy && !cancelling && msg.request_id === activeAnalyze && pending.get(msg.request_id)?.method === "analyze" && msg.state && typeof msg.state === "object" && !Array.isArray(msg.state)) {
-        data = msg.state;
-        render();
+        queueProgress(msg.state);
       }
       return;
     }
@@ -2811,6 +2983,7 @@ async function boot() {
     recentResponses.push({id:msg.id, method:job.method, ok:!msg.error, error:msg.error?.message || "", at:new Date().toISOString()});
     if (recentResponses.length > 40) recentResponses.shift();
     pending.delete(msg.id);
+    if (job.method === "analyze") clearProgress();
     clearTimeout(job.timer);
     if (msg.error) {
       const error = new Error(msg.error.message);
@@ -2840,6 +3013,7 @@ async function boot() {
 window.showpsisi = {
   scan,
   cancelScan,
+  pauseScan,
   snapshot,
   inspect,
   call,

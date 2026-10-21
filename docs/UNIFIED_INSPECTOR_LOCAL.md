@@ -1,8 +1,50 @@
 # Unified Qt inspector — local implementation checkpoint
 
-2026-10-21. **Incomplete delivery: source implemented and native component tested;
-the complete application build and pixel review are blocked.** No remote push,
+2026-10-21 update. **Complete Windows application now builds and runs; native
+synthetic-stream workflow and five screenshots reviewed at verified 150% DPI.**
+Same-owner-stream and some acceptance cases remain pending. No remote push,
 PR, release, installation or replacement of the owner's application occurred.
+
+## Current runnable result (supersedes earlier blocked checkpoints below)
+
+Launch `scripts/run-unified-local.ps1`, optionally with `-Sample <absolute TS path>`.
+It runs this worktree's `build/bin/showpsisi-qt.exe` with separate settings and
+the original shared SDK runtime, without modifying installed application files.
+
+User approval for six exact Qt tools resolved the full build. Two build cycles
+completed with exit 0. Both restored all six exact original security descriptors
+and content hashes in finally blocks; qmltestrunner was not modified. Evidence:
+`artifacts/unified-inspector/approved-six-operation-build1.json` and
+`approved-six-operation.json`, plus `approved-six-gui-build.log`.
+
+The complete application (not qmltestrunner) was run with the real C++ backend.
+`tests/verify_unified_native.py` reproduces the native diagnostic-session checks.
+The 11 checks in `full-app-keyboard/report.json` pass: initial open, five table
+selections, Alt+Left restoring field path, repeat scan, F6/Home/Enter selection,
+cancel a repeated synthetic stream, and reopen after cancellation. File loading
+uses the application's source/scan path via its explicitly enabled local
+diagnostic session; the native OS file picker itself was not exercised.
+
+Five full-app screenshots under `full-app-150-corrected` were inspected as pixels:
+PAT program/PMT association; PMT descriptor fields; BAT fields with exact hex;
+TDT/TOT UTC observations without invented long-header fields. The window is
+1280x800 logical and captures are 1920x1200 pixels. The first run accidentally
+multiplied system 200% by requested 150%; that evidence is retained in
+`full-app-150` but is NOT claimed as 150% acceptance. Test-only high-DPI settings
+corrected the second run without changing Windows settings. Convenient unchanged
+copies of reviewed screenshots are `full-PAT-150.png` through `full-TOT-150.png`.
+
+Remaining limits: checked core/Qt baseline has no pause/resume API, so that
+workflow is NOT RUN (cancel/reopen is not pause/resume). Full-app long-table
+pagination and multi-section EIT are not yet exercised. Fixture lacks service
+names. Owner stream remains unavailable. User reference pixels remain blocked
+by the official materializer. Runtime logs retain an Accessible attachment
+warning and two recursive-layout warnings; no crash or unreadable fields were
+observed in reviewed scenes. No claim that these warnings are resolved.
+
+Official Library exact-name search returned no confirmed matches for any of
+the five prior component screenshots. No Library IDs are confirmed; no blind
+repeat upload was made. Local full-app PNGs are available for delivery.
 
 ## Source and isolation
 

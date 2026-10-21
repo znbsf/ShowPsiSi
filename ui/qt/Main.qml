@@ -588,6 +588,7 @@ ApplicationWindow {
         let diagnostics = core.diagnostics();
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
+            unified: {visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -602,6 +603,13 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
+        if(action.name==="unified_path" && !advancedMode && unifiedInspector.nodes.some(function(n){return n.path===action.path;})){unifiedInspector.selectedPath=action.path;return JSON.stringify({accepted:true});}
+        if(action.name==="unified_back" && !advancedMode){unifiedInspector.back();return JSON.stringify({accepted:true});}
+        if(action.name==="unified_hex" && typeof action.value==="boolean"){unifiedInspector.hexOpen=action.value;return JSON.stringify({accepted:true});}
+        if(action.name==="open_source" && typeof action.path==="string" && backendReady){source.text=action.path;scan();return JSON.stringify({accepted:true});}
+        if(action.name==="cancel_scan" && core.busy){cancelScan();return JSON.stringify({accepted:true});}
+        if(action.name==="window_size" && action.width>=1000 && action.width<=1920 && action.height>=680 && action.height<=1200){win.width=action.width;win.height=action.height;return JSON.stringify({accepted:true});}
         if(action.name==="input_kind" && ["ts","dvbi"].indexOf(action.value)>=0 && !dvbiWorkspace.busy && !core.busy){inputKind=action.value;return JSON.stringify({accepted:true});}
         if(action.name.indexOf("dvbi_")===0){inputKind="dvbi";return JSON.stringify(dvbiWorkspace.action(action)?{accepted:true}:{error:"Unsupported DVB-I UI action"});}
         if (action.name === "select_tab" && ["Services", "Topology", "Tables", "EPG", "Issues", "Changes"].indexOf(action.value) >= 0) tab = action.value;

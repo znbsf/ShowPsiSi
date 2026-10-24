@@ -445,7 +445,9 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 if(p+5>end){issue(r,"service_loop_truncated",p,"Incomplete SDT service header");break;}
                 int sid=u16(b,p); size_t n=u16(b,p+3)&0xfff;
                 J s={{"id",sid},{"name","Service "+std::to_string(sid)},{"provider",""},{"group","Unassigned"},{"logical_channel_number",nullptr},{"source_id",r.id},{"ts_id",r.ext},{"onid",u16(b,8)},{"encrypted",(b[p+3]&0x10)!=0}};
-                J decoded=descriptors(r,p+5,p+5+n,sid); s.update(decoded); r.services.push_back(s); p+=5+n;
+                J decoded=descriptors(r,p+5,p+5+n,sid); s.update(decoded);
+                s["name_from_descriptor"]=decoded.contains("name") && decoded["name"].is_string() && !decoded["name"].get<std::string>().empty();
+                r.services.push_back(s); p+=5+n;
             }
         } else if(r.tid==0&&b.size()>=12) {
             r.fields["programs"]=J::array();
@@ -575,6 +577,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 {"name",nativeTableName(r)},{"version",(data[1]&0x80)?J(ver):J()}, {"section",num},{"current",r.current},{"valid",r.valid},
                 {"first_packet",first},{"at_packet",last},{"last_packet",last},{"observations",1}});
             if(r.j94){auto& item=tableHistory.back();for(const auto* field:{"extension","version","section","current"})item[field]=nullptr;item["versioning_supported"]=false;item["header_semantics"]="J.94 exact section observation; no wire version/section numbering";}
+            if(r.tid==0x70||r.tid==0x73){auto& item=tableHistory.back();for(const auto* field:{"extension","version","section","current"})item[field]=nullptr;item["versioning_supported"]=false;item["header_semantics"]="DVB short syntax; exact time observation";if(r.fields.contains("utc_time"))item["utc_time"]=r.fields["utc_time"];}
         } else {
             auto& entry=tableHistory[slot->second]; entry["last_packet"]=last;
             entry["observations"]=entry["observations"].get<uint64_t>()+1;
@@ -611,6 +614,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         return out;
     }
     J evidenceIdentity(const Record& r) const {
+        if(r.tid==0x70||r.tid==0x73)return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",nullptr},{"version",nullptr},{"current_next",nullptr},{"section_number",nullptr},{"last_section_number",nullptr},{"versioning_supported",false},{"header_semantics","DVB short syntax; exact section observation"}};
         if(r.j94)return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",nullptr},{"version",nullptr},{"current_next",nullptr},{"section_number",nullptr},{"last_section_number",nullptr},{"versioning_supported",false},{"header_semantics","J.94 short envelope; exact section observation, not an assembled map"}};
         return {{"table_key",tableGroup(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"current_next",r.current},{"section_number",r.number},{"last_section_number",r.last}};
     }
@@ -640,7 +644,13 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
         J out={{"id",r.id},{"key",r.key},{"name",nativeTableName(r)},{"pid",r.pid},{"table_id",r.tid},{"extension",r.ext},{"version",r.version},{"section",r.number},{"last_section",r.last},{"current",r.current},{"valid",r.valid},{"bytes",r.raw.size()},{"count",count},{"first_packet",r.positions.empty()?0:r.positions.front()},{"last_packet",count?*(stop-1):0},{"issue_count",r.issues.size()}};
         if(r.tid>=0x4e&&r.tid<=0x6f&&r.raw.size()>=14){out["segment_last_section_number"]=r.raw[12];out["last_table_id"]=r.raw[13];}
         if(r.j94){for(const auto* key:{"extension","version","section","last_section","current"})out[key]=nullptr;out["versioning_supported"]=false;out["header_semantics"]="J.94 short envelope; no wire version/section numbering";}
+        if(r.tid==0x70||r.tid==0x73){
+            for(const auto* key:{"extension","version","section","last_section","current"})out[key]=nullptr;
+            out["versioning_supported"]=false;out["header_semantics"]="DVB short syntax; no wire version/current-next/section numbering";
+            if(r.fields.contains("utc_time"))out["utc_time"]=r.fields["utc_time"];
+        }
         out["identity"]=evidenceIdentity(r);out["crc"]=crcEvidence(r);if(includeDistribution)out["distribution"]=distribution({&r},at,control);
+
         return out;
     }
     J tableGroups(uint64_t at,const std::shared_ptr<AnalysisControl>& control=nullptr,bool includeDistribution=true) const {
@@ -672,8 +682,9 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
             for(const auto* key:{"extension","version","last_section","current"})group[key]=nullptr;
             for(const auto* key:{"observed_section_numbers","valid_section_numbers","invalid_section_numbers","missing_section_numbers","missing_valid_section_numbers","selected_missing_section_numbers","expected_section_numbers"})group[key]=J::array();
             group["versioning_supported"]=false;group["selected_complete"]=false;
-            group["coverage_model"]="exact J.94 section observation; map assembly unsupported";
-            group["coverage_scope"]="No inferred version, missing ranges or complete network/channel map";
+            const bool dvbTime=group["table_id"]==0x70||group["table_id"]==0x73;
+            group["coverage_model"]=dvbTime?"exact DVB time section observation; no section numbering":"exact J.94 section observation; map assembly unsupported";
+            group["coverage_scope"]=dvbTime?"Content observations; no inferred wire version or numbered-section coverage":"No inferred version, missing ranges or complete network/channel map";
         }
         return result;
     }
@@ -1411,7 +1422,7 @@ public:
             require(candidate.is_object()&&candidate.contains("id")&&candidate["id"].is_string()&&!candidate["id"].get<std::string>().empty(),"nonempty string id required");
             require(candidate.contains("descriptors")&&candidate["descriptors"].is_array(),"descriptors must be an array");
             std::set<std::tuple<uint64_t,unsigned,unsigned>> descriptorScopes;
-            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","lcn_status","lcn_candidates","lcn_list_candidates","lcn_list_status","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
+            const std::set<std::string> reservedFields={"id","key","source_id","ts_id","onid","encrypted","service_id","pmt_pid","components","name","provider","type","title","text","start","duration_seconds","service_type","service_type_name","audio_pids","video_pids","media_status","name_from_descriptor","lcn_status","lcn_candidates","lcn_list_candidates","lcn_list_status","lcn_scope","language_variants","default_language","language_selection","identifier_lookups","text_diagnostics"};
             for(const auto& d:candidate["descriptors"]){
                 require(d.is_object(),"descriptor must be an object");
                 require(d.contains("tag")&&integer(d["tag"],255),"tag must be 0..255");

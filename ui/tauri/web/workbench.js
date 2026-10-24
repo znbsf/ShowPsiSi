@@ -365,6 +365,7 @@ workbench.structure = function(detail, scope, sid, state) {
   var context={detail:detail,state:state,path:'native',referenceSelection:{}};
   var header={};
   ['pid','table_id','extension','version','current','section','last_section','versioning_supported','header_semantics','bytes','valid','crc','detected_standards'].forEach(function(k) {if(detail[k]!==undefined) header[k]=detail[k];});
+  if(detail.versioning_supported===false)['extension','version','current','section','last_section'].forEach(function(k){delete header[k];});
   var children=[workbench.objectNode('header','Section header',header)];
   var sdk=scope==='section'?detail.section_native_table:(detail.merged || {}).native_table;
   children.push({id:'native',label:(detail.application_decoder?'Application decoded structure':'TSDuck decoded structure')+' · '+(scope==='section'?'selected section':'merged table'),value:sdk?(detail.application_decoder?'Application evidence':'SDK evidence'):scope==='section'?'No standalone SDK structure; section-local display in Decoded':'No complete selected generation; no merged decode',children:sdk && sdk.name===detail.name?[workbench.sdkNode(sdk,sid,context)]:sdk?[workbench.sdkNode(sdk,sid)]:[]});

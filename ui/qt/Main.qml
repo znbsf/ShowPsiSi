@@ -14,6 +14,8 @@ ApplicationWindow {
     visible: true
     title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : "ShowPsiSi · Transport stream inspector"
     property string inputKind: "ts"
+    property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
+    readonly property bool coreInspecting: core.inspecting
     readonly property bool metadataMode: inputKind === "dvbi"
     property bool lightTheme: core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
     property color surface: lightTheme ? "#f5f6f8" : "#181a1f"
@@ -631,6 +633,8 @@ ApplicationWindow {
         let diagnostics = core.diagnostics();
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
+            scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
+            unified: {services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -645,6 +649,15 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
+        if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
+        if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
+        if(action.name==="unified_path" && !advancedMode && unifiedInspector.nodes.some(function(n){return n.path===action.path;})){unifiedInspector.selectedPath=action.path;return JSON.stringify({accepted:true});}
+        if(action.name==="unified_back" && !advancedMode){unifiedInspector.back();return JSON.stringify({accepted:true});}
+        if(action.name==="unified_hex" && typeof action.value==="boolean"){unifiedInspector.hexOpen=action.value;return JSON.stringify({accepted:true});}
+        if(action.name==="open_source" && typeof action.path==="string" && backendReady){source.text=action.path;scan();return JSON.stringify({accepted:true});}
+        if(action.name==="cancel_scan" && core.busy){cancelScan();return JSON.stringify({accepted:true});}
+        if(action.name==="window_size" && action.width>=1000 && action.width<=1920 && action.height>=680 && action.height<=1200){win.width=action.width;win.height=action.height;return JSON.stringify({accepted:true});}
         if(["select_snapshot","select_record","history_jump","compare_snapshots","rescan"].indexOf(action.name)>=0 && !backendReady)
             return JSON.stringify({accepted:false,error:"Analysis or result presentation is still in progress"});
         if(action.name==="input_kind" && ["ts","dvbi"].indexOf(action.value)>=0 && !dvbiWorkspace.busy && !core.busy){inputKind=action.value;return JSON.stringify({accepted:true});}
@@ -1218,6 +1231,7 @@ ApplicationWindow {
         if (metadataMode || !backendReady || !source.text.trim() || extraPidsValue === null || !quickOptionsValid)
             return;
         recentMenu.close();
+        if(warningMessage.indexOf("Scan cancelled")===0){warningMessage="";warningRepeat=0;}
         clearWorkspaceIntentions();
         filter = ""; pidFilter = -1; expandedTables = {};
         recordSearch.clear();
@@ -1277,6 +1291,11 @@ ApplicationWindow {
     }
     function defaultInspect() {
         if (!backendReady || !analysisState.complete) return;
+        if (!advancedMode) {
+            let first=(analysisState.tables || []).find(function(r){return r.name==="PAT" && r.valid;}) || (analysisState.tables || [])[0];
+            if(first)inspect(first.id,-1);
+            return;
+        }
         let first = serviceRows[0];
         if (first) {
             inspect(first.source_id, first.id);
@@ -1396,7 +1415,7 @@ ApplicationWindow {
             onClicked: { const owner=diff; owner.fieldActivated(); owner.showAll=true; }
         }
     }
-    component LookupTable: ColumnLayout {
+    component LookupTable: Item {
         id: lookupTable
         property var result: ({})
         property string label: "Lookup result"
@@ -1405,9 +1424,16 @@ ApplicationWindow {
         readonly property real sourceWidth: width * 0.30
         visible: Object.keys(result).length > 0
         Layout.fillWidth: true
-        spacing: 0
+        // Width belongs to the containing layout. Do not derive an implicit
+        // width from columns whose preferred widths are fractions of this width.
+        implicitHeight: lookupContents.implicitHeight
         Accessible.role: Accessible.Table
         Accessible.name: label
+        ColumnLayout {
+        id: lookupContents
+        anchors.left: parent.left
+        anchors.right: parent.right
+        spacing: 0
         RowLayout {
             Layout.fillWidth: true
             spacing: 8
@@ -1466,6 +1492,7 @@ ApplicationWindow {
                 }
             }
         }
+    }
     }
     component SafeTip: ToolTip {
         id: tip
@@ -3851,31 +3878,34 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            if(!advancedMode){unifiedInspector.focusSearch();return;}
             let field=tab==="Topology"?topologySearch:recordSearch;
             if(win.activeFocusItem!==field)paletteReturnFocus=win.activeFocusItem;
             field.forceActiveFocus();field.selectAll();
         }
     }
-    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
     // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
-    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
-    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
-    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(24) }
-    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Left"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
+    Shortcut { sequence: "Ctrl+Alt+Right"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
+    Shortcut { sequence: "Ctrl+Alt+Up"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(24) }
+    Shortcut { sequence: "Ctrl+Alt+Down"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
+            if(!advancedMode){unifiedInspector.nextRegion();return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:focusNextRegion(true) }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:advancedMode?focusNextRegion(true):unifiedInspector.nextRegion() }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            if(!advancedMode){unifiedInspector.focusSearch();return;}
             inspectorView = "Structure";
             treeSearch.forceActiveFocus();
             treeSearch.selectAll();
@@ -4000,6 +4030,7 @@ ApplicationWindow {
             }
             Action {
                 objectName: "resetLayout"
+                visible: advancedMode
                 text: "Reset layout"
                 onClicked: resetLayout()
                 SafeTip {
@@ -4013,13 +4044,20 @@ ApplicationWindow {
                 onClicked: updateDialog.open()
             }
             Action {
+                objectName: "workspaceMode"
+                text: advancedMode ? "Inspector" : "Advanced workspace"
+                onClicked: advancedMode = !advancedMode
+            }
+            Action {
                 objectName: "agentApi"
+                visible: advancedMode
                 text: "Agent API"
                 enabled: backendReady
                 onClicked: core.send("capabilities", {})
             }
             Action {
                 objectName: "saveDiagnostics"
+                visible: advancedMode
                 text: "Save diagnostics"
                 enabled: !core.busy && !core.inspecting && !core.comparing
                 onClicked: {let result=uiAgent.saveBundle();showMessage(result,result.indexOf("Diagnostics failed:")===0 ? "error" : "info");}
@@ -4312,7 +4350,7 @@ ApplicationWindow {
             text:core.loadingResults ? "Scan 100% · loading result pages · " + num(scanProgress.loaded_items) + " records…" : core.busy ? (core.cancelling ? "Cancelling…" : core.paused ? "Paused · Resume continues this session" : scanProgress.analysis_status === "finalizing" ? "Scan 100% · finalizing evidence…" : "Scanning · "+Math.floor(Number(scanProgress.progress_fraction || 0)*100)+"%") + " · " + num(scanProgress.coverage?.scanned_packets || scanProgress.packets) + " packets · New inspection, comparison and export wait until completion. Cached records can still be browsed." : coverageText
         }
         RowLayout {
-            visible: !metadataMode
+            visible: !metadataMode && advancedMode
             Layout.fillWidth: true
             Layout.leftMargin: 12
             Layout.rightMargin: 12
@@ -4366,9 +4404,16 @@ ApplicationWindow {
             Layout.fillWidth:true
             Layout.fillHeight:true
         }
+        UnifiedInspector {
+            id: unifiedInspector
+            host: win
+            visible: !metadataMode && !advancedMode
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+        }
         SplitView {
             id: verticalWorkspace
-            visible: !metadataMode
+            visible: !metadataMode && advancedMode
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical
@@ -6301,7 +6346,6 @@ ApplicationWindow {
         modal: true
         focus: true
         closePolicy: Popup.CloseOnEscape
-        Accessible.name: "Keyboard shortcuts"
         background: Rectangle {color:panel;border.color:dividerColor;radius:4}
         onOpened: closeShortcutHelp.forceActiveFocus()
         onClosed: {

@@ -38,6 +38,7 @@ class QtTopologyTests(unittest.TestCase):
             env = native_environment()
             env.update(SHOWPSISI_SAMPLE=str(sample), SHOWPSISI_AGENT_DIR=str(session),
                        SHOWPSISI_STANDARDS=profile, SHOWPSISI_SCRIPT='', SHOWPSISI_THEME=theme,
+                       SHOWPSISI_ADVANCED='1',
                        SHOWPSISI_TEST_SIZE='compact' if compact else '',
                        SHOWPSISI_SETTINGS_PATH=str(directory / 'settings.ini'),
                        SHOWPSISI_TRACE=str(directory / 'trace.jsonl'))
@@ -54,7 +55,8 @@ class QtTopologyTests(unittest.TestCase):
                     self.session, self.process = session, process
                     self.last_state = None
                     try:
-                        self.wait(lambda s:s['settled'] and bool(s.get('inspection', {}).get('id')))
+                        state = self.wait(lambda s:s['settled'] and bool(s.get('inspection', {}).get('id')))
+                        self.assertFalse(state['unified']['visible'], 'Topology and protocol-source flows require the advanced workbench')
                         yield directory, sample
                         self.assertEqual(hashlib.sha256(sample.read_bytes()).hexdigest(), digest)
                         state = self.wait(lambda s:s['settled'])

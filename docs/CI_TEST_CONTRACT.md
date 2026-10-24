@@ -185,3 +185,20 @@ close their own window now require normal process exit within the existing
 five-second cleanup budget before forced cleanup is considered. Ordered contracts
 cover successful exit, timeout and nonzero exit; the latter two remain failures.
 The compiled close and keyboard/persistence regressions cover all four flows.
+
+## Explicit Qt workspace selection in diagnostic tests
+
+PR #29 run [40062701324](https://github.com/znbsf/ShowPsiSi/actions/runs/40062701324),
+source `df9bcec0e4f39667a9ff0e9a18c92d2def3e7049`, failed the Qt agent,
+topology and protocol-source assertions after the unified inspector became the
+ordinary startup view. Their diagnostic sessions deliberately clear
+`SHOWPSISI_SCRIPT`, so the scripted-test compatibility selection does not apply.
+Snapshots still contained the hidden advanced models; they did not prove the
+requested advanced controls were visible or usable.
+
+Advanced-workbench diagnostic helpers now explicitly set `SHOWPSISI_ADVANCED=1`
+and assert that the unified view is hidden before exercising the original flows.
+All original field, focus, source-navigation, timing and evidence assertions stay
+in force. The production startup default is unchanged. This correction does not
+supply routine CI coverage for the new unified inspector; that remains a separate
+follow-up rather than a claim established by these advanced-workbench tests.

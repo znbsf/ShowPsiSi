@@ -27,6 +27,9 @@ class UiAgentTests(unittest.TestCase):
         sample = Path(env['SHOWPSISI_SAMPLE'])
         source_hash = hashlib.sha256(sample.read_bytes()).hexdigest()
         env.update(SHOWPSISI_AGENT_DIR=str(session), SHOWPSISI_SETTINGS_PATH=str(directory / 'settings.ini'), SHOWPSISI_SCRIPT='', SHOWPSISI_THEME='dark')
+        if frontend == 'qt':
+            # These assertions exercise the retained advanced workbench.
+            env['SHOWPSISI_ADVANCED'] = '1'
         if frontend == 'tauri':
             env['WEBVIEW2_USER_DATA_FOLDER'] = str(directory / 'webview-profile')
         with (directory / 'application.log').open('w', encoding='utf-8') as log:
@@ -42,6 +45,8 @@ class UiAgentTests(unittest.TestCase):
                             break
                     time.sleep(.1)
                 self.assertTrue(state and state.get('settled') and state.get('tree'), state)
+                if frontend == 'qt':
+                    self.assertFalse(state['unified']['visible'], 'Advanced workbench must be visible for this flow')
                 self.assertFalse(state['diagnostics']['error'])
                 self.assertFalse(state['diagnostics'].get('frontend_errors'))
                 from collections import Counter

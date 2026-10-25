@@ -564,3 +564,11 @@ Final Tauri executable SHA-256:
 Both were built from `08d0a443b5ad16c03b050dbf14c8f42b388760dc` plus the
 reviewed local patch. Hosted checks must be matched to the published revision;
 previous green checks do not validate this patch.
+
+
+Hosted run 40213407212 passed both Tauri build jobs but found one selector
+collision in 79 browser cases: the older evidence test selected `data-path=section`
+across both workspaces, including hidden classic rows. Scope that locator to
+`#tree-area`; the complete CRC/group/arrival/evidence case then passed locally.
+This follow-up changes only the regression selector and this evidence note;
+application source and the verified local executable hashes remain unchanged.

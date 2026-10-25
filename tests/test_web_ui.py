@@ -2108,7 +2108,7 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('.evidence').inner_text(),detail['merged']['tsduck_xml'])
         self.page.locator('[data-view="tree"]').click()
         self.page.locator('#tree-search').fill('')
-        root=self.page.locator('[data-path="section"]')
+        root=self.page.locator('#tree-area [data-path="section"]')
         for unused in range(5):
             self.page.locator('#collapse-tree').click()
             self.assertEqual(root.get_attribute('aria-expanded'),'false')

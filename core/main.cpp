@@ -279,6 +279,7 @@ struct Record {
 #include "ApplicationSignalling.h"
 #include "SignalTopology.h"
 #include "ApplicationCarriage.h"
+#include "TransportStatistics.h"
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     dvbi::Store dvbiDocuments;
@@ -289,6 +290,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     std::unordered_map<std::string,size_t> historySlots;
     uint64_t packets=0,totalBytes=0,observations=0,crcErrors=0; size_t stride=188,prefix=0;
     double bitrate=0,firstMs=-1,totalMs=0; Clock::time_point began;
+    transportstats::Statistics transportStatistics;
     std::string standardsContext="auto",analysisStatus="idle";
     J requestId; std::function<void()> onFirst; bool complete=false; size_t revision=0;
     J coverage=J::object(),resultCache=J::object();uint64_t cacheCutoff=UINT64_MAX,scannedPackets=0,plannedPackets=0,demuxOffset=0;
@@ -788,6 +790,7 @@ public:
         for(const auto& r:records)for(auto pos:r.positions){checkCancelled(control);size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
         out["table_groups"]=tableGroups(at,control);out["timing"]={{"packet_unit","zero-based TS packet index"},{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"bitrate_unit","bits/second for 188-byte TS packets"},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
+        out["transport_summary"]=transportStatistics.summary(bitrate);
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         out["table_history"]=tableHistory;
         out["scope"]["table_history"]="entire scan; content transitions per PID/table/extension/section/current/validity; at_packet is first completed occurrence; not complete-generation transitions";
@@ -802,7 +805,17 @@ public:
         if(cacheCutoff==at)for(auto it=resultCache.begin();it!=resultCache.end();++it)counts[it.key()]=it.value().size();
         J cov=coverage;cov["scanned_packets"]=scannedPackets;
         J out={{"response_mode","compact"},{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"analysis_revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"bitrate",bitrate},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"text_charset",duck.charsetIn()->name().toUTF8()},{"time_reference",duck.timeReferenceName().toUTF8()},{"selected_packet",at==UINT64_MAX?J():J(at)},{"coverage",cov},{"result_counts",counts},{"progress_fraction",plannedPackets?double(scannedPackets)/plannedPackets:0.0},{"demux",demuxStatus},{"timing",{{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false}}},{"metrics",{{"scan_ms_basis","Wall elapsed time including pauses and owner finalization; excludes client result hydration"},{"first_section_ms",firstMs},{"scan_ms",(analysisStatus=="analyzing"||analysisStatus=="paused"||analysisStatus=="finalizing")?ms(began):totalMs}}}};
+        out["transport_summary"]=transportStatistics.summary(bitrate);
         appendStandardsMetadata(out);return out;
+    }
+    J queryTransport(const J& args) const {
+        if(!complete)throw std::runtime_error("Complete a successful analysis before querying transport statistics");
+        if(args.at("analysis_revision")!=revision)throw std::runtime_error("Stale transport analysis_revision");
+        auto out=transportStatistics.page(args.value("offset",size_t(0)),args.value("limit",size_t(100)),args.value("errors_only",false),args.value("sort",std::string("pid")),args.value("descending",false),bitrate);
+        out["aggregate_errors"]=J::array();
+        const auto badSync=out["summary"]["bad_sync_packets"].get<uint64_t>();
+        if(badSync)out["aggregate_errors"].push_back({{"code","transport_sync_error"},{"pid",nullptr},{"id",nullptr},{"aggregate",true},{"count",badSync},{"detail","Invalid sync byte; PID and exact source section are unavailable"}});
+        out["analysis_revision"]=revision;out["source"]=pathUtf8(source);out["coverage"]=coverage;return out;
     }
     J queryResult(const J& args) {
         if(!complete)throw std::runtime_error("Complete the requested scan before querying result pages");
@@ -950,7 +963,7 @@ public:
     }
     void clearEvidence() {
         records.clear();ids.clear();history=J::array();previous.clear();tableHistory=J::array();historySlots.clear();pending=J::object();patchSections.clear();
-        observations=crcErrors=0;demuxStatus=J::object();resultCache=J::object();cacheCutoff=UINT64_MAX;densityCounts.fill(0);densityBad.fill(0);
+        observations=crcErrors=0;transportStatistics.clear();demuxStatus=J::object();resultCache=J::object();cacheCutoff=UINT64_MAX;densityCounts.fill(0);densityBad.fill(0);
     }
     J analyze(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
         // A new scan owns a new revision even when opening or framing fails.
@@ -1054,7 +1067,7 @@ public:
                 if(n!=wanted)throw std::runtime_error("Source changed or read failed; analysis is incomplete");
                 for(size_t p=0;p+stride<=n;p+=stride){
                     if((p/stride)%256==0)checkCancelled(control);
-                    ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);++packets;++scannedPackets;++fed;demux.feedPacket(packet);
+                    ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);transportStatistics.observe(packet.b,packets);++packets;++scannedPackets;++fed;demux.feedPacket(packet);
                 }
                 if(ms(lastNotify)>=100){progress();lastNotify=Clock::now();}
             }
@@ -1409,6 +1422,7 @@ public:
         if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return args.value("response_mode",std::string("legacy"))=="compact"?compactState(args.value("at_packet",UINT64_MAX)):state(args.value("at_packet",UINT64_MAX));
         if(method=="query_result")return queryResult(args);
+        if(method=="query_transport")return queryTransport(args);
         if(method=="query_cable_oob")return queryCableOob(args);
         if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
@@ -1513,7 +1527,7 @@ static int runCore(int argc,char**argv) {
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
                     }
-                    if(method=="query"||method=="query_result"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
                         bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
                         if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }

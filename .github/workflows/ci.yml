@@ -144,10 +144,11 @@ jobs:
       - name: Build and exercise compiled Qt workbench
         run: |
           export LD_LIBRARY_PATH="$PWD/.deps/Qt/6.7.3/gcc_64/lib:${LD_LIBRARY_PATH:-}"
-          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$PWD/.deps/Qt/6.7.3/gcc_64" -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON -DSHOWPSISI_BUILD_UPDATER_TESTS=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$PWD/.deps/Qt/6.7.3/gcc_64" -DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON -DSHOWPSISI_BUILD_UPDATER_TESTS=ON -DSHOWPSISI_BUILD_QT_COMPONENT_TESTS=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build build --parallel 2
           python scripts/make_fixture.py
           ctest --test-dir build --output-on-failure --no-tests=error -R updater
+          python scripts/ci/qt_components.py --binary build/component-tests/Release/showpsisi-qml-tests --artifacts artifacts/linux-qt/components
           python scripts/ci/windows_native_checks.py --artifacts artifacts/linux-qt --qt
       - name: Keep strict Qt regression evidence
         if: always()

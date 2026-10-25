@@ -1,5 +1,17 @@
 # ShowPsiSi status
 
+2026-10-25 — NxTSA复刻P1（源码/组件阶段）：
+已fetch远端main de2b1d5，在codex/nxtsa-summary-pid保留当前改动。
+新增C++全PID统计/query_transport与Qt Summary/Error、排序分页、来源导航和返回状态，
+修复PID/extension碰撞、聚合来源误跳和筛选后Back；保留既有工作区。
+严格引擎30组/650项（649通过、1项可选样本缺失skip），
+Qt组件100%/150%各25 PASS（21实际用例+4setup/cleanup），深浅主题截图已复核。
+**完整新Qt仍受SDK生成工具写入权限阻塞；新代码实机NOT_RUN**，
+用户可见Qt仍为旧main CI产物，不能把组件测试等同完整应用通过。
+[当前P1合同、准确边界和下一Raw Packet设计](NXTSA_UI_UX_PARITY.md)；
+[初始45个原版/旧main Qt操作场景](NXTSA_BEHAVIOR_REFERENCE.md)保留版本范围。
+本阶段未push、发布或安装；托管CI与完整候选包仍是后续门槛。
+
 Latest operation audit and handoff, 2026-10-18, on merged main `88506ba`:
 real Windows Qt/WebView2 edit, export and A/B comparison checks found remaining
 functional gaps, including Web BIN export / Use snapshot, Qt selection restore

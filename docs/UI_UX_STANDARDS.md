@@ -1,5 +1,14 @@
 # Desktop workbench UX: standards-informed pass
 
+2026-10-25 addendum: the NxTSA functional correspondence work now follows the
+[14-group contract](NXTSA_UI_UX_PARITY.md) and
+[native behavior reference](NXTSA_BEHAVIOR_REFERENCE.md).
+Preserve the original's information grouping and user-visible operations before
+further aesthetic changes; the user decides later UX differences after functional
+acceptance. The standards-informed pass below remains historical evidence for its
+stated revision and does not establish NxTSA parity.
+
+
 Reviewed 2026-10-17 UTC, starting from `4d2635d`. Development and tests use the
 assistant's Linux cloud workspace only. This is a bounded improvement to the
 existing professional PSI/SI inspector, not a replacement design system or a

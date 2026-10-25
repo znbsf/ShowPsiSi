@@ -14,6 +14,8 @@ ApplicationWindow {
     visible: true
     title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : "ShowPsiSi · Transport stream inspector"
     property string inputKind: "ts"
+    property bool transportSummaryVisible: false
+    readonly property bool transportQueryReady: backendReady && !core.busy
     property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
     readonly property bool coreInspecting: core.inspecting
     readonly property bool metadataMode: inputKind === "dvbi"
@@ -1840,6 +1842,7 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if(method==="query_transport"){transportSummary.receive(result);return;}
             if(method==="capabilities" && analysisModesTestTimer.running){analysisModesTestTimer.barrier=true;return;}
             if(method === "analyze") {
                 if(result.complete && pendingScanOptions !== null){completedScanOptions=pendingScanOptions;completedCoverageKey=pendingCoverageKey;}
@@ -3878,13 +3881,14 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            transportSummaryVisible=false;
             if(!advancedMode){unifiedInspector.focusSearch();return;}
             let field=tab==="Topology"?topologySearch:recordSearch;
             if(win.activeFocusItem!==field)paletteReturnFocus=win.activeFocusItem;
             field.forceActiveFocus();field.selectAll();
         }
     }
-    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(transportSummaryVisible){transportSummaryVisible=false;return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
     // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
     Shortcut { sequence: "Ctrl+Alt+Left"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
     Shortcut { sequence: "Ctrl+Alt+Right"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
@@ -3895,16 +3899,18 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
+            if(transportSummaryVisible){transportSummary.nextRegion();return;}
             if(!advancedMode){unifiedInspector.nextRegion();return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:advancedMode?focusNextRegion(true):unifiedInspector.nextRegion() }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:transportSummaryVisible?transportSummary.nextRegion():advancedMode?focusNextRegion(true):unifiedInspector.nextRegion() }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            transportSummaryVisible=false;
             if(!advancedMode){unifiedInspector.focusSearch();return;}
             inspectorView = "Structure";
             treeSearch.forceActiveFocus();
@@ -4044,9 +4050,15 @@ ApplicationWindow {
                 onClicked: updateDialog.open()
             }
             Action {
+                objectName:"transportSummaryButton"
+                visible:!metadataMode
+                text:transportSummaryVisible ? "Return to inspector" : "Summary / PID"
+                onClicked:transportSummaryVisible=!transportSummaryVisible
+            }
+            Action {
                 objectName: "workspaceMode"
                 text: advancedMode ? "Inspector" : "Advanced workspace"
-                onClicked: advancedMode = !advancedMode
+                onClicked: {transportSummaryVisible=false;advancedMode = !advancedMode;}
             }
             Action {
                 objectName: "agentApi"
@@ -4407,13 +4419,29 @@ ApplicationWindow {
         UnifiedInspector {
             id: unifiedInspector
             host: win
-            visible: !metadataMode && !advancedMode
+            visible: !metadataMode && !advancedMode && !transportSummaryVisible
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
+        TransportSummary {
+            id:transportSummary
+            host:win
+            visible:!metadataMode && transportSummaryVisible
+            Layout.fillWidth:true;Layout.fillHeight:true
+            onPageRequested:function(offset,sort,descending,errorsOnly){
+                if(core.busy){reject("Wait for the current operation, then Refresh.");return;}
+                core.send("query_transport",{analysis_revision:analysisState.analysis_revision || analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});
+            }
+            onEntryActivated:function(entry){
+                if(entry.aggregate || entry.pid===null || entry.pid===undefined){showMessage("No exact packet/section identity is retained for this aggregate.","warning");return;}
+                let record=(analysisState.tables || []).find(function(row){return entry.id ? row.id===entry.id : row.pid===entry.pid;});
+                if(!record){showMessage(entry.id ? "The exact diagnostic section is unavailable in this result." : "PID "+hex(entry.pid)+" has no retained PSI/SI section. PES/media views are not implemented yet.","warning");return;}
+                transportSummaryVisible=false;advancedMode=false;unifiedInspector.filterPid(entry.pid);unifiedInspector.selectRecord(record);
+            }
+        }
         SplitView {
             id: verticalWorkspace
-            visible: !metadataMode && advancedMode
+            visible: !metadataMode && advancedMode && !transportSummaryVisible
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical

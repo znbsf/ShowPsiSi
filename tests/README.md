@@ -1,5 +1,12 @@
 # Validation
 
+Summary/PID组件回归使用可选SHOWPSISI_BUILD_QT_COMPONENT_TESTS，
+以真实生产引擎生成数据，再运行scripts/ci/qt_components.py。
+宿主在component-tests/Release，不进入生产包；使用隔离输入/截图，
+检查实际测试总数、QML诊断、列对齐、来源/聚合、返回状态及深浅主题。
+参见[当前实现与准确测试边界](../docs/NXTSA_UI_UX_PARITY.md)。
+
+
 Responsive local-file analysis adds `test_responsive_analysis.py`,
 `test_analysis_preview_review.py` and `test_qt_analysis_modes.py` to the strict
 native gates. These exercise compact result paging, pause/resume/cancellation

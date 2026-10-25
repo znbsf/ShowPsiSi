@@ -730,6 +730,49 @@
       "annotations": {
         "readOnlyHint": true
       }
+    },
+    {
+      "name": "query_transport",
+      "description": "Read bounded per-PID transport counters for all observed scan windows. Scan-global even when an inspector has a historical cutoff. Rates/duration use only supplied normalized 188-byte TS bitrate; no PCR clock measurement. Error packets exclude continuity, CRC, PES and decoder errors.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8192
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "pid",
+              "packets"
+            ]
+          },
+          "descending": {
+            "type": "boolean"
+          },
+          "errors_only": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "analysis_revision"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
     }
   ]
 }

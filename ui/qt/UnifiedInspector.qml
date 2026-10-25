@@ -14,11 +14,16 @@ SplitView {
     property string selectedPath: "section"
     property var history: []
     property bool restoring: false
+    property var navigationOrigin: ({})
+    property var selectionFilter: ({})
+    property var pendingRestore: null
+    onDetailChanged: if(detail.id && detail.id!==selectionFilter.id)selectionFilter={id:detail.id,page:page,family:family,query:query,pidFilter:pidFilter}
     property int page: 0
     property string family: "All tables"
     property string query: ""
+    property int pidFilter: -1
     property bool hexOpen: false
-    property var records: (state.tables || []).filter(function(r){return (family==="All tables" || r.name===family) && (!query || Model.inspector.title(r).toLowerCase().indexOf(query.toLowerCase())>=0);}).slice().sort(function(a,b){return a.pid-b.pid || a.table_id-b.table_id || a.first_packet-b.first_packet;})
+    property var records: (state.tables || []).filter(function(r){return (pidFilter<0 || Number(r.pid)===pidFilter) && (family==="All tables" || r.name===family) && (!query || Model.inspector.title(r).toLowerCase().indexOf(query.toLowerCase())>=0);}).slice().sort(function(a,b){return a.pid-b.pid || a.table_id-b.table_id || a.first_packet-b.first_packet;})
     property var nodes: Model.inspector.flatten(root,closed,0,limits)
     property var selectedNode: Model.inspector.find(root,selectedPath) || root
     property var fieldRows: selectedNode ? selectedNode.fields : []
@@ -34,23 +39,54 @@ SplitView {
     onQueryChanged: page=0
     onNavigationChanged: Qt.callLater(revealSelection)
     onSelectedPathChanged: Qt.callLater(revealSelection)
+    function captureContext() {
+        return {id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
+            scroll:nav.contentY,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
+    }
+    function filterPid(pid) {
+        if(detail.id && !navigationOrigin.id)navigationOrigin=captureContext();
+        pidFilter=pid;family='All tables';query='';page=0;
+    }
+    function changeFilter(nextFamily,nextQuery) {
+        if(nextFamily===family && nextQuery===query)return;
+        if(detail.id && !navigationOrigin.id)navigationOrigin=captureContext();
+        family=nextFamily;query=nextQuery;
+    }
     function revealSelection() {
+        if(pendingRestore) {
+            if(detail.id!==pendingRestore.id)return;
+            var saved=pendingRestore;pendingRestore=null;
+            var focused=navigation.findIndex(function(row){return row.key===saved.focusKey;});
+            if(focused>=0)nav.currentIndex=focused;
+            nav.contentY=Math.max(nav.originY,Math.min(saved.scroll,nav.originY+Math.max(0,nav.contentHeight-nav.height)));
+            return;
+        }
         var key=detail.id+':'+selectedPath;
         var index=navigation.findIndex(function(r){return r.key===key;});
         if(index<0)index=navigation.findIndex(function(r){return r.key===detail.id;});
         if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,ListView.Contain);}
     }
     property string sourceIdentity: (state.source || '')+':'+(state.analysis_revision || '')
-    onSourceIdentityChanged: {history=[];selectedPath='section';closed={};limits={};page=0;}
+    onSourceIdentityChanged: {history=[];navigationOrigin={};selectionFilter={};pendingRestore=null;pidFilter=-1;selectedPath='section';closed={};limits={};page=0;}
     function selectRecord(r) {
         if(!r || !host.backendReady || host.coreInspecting)return;
-        if(detail.id && r.id!==detail.id && !restoring)history=history.concat([{id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query}]).slice(-100);
+        if(detail.id && r.id!==detail.id && !restoring) {
+            var saved=navigationOrigin.id===detail.id ? Object.assign({},navigationOrigin) : captureContext();
+            if(!navigationOrigin.id && selectionFilter.id===detail.id) {
+                saved.page=selectionFilter.page;saved.family=selectionFilter.family;saved.query=selectionFilter.query;saved.pidFilter=selectionFilter.pidFilter;
+            }
+            history=history.concat([saved]).slice(-100);
+        }
+        navigationOrigin={};pendingRestore=null;
+        selectionFilter={id:r.id,page:page,family:family,query:query,pidFilter:pidFilter};
         selectedPath='section';host.inspect(r.id,-1);
     }
     function back() {
         if(!history.length || !host.backendReady || host.coreInspecting)return;
         var h=history[history.length-1];history=history.slice(0,-1);restoring=true;
-        family=h.family;query=h.query;page=h.page;closed=h.closed;limits=h.limits;host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
+        navigationOrigin={};selectionFilter={id:h.id,page:h.page,family:h.family,query:h.query,pidFilter:h.pidFilter};pendingRestore=h;
+        pidFilter=h.pidFilter===undefined?-1:h.pidFilter;family=h.family;query=h.query;page=h.page;closed=h.closed;limits=h.limits;host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
+        Qt.callLater(revealSelection);
     }
     function activate(row) {
         if(!row)return;
@@ -81,8 +117,9 @@ SplitView {
                 TextLabel { text:'STREAM STRUCTURE';font.bold:true;Layout.fillWidth:true }
                 Button {objectName:'unifiedBack';text:'← Back';enabled:view.history.length>0 && host.backendReady;onClicked:view.back()}
             }
-            ComboBox {Layout.fillWidth:true;model:host.tableFamilies;currentIndex:Math.max(0,host.tableFamilies.indexOf(view.family));onActivated:view.family=currentText}
-            TextField {id:search;Layout.fillWidth:true;placeholderText:'Find table, PID, version or UTC time';text:view.query;onTextEdited:view.query=text;selectByMouse:true}
+            ComboBox {Layout.fillWidth:true;model:host.tableFamilies;currentIndex:Math.max(0,host.tableFamilies.indexOf(view.family));onActivated:view.changeFilter(currentText,view.query)}
+            TextField {id:search;objectName:'unifiedSearch';Layout.fillWidth:true;placeholderText:'Find table, PID, version or UTC time';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
+            Button {text:'PID '+Model.inspector.hex(view.pidFilter)+' ×';visible:view.pidFilter>=0;onClicked:view.filterPid(-1);Accessible.name:'Clear numeric PID filter'}
             TextLabel {text:records.length+' distinct payloads · repeated arrivals counted as ×';color:host.muted;Layout.fillWidth:true;wrapMode:Text.Wrap}
             ListView {
                 id:nav;objectName:'unifiedTree';Layout.fillWidth:true;Layout.fillHeight:true;clip:true;reuseItems:true

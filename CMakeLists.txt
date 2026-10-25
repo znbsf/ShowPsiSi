@@ -6,6 +6,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 option(BUILD_QT_UI "Build Qt Quick prototype" ON)
 option(SHOWPSISI_BUILD_CANCELLATION_TESTS "Build the test-only gated native engine" OFF)
 option(SHOWPSISI_BUILD_UPDATER_TESTS "Build isolated Qt release/update contract tests" OFF)
+option(SHOWPSISI_BUILD_QT_COMPONENT_TESTS "Build the standalone Qt Quick component test host" OFF)
 find_package(Threads REQUIRED)
 # Pinned offline XML dependency, shared by both frontends through the core.
 # Keep upstream sources unchanged; import rejects DTDs before any entity work.
@@ -129,7 +130,7 @@ if(BUILD_QT_UI)
         RENAME org.showpsisi.ShowPsiSi.png)
     endforeach()
   endif()
-  qt_add_qml_module(showpsisi-qt URI ShowPsiSi VERSION 1.0 QML_FILES ui/qt/Main.qml ui/qt/UpdateDialog.qml ui/qt/DvbiWorkspace.qml ui/qt/UnifiedInspector.qml ui/qt/InspectorModel.js)
+  qt_add_qml_module(showpsisi-qt URI ShowPsiSi VERSION 1.0 QML_FILES ui/qt/Main.qml ui/qt/UpdateDialog.qml ui/qt/DvbiWorkspace.qml ui/qt/UnifiedInspector.qml ui/qt/TransportSummary.qml ui/qt/InspectorModel.js)
   target_link_libraries(showpsisi-qt PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
   set_target_properties(showpsisi-qt PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
@@ -137,4 +138,14 @@ endif()
 if(SHOWPSISI_BUILD_UPDATER_TESTS)
   enable_testing()
   add_subdirectory(tests/qt_updates)
+endif()
+
+# Source-level Qt component tests do not require moc, rcc or a packaged app.
+# This test-only executable is kept outside the production runtime directory.
+if(SHOWPSISI_BUILD_QT_COMPONENT_TESTS)
+  find_package(Qt6 6.7 REQUIRED COMPONENTS QuickTest QuickControls2)
+  add_executable(showpsisi-qml-tests tests/qt_component_runner.cpp)
+  target_link_libraries(showpsisi-qml-tests PRIVATE Qt6::QuickTest Qt6::QuickControls2)
+  set_target_properties(showpsisi-qml-tests PROPERTIES AUTOMOC OFF AUTORCC OFF
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/component-tests/$<CONFIG>")
 endif()

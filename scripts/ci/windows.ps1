@@ -79,7 +79,7 @@ try {
             & (Join-Path $Root 'scripts/setup-tsduck.ps1') -Sdk $Sdk -ValidateOnly
             Assert-File (Join-Path $Qt 'lib/cmake/Qt6/Qt6Config.cmake')
             Invoke-Checked 'cmake' @('--version')
-            Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', '-DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON', '-DSHOWPSISI_BUILD_UPDATER_TESTS=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
+            Invoke-Checked 'cmake' @('-S', $Root, '-B', $Build, '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DBUILD_QT_UI=ON', '-DSHOWPSISI_BUILD_CANCELLATION_TESTS=ON', '-DSHOWPSISI_BUILD_UPDATER_TESTS=ON', '-DSHOWPSISI_BUILD_QT_COMPONENT_TESTS=ON', "-DTSDUCK_ROOT=$Sdk", "-DCMAKE_PREFIX_PATH=$Qt")
             Invoke-Checked 'cmake' @('--build', $Build, '--config', 'Release', '--parallel', '2', '--verbose')
             Assert-File $env:SHOWPSISI_CORE
             Assert-File $env:SHOWPSISI_TEST_CORE
@@ -122,6 +122,7 @@ try {
             Invoke-Checked 'python' @('scripts/ci/windows_native_checks.py', '--artifacts', $Artifacts, '--engine')
         }
         'QtTests' {
+            Invoke-Checked 'python' @('scripts/ci/qt_components.py', '--binary', (Join-Path $Build 'component-tests/Release/showpsisi-qml-tests.exe'), '--artifacts', (Join-Path $Artifacts 'components'), '--qt-sdk', $Qt)
             Assert-File (Join-Path $env:QT_QPA_FONTDIR 'segoeui.ttf')
             Write-Host "Offscreen FreeType fonts: $env:QT_QPA_FONTDIR"
             Invoke-Checked 'python' @('scripts/ci/windows_native_checks.py', '--artifacts', $Artifacts, '--qt')

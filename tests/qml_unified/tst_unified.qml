@@ -33,6 +33,18 @@ Item {
             var evidence=JSON.parse(xhr.responseText);host.captures=evidence.details;host.analysisState=evidence.state;
             host.inspect(evidence.details[0].id,-1);
         }
+        function init() {
+            inspector.pidFilter=-1;inspector.family='All tables';inspector.query='';
+            inspector.navigationOrigin={};inspector.selectionFilter={};inspector.pendingRestore=null;inspector.history=[];
+            inspector.closed={};inspector.limits={};host.coreInspecting=false;
+            inspector.selectRecord(inspector.findRecord('PAT'));inspector.history=[];
+        }
+        function test_numeric_pid_excludes_extension_collision() {
+            inspector.query='0x0100';verify(inspector.records.length>=2);
+            inspector.filterPid(0x100);compare(inspector.records.length,1);
+            compare(inspector.records[0].pid,0x100);
+            verify(host.captures.some(function(record){return record.pid===0x102 && record.extension===0x100;}));
+        }
         function test_navigation_and_fields() {
             verify(inspector.navigation.length>host.captures.length);
             var original=host.detail.id;
@@ -66,6 +78,22 @@ Item {
             compare(host.detail.name,'PAT');compare(inspector.limits['section/decoded'],200);
             inspector.selectRecord(null);compare(host.detail.name,'PAT');
         }
+        function test_filter_back_restores_visible_context() {
+            inspector.family='All tables';inspector.query='';inspector.navigationOrigin={};inspector.history=[];
+            inspector.selectRecord(inspector.findRecord('PAT'));
+            inspector.selectedPath='section/decoded';inspector.limits={'section/decoded':200};
+            var previous=host.detail.id;
+            inspector.changeFilter('All tables','PID 0x0100');
+            compare(inspector.records.length,1);
+            inspector.selectRecord(inspector.records[0]);compare(host.detail.name,'PMT');
+            inspector.back();tryCompare(inspector,'query','');
+            compare(host.detail.id,previous);compare(inspector.family,'All tables');
+            compare(inspector.selectedPath,'section/decoded');compare(inspector.limits['section/decoded'],200);
+            verify(inspector.records.some(function(record){return record.id===previous;}));
+            tryVerify(function(){return inspector.pendingRestore===null;});
+            inspector.changeFilter('BAT','');inspector.selectRecord(inspector.records[0]);
+            inspector.back();compare(inspector.family,'All tables');compare(host.detail.id,previous);
+        }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';
             ['PAT','PMT','BAT','TDT','TOT'].forEach(function(name){
@@ -73,7 +101,8 @@ Item {
                 inspector.selectedPath=name==='PMT'?'section/descriptors/0/decoded':name==='PAT'?'section/decoded':'section';
                 inspector.hexOpen=name==='BAT';
                 wait(150);
-                var path=Qt.resolvedUrl('../../artifacts/unified-inspector/'+name+'-review2.png').toString().replace(/^file:\/\/\//,'');
+                var path=Qt.resolvedUrl('../../artifacts/unified-inspector/'+name+'-review2.png').toString().replace(/^file:\/\/\//,Qt.platform.os==='windows'?'':'/');
+                path=decodeURIComponent(path);
                 var done=false,saved=false;
                 verify(inspector.grabToImage(function(result){saved=result.saveToFile(path);done=true;}));
                 tryVerify(function(){return done;},5000);

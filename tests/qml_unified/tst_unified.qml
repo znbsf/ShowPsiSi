@@ -30,7 +30,7 @@ Item {
         when:windowShown
         function initTestCase() {
             var xhr=new XMLHttpRequest();xhr.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/engine-evidence.json'),false);xhr.send();
-            var evidence=JSON.parse(xhr.responseText);host.captures=evidence.details;host.analysisState=evidence.state;
+            var evidence=JSON.parse(xhr.responseText);host.captures=evidence.details;host.analysisState=evidence.state;inspector.organization=evidence.topology;
             host.inspect(evidence.details[0].id,-1);
         }
         function init() {
@@ -164,6 +164,19 @@ Item {
             var divider=findChild(inspector,'siPaneDivider');var before=inspector.hexFraction;
             mouseDrag(divider,divider.width/2,2,0,-40);verify(inspector.hexFraction>before);
             inspector.hexFraction=before;
+        }
+        function test_named_network_tp_lcn_navigation() {
+            inspector.family='All tables';inspector.query='';inspector.openFamilies={};
+            var network=inspector.navigation.find(function(r){return r.label.indexOf('Fixture Network')>=0;});verify(!!network);
+            var tp=inspector.navigation.find(function(r){return r.label.indexOf('TSID 0x1001 ONID 0x2001')>=0;});verify(!!tp);
+            verify(tp.label.indexOf('11727.5 MHz')>=0);
+            var service=inspector.navigation.find(function(r){return r.label.indexOf('LCN 7  News One')>=0;});verify(!!service);
+            compare(service.record.pid,256);inspector.activate(service);compare(host.detail.name,'PMT');
+            inspector.selectByte(3);verify(inspector.activeRange!==null);
+            inspector.fold(tp);verify(!inspector.navigation.some(function(r){return r.label.indexOf('News One')>=0;}));
+            inspector.fold(tp);verify(inspector.navigation.some(function(r){return r.label.indexOf('News One')>=0;}));
+            inspector.changeFilter('All tables','News One');verify(inspector.navigation.some(function(r){return r.label.indexOf('News One')>=0;}));
+            inspector.changeFilter('All tables','');
         }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';

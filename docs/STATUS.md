@@ -1,5 +1,13 @@
 # ShowPsiSi status
 
+2026-10-25 follow-up: the classic SI tree now organizes declared networks / TP /
+programs, with SDT names and resolved LCN. Unknown or conflicting identities
+remain explicit; program selection retains field/hex linkage. Local real-engine
+checks: 4 inspector + 35 topology tests; 70 model assertions; 31 Qt component
+passes at 150% (including setup/cleanup). Complete Windows build is moving to
+the existing hosted route because the shared SDK integrity labels are unchanged.
+Hosted and complete application acceptance are pending, not implied by these checks.
+
 2026-10-25 latest user correction: core SI now follows original NxTSA visuals:
 white/light-gray surfaces, actual original bitmap icons, boxed/dotted trees,
 red field values, yellow selection, and source-packet / Section dual hex panes.

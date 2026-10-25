@@ -241,3 +241,21 @@ state is `si-hotbird-evidence.json`, and actual renderer checks are in
 `classic-hotbird-qt.log`. These remain offscreen component evidence. The
 previous full-app Qt code-generation write blocker remains; no foreground or
 full new application acceptance is claimed.
+
+
+## 2026-10-25 network / TP / named program follow-up (in progress)
+
+User authorized resolving the Qt build blocker and organizing programs by network,
+TP, name and LCN in the existing original style. Current readback confirms the
+shared SDK generator retains inherited Low/NoWriteUp and the build directory has
+normal integrity. Do not repeat the unchanged local generator route or change
+shared SDK/security labels. Use the existing hosted Windows CI build/package route,
+then verify source/artifact identity locally. This route change addresses delivery;
+it does not claim the local integrity mismatch has been repaired. Stop on a hosted
+build failure, diagnose its retained evidence, and preserve the existing gates.
+
+The classic tree consumes revision/cutoff-bound, paged engine topology and service
+metadata. Network and transport identities remain separate; names come from SDT /
+NIT, LCN is used only when resolved, and TP parameters are advertised declarations.
+Unknown/conflicting data and remote announced services remain explicit. Existing
+PSI tables and field/byte inspection stay available.

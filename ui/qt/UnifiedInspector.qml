@@ -6,6 +6,8 @@ import "InspectorModel.js" as Model
 SplitView {
     id: view
     required property var host
+    property var organization: ({})
+    property string organizationStatus: ""
     property var state: host.analysisState
     property var detail: host.detail
     property var root: Model.inspector.structure(detail)
@@ -68,14 +70,14 @@ SplitView {
     property var fieldClosed: ({})
     property var fieldRows: root ? [{name:'Section['+((Number(detail.section)||0)+1)+'/'+((Number(detail.last_section)||0)+1)+']',value:'',help:'',depth:0,groupPath:root.path,rootRow:true}].concat(fieldClosed[root.path]?[]:Model.inspector.fieldTable(root,fieldClosed,1)) : []
     property var openFamilies: ({})
-    function familyOpen(name){return openFamilies[name]===undefined ? name==='Programs' || name==='PSI Packets' || family!=='All tables' : openFamilies[name];}
+    function familyOpen(name){return openFamilies[name]===undefined ? name==='Programs' || name==='PSI Packets' || name.indexOf('network:')===0 || family!=='All tables' : openFamilies[name];}
     property var navigation: {
         var out=[],groups={};
         records.slice(page*100,(page+1)*100).forEach(function(r){if(!groups[r.name])groups[r.name]=[];groups[r.name].push(r);});
-        var programs=records.filter(function(r){return r.name==='PMT';}).slice().sort(function(a,b){return ('Program '+a.extension).localeCompare('Program '+b.extension);});
-        if(programs.length){
+        var programRows=Model.inspector.programTree(state, (state.tables || []).filter(function(r){return (pidFilter<0 || Number(r.pid)===pidFilter) && (family==='All tables' || r.name===family);}), organization, openFamilies, query.toLowerCase());
+        if(programRows.length){
             out.push({kind:'family',key:'family:Programs',name:'Programs',label:'Programs',depth:0});
-            if(view.familyOpen('Programs'))programs.forEach(function(r){out.push({kind:'record',key:'program:'+r.id,label:'Program '+r.extension+' ['+Model.inspector.hex(r.extension)+']',record:r,program:true,depth:1});});
+            if(view.familyOpen('Programs'))out=out.concat(programRows);
         }
         var order=['PAT','PMT','SDT','CAT','EIT','TDT','TOT','NIT','BAT'];
         out.push({kind:'family',key:'family:PSI Packets',name:'PSI Packets',label:'PSI Packets',depth:0});
@@ -121,7 +123,7 @@ SplitView {
         var key=detail.id+':'+selectedPath;
         var index=navigation.findIndex(function(r){return r.key===key;});
         if(index<0)index=navigation.findIndex(function(r){return r.key===detail.id;});
-        if(index<0)index=navigation.findIndex(function(r){return r.key==='program:'+detail.id;});
+        if(index<0)index=navigation.findIndex(function(r){return r.record && r.record.id===detail.id;});
         if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,navigation[index].program?ListView.Contain:selectedPath==='section'?ListView.Center:ListView.Contain);}
     }
     property string sourceIdentity: (state.source || '')+':'+(state.analysis_revision || '')
@@ -148,14 +150,15 @@ SplitView {
         Qt.callLater(revealSelection);
     }
     function activate(row) {
-        if(!row)return;
+        if(!row || row.kind==='info')return;
         if(row.kind==='family'){fold(row);return;}
         if(row.kind==='record'){selectRecord(row.record);return;}
         if(row.node.more){var next=Object.assign({},limits);next[row.node.more]=(next[row.node.more] || 100)+100;limits=next;return;}
         selectedPath=row.node.path;
     }
+    function rowOpen(row){return openFamilies[row.name]===undefined && row.defaultOpen!==undefined?row.defaultOpen:familyOpen(row.name);}
     function fold(row) {
-        if(row && row.kind==='family'){var families=Object.assign({},openFamilies);families[row.name]=!familyOpen(row.name);openFamilies=families;return;}
+        if(row && row.kind==='family'){var families=Object.assign({},openFamilies);families[row.name]=!rowOpen(row);openFamilies=families;return;}
         if(!row || row.kind!=='node' || !row.node.children.length)return;
         var next=Object.assign({},closed);next[row.node.path]=!next[row.node.path];closed=next;
     }
@@ -229,8 +232,8 @@ SplitView {
                 ScrollBar.vertical:ScrollBar{policy:ScrollBar.AsNeeded}
                 Keys.onReturnPressed:view.activate(view.navigation[currentIndex])
                 Keys.onSpacePressed:view.fold(view.navigation[currentIndex])
-                Keys.onRightPressed:{var r=view.navigation[currentIndex];if(r && r.kind==='family'){if(!view.familyOpen(r.name))view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}else if(r && r.kind==='record')view.activate(r);else if(r && view.closed[r.node.path])view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}
-                Keys.onLeftPressed:{var r=view.navigation[currentIndex];if(r && r.kind==='family' && view.familyOpen(r.name))view.fold(r);else if(r && r.kind==='node' && r.node.children.length && !view.closed[r.node.path])view.fold(r);else if(r){for(var i=currentIndex-1;i>=0;--i)if(view.navigation[i].depth<r.depth){currentIndex=i;break;}}}
+                Keys.onRightPressed:{var r=view.navigation[currentIndex];if(r && r.kind==='family'){if(!view.rowOpen(r))view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}else if(r && r.kind==='record')view.activate(r);else if(r && r.node && view.closed[r.node.path])view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}
+                Keys.onLeftPressed:{var r=view.navigation[currentIndex];if(r && r.kind==='family' && view.rowOpen(r))view.fold(r);else if(r && r.kind==='node' && r.node.children.length && !view.closed[r.node.path])view.fold(r);else if(r){for(var i=currentIndex-1;i>=0;--i)if(view.navigation[i].depth<r.depth){currentIndex=i;break;}}}
                 Keys.onPressed:function(e){if(e.key===Qt.Key_Home){currentIndex=0;e.accepted=true;}else if(e.key===Qt.Key_End){currentIndex=count-1;e.accepted=true;}}
                 onCurrentIndexChanged:positionViewAtIndex(currentIndex,ListView.Contain)
                 delegate:ItemDelegate {
@@ -241,24 +244,25 @@ SplitView {
                     background:Rectangle {color:'white'}
                     contentItem:Row {
                         spacing:3
-                        Branch {depth:modelData.depth+1;width:(modelData.depth+1)*16;height:21;expandable:modelData.kind==='family' || (modelData.kind==='node' && modelData.node.children.length>0);expanded:modelData.kind==='family'?view.familyOpen(modelData.name):modelData.kind==='node' && !view.closed[modelData.node.path]}
-                        Icon {anchors.verticalCenter:parent.verticalCenter;kind:modelData.kind==='family'?(modelData.name==='Programs'?'programs':modelData.name==='PSI Packets'?'psi':modelData.name):modelData.program?'program':modelData.kind==='record'?modelData.record.name:modelData.node.label.toLowerCase().indexOf('descriptor')>=0?'descriptor':'field'}
+                        Branch {depth:modelData.depth+1;width:(modelData.depth+1)*16;height:21;expandable:modelData.kind==='family' || (modelData.kind==='node' && modelData.node.children.length>0);expanded:modelData.kind==='family'?view.rowOpen(modelData):modelData.kind==='node' && !view.closed[modelData.node.path]}
+                        Icon {anchors.verticalCenter:parent.verticalCenter;kind:modelData.icon || (modelData.kind==='family'?(modelData.name==='Programs'?'programs':modelData.name==='PSI Packets'?'psi':modelData.name):modelData.program?'program':modelData.kind==='record'?modelData.record.name:modelData.node.label.toLowerCase().indexOf('descriptor')>=0?'descriptor':'field')}
                         Rectangle {width:Math.min(nav.width-(modelData.depth+1)*16-26,navText.implicitWidth+4);height:19;anchors.verticalCenter:parent.verticalCenter;color:'white';border.width:parent.parent.highlighted?1:0;border.color:'#c00000'
                             TextLabel {id:navText;anchors.fill:parent;anchors.leftMargin:2;verticalAlignment:Text.AlignVCenter;text:modelData.label;font.pixelSize:13;elide:Text.ElideRight}
                         }
                     }
                     onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.activate(modelData);}
-                    onDoubleClicked:if(modelData.kind==='node')view.fold(modelData)
-                    ToolTip {visible:parent.hovered;text:modelData.label}
+                    onDoubleClicked:{if(modelData.kind==='node')view.fold(modelData);else if(modelData.sourceRecord)view.selectRecord(modelData.sourceRecord);}
+                    ToolTip {visible:parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
                     Accessible.name:modelData.label
                 }
             }
+            TextLabel {visible:!!view.organizationStatus;text:view.organizationStatus;Layout.fillWidth:true;font.pixelSize:11;elide:Text.ElideRight}
             RowLayout {Layout.fillWidth:true;spacing:2
                 ClassicButton {objectName:'unifiedBack';text:'Back';implicitHeight:23;enabled:view.history.length>0 && host.backendReady;onClicked:view.back()}
                 ComboBox {Layout.fillWidth:true;implicitHeight:23;font.pixelSize:11;model:host.tableFamilies;currentIndex:Math.max(0,host.tableFamilies.indexOf(view.family));onActivated:view.changeFilter(currentText,view.query)}
                 ClassicButton {text:'Find';implicitHeight:23;onClicked:view.focusSearch()}
             }
-            TextField {id:search;objectName:'unifiedSearch';visible:view.searchVisible;Layout.fillWidth:true;implicitHeight:24;color:'black';placeholderTextColor:'#606060';placeholderText:'Find table / PID';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
+            TextField {id:search;objectName:'unifiedSearch';visible:view.searchVisible;Layout.fillWidth:true;implicitHeight:24;color:'black';placeholderTextColor:'#606060';placeholderText:'Find program / LCN / TP / PID';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
             ClassicButton {text:'PID '+Model.inspector.hex(view.pidFilter)+' ×';visible:view.pidFilter>=0;implicitHeight:23;onClicked:view.filterPid(-1);Accessible.name:'Clear numeric PID filter'}
             RowLayout {visible:view.records.length>100;Layout.fillWidth:true;spacing:2
                 ClassicButton {objectName:'unifiedPrevious';text:'Previous';implicitHeight:23;enabled:page>0;onClicked:page--}

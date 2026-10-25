@@ -25,6 +25,14 @@ def fixture():
         tdt=b'\x70\x70\x05'+utc
         tot=b'\x73\x70\x0b'+utc+word(0xf000);tot+=crc(tot).to_bytes(4,'big')
         pairs += [(0x14,tdt),(0x14,tot)]
+    # Real named-network + SDT + namespaced LCN declarations for the classic tree.
+    service=descriptor(0x48,b'\x01\x00\x08News One')
+    pairs.append((0x11,section(0x42,0x1001,1,word(0x2001)+b'\xff'+word(101)+b'\xff'+word(0x8000+len(service))+service)))
+    delivery=descriptor(0x43,bytes.fromhex('0117275001308002750003'))
+    lcn=descriptor(0x5f,bytes.fromhex('00000028'))+descriptor(0x83,word(101)+word(0xfc07))
+    transport=word(0x1001)+word(0x2001)+word(0xf000+len(delivery+lcn))+delivery+lcn
+    netname=descriptor(0x40,b'Fixture Network')
+    pairs.append((0x10,section(0x40,10,1,word(0xf000+len(netname))+netname+word(0xf000+len(transport))+transport)))
     cc={};packets=[]
     for pid,raw in pairs:
         n=cc.get(pid,0);cc[pid]=(n+1)%16
@@ -90,7 +98,11 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                 self.assertEqual(sum(r['count'] for r in pats),4)
                 out=Path(os.environ.get('SHOWPSISI_UNIFIED_EVIDENCE_DIR',ROOT/'artifacts/unified-inspector'));out.mkdir(parents=True,exist_ok=True)
                 (out/'fixture.ts').write_bytes(path.read_bytes())
-                (out/'engine-evidence.json').write_text(json.dumps({'state':state,'details':details},indent=2),encoding='utf-8')
+                topology=core.call('query_topology',{'limit':500})
+                network=next(n for n in topology['nodes'] if n['object_type']=='network')
+                self.assertEqual(network['attributes']['name'],'Fixture Network')
+                self.assertEqual(state['services'][0]['logical_channel_number'],7)
+                (out/'engine-evidence.json').write_text(json.dumps({'state':state,'details':details,'topology':topology},indent=2),encoding='utf-8')
             finally:core.close()
 
     def test_si_loop_positions_and_descriptor_namespaces(self):

@@ -267,6 +267,7 @@ ApplicationWindow {
     function acceptTopology(result) {
         result=JSON.parse(JSON.stringify(result));
         topologyLoading=false;
+        if(topologyRequest.revision!==analysisState.analysis_revision || topologyRequest.cutoff!==(topologyCutoff===null?currentPacket():topologyCutoff)){siOrganizationTimer.restart();return;}
         if(result.message){topologyError=result.message;topologyFailed=true;return;}
         let contractError=Shared.workbench.validateTopology(result,topologyRequest.revision,topologyRequest.cutoff);
         if(contractError){topologyError=contractError;topologyFailed=true;return;}
@@ -280,11 +281,23 @@ ApplicationWindow {
             });
             topologyData=merged;
         }else topologyData=result;
+        if(unifiedInspector.visible)siOrganizationTimer.restart();
         let families=result.projections || [];
         if(!families.some(function(p){return p.family===topologyFamily;}))topologyFamily=families.length ? families[0].family : "";
         if(!topologyFocus && topologyRows.length)topologyFocus=topologyRows[0].node_id;
         if(topologySelection && !topologyNode && !(result.page || {}).has_more)topologyError="The previous object is not observed at this cutoff. Choose an available object.";
     }
+    // Reuse the engine's paged, revision-bound topology for the classic SI tree.
+    Timer {
+        id: siOrganizationTimer; interval: 150; repeat: false
+        onTriggered: {
+            if(!unifiedInspector.visible || !backendReady || !analysisState.complete || topologyLoading)return;
+            if(topologyFailed)return;
+            if(!topologyData.analysis_revision || topologyStale){topologyCutoff=null;loadTopology(false);}
+            else if((topologyData.page || {}).has_more)loadTopology(true);
+        }
+    }
+    onBackendReadyChanged: if(backendReady)siOrganizationTimer.restart()
     function topologyNavigationPoint() {
         return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.query,family:topologyFamily,
             evidence:topologyEvidenceRef,sectionContext:topologySectionContext,resolution:topologyResolution,view:inspectorView,scope:evidenceScope,tab:tab,
@@ -1827,6 +1840,7 @@ ApplicationWindow {
             const staged=state.response_mode==="compact" && !!state.complete;
             presentationPending=staged;
             core.mark("state_js_assembled");analysisState=state;core.mark("state_js_end");
+            if(unifiedInspector.visible){topologyFailed=false;siOrganizationTimer.restart();}
             if(staged)Qt.callLater(function(){publishViewStage(state,token,epoch,0);});
             else {tableViewState=state;explorerViewState=state;historyViewState=state;recordViewState=state;}
         }
@@ -4419,6 +4433,9 @@ ApplicationWindow {
         UnifiedInspector {
             id: unifiedInspector
             host: win
+            organization: !topologyStale && topologyData.analysis_revision===analysisState.analysis_revision ? topologyData : ({})
+            organizationStatus: topologyLoading ? "Loading networks / TP..." : topologyError ? "Network organization unavailable" : (topologyData.page || {}).has_more ? "Loading more networks / TP..." : ""
+            onVisibleChanged: if(visible)siOrganizationTimer.restart()
             visible: !metadataMode && !advancedMode && !transportSummaryVisible
             Layout.fillWidth: true
             Layout.fillHeight: true

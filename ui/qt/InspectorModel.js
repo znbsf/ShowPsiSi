@@ -47,6 +47,11 @@ var inspector = {
         var root=d.si_structure ? JSON.parse(JSON.stringify(d.si_structure)) : this.node('section',d.name+' · selected section',header);
         root.label=d.name+' · selected section';
         function enrich(n){
+            var identifier=(n.fields || []).find(function(f){return ['elementary_PID','program_number','service_id','transport_stream_id','event_id'].indexOf(f.name)>=0;});
+            if(identifier && n.path!=='section'){
+                var kind={elementary_PID:'Stream PID ',program_number:'Program ',service_id:'Service ',transport_stream_id:'Transport ',event_id:'Event '}[identifier.name];
+                n.label=kind+identifier.value.split(' ')[0];
+            }
             if(n.descriptor_offset!==undefined){
                 var descriptor=(d.descriptors || []).find(function(x){return x.offset===n.descriptor_offset;});
                 if(descriptor && descriptor.native)n.children.push(inspector.native(descriptor.native,n.path+'/decoded'));

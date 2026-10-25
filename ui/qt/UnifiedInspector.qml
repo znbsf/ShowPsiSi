@@ -158,6 +158,7 @@ SplitView {
     palette.window:host.panel
     palette.base:host.surface
     palette.text:host.ink
+    palette.mid:host.muted
     palette.windowText:host.ink
     palette.button:host.surface
     palette.buttonText:host.ink
@@ -178,8 +179,9 @@ SplitView {
                 TextLabel { text:'PSI / SI TABLES';font.bold:true;Layout.fillWidth:true }
                 Button {objectName:'unifiedBack';text:'← Back';enabled:view.history.length>0 && host.backendReady;onClicked:view.back()}
             }
-            ComboBox {Layout.fillWidth:true;model:host.tableFamilies;currentIndex:Math.max(0,host.tableFamilies.indexOf(view.family));onActivated:view.changeFilter(currentText,view.query)}
-            TextField {id:search;objectName:'unifiedSearch';Layout.fillWidth:true;placeholderText:'Find table, PID, version or UTC time';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
+            ComboBox {Layout.fillWidth:true;indicator:TextLabel {text:'▾';color:host.muted;x:parent.width-width-10;y:(parent.height-height)/2}
+                model:host.tableFamilies;currentIndex:Math.max(0,host.tableFamilies.indexOf(view.family));onActivated:view.changeFilter(currentText,view.query)}
+            TextField {id:search;objectName:'unifiedSearch';color:host.ink;placeholderTextColor:host.muted;Layout.fillWidth:true;placeholderText:'Find table, PID, version or UTC time';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
             Button {text:'PID '+Model.inspector.hex(view.pidFilter)+' ×';visible:view.pidFilter>=0;onClicked:view.filterPid(-1);Accessible.name:'Clear numeric PID filter'}
             TextLabel {text:records.length+' distinct payloads · repeated arrivals counted as ×';color:host.muted;Layout.fillWidth:true;wrapMode:Text.Wrap}
             ListView {

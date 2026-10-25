@@ -19,7 +19,7 @@ ApplicationWindow {
     property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
     readonly property bool coreInspecting: core.inspecting
     readonly property bool metadataMode: inputKind === "dvbi"
-    property bool lightTheme: core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
+    property bool lightTheme: (!metadataMode && !advancedMode && !transportSummaryVisible) || core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
     property color surface: lightTheme ? "#f5f6f8" : "#181a1f"
     property color panel: lightTheme ? "#ffffff" : "#20232a"
     property color raised: lightTheme ? "#eef0f3" : "#2a2e37"

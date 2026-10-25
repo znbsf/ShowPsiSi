@@ -126,4 +126,55 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                         if width<=48:self.assertEqual(int(f['value'].split(' [')[1][:-1]),int(bits[start:start+width],2))
             finally:core.close()
 
+    def test_source_packet_framing_mapping_and_changed_file(self):
+        base=fixture();packets=[base[i:i+188] for i in range(0,len(base),188)]
+        with tempfile.TemporaryDirectory() as tmp:
+            core=Core()
+            try:
+                for stride,prefix in [(188,0),(192,4),(204,0)]:
+                    path=Path(tmp)/f'framing-{stride}.ts'
+                    raw=b''.join((b'\x00'*prefix)+p+(b'\x00'*(stride-prefix-188)) for p in packets)
+                    path.write_bytes(raw)
+                    state=core.call('analyze',{'path':str(path),'standards':'dvb'})
+                    row=next(r for r in state['tables'] if r['name']=='PMT' and r['pid']==256)
+                    detail=core.call('inspect',{'id':row['id']});packet=detail['source_packet']
+                    self.assertEqual(packet['status'],'available')
+                    self.assertEqual(packet['framing_stride'],stride)
+                    self.assertEqual(packet['file_offset'],stride+prefix)
+                    self.assertEqual(packet['raw_hex'],packets[1].hex().upper())
+                    self.assertEqual(packet['section_offset'],5)
+                    self.assertEqual(packet['section_bytes'],detail['bytes'])
+                    with path.open('ab') as f:f.write(b'changed')
+                    stale=core.call('inspect',{'id':row['id']})
+                    self.assertEqual(stale['raw_hex'],detail['raw_hex'])
+                    self.assertEqual(stale['source_packet']['status'],'source_changed')
+                    self.assertEqual(stale['source_packet']['raw_hex'],'')
+            finally:core.close()
+
+    def test_source_packet_multiple_sections_and_continuation(self):
+        pat1=section(0,1,1,word(100)+word(0xe100))
+        pat2=section(0,1,2,word(100)+word(0xe101))
+        first=bytes([0x47,0x40,0,0x10,0])+pat1+pat2
+        first+=b'\xff'*(188-len(first))
+        large=section(0,2,1,b''.join(word(100+i)+word(0xe100+i) for i in range(60)))
+        start=bytes([0x47,0x40,0,0x11,0])+large[:183]
+        tail=bytes([0x47,0,0,0x12])+large[183:]
+        tail+=b'\xff'*(188-len(tail))
+        null=bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'sections.ts';path.write_bytes(first+start+tail+null*3)
+            core=Core()
+            try:
+                state=core.call('analyze',{'path':str(path),'standards':'dvb'})
+                for row in state['tables']:
+                    detail=core.call('inspect',{'id':row['id']});packet=detail['source_packet']
+                    if row['extension']==2:
+                        self.assertEqual(packet['packet_index'],1)
+                        self.assertEqual(packet['section_offset'],5)
+                        self.assertEqual(packet['section_bytes'],183)
+                        self.assertGreater(detail['bytes'],183)
+                    elif row['version']==2:self.assertEqual(packet['section_offset'],5+len(pat1))
+                    else:self.assertEqual(packet['section_offset'],5)
+            finally:core.close()
+
 if __name__=='__main__':unittest.main()

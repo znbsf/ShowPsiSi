@@ -204,3 +204,40 @@ configuration failure, not a newly completed full Qt compile. Its child argv was
 not captured. No unchanged failing code-generation route or security-label
 change was retried for this slice. CoreOnly and the existing public QuickTest
 host avoid that generator and establish only engine/component evidence.
+
+
+## 2026-10-25 original visual reconstruction (supersedes dark P2 preview)
+
+User correction: reproduce the original colors, icons, fonts and layout before
+any redesign. `UnifiedInspector.qml` now uses the original light treatment,
+actual NxTSA bitmap icons, Programs / PSI Packets navigation, a dense unstriped
+field tree, red values, yellow selection and dual hex/ASCII panes. The field
+tree stays complete while byte selection reveals a matching descendant. The
+horizontal and vertical pane boundaries remain adjustable. Header/field widths
+and ten-byte hex rows follow `nx19-pmt-field-0.png`; this is not a claim of full
+original MDI/window-chrome or exact font/pixel parity. Compact search/back/page
+controls retain existing functionality at the bottom of the tree.
+
+`inspect.source_packet` supplies the first observed original 188-byte TS packet,
+with source packet index, file offset and physical framing stride. It reads the
+source only when file size/time still match analysis; unavailable/changed files
+leave the packet pane unavailable while retained Section bytes remain readable.
+The optional `section_offset`/`section_bytes` map only the matching PSI payload
+fragment in that packet, including multiple sections after a pointer field.
+A spanning Section is never presented as wholly contained in its first packet.
+The underlying source identity guard is metadata-based, not a fresh full-file
+cryptographic revalidation. No playback, all-packet browser or export increment
+was added. This supersedes the prior missing-first-source-packet-pane boundary.
+
+Validation: clean production core and QuickTest host build; 4 unified-engine
+tests cover exact layout, 188/192/204 framing, changed source, multiple Sections
+and continuation; 18 existing Section tests pass. The component suite runs
+11 SI checks plus 15 existing Summary checks at both 100% and 150% (30 PASS
+including four setup/cleanup entries), with palette, packet/Section selection,
+original grouping and divider drag checks. Existing theme tests: 6 PASS;
+presentation model: 50 assertions. The current original-input preview is
+`artifacts/nxtsa-parity-20261025/classic-hotbird-pmt.png`; associated raw engine
+state is `si-hotbird-evidence.json`, and actual renderer checks are in
+`classic-hotbird-qt.log`. These remain offscreen component evidence. The
+previous full-app Qt code-generation write blocker remains; no foreground or
+full new application acceptance is claimed.

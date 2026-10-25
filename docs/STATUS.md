@@ -1,5 +1,14 @@
 # ShowPsiSi status
 
+2026-10-25 latest user correction: core SI now follows original NxTSA visuals:
+white/light-gray surfaces, actual original bitmap icons, boxed/dotted trees,
+red field values, yellow selection, and source-packet / Section dual hex panes.
+The source-packet pane and both directions of selection are functional with
+real engine output, not screenshot mockups. See [visual requirements](UI_UX_STANDARDS.md)
+and [current parity evidence](NXTSA_UI_UX_PARITY.md). Complete app/native acceptance
+remains pending under the previously documented Qt generator write blocker.
+The earlier dark core-SI preview below is superseded by this visual slice.
+
 2026-10-25 core SI priority: Qt now has table-family navigation, an expandable
 Field / Bits / Value / Comment table and bidirectional Section-byte selection.
 C++ `inspect.si_structure` supplies exact MSB-first ranges; unknown ranges stay

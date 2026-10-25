@@ -36,7 +36,7 @@ Item {
         function init() {
             inspector.pidFilter=-1;inspector.family='All tables';inspector.query='';
             inspector.navigationOrigin={};inspector.selectionFilter={};inspector.pendingRestore=null;inspector.history=[];
-            inspector.openFamilies={};inspector.closed={};inspector.fieldClosed={};inspector.limits={};host.coreInspecting=false;
+            inspector.hexFraction=0.40;inspector.openFamilies={};inspector.closed={};inspector.fieldClosed={};inspector.limits={};host.coreInspecting=false;
             inspector.selectRecord(inspector.findRecord('PAT'));inspector.history=[];
         }
         function test_numeric_pid_excludes_extension_collision() {
@@ -120,7 +120,7 @@ Item {
             compare(inspector.selectedField.name,'payload');compare(inspector.selectedField.value,'0x42 [66]');
             verify(inspector.selectedPath.indexOf('/descriptor/20')>=0);
             verify(!inspector.closed.section);compare(inspector.activeRange.offset,22);
-            inspector.selectedPath='section/decoded';inspector.selectField(0);
+            inspector.selectedPath='section/decoded';inspector.selectField(inspector.fieldRows.findIndex(function(f){return f.nodePath==='section/decoded' && !f.groupPath && f.bit_offset===undefined;}));
             compare(inspector.activeRange,null);
             verify(findChild(inspector,'siRange').text.indexOf('unavailable')>=0);
         }
@@ -145,6 +145,25 @@ Item {
             inspector.focusNavigation();inspector.nextRegion();verify(findChild(inspector,'unifiedFields').activeFocus);
             inspector.hexOpen=true;inspector.nextRegion();verify(findChild(inspector,'siHexRows').activeFocus);
             inspector.nextRegion();verify(findChild(inspector,'unifiedTree').activeFocus);
+        }
+        function test_classic_palette_icons_and_packet_link() {
+            inspector.selectRecord(inspector.findRecord('PMT'));inspector.selectByte(3);
+            compare(String(inspector.classicPaper),'#ffffff');compare(String(inspector.classicSelection),'#ffff00');compare(String(inspector.classicValue),'#ff0000');
+            compare(inspector.sourcePacket.status,'available');compare(inspector.packetRaw.length,376);
+            verify(inspector.packetSelected(inspector.sourcePacket.section_offset+3));
+            inspector.packetClick(inspector.sourcePacket.section_offset+5);
+            compare(inspector.selectedField.name,'current_next_indicator');
+            inspector.packetClick(0);compare(inspector.selectedFieldIndex,-1);
+            inspector.selectByte(3);wait(100);
+            var field=findChild(inspector,'unifiedFields').itemAtIndex(inspector.selectedFieldIndex);
+            compare(String(field.background.color),'#ffff00');
+            verify(findChild(inspector,'siPacketRows').width>300);
+            verify(findChild(inspector,'siPacketRows').height>150);
+            verify(inspector.navigation.some(function(r){return r.name==='Programs';}));
+            verify(inspector.navigation.some(function(r){return r.name==='PSI Packets';}));
+            var divider=findChild(inspector,'siPaneDivider');var before=inspector.hexFraction;
+            mouseDrag(divider,divider.width/2,2,0,-40);verify(inspector.hexFraction>before);
+            inspector.hexFraction=before;
         }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';

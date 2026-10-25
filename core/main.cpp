@@ -284,6 +284,7 @@ struct Record {
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     dvbi::Store dvbiDocuments;
+    fs::file_time_type analysisSourceStamp{}; bool analysisSourceKnown=false;
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
     std::vector<Record> records; std::unordered_map<std::string,size_t> ids; J history=J::array();
     std::unordered_map<std::string,std::string> previous;
@@ -970,7 +971,7 @@ public:
         // A new scan owns a new revision even when opening or framing fails.
         // Never allow old evidence or preview tokens to acquire a new source label.
         clearEvidence();++revision;analysisStatus="analyzing";
-        source.clear();packets=totalBytes=0;complete=false;coverage=J::object();scannedPackets=plannedPackets=demuxOffset=0;compactResponse=args.value("response_mode",std::string("legacy"))=="compact";
+        source.clear();analysisSourceKnown=false;packets=totalBytes=0;complete=false;coverage=J::object();scannedPackets=plannedPackets=demuxOffset=0;compactResponse=args.value("response_mode",std::string("legacy"))=="compact";
         firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;began=Clock::now();requestId=rid;
         std::string pausedPhase;
         if(control)control->onPause=[&](bool paused){if(paused){pausedPhase=analysisStatus;analysisStatus="paused";}else analysisStatus=pausedPhase;if(!control->cancelled.load())emit({{"event","progress"},{"request_id",rid},{"state",compactState()}});};
@@ -1002,7 +1003,7 @@ public:
         std::error_code sourceError;
         if(!fs::is_regular_file(source,sourceError))throw std::runtime_error("Source must be a regular local file");
         std::ifstream in(source,std::ios::binary);
-        if(!in)throw std::runtime_error("Cannot read source file");const auto sourceStamp=fs::last_write_time(source);totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
+        if(!in)throw std::runtime_error("Cannot read source file");const auto sourceStamp=fs::last_write_time(source);analysisSourceStamp=sourceStamp;analysisSourceKnown=true;totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
         checkCancelled(control);
         std::vector<uint8_t> probe(5*204);in.read(reinterpret_cast<char*>(probe.data()),probe.size());size_t got=size_t(in.gcount());in.clear();in.seekg(0);
         bool framing=false;
@@ -1133,6 +1134,34 @@ public:
         ts::DuckContext topologyDuck(&NULLREP);topologyDuck.resetStandards(duck.standards());topologyDuck.setDefaultCharsetIn(duck.charsetIn());topologyDuck.setDefaultCharsetOut(duck.charsetOut());topologyDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
         topology::Builder builder(full,topologyDuck,root,standardsContext,revision,at);auto out=builder.build(args,raw,incomplete);out["coverage"]=coverage;out["semantic_scope"]="Only the contiguous window containing or preceding the cutoff; gaps remain unknown";return out;
     }
+    J sourcePacket(const Record& r) const {
+        J out={{"status","unavailable"},{"raw_hex",""},{"section_offset",nullptr},{"section_bytes",0}};
+        // Read only the first observed 188-byte TS packet, not a reconstructed
+        // transport packet. Section linking is allowed only at real PSI starts.
+        try {
+            if(!analysisSourceKnown || r.positions.empty() || !fs::is_regular_file(source))return out;
+            if(fs::file_size(source)!=totalBytes || fs::last_write_time(source)!=analysisSourceStamp){out["status"]="source_changed";return out;}
+            const uint64_t offset=r.positions.front()*stride+prefix;
+            std::ifstream input(source,std::ios::binary);input.seekg(std::streamoff(offset));Bytes packet(188);input.read(reinterpret_cast<char*>(packet.data()),188);
+            if(input.gcount()!=188 || packet[0]!=0x47 || ((unsigned(packet[1]&31)<<8)|packet[2])!=r.pid)return out;
+            if(fs::file_size(source)!=totalBytes || fs::last_write_time(source)!=analysisSourceStamp){out["status"]="source_changed";return out;}
+            out["status"]="available";out["raw_hex"]=hex(packet);out["packet_index"]=r.positions.front();out["file_offset"]=offset;out["framing_stride"]=stride;
+            out["scope"]="First observed source TS packet, 188 bytes; framing prefix/parity excluded";
+            const unsigned afc=(packet[3]>>4)&3;
+            if((packet[1]&0xc0)!=0x40 || (packet[3]&0xc0) || !(afc&1))return out;
+            size_t p=4;if(afc&2)p+=size_t(packet[4])+1;if(p>=188)return out;
+            p+=size_t(packet[p])+1;
+            for(;p+3<=188 && packet[p]!=0xff;){
+                const size_t length=3+((size_t(packet[p+1]&15)<<8)|packet[p+2]);
+                const size_t count=std::min(length,188-p);
+                if(length==r.raw.size() && std::equal(packet.begin()+p,packet.begin()+p+count,r.raw.begin())){
+                    out["section_offset"]=p;out["section_bytes"]=count;break;
+                }
+                if(length>188-p)break;p+=length;
+            }
+        }catch(const fs::filesystem_error&){out["status"]="unavailable";}
+        return out;
+    }
     J inspect(const J& args) {
         if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale inspection analysis_revision");
         std::string id=args.at("id");if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
@@ -1142,6 +1171,7 @@ public:
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
         J out=summary(r,cutoff);out["analysis_revision"]=revision;out["evidence_anchors"]=topology::anchors(r,standardsContext);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
+        out["source_packet"]=sourcePacket(r);
         out["si_structure"]=siwire::inspect(r.raw,r.descriptors,r.valid && !r.j94);
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);

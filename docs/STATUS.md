@@ -1,5 +1,13 @@
 # ShowPsiSi status
 
+2026-10-25 core SI priority: Qt now has table-family navigation, an expandable
+Field / Bits / Value / Comment table and bidirectional Section-byte selection.
+C++ `inspect.si_structure` supplies exact MSB-first ranges; unknown ranges stay
+explicit. Real-engine component checks and original Hotbird PMT evidence are in
+[the current UI parity record](NXTSA_UI_UX_PARITY.md). This is source/component
+implementation; complete new Qt build/native acceptance and the original
+separate TS-packet hex pane remain pending.
+
 2026-10-25 — NxTSA复刻P1（源码/组件阶段）：
 已fetch远端main de2b1d5，在codex/nxtsa-summary-pid保留当前改动。
 新增C++全PID统计/query_transport与Qt Summary/Error、排序分页、来源导航和返回状态，

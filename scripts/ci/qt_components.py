@@ -98,7 +98,7 @@ def run(binary,artifacts,qt_sdk=None):
         result['binaries']['engine']=fingerprint(engine)
         sidecar=Path(engine).resolve().parent/'showpsisi-build.json'
         if sidecar.is_file():result['declared_build_record']=fingerprint(sidecar)
-        for relative in ('ui/qt/UnifiedInspector.qml','ui/qt/TransportSummary.qml','ui/qt/InspectorModel.js',
+        for relative in ('core/SiWireFields.h','core/main.cpp','ui/qt/UnifiedInspector.qml','ui/qt/TransportSummary.qml','ui/qt/InspectorModel.js',
                          'tests/qml_unified/tst_unified.qml','tests/qml_transport/tst_transport.qml',
                          'tests/test_unified_inspector.py','tests/test_transport_statistics.py'):
             result['source_files'].append({'file':relative,**fingerprint(ROOT/relative)})

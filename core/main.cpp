@@ -59,6 +59,7 @@ TS_LIBTSDUCK_CHECK();
 #endif
 
 using J = nlohmann::json;
+#include "SiWireFields.h"
 #include "NorDigMetadata.h"
 #include "DvbiInput.h"
 #include "CableOobMetadata.h"
@@ -1141,6 +1142,7 @@ public:
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
         J out=summary(r,cutoff);out["analysis_revision"]=revision;out["evidence_anchors"]=topology::anchors(r,standardsContext);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
+        out["si_structure"]=siwire::inspect(r.raw,r.descriptors,r.valid && !r.j94);
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);
         out["satellite_associations"]=satellitemeta::inspect(root,r);

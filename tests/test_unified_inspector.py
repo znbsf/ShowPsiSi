@@ -40,6 +40,30 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                 state=core.call('analyze',{'path':str(path),'standards':'dvb'})
                 self.assertEqual(state['crc_errors'],0)
                 details=[core.call('inspect',{'id':r['id']}) for r in state['tables']]
+                # Wire positions are selected-section evidence, not XML attribute guesses.
+                for detail in details:
+                    raw=bytes.fromhex(detail['raw_hex'])
+                    def visit(node):
+                        for field in node['fields']:
+                            start,width=field['bit_offset'],field['bit_length']
+                            self.assertGreater(width,0)
+                            self.assertLessEqual(start+width,len(raw)*8)
+                        for child in node['children']:visit(child)
+                    visit(detail['si_structure'])
+                pmt=next(d for d in details if d['name']=='PMT' and d['pid']==0x100)
+                fields={f['name']:f for f in pmt['si_structure']['fields']}
+                self.assertEqual((fields['PCR_PID']['bit_offset'],fields['PCR_PID']['bit_length'],fields['PCR_PID']['value']),(67,13,'0x0101 [257]'))
+                self.assertEqual((fields['version_number']['bit_offset'],fields['version_number']['bit_length']),(42,5))
+                stream=pmt['si_structure']['children'][0]
+                es=next(f for f in stream['fields'] if f['name']=='elementary_PID')
+                self.assertEqual((es['bit_offset'],es['bit_length'],es['value']),(107,13,'0x0101 [257]'))
+                self.assertEqual([n['descriptor_offset'] for n in stream['children']],[17,20])
+                self.assertEqual(stream['children'][1]['fields'][2]['value'],'0x42 [66]')
+                for detail in details:
+                    if detail['name']=='TDT':
+                        names=[f['name'] for f in detail['si_structure']['fields']]
+                        self.assertNotIn('version_number',names)
+                        self.assertNotIn('CRC_32',names)
                 times=[r for r in state['tables'] if r['table_id'] in (0x70,0x73)]
                 self.assertEqual(len(times),4)
                 self.assertEqual(sorted(r['count'] for r in times),[1,1,2,2])
@@ -67,6 +91,39 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                 out=Path(os.environ.get('SHOWPSISI_UNIFIED_EVIDENCE_DIR',ROOT/'artifacts/unified-inspector'));out.mkdir(parents=True,exist_ok=True)
                 (out/'fixture.ts').write_bytes(path.read_bytes())
                 (out/'engine-evidence.json').write_text(json.dumps({'state':state,'details':details},indent=2),encoding='utf-8')
+            finally:core.close()
+
+    def test_si_loop_positions_and_descriptor_namespaces(self):
+        service=descriptor(0x48,b'\x01\x01P\x01S')
+        event=descriptor(0x4d,b'eng\x01E\x01T')
+        raws=[(0,section(0,1,1,word(100)+word(0xe100))),
+              (1,section(1,1,1,descriptor(9,word(0x100)+word(0xe101)))),
+              (0x11,section(0x42,1,1,word(2)+b'\xff'+word(100)+b'\xff'+word(0x8000+len(service))+service)),
+              (0x10,section(0x40,1,1,word(0xf000)+word(0xf006)+word(1)+word(2)+word(0xf000))),
+              (0x12,section(0x4e,100,1,word(1)+word(2)+b'\x00\x4e'+word(5)+bytes.fromhex('eb96123456010000')+word(0x8000+len(event))+event))]
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'si.ts'
+            path.write_bytes(b''.join(bytes([0x47,0x40|(pid>>8),pid&255,0x10,0])+raw+b'\xff'*(183-len(raw)) for pid,raw in raws))
+            core=Core()
+            try:
+                state=core.call('analyze',{'path':str(path),'standards':'dvb'})
+                details={r['table_id']:core.call('inspect',{'id':r['id']}) for r in state['tables']}
+                def fields(node):
+                    return node['fields']+[f for child in node['children'] for f in fields(child)]
+                expected={0x42:{'service_id':88,'service_type':144,'service_name':176},
+                          0x40:{'transport_stream_id':96,'original_network_id':112},
+                          0x4e:{'event_id':112,'start_time':128,'event_name':256},
+                          1:{'CA_system_id':80,'CA_PID':99}}
+                for tid,positions in expected.items():
+                    detail=details[tid];self.assertTrue(detail['valid'])
+                    items=fields(detail['si_structure'])
+                    for name,offset in positions.items():
+                        self.assertTrue(any(f['name']==name and f['bit_offset']==offset for f in items),(tid,name,offset,items))
+                    raw=bytes.fromhex(detail['raw_hex']);bits=''.join(f'{b:08b}' for b in raw)
+                    for f in items:
+                        start,width=f['bit_offset'],f['bit_length']
+                        self.assertLessEqual(start+width,len(bits))
+                        if width<=48:self.assertEqual(int(f['value'].split(' [')[1][:-1]),int(bits[start:start+width],2))
             finally:core.close()
 
 if __name__=='__main__':unittest.main()

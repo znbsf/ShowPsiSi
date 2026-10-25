@@ -156,3 +156,51 @@ query_transport 已交付上述scan-global统计；其余仍为**待设计模型
 - PR29 的导航变化可能重置焦点、手动原生驱动所属进程树清理、机器SDK路径仍保留待办。常规CI缺unified专项回归已由P1补入源码路线，托管执行与完整应用门槛仍待验证。
 - [2026-10-18 operation handoff](OPERATIONS_PARITY_HANDOFF.md) 的 Web BIN / Use snapshot / Qt 对比选择等属于历史待复核，本轮没有重新运行其保存/导出流程；不能直接宣布仍坏或已修。
 - 构建、CI、静态测试、offscreen 图不能替代本次之外的 Windows 真实交互验收。后续实现按 [交付 runbook](DELIVERY_RUNBOOK.md)、[CI 合同](CI_TEST_CONTRACT.md)、[取消合同](ANALYSIS_CANCELLATION.md)、[协议覆盖](PROTOCOL_COVERAGE.md) 执行；SDK 注册、解析、应用语义和完整协议支持分别报告。
+
+
+## 2026-10-25 core SI implementation (UX03; user-priority correction)
+
+The current slice concentrates on the original SI inspection interface. No new
+Summary, media, Timing, playback or export feature is included in this slice.
+`UnifiedInspector.qml` now groups the navigation tree by PSI/SI table family and
+shows an expandable Field / Bits / Value / Comment tree table, hexadecimal plus
+decimal values, and a visible Section hex/ASCII pane. Field clicks highlight and
+scroll to the corresponding bytes; byte clicks reveal the narrowest matching
+field. Equal ranges prefer a named field over opaque payload. F6 cycles the tree,
+field table and hex pane; arrow keys operate each region. Back restores field,
+expansion and scroll context. Unknown SDK attribute offsets clear the highlight.
+
+`inspect.si_structure` is produced by `core/SiWireFields.h`, not inferred in QML.
+Its `bit_offset` and `bit_length` are MSB-first positions in this exact section's
+`raw_hex`. Headers and supported PAT/PMT/CAT/SDT/NIT/BAT/EIT/TDT/TOT loops have
+bounded ranges. The descriptor layouts for service, network/bouquet name, short
+event, registration, CA, ISO-639 and stream identifier are emitted only after
+context-aware SDK identity/decoding succeeds. Unknown/private payloads remain
+opaque. Existing native/decoded trees, exact descriptor views and advanced
+workbench remain available. A malformed envelope does not establish loop ranges.
+
+Validation is against HEAD `b305ef7` plus this slice, not the old main portable.
+The production engine was clean-built in the existing isolated CoreOnly build;
+18 section-evidence and 44 protocol-coverage tests passed. The Qt component suite
+uses actual production-engine output and tests click selection, shared-byte bit
+fields, unknown offsets, descriptor selection, expansion, keyboard and Back at
+100%/150%. Receipts live under `artifacts/nxtsa-parity-20261025/si-final-*`.
+The original Hotbird input independently confirms PMT PID 0x0108, program 0x0008,
+version 13, PCR PID 0x0712, 174 bytes and seven streams (`si-hotbird-evidence.json`).
+`si-hotbird-pmt.png` is a real Qt offscreen render of that engine detail.
+
+Remaining differences: this is not complete original MDI/pixel parity; the
+original separate source-TS-packet hex pane is not implemented here. Section
+bytes must not be relabelled as original TS packet bytes. Not all descriptor
+semantic subfields have bit ranges. Complete new application/native interaction
+acceptance remains pending; no foreground input was performed.
+The previously attempted Qt-enabled build command was
+`cmake --build build --target showpsisi-core --parallel 2` after `scripts/env.ps1`.
+CMake regeneration failed before compilation because the existing kit's
+`C:/Users/hentai/Documents/ShowPsiSi/.deps/Qt/6.7.3/msvc2019_64/bin/qmlimportscanner.exe`
+could not write `build/.qt/qml_imports/showpsisi-qt_conf.cmake` (exit 1;
+`artifacts/nxtsa-parity-20261025/p1-core-build.log`). This was a Qt-enabled
+configuration failure, not a newly completed full Qt compile. Its child argv was
+not captured. No unchanged failing code-generation route or security-label
+change was retried for this slice. CoreOnly and the existing public QuickTest
+host avoid that generator and establish only engine/component evidence.

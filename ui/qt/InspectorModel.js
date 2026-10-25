@@ -44,7 +44,17 @@ var inspector = {
         var header={table_id:this.hex(d.table_id),pid:this.hex(d.pid),bytes:d.bytes};
         if(!this.shortSyntax(d)){header.table_id_extension=this.hex(d.extension);header.version_number=d.version;header.current_next_indicator=d.current;header.section_number=d.section;header.last_section_number=d.last_section;}
         if(d.utc_time || (d.fields || {}).utc_time)header.utc_time=d.utc_time || d.fields.utc_time;
-        var root=this.node('section',d.name+' · selected section',header);
+        var root=d.si_structure ? JSON.parse(JSON.stringify(d.si_structure)) : this.node('section',d.name+' · selected section',header);
+        root.label=d.name+' · selected section';
+        function enrich(n){
+            if(n.descriptor_offset!==undefined){
+                var descriptor=(d.descriptors || []).find(function(x){return x.offset===n.descriptor_offset;});
+                if(descriptor && descriptor.native)n.children.push(inspector.native(descriptor.native,n.path+'/decoded'));
+                if(descriptor && Object.keys(descriptor.fields || {}).length)n.children.push(inspector.node(n.path+'/fields','Decoded fields',descriptor.fields));
+            }
+            n.children.forEach(enrich);
+        }
+        if(d.si_structure)enrich(root);
         var native=d.section_native_table;
         if(!native && d.native_table_complete && (d.native_table_sources || []).length===1 && d.native_table_sources[0].id===d.id)native=d.native_table;
         if(native)root.children.push(this.native(native,'section/decoded'));
@@ -61,6 +71,27 @@ var inspector = {
             });root.children.push(descriptors);
         }
         return root;
+    },
+    fieldTable: function(node,closed,depth) {
+        if(!node)return [];
+        function firstBit(n){
+            var bits=(n.fields || []).filter(function(f){return f.bit_offset!==undefined;}).map(function(f){return f.bit_offset;});
+            if(n.range)bits.push(n.range.offset*8);
+            return bits.length?Math.min.apply(null,bits):Infinity;
+        }
+        var rows=[],entries=(node.fields || []).map(function(f){return {field:f,bit:f.bit_offset===undefined?Infinity:f.bit_offset};});
+        (node.children || []).forEach(function(child){entries.push({child:child,bit:firstBit(child)});});
+        // Wire order places CRC after the loops, while SDK-only attributes stay
+        // available after all positioned evidence without invented offsets.
+        entries.sort(function(a,b){return a.bit===b.bit?0:a.bit-b.bit;});
+        entries.forEach(function(entry){
+            if(entry.field)rows.push(Object.assign({},entry.field,{depth:depth || 0,nodePath:node.path}));
+            else {
+                var child=entry.child;
+                rows.push({name:child.label,value:'',help:'',depth:depth || 0,groupPath:child.path});
+                if(!closed[child.path])rows=rows.concat(inspector.fieldTable(child,closed,(depth || 0)+1));
+            }
+        });return rows;
     },
     find: function(root,path) {
         if(!root)return null;

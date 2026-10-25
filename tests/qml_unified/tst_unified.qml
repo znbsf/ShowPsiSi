@@ -12,6 +12,7 @@ Item {
         property var captures: []
         property bool backendReady:true
         property bool coreInspecting:false
+        property bool deferInspection:false
         property var tableFamilies:['All tables','PAT','PMT','BAT','TDT','TOT']
         property color ink:'#202733'
         property color muted:'#566171'
@@ -22,21 +23,25 @@ Item {
         property color selectionSurface:'#dceafd'
         property color hoverSurface:'#e5e9ef'
         property color removedColor:'#b42929'
-        function inspect(id,sid) {detail=captures.find(function(d){return d.id===id;}) || {};}
+        function inspect(id,sid) {if(deferInspection){coreInspecting=true;detail={};return;}detail=captures.find(function(d){return d.id===id;}) || {};}
     }
     UnifiedInspector {id:inspector;anchors.fill:parent;host:host}
     TestCase {
         name:'UnifiedInspectorRealEngineEvidence'
+        property var referenceTables:[]
         when:windowShown
         function initTestCase() {
             var xhr=new XMLHttpRequest();xhr.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/engine-evidence.json'),false);xhr.send();
-            var evidence=JSON.parse(xhr.responseText);host.captures=evidence.details;host.analysisState=evidence.state;inspector.organization=evidence.topology;
+            var evidence=JSON.parse(xhr.responseText);
+            var refs=new XMLHttpRequest();refs.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/reference-trees.json'),false);refs.send();referenceTables=JSON.parse(refs.responseText);
+            host.captures=evidence.details;host.analysisState=evidence.state;inspector.organization=evidence.topology;
             host.inspect(evidence.details[0].id,-1);
         }
         function init() {
             inspector.pidFilter=-1;inspector.family='All tables';inspector.query='';
-            inspector.navigationOrigin={};inspector.selectionFilter={};inspector.pendingRestore=null;inspector.history=[];
-            inspector.hexFraction=0.40;inspector.openFamilies={};inspector.closed={};inspector.fieldClosed={};inspector.limits={};host.coreInspecting=false;
+            inspector.navigationOrigin={};inspector.selectionFilter={};inspector.pendingRestore=null;inspector.pendingNode=null;inspector.history=[];
+            inspector.expandedRecords={};inspector.treeClosed={};inspector.treeLimits={};
+            host.deferInspection=false;inspector.fieldColumnWidths=[-1,-1,-1,-1];inspector.hexFraction=0.40;inspector.openFamilies={};inspector.closed={};inspector.fieldClosed={};inspector.limits={};host.coreInspecting=false;
             inspector.selectRecord(inspector.findRecord('PAT'));inspector.history=[];
         }
         function test_numeric_pid_excludes_extension_collision() {
@@ -189,6 +194,178 @@ Item {
             keyClick(Qt.Key_Space);compare(inspector.fieldRows.length,count);
             for(var i=0;i<6;i++)keyClick(Qt.Key_Down);
             compare(inspector.selectedField.name,'table_id_extension');compare(inspector.activeRange.offset,3);
+        }
+        function test_pending_detail_keeps_presentation_and_clears_on_failure() {
+            inspector.selectRecord(inspector.findRecord('PMT'));wait(30);
+            var old=inspector.detail.id,count=inspector.fieldRows.length,hex=inspector.rawHex;
+            host.deferInspection=true;
+            inspector.selectRecord(inspector.findRecord('BAT'));wait(50);
+            compare(host.detail.id,undefined);compare(inspector.detail.id,old);
+            compare(inspector.fieldRows.length,count);compare(inspector.rawHex,hex);
+            verify(!findChild(inspector,'unifiedFields').enabled);
+            host.detail=host.captures.find(function(d){return d.name==='BAT';});host.coreInspecting=false;
+            tryCompare(inspector,'detail',host.detail);verify(inspector.detail.name==='BAT');
+            inspector.selectRecord(inspector.findRecord('PAT'));host.coreInspecting=false;
+            tryVerify(function(){return !inspector.detail.id;});compare(inspector.fieldRows.length,0);
+            host.deferInspection=false;
+        }
+        function test_scrolled_tree_click_keeps_row_and_delegate() {
+            // Bounded synthetic repetition of real engine records stresses a long tree.
+            var originalState=host.analysisState;
+            try {
+                var state=Object.assign({},originalState),pat=inspector.findRecord('PAT'),rows=[];
+                for(var i=0;i<80;i++)rows.push(Object.assign({},pat,{id:'scroll:'+i,extension:i}));
+                state.tables=rows;host.analysisState=state;inspector.family='PAT';inspector.openFamilies={'PAT':true};wait(50);
+                var nav=findChild(inspector,'unifiedTree');
+                var index=inspector.navigation.findIndex(function(r){return r.key==='scroll:73';});verify(index>=0);
+                nav.positionViewAtIndex(index,ListView.Center);wait(50);
+                var clicked=nav.itemAtIndex(index);verify(clicked,'visible index '+index+' count '+nav.count+' scroll '+nav.contentY);var y=clicked.y-nav.contentY;
+                host.deferInspection=true;mouseClick(clicked,Math.min(clicked.width/2,nav.width-20),10);wait(50);
+                compare(nav.itemAtIndex(index),clicked);verify(Math.abs(clicked.y-nav.contentY-y)<1);
+                var incoming=Object.assign({},host.captures[0],{id:'scroll:73'});host.detail=incoming;host.coreInspecting=false;wait(50);
+                index=inspector.navigation.findIndex(function(r){return r.key==='scroll:73';});
+                compare(nav.itemAtIndex(index),clicked);verify(Math.abs(clicked.y-nav.contentY-y)<1,'Clicked row must stay at its viewport position');
+                compare(inspector.navigation[nav.currentIndex].key,'scroll:73');
+            } finally {host.deferInspection=false;host.coreInspecting=false;host.analysisState=originalState;}
+        }
+        function test_drag_field_columns_and_horizontal_scroll() {
+            inspector.selectRecord(inspector.findRecord('PMT'));wait(50);
+            var list=findChild(inspector,'unifiedFields'),grip=findChild(inspector,'siColumnGrip:0');verify(grip);
+            var before=inspector.fieldColumnWidth(0);
+            mouseDrag(grip,3,10,100,0);verify(inspector.fieldColumnWidth(0)>before+80);
+            compare(findChild(inspector,'siColumnHeader:0').width,inspector.fieldColumnWidth(0));
+            var width=inspector.fieldColumnWidth(0);inspector.selectRecord(inspector.findRecord('BAT'));compare(inspector.fieldColumnWidth(0),width);
+            verify(list.contentWidth>list.width);list.contentX=60;wait(30);
+            verify(findChild(inspector,'siColumnHeader:0').mapToItem(list,0,0).x<0);
+            list.contentX=0;var valueGrip=findChild(inspector,'siColumnGrip:2');
+            mouseDoubleClickSequence(valueGrip,3,10);verify(inspector.fieldColumnWidths[2]>0);
+            inspector.resizeFieldColumn(1,-100);compare(inspector.fieldColumnWidth(1),48);
+            list.contentX=0;
+        }
+        function test_left_tree_wire_loops_and_cached_descriptor_selection() {
+            var pmt=inspector.findRecord('PMT'),nit=inspector.findRecord('NIT');
+            inspector.selectRecord(pmt);wait(30);
+            var stream=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===pmt.id && r.node.path==='section/stream/12';});verify(stream);
+            verify(stream.label.indexOf('PID=0x0101')>=0);verify(stream.label.indexOf('stream_type = 0x1B')>=0);
+            var descriptor=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===pmt.id && r.node.descriptor_offset===17;});verify(descriptor);
+            compare(descriptor.depth,stream.depth+1);verify(descriptor.label.indexOf('stream_identifier_descriptor TAG(0x52)')>=0);
+            verify(!inspector.navigation.some(function(r){return r.kind==='node' && /\/decoded|section\/descriptors/.test(r.node.path);}));
+            inspector.selectRecord(nit);wait(30);
+            verify(inspector.navigation.some(function(r){return r.key===descriptor.key;}),'Expanded PMT must survive selection of NIT');
+            var transport=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===nit.id && r.label==='ONID=0x2001 TSID = 0x1001';});verify(transport);
+            var networkDescriptor=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===nit.id && r.node.descriptor_offset===10;});verify(networkDescriptor);
+            var delivery=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===nit.id && r.node.descriptor_offset===35;});verify(delivery);
+            compare(networkDescriptor.depth,transport.depth);compare(delivery.depth,transport.depth+1);
+            inspector.activate(transport);compare(inspector.selectedPath,transport.node.path);verify(inspector.activeRange.offset===29 && inspector.activeRange.length===31);
+            compare(inspector.fieldRows[inspector.selectedFieldIndex].groupPath,transport.node.path);
+            var oldWidth=inspector.fieldColumnWidth(0);inspector.resizeFieldColumn(0,oldWidth+40);
+            host.deferInspection=true;inspector.activate(descriptor);compare(inspector.detail.id,nit.id);
+            host.detail=host.captures.find(function(d){return d.id===pmt.id;});host.coreInspecting=false;
+            tryCompare(inspector,'selectedPath',descriptor.node.path);
+            compare(inspector.activeRange.offset,17);compare(inspector.activeRange.length,3);
+            compare(inspector.fieldRows[inspector.selectedFieldIndex].groupPath,descriptor.node.path);
+            compare(inspector.fieldColumnWidth(0),oldWidth+40);
+            verify(inspector.navigation.some(function(r){return r.key===delivery.key;}),'NIT must stay expanded after returning to PMT');
+            host.deferInspection=false;
+        }
+        function test_left_tree_expand_controls_and_source_reset() {
+            var pmt=inspector.findRecord('PMT');inspector.selectRecord(pmt);wait(30);
+            var nav=findChild(inspector,'unifiedTree');
+            verify(nav.contentWidth>nav.width,'Long SI labels must remain accessible by horizontal scrolling');nav.contentX=0;
+            var stream=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===pmt.id && r.node.path==='section/stream/12';});verify(stream);
+            var index=inspector.navigation.findIndex(function(r){return r.key===stream.key;});nav.positionViewAtIndex(index,ListView.Center);wait(30);
+            var row=nav.itemAtIndex(index);verify(row);
+            // Click the actual [+/-] box, not a helper that bypasses the delegate.
+            mouseClick(row,(stream.depth+1)*16-5,10);wait(30);
+            verify(!inspector.navigation.some(function(r){return r.kind==='node' && r.record.id===pmt.id && r.node.descriptor_offset===17;}));
+            nav.forceActiveFocus();keyClick(Qt.Key_Right);wait(30);
+            verify(inspector.navigation.some(function(r){return r.kind==='node' && r.record.id===pmt.id && r.node.descriptor_offset===17;}));
+            var original=host.analysisState;
+            host.analysisState=Object.assign({},original,{source:'another-source.ts',analysis_revision:'another'});compare(Object.keys(inspector.tableTrees).length,0);compare(Object.keys(inspector.expandedRecords).length,0);
+            host.analysisState=original;host.detail={};host.inspect(pmt.id,-1);
+        }
+        function test_all_reference_table_trees_and_semantic_selection() {
+            var original=host.analysisState,originalCaptures=host.captures,visited=0;
+            try {
+                for(var i=0;i<referenceTables.length;i++){
+                    var sample=referenceTables[i],d=sample.detail;
+                    host.analysisState=sample.state;host.detail={};host.captures=[d];host.inspect(d.id,-1);
+                    inspector.family='All tables';inspector.selectRecord(sample.state.tables.find(function(r){return r.id===d.id;}));
+                    var rows=inspector.navigation.filter(function(r){return r.kind==='node' && r.record.id===d.id;});verify(rows.length>0,sample.name);
+                    if(!d.si_structure.children.length){
+                        var expected=[];
+                        function collect(n,path){expected.push({name:n.name,path:path});(n.children || []).forEach(function(child,index){collect(child,path+'/'+index);});}
+                        if(d.native_table.children.length)d.native_table.children.forEach(function(n,index){collect(n,'section/decoded/'+index);});else collect(d.native_table,'section/decoded');
+                        for(var j=0;j<expected.length;j++)verify(rows.some(function(r){return r.node.path===expected[j].path && r.node.semanticName===expected[j].name;}),sample.name+': '+expected[j].path);
+                        var leaf=rows[rows.length-1];inspector.activate(leaf);
+                        compare(inspector.selectedPath,leaf.node.path);compare(inspector.activeRange,null);
+                        verify(inspector.selectedFieldIndex>=0,sample.name+' field row');
+                        compare(inspector.fieldRows[inspector.selectedFieldIndex].groupPath,leaf.node.path);
+                        verify(findChild(inspector,'siRange').text.indexOf('unavailable')>=0);
+                        visited++;
+                    }
+                }
+                verify(visited>30);
+            } finally {host.captures=originalCaptures;host.analysisState=original;host.detail={};host.inspect(originalCaptures[0].id,-1);}
+        }
+        function test_mouse_expand_contract_for_left_and_right_trees() {
+            inspector.selectRecord(inspector.findRecord('PMT'));wait(30);
+            var nav=findChild(inspector,'unifiedTree');nav.contentX=0;
+            function item(row){var index=inspector.navigation.findIndex(function(r){return r.key===row.key;});verify(index>=0);nav.positionViewAtIndex(index,ListView.Center);wait(30);var delegate=nav.itemAtIndex(index);verify(delegate);return delegate;}
+            function textX(row){return (row.depth+1)*16+35;}
+            var family=inspector.navigation.find(function(r){return r.kind==='family' && r.name==='PMT';});
+            mouseClick(item(family),textX(family),10);verify(inspector.rowOpen(family),'Single click family text must not collapse');
+            mouseDoubleClickSequence(item(family),textX(family),10);verify(!inspector.rowOpen(family),'Double click family text collapses');
+            mouseClick(item(family),(family.depth+1)*16-5,10);verify(inspector.rowOpen(family),'Single click + expands');
+            var record=inspector.navigation.find(function(r){return r.kind==='record' && !r.program && r.record.id===inspector.detail.id;});verify(record);
+            inspector.fold(record);verify(!inspector.rowOpen(record));
+            mouseClick(item(record),textX(record),10);verify(!inspector.rowOpen(record),'Single click record text must not expand');
+            mouseDoubleClickSequence(item(record),textX(record),10);verify(inspector.rowOpen(record));
+            var stream=inspector.navigation.find(function(r){return r.kind==='node' && r.record.id===inspector.detail.id && r.node.path==='section/stream/12';});verify(stream);
+            mouseClick(item(stream),textX(stream),10);verify(inspector.rowOpen(stream));
+            mouseDoubleClickSequence(item(stream),textX(stream),10);verify(!inspector.rowOpen(stream));
+            mouseClick(item(stream),(stream.depth+1)*16-5,10);verify(inspector.rowOpen(stream));
+            var fields=findChild(inspector,'unifiedFields');fields.contentX=0;fields.positionViewAtBeginning();wait(30);
+            var count=inspector.fieldRows.length,rootRow=fields.itemAtIndex(0);verify(rootRow);
+            mouseClick(rootRow,80,10);compare(inspector.fieldRows.length,count,'Single click field group text only selects');
+            mouseDoubleClickSequence(rootRow,80,10);compare(inspector.fieldRows.length,1,'Double click field group collapses');
+            wait(30);mouseClick(fields.itemAtIndex(0),7,10);compare(inspector.fieldRows.length,count,'Single click field + expands');
+        }
+        function test_uncached_record_double_click_survives_pending_inspect() {
+            var pmt=inspector.findRecord('PMT'),trees=Object.assign({},inspector.tableTrees);delete trees[pmt.id];inspector.tableTrees=trees;
+            inspector.openFamilies={'PAT':true,'PMT':true};inspector.expandedRecords={};
+            var nav=findChild(inspector,'unifiedTree'),index=inspector.navigation.findIndex(function(r){return r.kind==='record' && r.key===pmt.id;});verify(index>=0);
+            nav.contentX=0;nav.positionViewAtIndex(index,ListView.Center);wait(30);
+            var row=nav.itemAtIndex(index);verify(row);host.deferInspection=true;
+            mouseDoubleClickSequence(row,100,10);verify(host.coreInspecting);verify(inspector.expandedRecords[pmt.id]);
+            host.detail=host.captures.find(function(d){return d.id===pmt.id;});host.coreInspecting=false;
+            tryVerify(function(){return inspector.navigation.some(function(r){return r.kind==='node' && r.record.id===pmt.id && r.node.path==='section/stream/12';});});
+            host.deferInspection=false;
+        }
+        function test_field_group_fold_preserves_scrolled_viewport() {
+            inspector.selectRecord(inspector.findRecord('PMT'));wait(40);
+            var fields=findChild(inspector,'unifiedFields');
+            var index=inspector.fieldRows.findIndex(function(r){return r.groupPath && r.groupPath.indexOf('/descriptor/')>=0;});
+            verify(index>0);fields.positionViewAtIndex(index,ListView.Beginning);wait(30);
+            var before=fields.contentY;verify(before>0);
+            inspector.selectField(index);wait(30);
+            var expected=Math.max(fields.originY,Math.min(before,fields.originY+Math.max(0,fields.contentHeight-fields.height)));
+            fuzzyCompare(fields.contentY,expected,1);
+            inspector.selectField(index);wait(30);fuzzyCompare(fields.contentY,expected,1);
+        }
+        function test_field_grid_tracks_header_resize_and_scroll() {
+            inspector.selectRecord(inspector.findRecord('PMT'));wait(30);
+            var fields=findChild(inspector,'unifiedFields');
+            function aligned(){
+                for(var i=0;i<4;i++){
+                    var line=findChild(inspector,'siColumnLine:'+i),header=findChild(inspector,'siColumnHeader:'+i);
+                    verify(line);compare(line.width,1);compare(line.height,fields.height);
+                    verify(Math.abs(line.mapToItem(fields,0,0).x-(header.mapToItem(fields,header.width,0).x-1))<1,'column '+i+' alignment');
+                    compare(line.mapToItem(fields,0,0).y,0);compare(String(line.color),'#b0b0b0');
+                }
+            }
+            aligned();inspector.resizeFieldColumn(0,inspector.fieldColumnWidth(0)+120);fields.contentX=70;wait(30);aligned();
+            fields.positionViewAtEnd();wait(30);aligned();fields.contentX=0;
         }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';

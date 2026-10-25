@@ -40,6 +40,17 @@ def fixture():
     return b''.join(packets)
 
 class UnifiedInspectorEngineTests(unittest.TestCase):
+    def test_reference_table_structures_from_pinned_vectors(self):
+        from si_reference_fixture import collect
+        out=Path(os.environ.get('SHOWPSISI_UNIFIED_EVIDENCE_DIR',ROOT/'artifacts/unified-inspector'))
+        out.mkdir(parents=True,exist_ok=True)
+        core=Core()
+        try:
+            cases=collect(core,out/'reference-inputs')
+            self.assertGreaterEqual(len(cases),50)
+            (out/'reference-trees.json').write_text(json.dumps(cases,ensure_ascii=False,indent=2),encoding='utf-8')
+        finally:core.close()
+
     def test_short_syntax_repeats_and_program_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'inspector.ts';path.write_bytes(fixture())

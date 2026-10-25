@@ -277,3 +277,15 @@ python -m unittest discover -s tests -p test_ui_contrast.py -v
 The runner name does not identify the host OS. Offscreen Qt and sandboxed
 Chromium checks do not prove native Windows/macOS dialogs, WebView2, GPU,
 clean-machine installation or receiver conformance.
+
+
+### Shared classic SI frontends
+
+`test_unified_inspector.py` collects the pinned protocol vectors through the real
+engine, then `test_inspector_model.cjs` verifies their shared Qt/web hierarchy.
+`BrowserTests.test_classic_*` exercises the default classic surface; other web
+regressions explicitly select the retained advanced workspace. The exported
+`verifyClassicSi(page, output)` and `verifySummaryAndGeneric(page, output,
+referencePath)` helpers in `verify_classic_si*.mjs` additionally check a loaded
+Hotbird real-engine preview and a caller-supplied declared DVB reference bundle.
+Their browser results do not establish native WebView2 mouse acceptance.

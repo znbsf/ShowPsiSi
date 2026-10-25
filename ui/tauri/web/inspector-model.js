@@ -55,6 +55,74 @@ var inspector = {
         records.filter(function(r){return r.name==='PMT' && !used[r.id] && (!query || self.title(r).toLowerCase().indexOf(query)>=0);}).sort(function(a,b){return a.extension-b.extension || a.pid-b.pid;}).forEach(function(r){out.push({kind:'record',key:'program:'+r.id,label:'Program '+r.extension+' ['+self.hex(r.extension)+']  name unknown',record:r,program:true,depth:1});});
         return out;
     },
+    // Prefer exact selected-section loop ownership where it exists. Every other
+    // table uses the engine's recursive semantic tree, without a family allowlist.
+    navigationChildren: function(node) {
+        if(!node)return [];
+        if(node.semanticName)return node.children || [];
+        if(node.descriptor_offset!==undefined)return [];
+        var children=node.children || [];
+        if(node.path==='section'){
+            var wire=children.filter(function(n){return n.path!=='section/decoded' && n.path!=='section/descriptors' && n.path!=='section/assembled';});
+            var assembled=children.find(function(n){return n.path==='section/assembled';});
+            if(wire.length)return assembled?wire.concat([assembled]):wire;
+            if(assembled)return [assembled];
+            var decoded=children.find(function(n){return n.path==='section/decoded';});
+            if(decoded && decoded.children.length)return decoded.children;
+            if(decoded && decoded.fields.length)return [decoded];
+            var descriptors=children.find(function(n){return n.path==='section/descriptors';});
+            return descriptors && descriptors.children.length?[descriptors]:[];
+        }
+        return children;
+    },
+    wireValue: function(node,name) {
+        var f=(node && node.fields || []).find(function(f){return f.name===name;});
+        return f ? String(f.value).split(' ')[0] : '';
+    },
+    wireRange: function(node) {
+        if(!node)return null;
+        if(node.range)return node.range;
+        var start=Infinity,end=-1;
+        function visit(n){
+            (n.fields || []).forEach(function(f){if(Number.isInteger(f.bit_offset) && f.bit_length>0){start=Math.min(start,f.bit_offset);end=Math.max(end,f.bit_offset+f.bit_length);}});
+            (n.children || []).forEach(visit);
+        }
+        visit(node);return end>start?{offset:Math.floor(start/8),length:Math.ceil(end/8)-Math.floor(start/8)}:null;
+    },
+    navigationLabel: function(node) {
+        if(node.semanticName)return node.label;
+        var pid=this.wireValue(node,'elementary_PID'),type=this.wireValue(node,'stream_type');
+        if(node.descriptor_offset!==undefined)return node.label+' TAG('+this.wireValue(node,'descriptor_tag')+')';
+        if(pid)return 'ES: PID='+pid+' ['+Number(pid)+'], stream_type = '+type;
+        var tsid=this.wireValue(node,'transport_stream_id'),onid=this.wireValue(node,'original_network_id');
+        if(tsid && onid)return 'ONID='+onid+' TSID = '+tsid;
+        var program=this.wireValue(node,'program_number');
+        if(program)return 'Program '+program+' PID['+this.wireValue(node,'program_map_PID')+']';
+        return node.label;
+    },
+    navigationTitle: function(record,tree) {
+        var version=' Version '+record.version, pid=' PID['+this.hex(record.pid)+']',suffix=record.last_section>0?' Section '+record.section+'/'+record.last_section:'';
+        if(record.name==='PMT'){var pcr=this.wireValue(tree,'PCR_PID');return 'Program '+this.hex(record.extension)+pid+version+(pcr?' PCR_PID['+pcr+']':'')+suffix;}
+        if(record.name==='NIT')return (record.table_id===0x40?'Actual':'Other')+' NIT NetworkID['+this.hex(record.extension)+']'+pid+version+suffix;
+        if(record.name==='BAT')return 'BouquetID['+this.hex(record.extension)+']'+pid+version+suffix;
+        return this.title(record);
+    },
+    tableNavigation: function(root,record,ownerKey,closed,limits,depth) {
+        if(!root)return [];
+        var self=this,out=[];
+        function addChildren(parent,level){
+            var children=self.navigationChildren(parent),key=ownerKey+':'+parent.path,limit=limits[key] || 100;
+            children.slice(0,limit).forEach(function(n){
+                var nodeKey=ownerKey+':'+n.path,expandable=self.navigationChildren(n).length>0;
+                out.push({kind:'node',key:nodeKey,ownerKey:ownerKey,record:record,node:n,label:self.navigationLabel(n),depth:level,expandable:expandable,icon:n.descriptor_offset!==undefined || /descriptor$/i.test(n.semanticName || '')?'descriptor':self.wireValue(n,'elementary_PID')?'PES':self.wireValue(n,'service_id')?'program':'field'});
+                if(expandable && !closed[nodeKey])addChildren(n,level+1);
+            });
+            if(children.length>limit)out.push({kind:'more',key:key+':more',limitKey:key,label:'Load next '+Math.min(100,children.length-limit)+' of '+children.length,depth:level,icon:'field'});
+        }
+        addChildren(root,depth);
+        if(!out.length)out.push({kind:'node',key:ownerKey+':section',ownerKey:ownerKey,record:record,node:root,label:'Section['+((Number(record.section)||0)+1)+'/'+((Number(record.last_section)||0)+1)+']',depth:depth,expandable:false,icon:'field'});
+        return out;
+    },
     shortSyntax: function(r) { return r.versioning_supported === false || r.table_id === 0x70 || r.table_id === 0x73; },
     hex: function(n) { return '0x' + Number(n).toString(16).toUpperCase().padStart(4, '0'); },
     title: function(r) {
@@ -88,8 +156,8 @@ var inspector = {
         return n;
     },
     native: function(value,path) {
-        var a=value.attributes || {}, suffix=['service_id','program_number','elementary_PID','transport_stream_id','bouquet_id'].filter(function(k){return a[k]!==undefined;}).map(function(k){return a[k];}).join(' · ');
-        var n=this.node(path,value.name+(suffix?' · '+suffix:''),a);
+        var a=value.attributes || {}, suffix=['service_id','program_number','elementary_PID','transport_stream_id','bouquet_id','event_id','source_id','organization_id','application_id','module_id','download_id','table_type','short_name'].filter(function(k){return a[k]!==undefined;}).map(function(k){return k+'='+a[k];}).join(' ');
+        var n=this.node(path,value.name+(suffix?' '+suffix:''),a);n.semanticName=value.name;
         (value.children || []).forEach(function(c,i){n.children.push(inspector.native(c,path+'/'+i));});
         if(value.text)n.fields.push({name:'text',value:value.text,help:''});
         return n;
@@ -119,6 +187,12 @@ var inspector = {
         if(!native && d.native_table_complete && (d.native_table_sources || []).length===1 && d.native_table_sources[0].id===d.id)native=d.native_table;
         if(native)root.children.push(this.native(native,'section/decoded'));
         else root.children.push(this.node('section/decoded','Decoded fields',d.fields || {}));
+        if(!native && d.native_table_complete && d.native_table && (d.native_table_sources || []).length>1 && d.native_table_sources.some(function(source){return source.id===d.id;})){
+            var assembled=this.native(d.native_table,'section/assembled');
+            assembled.label='Assembled '+d.native_table.name+' ['+d.native_table_sources.length+' sections]';
+            assembled.fields.unshift({name:'evidence_scope',value:'Complete table assembled from '+d.native_table_sources.length+' sections',help:'These semantic fields have no verified byte range in the currently selected section.'});
+            root.children.push(assembled);
+        }
         // Raw descriptor loop ownership and offsets come exclusively from the engine.
         if((d.descriptors || []).length){var descriptors={path:'section/descriptors',label:'Descriptors · exact section',fields:[],children:[]};
             d.descriptors.forEach(function(x,i){

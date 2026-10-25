@@ -165,6 +165,7 @@ function distributionPanel(row) {
   return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
+let siView = null, summaryView = null, summaryVisible = false, classicMode = true;
 let data = {},
   detail = {},
   env = {},
@@ -581,13 +582,14 @@ async function listenForFileDrop() {
   } catch (_) {notice("File drop is unavailable. Use Open… to choose a local source.");}
 }
 window.addEventListener("pagehide",()=>{stopFileDrop?.();stopFileDrop=null;nativeFileDrop=false;});
-let theme = "dark";
-try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
+let theme = "light";
+try { theme = localStorage.getItem("showpsisi.theme") === "dark" ? "dark" : "light"; } catch (_) {}
 function applyTheme() {
-  document.documentElement.dataset.theme = theme;
+  const effective=classicMode&&!summaryVisible&&$("#input-kind")?.value==="ts"?"light":theme;
+  document.documentElement.dataset.theme = effective;
   $("#theme-toggle").textContent = theme === "dark" ? "Light theme" : "Dark theme";
   $("#theme-toggle").setAttribute("aria-pressed", String(theme === "light"));
-  document.querySelector('meta[name="color-scheme"]').content = theme;
+  document.querySelector('meta[name="color-scheme"]').content = effective;
 }
 applyTheme();
 $("#theme-toggle").onclick = () => {
@@ -756,7 +758,7 @@ function call(method, params = {}) {
     // Only idle read requests expire. Analysis may be long-running, and write
     // timeouts would leave ambiguous outcomes. Backend exit rejects every job.
     const canTimeout =
-      ["inspect", "query", "query_topology", "query_dvbi", "inspect_dvbi", "diff_snapshots", "capabilities"].includes(method) &&
+      ["inspect", "query", "query_transport", "query_topology", "query_dvbi", "inspect_dvbi", "diff_snapshots", "capabilities"].includes(method) &&
       !busy &&
       ![...pending.values()].some((job) => job.method === "analyze");
     const timer = canTimeout
@@ -1258,6 +1260,7 @@ function renderExplorer() {
   if (restoreFocus) buttons.find(el => el.dataset.explorerKey === explorerFocusKey)?.focus();
 }
 function render() {
+  syncSiMode(); siView?.update(); summaryView?.update();
   renderScanProgress(); renderResultPages();
   dvbiWorkspace?.update();
   updateScanOptions();
@@ -2092,6 +2095,7 @@ function editBlockReason() {
   return "";
 }
 function renderInspector() {
+  syncSiMode(); siView?.update(); summaryView?.update();
   if(palette.mode)renderPalette();
   const panel = $("#inspector");
   if (!panel) return;
@@ -2697,6 +2701,12 @@ function focusNextRegion(backwards) {
 document.addEventListener("keydown", (e) => {
   if($("#shortcuts-dialog").open)return;
   const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
+  if(workbenchKeys && classicMode) {
+    if(e.key==='F6') {e.preventDefault();const regions=summaryVisible?[$('.sourcebar'),$('#transport-si .si-summary-list')]:[$('.sourcebar'),$('#unified-si .si-navigation'),$('#unified-si .si-fields'),$('#unified-si .si-section')];const i=regions.findIndex(r=>r?.contains(document.activeElement));regions[(i+(e.shiftKey?regions.length-1:1)+regions.length)%regions.length]?.focus();return;}
+    if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(summaryVisible){summaryVisible=false;syncSiMode();}else siView.back();return;}
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const search=$('#unified-si .si-search');search.hidden=false;search.focus();return;}
+  }
+
   if (workbenchKeys && e.key === "F6" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     focusNextRegion(e.shiftKey);
@@ -2896,11 +2906,11 @@ function uiState() {
     runtime:{driver:env.driver,user_agent:navigator.userAgent},viewport:{width:innerWidth,height:innerHeight,device_pixel_ratio:devicePixelRatio},
     scan_control:{busy,cancelling,pause_pending:pausePending,request_id:activeAnalyze,coverage:data.coverage,result_loading:resultLoading,result_pages:resultPages},
     source:data.source || "",analysis_status:data.analysis_status || "idle",selected,selected_service:selectedService,packet:data.selected_packet,
-    theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
+    theme:document.documentElement.dataset.theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
     records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
     history:{all:allTableHistory,entries:workbench.history(data,detail,allTableHistory),page:historyPage},evidence_scope:evidenceScope,
     protocol_source:{resolution:protocolResolution,return_depth:protocolSourceHistory.length},topology:{profile:topology.snapshot?.interpretation_profile,cutoff:topology.snapshot?.at_packet,selected_node:topology.selected,focused_node:topology.focused,expanded_ids:Object.keys(topology.expanded).filter(id=>topology.expanded[id]),search:topology.search,family:topology.family,loaded_nodes:workbench.topologyNodes(topology.snapshot || {}).length,total_nodes:topology.snapshot?.counts?.nodes,loading:topology.loading,stale:topology.stale,error:topology.error,evidence_ref:topology.active,locator_resolution:topology.resolution,return_depth:topology.history.length},inspection_context:inspectionEvidence?.kind || (comparisonEvidence?"comparison":"workspace"),
-    tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
+    unified:siView?.snapshot(),classic_mode:classicMode,tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
     diagnostics:{pending:pending.size,error:backendFailure || detailError,recent_responses:recentResponses.slice(),frontend_errors:frontendErrors.slice()},
@@ -3025,6 +3035,25 @@ window.showpsisi = {
   getDvbiDetail: () => dvbiWorkspace.getDetail(),
   getUiState: uiState,
 };
+// The classic core SI view and advanced workbench share the same live engine.
+function syncSiMode() {
+  const active=classicMode && !dvbiWorkspace.getState().active;
+  document.body.classList.toggle('si-mode',active);applyTheme();
+  const panel=$('#unified-si');if(panel)panel.hidden=!active||summaryVisible;
+  const summary=$("#transport-si");if(summary)summary.hidden=!active||!summaryVisible;
+  const summaryButton=$("#summary-toggle");if(summaryButton)summaryButton.textContent=summaryVisible?"Return to inspector":"Summary / PID";
+  const button=$('#workspace-toggle');if(button)button.textContent=classicMode?'Advanced workspace':'SI Inspector';
+}
+const siPanel=document.createElement('section');siPanel.id='unified-si';siPanel.setAttribute('aria-label','PSI / SI inspector');$('#panes').before(siPanel);
+const workspaceButton=document.createElement('button');workspaceButton.id='workspace-toggle';workspaceButton.className='btn';workspaceButton.textContent='Advanced workspace';$('.titlebar').append(workspaceButton);
+workspaceButton.onclick=()=>{summaryVisible=false;classicMode=!classicMode;syncSiMode();siView.update();};
+const summaryPanel=document.createElement('section');summaryPanel.id='transport-si';summaryPanel.hidden=true;siPanel.after(summaryPanel);
+const summaryButton=document.createElement('button');summaryButton.id='summary-toggle';summaryButton.className='btn';summaryButton.textContent='Summary / PID';workspaceButton.before(summaryButton);
+summaryButton.onclick=()=>{classicMode=true;summaryVisible=!summaryVisible;syncSiMode();summaryView.update();};
+summaryView=TransportSi.create(summaryPanel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record,pid)=>{summaryVisible=false;classicMode=true;syncSiMode();siView.filterPid(pid);siView.selectRecord(record,record.id,null,true,false);}});
+siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,
+  loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
+syncSiMode();
 boot().catch((error) => {
   disconnectBackend("Backend connection failed: " + String(error));
 });

@@ -910,8 +910,38 @@ class BrowserTests(unittest.TestCase):
         self.page=self.browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=1)
         self.page_errors=[]
         self.page.on('pageerror',lambda error:self.page_errors.append(str(error)))
+        # Existing tests exercise the retained advanced workspace explicitly.
+        # Classic SI has separate default-surface and interaction regressions.
+        if not self._testMethodName.startswith('test_classic_'):
+            self.page.add_init_script("""if(!localStorage.getItem('showpsisi.theme'))localStorage.setItem('showpsisi.theme','dark');
+                window.addEventListener('DOMContentLoaded',()=>document.querySelector('#workspace-toggle').click());""")
         self.page.goto(self.server.url)
         self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+
+    def test_classic_default_fields_mouse_grid_and_advanced_return(self):
+        p=self.page
+        self.assertTrue(p.locator('#unified-si').is_visible())
+        self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
+        self.analyze();p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getDetail().id')
+        root=p.locator('.si-field-row[aria-expanded]').first
+        root.locator('.si-field-name').click();self.assertEqual(root.get_attribute('aria-expanded'),'true')
+        root.locator('.si-field-name').dblclick();self.assertEqual(root.get_attribute('aria-expanded'),'false')
+        root.locator('.si-fold').click();self.assertEqual(root.get_attribute('aria-expanded'),'true')
+        self.assertTrue(p.evaluate("""()=>{const h=[...document.querySelectorAll('.si-field-header>div')],c=[...document.querySelector('.si-field-row').children];return h.every((n,i)=>Math.abs(n.getBoundingClientRect().right-c[i].getBoundingClientRect().right)<1&&getComputedStyle(c[i]).borderRightWidth==='1px');}"""))
+        selected=p.evaluate('showpsisi.getUiState().unified.selected')
+        p.locator('#workspace-toggle').click();self.assertTrue(p.locator('#panes').is_visible())
+        p.locator('#workspace-toggle').click();self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selected'),selected)
+
+    def test_classic_uncached_raw_record_double_click_keeps_target(self):
+        self.analyze();p=self.page;p.wait_for_function('()=>showpsisi.getUiState().settled')
+        p.locator('.si-nav-row[data-key="family:PMT"] .si-fold').click()
+        row=p.locator('.si-navigation .si-nav-row').filter(has=p.locator('.si-row-label',has_text='Program 0x')).first
+        key=row.get_attribute('data-key');label=row.locator('.si-row-label')
+        label.evaluate('(node)=>window.savedSiClickTarget=node')
+        label.dblclick();p.wait_for_function('(key)=>showpsisi.getUiState().settled && showpsisi.getUiState().unified.navigation.some(r=>r.key===key&&r.expanded)',arg=key)
+        self.assertTrue(p.evaluate('window.savedSiClickTarget.isConnected'))
+        # This fixture deliberately has an empty PMT; its decoded root must still appear.
+        self.assertTrue(p.evaluate('(key)=>showpsisi.getUiState().unified.navigation.some(r=>r.kind==="node"&&r.record_id===key&&r.path==="section/decoded")',key))
 
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)

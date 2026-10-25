@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import "InspectorModel.js" as Model
+import "../tauri/web/inspector-model.js" as Model
 
 SplitView {
     id: view
@@ -9,8 +9,45 @@ SplitView {
     property var organization: ({})
     property string organizationStatus: ""
     property var state: host.analysisState
-    property var detail: host.detail
+    // Inspect clears the backend payload while the next response is in flight.
+    // Keep the last presentation until a replacement arrives, without changing
+    // the backend's stale-result/failed-inspection contract.
+    property var incomingDetail: host.detail
+    property bool inspectionPending: host.coreInspecting
+    property var detail: ({})
+    onIncomingDetailChanged: if(incomingDetail.id || !inspectionPending)detail=incomingDetail
+    onInspectionPendingChanged: if(!inspectionPending)Qt.callLater(function(){if(!inspectionPending){if(!incomingDetail.id){detail=incomingDetail;pendingNode=null;}else completeNodeSelection();}})
+    Component.onCompleted: {detail=incomingDetail;syncNavigation();}
     property var root: Model.inspector.structure(detail)
+    property var tableTrees: ({})
+    property var treeOrder: []
+    property var expandedRecords: ({})
+    property var treeClosed: ({})
+    property var treeLimits: ({})
+    property var pendingNode: null
+    onRootChanged: {
+        if(root && detail.id){
+            var trees=Object.assign({},tableTrees);trees[detail.id]=root;
+            var order=treeOrder.filter(function(id){return id!==detail.id;});order.push(detail.id);
+            while(order.length>64){var expired=order.shift();delete trees[expired];}
+            tableTrees=trees;treeOrder=order;
+            Qt.callLater(completeNodeSelection);
+        }
+    }
+    function completeNodeSelection(){
+        if(!pendingNode || pendingNode.id!==detail.id || inspectionPending)return;
+        var path=pendingNode.path;pendingNode=null;focusNode(path);
+    }
+    function focusNode(path){
+        var node=Model.inspector.find(root,path);if(!node)return;
+        var opened=Object.assign({},fieldClosed);
+        Object.keys(opened).forEach(function(k){if(path===k || path.indexOf(k+'/')===0)delete opened[k];});fieldClosed=opened;
+        selectedPath=path;selectedByte=-1;
+        var index=fieldRows.findIndex(function(r){return r.groupPath===path;});
+        selectedFieldIndex=index;fieldList.currentIndex=index;
+        if(index>=0)fieldList.positionViewAtIndex(index,ListView.Beginning);
+        if(activeRange){hexOpen=true;hexRows.positionViewAtIndex(Math.floor(activeRange.offset/10),ListView.Contain);}
+    }
     property var closed: ({})
     property var limits: ({})
     property string selectedPath: "section"
@@ -31,17 +68,24 @@ SplitView {
     property var selectedField: fieldRows[selectedFieldIndex] && !fieldRows[selectedFieldIndex].groupPath ? fieldRows[selectedFieldIndex] : null
     property var activeRange: selectedField && selectedField.bit_offset!==undefined
         ? {offset:Math.floor(selectedField.bit_offset/8),length:Math.ceil((selectedField.bit_offset%8+selectedField.bit_length)/8)}
-        : selectedField ? null : selectedNode && selectedNode.range ? selectedNode.range : null
+        : selectedField || selectedPath==='section' ? null : Model.inspector.wireRange(selectedNode)
     property string rawHex: (detail.raw_hex || '').replace(/\s/g,'')
     function selectField(index) {
         var row=fieldRows[index];
-        if(row && row.groupPath){var next=Object.assign({},fieldClosed);next[row.groupPath]=!next[row.groupPath];fieldClosed=next;selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;return;}
+        if(row && row.groupPath){
+            var scroll=fieldList.contentY;
+            selectedPath=row.groupPath;var next=Object.assign({},fieldClosed);next[row.groupPath]=!next[row.groupPath];fieldClosed=next;
+            selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;
+            fieldList.forceLayout();
+            fieldList.contentY=Math.max(fieldList.originY,Math.min(scroll,fieldList.originY+Math.max(0,fieldList.contentHeight-fieldList.height)));
+            return;
+        }
         selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;
         if(activeRange){hexOpen=true;hexRows.positionViewAtIndex(Math.floor(activeRange.offset/10),ListView.Contain);}
     }
     function focusField(index) {
         var row=fieldRows[index];if(!row)return;
-        if(row.groupPath){selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;}
+        if(row.groupPath){selectedPath=row.groupPath;selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;}
         else selectField(index);
     }
     function selectByte(offset) {
@@ -82,7 +126,7 @@ SplitView {
         var programRows=Model.inspector.programTree(state, (state.tables || []).filter(function(r){return (pidFilter<0 || Number(r.pid)===pidFilter) && (family==='All tables' || r.name===family);}), organization, openFamilies, query.toLowerCase());
         if(programRows.length){
             out.push({kind:'family',key:'family:Programs',name:'Programs',label:'Programs',depth:0});
-            if(view.familyOpen('Programs'))out=out.concat(programRows);
+            if(view.familyOpen('Programs'))programRows.forEach(function(row){out.push(row);if(row.kind==='record' && expandedRecords[row.key])out=out.concat(Model.inspector.tableNavigation(tableTrees[row.record.id],row.record,row.key,treeClosed,treeLimits,row.depth+1));});
         }
         var order=['PAT','PMT','SDT','CAT','EIT','TDT','TOT','NIT','BAT'];
         out.push({kind:'family',key:'family:PSI Packets',name:'PSI Packets',label:'PSI Packets',depth:0});
@@ -90,18 +134,47 @@ SplitView {
             out.push({kind:'family',key:'family:'+name,label:name,name:name,depth:1});
             if(!view.familyOpen(name))return;
             groups[name].forEach(function(r){
-                out.push({kind:'record',key:r.id,label:Model.inspector.title(r),record:r,depth:2});
-                if(r.id===detail.id && root)out.push({kind:'node',key:r.id+':section',label:'Section['+((Number(r.section)||0)+1)+'/'+((Number(r.last_section)||0)+1)+']',node:root,depth:3});
+                out.push({kind:'record',key:r.id,label:Model.inspector.navigationTitle(r,tableTrees[r.id]),record:r,depth:2});
+                if(expandedRecords[r.id])out=out.concat(Model.inspector.tableNavigation(tableTrees[r.id],r,r.id,treeClosed,treeLimits,3));
             });
         });return out;
     }
     onRecordsChanged: page=Math.min(page,Math.max(0,Math.ceil(records.length/100)-1))
     onFamilyChanged: page=0
     onQueryChanged: page=0
-    onNavigationChanged: Qt.callLater(revealSelection)
-    onSelectedPathChanged: {selectedFieldIndex=-1;selectedByte=-1;Qt.callLater(revealSelection);}
+    FontMetrics {id:navigationMetrics;font.family:view.classicFont;font.pixelSize:13}
+    readonly property real navigationWidth: navigation.reduce(function(width,row){return Math.max(width,(row.depth+1)*16+30+navigationMetrics.advanceWidth(row.label));},0)
+    property bool syncingNavigation:false
+    ListModel {id:navigationModel;dynamicRoles:true}
+    onNavigationChanged: syncNavigation()
+    function syncNavigation() {
+        if(!nav || !navigationModel)return;
+        // Update keyed rows in place: a new detail must not reset the ListView.
+        var oldIndex=nav.currentIndex,focusKey=oldIndex>=0 && oldIndex<navigationModel.count?navigationModel.get(oldIndex).rowData.key:'';
+        var top=nav.indexAt(1,nav.contentY+1),anchor=top>=0?navigationModel.get(top).rowData.key:'',offset=top>=0?nav.contentY-top*21:0;
+        var oldY=nav.contentY;
+        syncingNavigation=true;
+        for(var i=0;i<navigation.length;i++){
+            if(i>=navigationModel.count)navigationModel.append({rowData:navigation[i]});
+            else if(navigationModel.get(i).rowData.key===navigation[i].key)navigationModel.setProperty(i,'rowData',navigation[i]);
+            else {
+                var found=-1;for(var j=i+1;j<navigationModel.count;j++)if(navigationModel.get(j).rowData.key===navigation[i].key){found=j;break;}
+                if(found>=0){navigationModel.move(found,i,1);navigationModel.setProperty(i,'rowData',navigation[i]);}
+                else navigationModel.insert(i,{rowData:navigation[i]});
+            }
+        }
+        if(navigationModel.count>navigation.length)navigationModel.remove(navigation.length,navigationModel.count-navigation.length);
+        nav.forceLayout();
+        var focused=navigation.findIndex(function(row){return row.key===focusKey;});
+        nav.currentIndex=focused>=0?focused:Math.min(oldIndex,navigation.length-1);
+        var anchored=navigation.findIndex(function(row){return row.key===anchor;});
+        nav.contentY=Math.max(nav.originY,Math.min(anchored>=0?anchored*21+offset:oldY,nav.originY+Math.max(0,nav.contentHeight-nav.height)));
+        syncingNavigation=false;
+        if(pendingRestore)Qt.callLater(revealSelection);
+    }
+    onSelectedPathChanged: {selectedFieldIndex=-1;selectedByte=-1;}
     function captureContext() {
-        return {openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
+        return {expandedRecords:expandedRecords,treeClosed:treeClosed,treeLimits:treeLimits,openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
             fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,fieldScroll:fieldList.contentY,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexOpen:hexOpen,scroll:nav.contentY,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
     }
     function filterPid(pid) {
@@ -129,11 +202,11 @@ SplitView {
         var index=navigation.findIndex(function(r){return r.key===key;});
         if(index<0)index=navigation.findIndex(function(r){return r.key===detail.id;});
         if(index<0)index=navigation.findIndex(function(r){return r.record && r.record.id===detail.id;});
-        if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,navigation[index].program?ListView.Contain:selectedPath==='section'?ListView.Center:ListView.Contain);}
+        if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,ListView.Contain);}
     }
     property string sourceIdentity: (state.source || '')+':'+(state.analysis_revision || '')
-    onSourceIdentityChanged: {history=[];navigationOrigin={};selectionFilter={};pendingRestore=null;pidFilter=-1;selectedPath='section';openFamilies={};closed={};fieldClosed={};limits={};page=0;}
-    function selectRecord(r) {
+    onSourceIdentityChanged: {tableTrees={};treeOrder=[];expandedRecords={};treeClosed={};treeLimits={};pendingNode=null;history=[];navigationOrigin={};selectionFilter={};pendingRestore=null;pidFilter=-1;selectedPath='section';openFamilies={};closed={};fieldClosed={};limits={};page=0;}
+    function selectRecord(r,rowKey,nodePath,expand) {
         if(!r || !host.backendReady || host.coreInspecting)return;
         if(detail.id && r.id!==detail.id && !restoring) {
             var saved=navigationOrigin.id===detail.id ? Object.assign({},navigationOrigin) : captureContext();
@@ -144,34 +217,63 @@ SplitView {
         }
         navigationOrigin={};pendingRestore=null;
         selectionFilter={id:r.id,page:page,family:family,query:query,pidFilter:pidFilter};
-        var opened=Object.assign({},openFamilies);opened[r.name]=true;openFamilies=opened;
-        selectedPath='section';host.inspect(r.id,-1);
+        if(expand!==false){
+            if(!familyOpen(r.name)){var opened=Object.assign({},openFamilies);opened[r.name]=true;openFamilies=opened;}
+            var expanded=Object.assign({},expandedRecords);expanded[rowKey || r.id]=true;expandedRecords=expanded;
+        }
+        pendingNode=nodePath?{id:r.id,path:nodePath}:null;
+        selectedPath='section';if(r.id!==detail.id)host.inspect(r.id,-1);else if(nodePath)completeNodeSelection();
     }
     function back() {
         if(!history.length || !host.backendReady || host.coreInspecting)return;
         var h=history[history.length-1];history=history.slice(0,-1);restoring=true;
         navigationOrigin={};selectionFilter={id:h.id,page:h.page,family:h.family,query:h.query,pidFilter:h.pidFilter};pendingRestore=h;
+        pendingNode=null;expandedRecords=h.expandedRecords || {};treeClosed=h.treeClosed || {};treeLimits=h.treeLimits || {};
         openFamilies=h.openFamilies || {};pidFilter=h.pidFilter===undefined?-1:h.pidFilter;family=h.family;query=h.query;page=h.page;closed=h.closed;limits=h.limits;host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
         Qt.callLater(revealSelection);
     }
     function activate(row) {
         if(!row || row.kind==='info')return;
-        if(row.kind==='family'){fold(row);return;}
-        if(row.kind==='record'){selectRecord(row.record);return;}
-        if(row.node.more){var next=Object.assign({},limits);next[row.node.more]=(next[row.node.more] || 100)+100;limits=next;return;}
-        selectedPath=row.node.path;
+        if(row.kind==='family'){if(row.sourceRecord)selectRecord(row.sourceRecord,undefined,undefined,false);return;}
+        if(row.kind==='record'){selectRecord(row.record,row.key,undefined,false);return;}
+        if(row.kind==='more'){var next=Object.assign({},treeLimits);next[row.limitKey]=(next[row.limitKey] || 100)+100;treeLimits=next;return;}
+        if(row.record.id!==detail.id)selectRecord(row.record,row.ownerKey,row.node.path);
+        else focusNode(row.node.path);
     }
-    function rowOpen(row){return openFamilies[row.name]===undefined && row.defaultOpen!==undefined?row.defaultOpen:familyOpen(row.name);}
+    function expandable(row){return !!row && (row.kind==='family' || row.kind==='record' || !!row.expandable);}
+    function rowOpen(row){
+        if(row.kind==='record')return !!expandedRecords[row.key] && (!!tableTrees[row.record.id] || inspectionPending && selectionFilter.id===row.record.id);
+        if(row.kind==='node')return !treeClosed[row.key];
+        if(row.kind!=='family')return false;
+        return openFamilies[row.name]===undefined && row.defaultOpen!==undefined?row.defaultOpen:familyOpen(row.name);
+    }
     function fold(row) {
-        if(row && row.kind==='family'){var families=Object.assign({},openFamilies);families[row.name]=!rowOpen(row);openFamilies=families;return;}
-        if(!row || row.kind!=='node' || !row.node.children.length)return;
-        var next=Object.assign({},closed);next[row.node.path]=!next[row.node.path];closed=next;
+        if(!row || !expandable(row))return;
+        if(row.kind==='family'){var families=Object.assign({},openFamilies);families[row.name]=!rowOpen(row);openFamilies=families;return;}
+        if(row.kind==='record'){
+            var wasOpen=rowOpen(row),expanded=Object.assign({},expandedRecords);expanded[row.key]=!wasOpen;expandedRecords=expanded;
+            // The first click of a double-click may already have started inspect.
+            // Remember expansion immediately so the arriving tree opens once.
+            if(!wasOpen && !tableTrees[row.record.id] && !inspectionPending)selectRecord(row.record,row.key);
+            return;
+        }
+        var next=Object.assign({},treeClosed);next[row.key]=!next[row.key];treeClosed=next;
     }
     function focusNavigation(){nav.forceActiveFocus();}
     function nextRegion(){if(nav.activeFocus)fieldList.forceActiveFocus();else if(fieldList.activeFocus && hexOpen)hexRows.forceActiveFocus();else nav.forceActiveFocus();}
     function focusSearch(){searchVisible=true;search.forceActiveFocus();search.selectAll();}
     function findRecord(name){return records.find(function(r){return r.name===name;});}
 
+    property var fieldColumnWidths: [-1,-1,-1,-1]
+    function fieldColumnWidth(index){var ratios=[0.37,0.12,0.12,0.39],minimum=[120,48,64,120];return fieldColumnWidths[index]>0?fieldColumnWidths[index]:Math.max(minimum[index],fieldList.width*ratios[index]);}
+    function resizeFieldColumn(index,width){var next=fieldColumnWidths.slice();next[index]=Math.max([120,48,64,120][index],width);fieldColumnWidths=next;}
+    function fitFieldColumn(index){
+        var width=columnMetrics.advanceWidth(['Field','Bits','Value','Comment'][index])+20;
+        fieldRows.forEach(function(row){var text=index===0?row.name:index===1?(row.bit_length===undefined?'':String(row.bit_length)):index===2?fieldValue(row.value):row.help || '';width=Math.max(width,columnMetrics.advanceWidth(String(text))+20+(index===0?35+(row.depth || 0)*16:0));});
+        resizeFieldColumn(index,width);
+    }
+    FontMetrics {id:columnMetrics;font.family:view.classicFont;font.pixelSize:14}
+    readonly property real fieldTableWidth:fieldColumnWidth(0)+fieldColumnWidth(1)+fieldColumnWidth(2)+fieldColumnWidth(3)
     property bool searchVisible:false
     readonly property color classicPaper:'#ffffff'
     readonly property color classicFace:'#efefef'
@@ -233,30 +335,37 @@ SplitView {
             }
             ListView {
                 id:nav;objectName:'unifiedTree';Layout.fillWidth:true;Layout.fillHeight:true;clip:true;reuseItems:true
-                model:view.navigation;activeFocusOnTab:true
+                model:navigationModel;activeFocusOnTab:true
+                contentWidth:Math.max(width,view.navigationWidth);flickableDirection:Flickable.AutoFlickDirection
+                ScrollBar.horizontal:ScrollBar{policy:ScrollBar.AsNeeded}
                 ScrollBar.vertical:ScrollBar{policy:ScrollBar.AsNeeded}
                 Keys.onReturnPressed:view.activate(view.navigation[currentIndex])
                 Keys.onSpacePressed:view.fold(view.navigation[currentIndex])
-                Keys.onRightPressed:{var r=view.navigation[currentIndex];if(r && r.kind==='family'){if(!view.rowOpen(r))view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}else if(r && r.kind==='record')view.activate(r);else if(r && r.node && view.closed[r.node.path])view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}
-                Keys.onLeftPressed:{var r=view.navigation[currentIndex];if(r && r.kind==='family' && view.rowOpen(r))view.fold(r);else if(r && r.kind==='node' && r.node.children.length && !view.closed[r.node.path])view.fold(r);else if(r){for(var i=currentIndex-1;i>=0;--i)if(view.navigation[i].depth<r.depth){currentIndex=i;break;}}}
+                Keys.onRightPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && !view.rowOpen(r))view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}
+                Keys.onLeftPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && view.rowOpen(r))view.fold(r);else if(r){for(var i=currentIndex-1;i>=0;--i)if(view.navigation[i].depth<r.depth){currentIndex=i;break;}}}
                 Keys.onPressed:function(e){if(e.key===Qt.Key_Home){currentIndex=0;e.accepted=true;}else if(e.key===Qt.Key_End){currentIndex=count-1;e.accepted=true;}}
-                onCurrentIndexChanged:positionViewAtIndex(currentIndex,ListView.Contain)
+                onCurrentIndexChanged:if(!view.syncingNavigation)positionViewAtIndex(currentIndex,ListView.Contain)
                 delegate:ItemDelegate {
-                    required property var modelData
+                    required property var rowData
                     required property int index
-                    objectName:'unifiedRow:'+index;width:nav.width;height:21;padding:0
-                    highlighted:modelData.kind==='node'?modelData.node.path===view.selectedPath:modelData.kind==='record' && modelData.record.id===view.detail.id
+                    property var modelData:rowData
+                    objectName:'unifiedRow:'+index;width:nav.contentWidth;height:21;padding:0
+                    Keys.onSpacePressed:view.fold(modelData)
+                    Keys.onReturnPressed:view.activate(modelData)
+                    highlighted:modelData.kind==='node'?modelData.record.id===view.detail.id && modelData.node.path===view.selectedPath:modelData.kind==='record' && modelData.record.id===view.detail.id && view.selectedPath==='section'
                     background:Rectangle {color:'white'}
                     contentItem:Row {
                         spacing:3
-                        Branch {depth:modelData.depth+1;width:(modelData.depth+1)*16;height:21;expandable:modelData.kind==='family' || (modelData.kind==='node' && modelData.node.children.length>0);expanded:modelData.kind==='family'?view.rowOpen(modelData):modelData.kind==='node' && !view.closed[modelData.node.path]}
+                        Branch {depth:modelData.depth+1;width:(modelData.depth+1)*16;height:21;expandable:view.expandable(modelData);expanded:view.rowOpen(modelData)
+                            MouseArea {anchors.right:parent.right;width:14;height:parent.height;enabled:parent.expandable;onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.fold(modelData);}}
+                        }
                         Icon {anchors.verticalCenter:parent.verticalCenter;kind:modelData.icon || (modelData.kind==='family'?(modelData.name==='Programs'?'programs':modelData.name==='PSI Packets'?'psi':modelData.name):modelData.program?'program':modelData.kind==='record'?modelData.record.name:modelData.node.label.toLowerCase().indexOf('descriptor')>=0?'descriptor':'field')}
-                        Rectangle {width:Math.min(nav.width-(modelData.depth+1)*16-26,navText.implicitWidth+4);height:19;anchors.verticalCenter:parent.verticalCenter;color:'white';border.width:parent.parent.highlighted?1:0;border.color:'#c00000'
+                        Rectangle {width:Math.min(nav.contentWidth-(modelData.depth+1)*16-26,navText.implicitWidth+4);height:19;anchors.verticalCenter:parent.verticalCenter;color:'white';border.width:parent.parent.highlighted?1:0;border.color:'#c00000'
                             TextLabel {id:navText;anchors.fill:parent;anchors.leftMargin:2;verticalAlignment:Text.AlignVCenter;text:modelData.label;font.pixelSize:13;elide:Text.ElideRight}
                         }
                     }
                     onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.activate(modelData);}
-                    onDoubleClicked:{if(modelData.kind==='node')view.fold(modelData);else if(modelData.sourceRecord)view.selectRecord(modelData.sourceRecord);}
+                    onDoubleClicked:view.fold(modelData)
                     ToolTip {visible:parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
                     Accessible.name:modelData.label
                 }
@@ -295,16 +404,33 @@ SplitView {
             // The original field table is dense and unstriped, with a tree in
             // the Field column, red values and a solid yellow selection.
             Rectangle {
-                Layout.fillWidth:true;implicitHeight:23;color:classicFace;border.color:'#a0a0a0'
-                Row {anchors.fill:parent
-                    Repeater {model:[{name:'Field',ratio:0.37},{name:'Bits',ratio:0.12},{name:'Value',ratio:0.12},{name:'Comment',ratio:0.39}]
-                        delegate:Rectangle {required property var modelData;width:parent.width*modelData.ratio;height:parent.height;color:'transparent';border.color:'#b0b0b0';TextLabel {anchors.fill:parent;anchors.leftMargin:6;verticalAlignment:Text.AlignVCenter;text:modelData.name}}
+                Layout.fillWidth:true;implicitHeight:23;color:classicFace;border.color:'#a0a0a0';clip:true
+                Row {x:-fieldList.contentX;width:view.fieldTableWidth;height:parent.height
+                    Repeater {model:['Field','Bits','Value','Comment']
+                        delegate:Rectangle {
+                            required property string modelData
+                            required property int index
+                            objectName:'siColumnHeader:'+index
+                            width:view.fieldColumnWidth(index);height:23;color:'transparent';border.color:'#b0b0b0'
+                            TextLabel {anchors.fill:parent;anchors.leftMargin:6;verticalAlignment:Text.AlignVCenter;text:modelData;elide:Text.ElideRight}
+                            MouseArea {
+                                objectName:'siColumnGrip:'+index
+                                anchors.right:parent.right;anchors.top:parent.top;anchors.bottom:parent.bottom;width:7;cursorShape:Qt.SplitHCursor;preventStealing:true
+                                property real startX:0
+                                property real startWidth:0
+                                onPressed:function(mouse){startX=mapToItem(view,mouse.x,mouse.y).x;startWidth=view.fieldColumnWidth(index);}
+                                onPositionChanged:function(mouse){if(pressed)view.resizeFieldColumn(index,startWidth+mapToItem(view,mouse.x,mouse.y).x-startX);}
+                                onDoubleClicked:view.fitFieldColumn(index)
+                            }
+                        }
                     }
                 }
             }
             ListView {
                 id:fieldList;objectName:'unifiedFields';Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:120
-                clip:true;model:view.fieldRows;reuseItems:true;activeFocusOnTab:true
+                clip:true;model:view.fieldRows;reuseItems:true;activeFocusOnTab:true;enabled:!view.inspectionPending
+                contentWidth:view.fieldTableWidth;flickableDirection:Flickable.AutoFlickDirection
+                ScrollBar.horizontal:ScrollBar{policy:ScrollBar.AsNeeded}
                 ScrollBar.vertical:ScrollBar{}
                 Keys.onReturnPressed:view.selectField(currentIndex)
                 Keys.onSpacePressed:view.selectField(currentIndex)
@@ -314,26 +440,42 @@ SplitView {
                 delegate:ItemDelegate {
                     required property var modelData
                     required property int index
-                    objectName:'siField:'+index;width:fieldList.width;height:20;padding:0
+                    objectName:'siField:'+index;width:view.fieldTableWidth;height:20;padding:0
+                    Keys.onSpacePressed:view.selectField(index)
+                    Keys.onReturnPressed:view.selectField(index)
                     highlighted:index===view.selectedFieldIndex
                     background:Rectangle {color:parent.highlighted?view.classicSelection:view.classicPaper;Rectangle {anchors.bottom:parent.bottom;width:parent.width;height:1;color:'#ededed'}}
-                    onClicked:{fieldList.forceActiveFocus();view.selectField(index);}
+                    onClicked:{fieldList.forceActiveFocus();view.focusField(index);}
+                    onDoubleClicked:if(modelData.groupPath)view.selectField(index)
                     Accessible.name:modelData.name+', '+(modelData.bit_length===undefined?'bit range unknown':modelData.bit_length+' bits')+', '+modelData.value
                     contentItem:Row {
-                        Item {width:fieldList.width*0.37;height:20;clip:true
+                        Item {width:view.fieldColumnWidth(0);height:20;clip:true
                             Row {anchors.fill:parent;spacing:3
-                                Branch {depth:modelData.depth || 0;width:12+(modelData.depth || 0)*16;height:20;expandable:!!modelData.groupPath;expanded:!view.fieldClosed[modelData.groupPath]}
+                                Branch {depth:modelData.depth || 0;width:12+(modelData.depth || 0)*16;height:20;expandable:!!modelData.groupPath;expanded:!view.fieldClosed[modelData.groupPath]
+                                    MouseArea {anchors.right:parent.right;width:12;height:parent.height;enabled:parent.expandable;onClicked:{fieldList.forceActiveFocus();view.selectField(index);}}
+                                }
                                 Icon {anchors.verticalCenter:parent.verticalCenter;kind:'field'}
                                 TextLabel {height:20;verticalAlignment:Text.AlignVCenter;text:modelData.name}
                             }
                         }
-                        TextLabel {width:fieldList.width*0.12;height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.groupPath?'':modelData.bit_length===undefined?'—':String(modelData.bit_length)}
-                        TextLabel {width:fieldList.width*0.12;height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:view.fieldValue(modelData.value);color:view.classicValue;elide:Text.ElideRight}
-                        TextLabel {width:fieldList.width*0.39;height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.help || '';elide:Text.ElideRight}
+                        TextLabel {width:view.fieldColumnWidth(1);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.groupPath?'':modelData.bit_length===undefined?'—':String(modelData.bit_length)}
+                        TextLabel {width:view.fieldColumnWidth(2);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:view.fieldValue(modelData.value);color:view.classicValue;elide:Text.ElideRight}
+                        TextLabel {width:view.fieldColumnWidth(3);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.help || '';elide:Text.ElideRight}
                     }
                     ToolTip {visible:parent.hovered;text:modelData.name+'  '+modelData.value+(modelData.help?'  '+modelData.help:'')}
                 }
                 Rectangle {z:-1;anchors.fill:parent;color:'white'}
+                Item {
+                    parent:fieldList;anchors.fill:parent;clip:true;z:2
+                    Repeater {model:4
+                        Rectangle {
+                            required property int index
+                            objectName:'siColumnLine:'+index
+                            x:{var edge=0;for(var i=0;i<=index;i++)edge+=view.fieldColumnWidth(i);return edge-fieldList.contentX-1;}
+                            width:1;height:parent.height;color:'#b0b0b0'
+                        }
+                    }
+                }
             }
             Rectangle {objectName:'siPaneDivider';Layout.fillWidth:true;implicitHeight:5;color:'#d0d0d0';border.color:'#ffffff'
                 MouseArea {id:splitGrip;anchors.fill:parent;cursorShape:Qt.SizeVerCursor;property real startY:0;property real startFraction:0
@@ -417,7 +559,7 @@ SplitView {
             }
             TextLabel {
                 objectName:'siRange';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:11;elide:Text.ElideRight
-                text:view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
+                text:view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
             }
         }
     }

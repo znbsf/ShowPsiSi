@@ -13,7 +13,7 @@ Fonts and rendering remain a close visual match, not proven original LOGFONT or
 pixel equivalence. Existing advanced workbench theme controls remain available;
 the core SI component has its own fixed original-style palette.
 
-The selected RT_BITMAP assets are embedded in `InspectorModel.js` with resource
+The selected RT_BITMAP assets are embedded in shared `ui/tauri/web/inspector-model.js` with resource
 IDs and the installed original executable hash. Raw extraction/atlas files stay
 ignored under `artifacts/nxtsa-parity-20261025/classic-icons`. No new dependency,
 installation, foreground window operation or remote distribution was performed.

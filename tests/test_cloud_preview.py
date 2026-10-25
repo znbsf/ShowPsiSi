@@ -27,6 +27,12 @@ class BridgeTests(unittest.TestCase):
         return urlopen(request,timeout=20)
     def invoke(self,command,args=None):
         with self.request('/__bridge/invoke',{'command':command,'args':args or {}}) as response:return json.load(response)
+    def test_transport_query_reaches_native_engine(self):
+        self.invoke('request',{'message':{'id':41,'method':'query_transport','params':{'analysis_revision':0,'offset':0,'limit':100}}})
+        with self.request('/__bridge/events?after=0') as response:batch=json.load(response)
+        message=next(item['payload'] for item in batch['messages'] if item['payload'].get('id')==41)
+        self.assertIn('error',message) # No source loaded, but native protocol handled it.
+        self.assertNotIn('Unknown engine method',str(message))
     def test_real_engine_capabilities(self):
         self.invoke('request',{'message':{'id':1,'method':'capabilities','params':{}}})
         with self.request('/__bridge/events?after=0') as response:batch=json.load(response)
@@ -98,7 +104,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(error.exception.code,400)
 
     def test_static_assets_and_environment(self):
-        for name in ('app.js','dvbi.js','workbench.js','style.css'):
+        for name in ('app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js'):
             with self.request('/'+name) as response:self.assertEqual(response.read(),(ROOT/'ui/tauri/web'/name).read_bytes())
         with self.request('/') as response:
             index=response.read().decode();self.assertIn('window.__TAURI__',index)

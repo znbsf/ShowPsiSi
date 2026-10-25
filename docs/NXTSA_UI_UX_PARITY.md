@@ -274,3 +274,293 @@ Navigation now moves focus without folding; Return/Space or clicking activates a
 group. A real QML key regression covers root navigation, fold/unfold and the exact
 field/byte selection. The updated candidate requires a new hosted build; the prior
 successful artifact is not evidence for this follow-up source revision.
+
+
+## Local Qt integrity diagnosis reopened (2026-10-25)
+
+The user explicitly requested fixing local compilation. Fresh ancestor readback
+shows an explicit inheritable Low/NoWriteUp label on the original ShowPsiSi root;
+the shared SDK inherits it, while the current worktree/build root is unlabeled
+(medium). No evidence yet identifies the historical setter. This new observation
+allows a bounded test of an existing, already-low output location without changing
+any security descriptor. Capture the actual scanner token before resuming it and
+compare identical scans into fresh medium vs inherited-low task directories.
+Budget: one paired probe, then one fresh local Qt build if the low output works;
+stop on token-query failure, unexpected scope, timeout or no new evidence. Preserve
+all earlier CI artifacts. No SDK relabel, ACL broadening or global configuration.
+
+### Local build blocker resolved (2026-10-25)
+
+The paired real-process probe confirms Medium parent (`S-1-16-8192`), Low
+scanner child (`S-1-16-4096`), same user and zero restricted SIDs. The identical
+scanner exits 1 without output in the Medium worktree, but exits 0 and writes
+1,665 bytes in the original workspace's inherited-Low artifacts directory.
+The original workspace root carries the explicit inheritable Low/NoWriteUp
+label; its historical setter remains unknown. No security descriptors changed.
+
+A fresh full Release build from source HEAD `08d0a443b5ad16c03b050dbf14c8f42b388760dc`
+plus the dirty `scripts/build.ps1` and `scripts/env.ps1` patch succeeded, placing
+outputs under the original workspace's `artifacts/local-qt-integrity-20261025/build`.
+The script now accepts `-BuildDirectory` for Qt/core builds and respects an
+explicit `QT_ROOT`. The default build route is unchanged. Tauri custom-output
+packaging is outside this fix and is explicitly rejected.
+
+The locally built application passed all nine existing complete-app classic-SI
+checks using the actual engine: light SI, automatic network, actual TP,
+keyboard program/PMT selection, field-tree navigation, source replacement,
+known LCN and absence of QML errors. The Hotbird capture hash exactly matches
+the earlier CI candidate capture. These are offscreen software checks;
+interactive desktop/GPU/dialog acceptance is not implied. The test-owned app
+was terminated by the harness after capture (exit 1 from forced cleanup).
+
+Evidence is under the original workspace's ignored
+`artifacts/local-qt-integrity-20261025/`: `probe.py`, `probe-result.json`,
+`build.log`, `validate-local.py`, `runtime-result.json`, and
+`local-classic-1792936315344021200/report.json`. Executable SHA256 values:
+- core: `fd0c9f4d062809e2c9e25b6691c6091f2b0c833d31dff5a0d7b7df4737339d5b`
+- Qt: `5e8010ac9d26c45e089333f098954ef37771ba023e0e50f0bf5da763d06ba075`
+
+This resolves the local build/output-permission gate. This follow-up patch is
+local and uncommitted; the earlier hosted/PR results do not validate this patch.
+
+
+## Tree stability and field-column resizing (2026-10-25, in progress)
+
+The user reports whole-view flashing, lost tree position, and fixed field
+column widths in the locally built preview. Source inspection identifies the
+backend clearing detail during inspect, a JS-array navigation model replaced
+on detail changes, and automatic Center scrolling. Reuse the verified Low
+output build route; no SDK permission investigation is reopened. Add delayed
+inspection/scroll-anchor and actual mouse-drag column regressions, then build
+and run the complete local application. Budget: targeted component regression,
+repair supported failures, one candidate build and runtime check. Stop on
+invalid environment or no new evidence; preserve the prior runnable preview.
+
+### Tree/columns local candidate result
+
+`UnifiedInspector.qml` now retains the last displayed detail only while the
+next inspection is pending; failed inspection still clears the stale detail.
+The navigation ListModel updates by stable key, preserving the focused row,
+viewport anchor and live delegate. Selection no longer recenters the tree.
+Field/Bits/Value/Comment share adjustable pixel widths, with draggable header
+separators, double-click content fit and a synchronized horizontal scrollbar.
+Column widths survive record changes during the session.
+
+Regression includes an explicitly delayed inspect, failure clearing, an
+80-record synthetic scroll stress case derived from real engine data (actual
+mouse click and delegate/viewport identity assertions), and actual column
+mouse drag/double-click. Component result: 35 PASS including 4 suite lifecycle
+entries (31 test cases), zero failures/skips. Initial test preparation errors
+(incorrect QtTest double-click API and target row not instantiated) were fixed;
+failed receipts remain preserved. The complete locally rebuilt app passed all
+nine existing real-engine SI checks. A first complete-app attempt hit a
+transient diagnostic-client PermissionError; a new run with traceback capture
+passed, without changing application permissions or the client implementation.
+
+Evidence: original workspace `artifacts/si-navigation-resize-20261025/`, including
+`components/run-1792939852046510900/result.json`, `build.log`,
+`runtime-result-2.json`, `delivery-checkpoint.json`, and `Launch Local Qt.cmd`.
+Qt executable SHA256: `1be99923e937f45419f28e2d404129dcbd7f4426e39142313b736c9e205f20ba`.
+Source identity is HEAD `08d0a443b5ad16c03b050dbf14c8f42b388760dc` plus the local
+uncommitted UI/tests/build-script/docs patch; hashes are in the checkpoint.
+
+The candidate was launched on the Windows desktop and its Hotbird SI view was
+observed. Native automated input stopped on detected concurrent user input;
+no native click/drag pass is claimed. The candidate remains open for the user.
+The old executable is preserved. This local interaction repair is not yet
+committed/pushed; earlier hosted results do not validate the new patch.
+
+
+## Missing left SI hierarchy correction (2026-10-25)
+
+User reference screenshot shows PMT program descriptors / ES / ES descriptors,
+and NIT network descriptors / ONID-TSID transports / transport descriptors,
+simultaneously expanded in the left tree. Previous navigation exposed only a
+single Section node and did not satisfy that structure. Existing original-app
+reference nx18/nx19 establishes table/field/hex identity, not complete tree
+parity. The local NXTSA mfc_shell.cpp is a reconstruction, not authoritative
+original source; use the user screenshot as the hierarchy reference.
+
+The engine already supplies scoped wire-loop ownership and exact bit offsets.
+Project those nodes without flattened descriptor duplicates or SDK attribute
+subtrees, retain expanded inspected tables across navigation, and route child
+clicks through the owning record before positioning fields/bytes. No protocol
+parser change. Budget: targeted model/component regressions, full local build,
+complete-app check with actual PMT and NIT; stop on invalid evidence/environment.
+Reuse the verified Low output build route, without ACL changes.
+
+### Internal SI tree local acceptance
+
+The left navigation now projects exact engine wire-loop ownership: PMT program
+and ES descriptor lists; NIT/BAT network or bouquet descriptors and ONID/TSID
+transports; PAT programs, SDT services, and EIT events when carried by the wire
+structure. Descriptor nodes use engine-provided names/tag and byte provenance;
+SDK attribute trees and the separate flat descriptor index are not duplicated
+in the left tree. Unsupported structures are not invented. Table sections keep
+separate record identity; this is not a claim of complete original-app parity.
+
+Nodes expand/collapse via [+/-], Left/Right and Space. A record lazily loads its
+structure on selection/expansion. Up to 64 inspected structures are retained
+per source/revision, with bounded 100-child pages. A cached child from another
+table selects its owning record before positioning the field group and exact
+Section/source-packet bytes. Expanded PMT/NIT branches coexist, source change
+clears the cache, and long labels have horizontal scrolling. Prior viewport
+stability and adjustable field columns remain covered by regression.
+
+Validation: 83 presentation-model assertions; 37 Qt PASS entries (33 cases +
+4 suite lifecycle entries), no failures/skips; 14 complete locally built app
+checks on actual Hotbird data plus the declared fixture. Initial regressions
+caught non-family expansion-state warnings and a duplicate async detail
+assignment clearing selected-field position; both were repaired and rerun.
+The final Windows native candidate was opened with Hotbird PMT PID 0x0108,
+program 8. Actual mouse drag widened its tree; actual mouse click selected
+teletext_descriptor at section/stream/28/descriptor/33. Observed left-row
+position unchanged, right field group at top, and both hex panes highlighted.
+Only this bounded native operation is established, not all original UI paths.
+
+Evidence is in original workspace `artifacts/si-internal-tree-20261025/`:
+`components-final.log`, `runtime-result-final.json`, `build-final.log`,
+`native-preview.json` (actual capture and source), and `delivery-checkpoint.json`.
+Source is HEAD `08d0a443b5ad16c03b050dbf14c8f42b388760dc` plus the local dirty
+UI/model/tests/build-script/docs patch. No new commit, push or merge occurred;
+prior hosted CI does not validate this patch. The candidate stays open for review.
+
+
+## Generic table hierarchy audit (2026-10-25)
+
+User clarified that every table must expose its reference-data hierarchy, not
+just PMT/NIT examples. Source audit confirms SiWireFields covers only selected
+wire layouts and the prior navigation projection discarded the engine's native
+semantic trees. This leaves AIT/UNT, DSM-CC, ATSC, ISDB, SCTE and other decoded
+families at Section-only navigation despite existing structured evidence.
+Use existing pinned reference vectors as a whole catalog. Preserve selected
+section vs assembled table scope and never invent byte offsets for semantic
+nodes. No protocol parser change. Budget: one catalog audit, generic renderer
+plus regression repairs, then one local candidate build and full-app checks.
+
+
+The user additionally specified the mouse contract for both SI trees: a single
+click on [+/-] toggles; a single click on row text selects/locates; double-click
+on row text toggles. Earlier left-family activation and right-field-group clicks
+violated this contract. Unify delegate behavior and verify actual mouse sequences
+for family, record, internal-loop and right-field group rows. Keyboard expansion
+remains explicit through Left/Right/Space (and field Return).
+
+
+User also reported missing vertical field grid lines. Add viewport-height column
+boundaries aligned with the same column-width values as the headers and rows;
+keep lines visible through selected rows and blank space, and synchronized with
+horizontal scrolling. Verify alignment after resize and both-axis scrolling.
+
+
+### Generic hierarchy and interaction local acceptance
+
+The navigation now uses exact wire loops where available and the existing
+native semantic tree otherwise, recursively and without a table-family allowlist.
+The pinned catalog contains 52 inputs and 34 native table names; 37 inputs had
+children hidden by the old navigation. All 52 now preserve available structure
+and attributes (41 use the generic route). This is reference-vector coverage,
+not a claim that every broadcast table or original-app behavior is supported.
+Multi-section native trees are labeled Assembled with their section count;
+semantic nodes without proven wire ranges explicitly report unavailable byte
+ranges instead of inventing hex highlights. No protocol parser was changed.
+
+Both tree delegates now use single-click +/- to fold, single-click text to
+select/locate, and double-click text to fold. An uncached record double-click
+retains its requested expansion until inspection completes. Field-group folding
+also retains its viewport, clamped only when the resulting content is shorter.
+The native check caught a model-reset scroll-to-top defect after the initial
+component pass; it was repaired and added as a regression before final rebuild.
+Vertical field boundaries cover the viewport and track header widths and
+horizontal scrolling, including selected rows and blank space.
+
+Final validation: 904 model assertions on 52 pinned inputs; 38 component cases
+(42 PASS entries including 4 lifecycle entries), no failures/skips; 22 complete
+locally compiled app checks with actual Hotbird and declared reference data.
+The synthetic DVB bundle exercises AIT, UNT and both DSM-CC native structures
+through the final candidate engine. Offscreen checks are distinct from native
+interaction. Actual Windows mouse checks observed left text selection without
+folding, double-click folding and single-click + expansion; the final rebuilt
+candidate also verified right descriptor double-click folding and + expansion
+at the same viewport position, and a native Field-column drag moved its vertical
+boundary with the header. The final candidate remains open on Hotbird PMT.
+
+Evidence: original workspace `artifacts/si-generic-tree-20261025/`, including
+`catalog/reference-trees.json`, `before-audit.json`,
+`components-scroll-final.log`, `build-scroll-final.log`, `runtime-result.json`,
+`native-preview.json` and `delivery-checkpoint.json`. Final Qt SHA-256:
+`14756c8d379300780685ec73519b6733e4c58909e27ef50729185915e12205e4`.
+Source remains HEAD `08d0a443b5ad16c03b050dbf14c8f42b388760dc` plus the local
+patch, including the new reference fixture helper. No new commit/push/merge;
+prior hosted CI does not validate these local changes. Build route reuses the
+existing Low-integrity output directory; no ACL or security label was changed.
+
+
+## Qt and Tauri core SI synchronization (2026-10-25)
+
+User requests matching UI and UX in both frontends. Qt local acceptance above
+is the baseline; Tauri still uses the older workbench. Reuse the same model,
+icons, exact wire/semantic scope and existing engine bridge. Add the classic
+SI surface to Tauri and retain the older workspace through an explicit switch.
+Required gates: shared-model catalog, Qt component/resource checks after moving
+the shared source, real-engine browser interaction and native build/runtime if
+the installed toolchain is usable. Reuse the established Low output Qt route;
+no renewed security-label investigation. Budget one implementation pass plus
+repairs justified by failing checks; stop environment probes after a decisive
+missing dependency or access failure and report that boundary.
+
+Native Tauri first build reached the linker, then LNK1104 could not create a
+Windows Temp lnk*.tmp file. This matches the established inherited-Low child
+write boundary, now at the linker temporary output. One bounded retry redirects
+process-only TMP/TEMP into the existing Low artifact root; no ACL changes.
+
+The low-temp retry passed linking and reached tauri-build, whose ACL generation
+writes gen/schemas inside the source crate (verified in the pinned local SDK).
+That Medium source tree is not writable by the Low build helper. Build an exact
+hash-checked copy of only the Tauri sources/assets in the existing Low artifact
+root, keeping the working tree untouched. This is the bounded source-output
+fix, not a permission change; preserve the source manifest and final binary.
+
+
+### Dual-frontend local acceptance (2026-10-26)
+
+Qt imports `ui/tauri/web/inspector-model.js` directly; the web frontend loads
+that same file. Generic native-table recursion, exact wire ranges, original
+bitmap icons and network/TP/program organization now have one implementation.
+Tauri defaults to the classic SI view with the same palette, typeface, field
+columns, dual hex panes, explicit +/- and double-click folding, and adjustable
+column/pane boundaries. The prior advanced workspace and DVB-I remain available.
+Summary/PID uses the existing scan-global `query_transport` contract in both
+frontends; it does not reinterpret packet counters as media/decoder validation.
+
+The final web check uses the actual engine: 20 core interaction checks and
+14 Summary/PID/generic hierarchy checks passed. The uncached raw PMT regression
+also verifies that asynchronous label changes preserve the clicked DOM element
+through both clicks. Its fixture has an empty PMT; it checks the decoded root,
+not a nonexistent elementary stream. Four existing/default browser checks,
+eight bridge checks and six palette checks passed. The shared-model catalog
+passed 904 assertions on 52 inputs; the rebuilt Qt passed 38 component cases
+and 22 full-application offscreen checks. These are separate evidence layers.
+
+Both current Windows applications were started on the same 223,404-packet
+Hotbird input. Qt's visible native window was inspected. Tauri's built-in
+read-only diagnostic capture confirms the native WebView2 classic SI surface,
+completed real scan, field grid and packet/section panes. Computer Use application
+authorization timed out for Tauri, so this iteration does not claim native mouse
+acceptance: the final mouse regressions ran in the real-engine browser surface.
+No security labels or ACLs were changed. Browser tooling's available update was
+not installed. Clean-machine deployment, native dialogs and pixel-identical
+cross-platform font rasterization are outside this core-SI verification.
+
+Evidence is in the original workspace's ignored
+`artifacts/si-dual-ui-20261026/`: source manifest, Qt/Tauri build logs,
+`browser/classic-result.json`, `browser/extended-result.json`,
+`web-regression-final.log` plus `web-double-final.log` (corrected empty-PMT
+expectation), native preview identities and Tauri diagnostic capture.
+Final Qt executable SHA-256:
+`8c60f40cc8681d424aa4e1c2c9ba5f7ab17597e6cab0eae0edd43b8591b65cef`.
+Final Tauri executable SHA-256:
+`051e875ef6a52448c56360cdaf99d6839e68c1f6873c54e9b085fe1bd429110d`.
+Both were built from `08d0a443b5ad16c03b050dbf14c8f42b388760dc` plus the
+reviewed local patch. Hosted checks must be matched to the published revision;
+previous green checks do not validate this patch.

@@ -1,5 +1,40 @@
 # ShowPsiSi status
 
+2026-10-25 generic SI hierarchy and interaction correction: available native
+structures are now projected for every table family, preserving exact wire
+loops and explicit assembled-table scope. The 52 pinned reference inputs pass
+904 model assertions. Both trees now distinguish text single/double click from
+single-click +/-. Field grid columns remain aligned on resize/scroll, and field
+folding retains viewport position. 38 component cases and 22 full-app checks
+passed; native Windows mouse checks verified the repaired behavior and column
+drag alignment. Final local candidate is open; patch remains uncommitted.
+[Scope and evidence](NXTSA_UI_UX_PARITY.md#generic-hierarchy-and-interaction-local-acceptance).
+
+2026-10-25 SI internal hierarchy correction: left trees now expose PMT ES and
+descriptors, NIT/BAT ONID/TSID transports and descriptors, and other supported
+wire-loop nodes. Cached branches coexist and child selection restores the exact
+owner before field/hex navigation. Long labels scroll horizontally. 83 model
+assertions, 33 component cases and 14 full-app checks passed; a native Windows
+teletext-descriptor click also verified field/dual-hex positioning. Candidate
+is open locally; these changes remain uncommitted.
+[Scope and evidence](NXTSA_UI_UX_PARITY.md#internal-si-tree-local-acceptance).
+
+2026-10-25 local interaction repair: SI detail no longer clears during an
+in-flight selection, and keyed navigation preserves clicked-row position.
+Field columns support drag sizing, double-click fit and horizontal scrolling.
+31 component test cases and nine full-app SI checks passed; the new local
+candidate is open for user review. Native click/drag automation stopped when
+concurrent user input was detected. See [evidence](NXTSA_UI_UX_PARITY.md#treecolumns-local-candidate-result).
+Changes remain local and uncommitted.
+
+2026-10-25 local Qt build blocker resolved: the actual Qt scanner runs at Low
+integrity and cannot write to the Medium worktree. Building current sources
+into an existing inherited-Low output directory succeeds without ACL changes.
+The locally built full app passed nine offscreen classic-SI checks. See
+[diagnosis and evidence](NXTSA_UI_UX_PARITY.md#local-build-blocker-resolved-2026-10-25).
+The earlier pending-build notes below are historical; native desktop/dialog
+acceptance remains separate. Build-script follow-up changes are local only.
+
 2026-10-25 follow-up: the classic SI tree now organizes declared networks / TP /
 programs, with SDT names and resolved LCN. Unknown or conflicting identities
 remain explicit; program selection retains field/hex linkage. Local real-engine
@@ -433,3 +468,21 @@ constrain this cloud iteration.
 SDKs, binaries, downloaded streams, local profiles and transient evidence remain
 ignored. Source screenshots and reproducible tests are committed. Read
 [CLOUD_DEVELOPMENT.md](CLOUD_DEVELOPMENT.md) before repeating environment diagnosis.
+
+
+## 2026-10-26 — Qt / Tauri core SI synchronization
+
+The two frontends now consume one inspector model and original bitmap assets.
+Tauri gains the matching classic SI tree/field/dual-hex view, stable selection,
+explicit single-click +/- versus double-click labels, resizable columns with
+vertical grid lines, network/TP/program/LCN organization and Summary/PID return.
+The prior advanced workspace remains accessible. No protocol parser changed.
+
+Local evidence: shared catalog 904 assertions, Qt 38 component and 22 full-app
+checks, real-engine browser 20 core plus 14 extended interaction checks, and the
+uncached double-click regression. Current Qt and Tauri native previews both
+complete the same Hotbird scan. Native WebView2 capture is verified; Tauri native
+mouse automation remains unverified because application authorization timed out.
+See [parity evidence and exact binaries](NXTSA_UI_UX_PARITY.md#dual-frontend-local-acceptance-2026-10-26).
+Publication continues on the authorized draft PR #30; hosted results must be
+read against the new commit, not the earlier branch head.

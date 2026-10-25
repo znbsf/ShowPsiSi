@@ -35,9 +35,14 @@ SplitView {
     property string rawHex: (detail.raw_hex || '').replace(/\s/g,'')
     function selectField(index) {
         var row=fieldRows[index];
-        if(row && row.groupPath){var next=Object.assign({},fieldClosed);next[row.groupPath]=!next[row.groupPath];fieldClosed=next;selectedFieldIndex=-1;return;}
+        if(row && row.groupPath){var next=Object.assign({},fieldClosed);next[row.groupPath]=!next[row.groupPath];fieldClosed=next;selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;return;}
         selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;
         if(activeRange){hexOpen=true;hexRows.positionViewAtIndex(Math.floor(activeRange.offset/10),ListView.Contain);}
+    }
+    function focusField(index) {
+        var row=fieldRows[index];if(!row)return;
+        if(row.groupPath){selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;}
+        else selectField(index);
     }
     function selectByte(offset) {
         var best=null;
@@ -301,9 +306,11 @@ SplitView {
                 id:fieldList;objectName:'unifiedFields';Layout.fillWidth:true;Layout.fillHeight:true;Layout.minimumHeight:120
                 clip:true;model:view.fieldRows;reuseItems:true;activeFocusOnTab:true
                 ScrollBar.vertical:ScrollBar{}
-                Keys.onUpPressed:{view.selectField(Math.max(0,view.selectedFieldIndex-1));positionViewAtIndex(currentIndex,ListView.Contain);}
-                Keys.onDownPressed:{view.selectField(Math.min(count-1,view.selectedFieldIndex+1));positionViewAtIndex(currentIndex,ListView.Contain);}
-                Keys.onPressed:function(e){if(e.key===Qt.Key_Home){view.selectField(0);positionViewAtBeginning();e.accepted=true;}else if(e.key===Qt.Key_End){view.selectField(count-1);positionViewAtEnd();e.accepted=true;}}
+                Keys.onReturnPressed:view.selectField(currentIndex)
+                Keys.onSpacePressed:view.selectField(currentIndex)
+                Keys.onUpPressed:{view.focusField(Math.max(0,view.selectedFieldIndex-1));positionViewAtIndex(currentIndex,ListView.Contain);}
+                Keys.onDownPressed:{view.focusField(Math.min(count-1,view.selectedFieldIndex+1));positionViewAtIndex(currentIndex,ListView.Contain);}
+                Keys.onPressed:function(e){if(e.key===Qt.Key_Home){view.focusField(0);positionViewAtBeginning();e.accepted=true;}else if(e.key===Qt.Key_End){view.focusField(count-1);positionViewAtEnd();e.accepted=true;}}
                 delegate:ItemDelegate {
                     required property var modelData
                     required property int index

@@ -178,6 +178,18 @@ Item {
             inspector.changeFilter('All tables','News One');verify(inspector.navigation.some(function(r){return r.label.indexOf('News One')>=0;}));
             inspector.changeFilter('All tables','');
         }
+        function test_field_keyboard_navigation_does_not_fold_groups() {
+            inspector.selectRecord(inspector.findRecord('PMT'));inspector.fieldClosed={};
+            var fields=findChild(inspector,'unifiedFields');fields.forceActiveFocus();
+            var count=inspector.fieldRows.length;verify(count>7);
+            keyClick(Qt.Key_Home);compare(inspector.fieldRows.length,count);compare(inspector.selectedFieldIndex,0);
+            keyClick(Qt.Key_Down);compare(inspector.selectedField.name,'table_id');
+            keyClick(Qt.Key_Home);keyClick(Qt.Key_Return);compare(inspector.fieldRows.length,1);
+            keyClick(Qt.Key_Down);compare(inspector.fieldRows.length,1);
+            keyClick(Qt.Key_Space);compare(inspector.fieldRows.length,count);
+            for(var i=0;i<6;i++)keyClick(Qt.Key_Down);
+            compare(inspector.selectedField.name,'table_id_extension');compare(inspector.activeRange.offset,3);
+        }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';
             ['PAT','PMT','BAT','TDT','TOT'].forEach(function(name){

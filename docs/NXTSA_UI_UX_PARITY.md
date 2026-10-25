@@ -259,3 +259,18 @@ metadata. Network and transport identities remain separate; names come from SDT 
 NIT, LCN is used only when resolved, and TP parameters are advertised declarations.
 Unknown/conflicting data and remote announced services remain explicit. Existing
 PSI tables and field/byte inspection stay available.
+
+
+Complete Windows candidate run 40195156893 passed all five jobs and produced
+artifact 12600545735. Its 698-file manifest and source tree were verified locally.
+The full packaged app passed eight isolated checks in explicit DVB mode: automatic
+network/TP loading, keyboard program activation, PMT selection, source replacement,
+resolved LCN, light SI and QML diagnostics. Auto interpretation intentionally keeps
+ambiguous signalling unresolved; network/TP projection requires the existing
+explicit analysis profile, not a separate parser-enable toggle.
+
+Further whole-window review exposed field Home/arrow keys toggling Section groups.
+Navigation now moves focus without folding; Return/Space or clicking activates a
+group. A real QML key regression covers root navigation, fold/unfold and the exact
+field/byte selection. The updated candidate requires a new hosted build; the prior
+successful artifact is not evidence for this follow-up source revision.

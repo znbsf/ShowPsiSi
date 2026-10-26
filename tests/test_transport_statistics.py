@@ -95,11 +95,12 @@ class TransportStatisticsTests(unittest.TestCase):
         self.assertEqual(self.page(),before)
         self.assertEqual(sum(r['packets'] for r in before['items']),16)
         self.assertIn('not the selected historical cutoff',before['summary']['scope'])
-    def test_failed_and_new_analysis_do_not_retain_old_pid_rows(self):
+    def test_rejected_input_retains_pid_rows_until_new_analysis(self):
         self.analyze([packet(256)]*16)
         old=self.revision
         with self.assertRaises(CoreError):self.core.call('analyze',{'path':str(Path(self.temp.name)/'missing.ts')})
-        with self.assertRaises(CoreError):self.core.call('query_transport',{'analysis_revision':old})
+        retained=self.core.call('query_transport',{'analysis_revision':old})
+        self.assertEqual([(r['pid'],r['packets']) for r in retained['items']],[(256,16)])
         self.analyze([packet(257)]*8)
         self.assertEqual([(r['pid'],r['packets']) for r in self.page()['items']],[(257,8)])
     def test_bad_sync_error_has_unattributed_aggregate(self):

@@ -959,6 +959,27 @@ class BrowserTests(unittest.TestCase):
                 self.assertEqual(after['unified'][name],before['unified'][name],name)
             self.assertEqual(p.locator('#source').input_value(),before['state']['source'])
 
+    def test_classic_back_restores_exact_field_and_both_axis_scroll(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        field=p.evaluate('showpsisi.getUiState().unified.fields.findIndex((r,i)=>i>6&&!r.groupPath&&r.bit_offset!==undefined)')
+        self.assertGreater(field,6)
+        p.locator('.si-field-row').nth(field).locator('.si-field-name').click()
+        grip=p.locator('.si-column-grip[data-column="0"]');grip.press('ArrowRight')
+        p.locator('.si-fields').evaluate('(node)=>{node.scrollLeft=10;node.scrollTop=60;}')
+        before=p.evaluate('showpsisi.getUiState().unified')
+        self.assertIsNotNone(before['selectedField']);self.assertGreater(before['scroll']['fieldsX'],0)
+        p.locator('.si-nav-row[data-key="family:PMT"] .si-fold').click()
+        p.locator('.si-nav-row').filter(has=p.locator('.si-row-label',has_text='Program 0x')).first.locator('.si-row-label').click()
+        p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getUiState().unified.selected!==id',arg=before['selected'])
+        p.locator('[data-command="back"]').click()
+        p.wait_for_function('(field)=>showpsisi.getUiState().settled && showpsisi.getUiState().unified.selectedField?.name===field.name',arg=before['selectedField'])
+        after=p.evaluate('showpsisi.getUiState().unified')
+        for name in ['selected','path','range','selectedField','columnWidths']:
+            self.assertEqual(after[name],before[name],name)
+        self.assertEqual(after['scroll']['fields'],before['scroll']['fields'])
+        self.assertEqual(after['scroll']['fieldsX'],before['scroll']['fieldsX'])
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

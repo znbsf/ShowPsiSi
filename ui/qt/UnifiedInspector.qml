@@ -175,7 +175,7 @@ SplitView {
     onSelectedPathChanged: {selectedFieldIndex=-1;selectedByte=-1;}
     function captureContext() {
         return {expandedRecords:expandedRecords,treeClosed:treeClosed,treeLimits:treeLimits,openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
-            fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,fieldScroll:fieldList.contentY,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexOpen:hexOpen,scroll:nav.contentY,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
+            fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,field:selectedField?{nodePath:selectedField.nodePath,name:selectedField.name,bit_offset:selectedField.bit_offset,bit_length:selectedField.bit_length}:null,fieldColumns:fieldColumnWidths.slice(),fieldScroll:fieldList.contentY,fieldX:fieldList.contentX,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexX:bytes.contentX,packetScroll:packetRows.contentY,packetX:packetBytes.contentX,hexOpen:hexOpen,scroll:nav.contentY,navX:nav.contentX,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
     }
     function filterPid(pid) {
         if(detail.id && !navigationOrigin.id)navigationOrigin=captureContext();
@@ -191,8 +191,10 @@ SplitView {
             if(detail.id!==pendingRestore.id)return;
             var saved=pendingRestore;pendingRestore=null;
             fieldClosed=saved.fieldClosed || {};hexFraction=saved.hexFraction || 0.40;hexOpen=saved.hexOpen===undefined?true:saved.hexOpen;
-            selectedFieldIndex=saved.fieldIndex===undefined?-1:saved.fieldIndex;
-            fieldList.contentY=saved.fieldScroll || 0;hexRows.contentY=saved.hexScroll || 0;
+            if(saved.fieldColumns)fieldColumnWidths=saved.fieldColumns.slice();
+            selectedFieldIndex=saved.field ? fieldRows.findIndex(function(f){return !f.groupPath && f.nodePath===saved.field.nodePath && f.name===saved.field.name && f.bit_offset===saved.field.bit_offset && f.bit_length===saved.field.bit_length;}) : saved.fieldIndex===undefined?-1:saved.fieldIndex;
+            fieldList.contentY=saved.fieldScroll || 0;fieldList.contentX=saved.fieldX || 0;hexRows.contentY=saved.hexScroll || 0;bytes.contentX=saved.hexX || 0;
+            packetRows.contentY=saved.packetScroll || 0;packetBytes.contentX=saved.packetX || 0;nav.contentX=saved.navX || 0;
             var focused=navigation.findIndex(function(row){return row.key===saved.focusKey;});
             if(focused>=0)nav.currentIndex=focused;
             nav.contentY=Math.max(nav.originY,Math.min(saved.scroll,nav.originY+Math.max(0,nav.contentHeight-nav.height)));
@@ -495,7 +497,7 @@ SplitView {
                         ScrollBar.horizontal:ScrollBar{}
                         Rectangle {width:packetBytes.contentWidth;height:packetBytes.height;color:'#d4d4d4'}
                         ListView {
-                            objectName:'siPacketRows';width:packetBytes.contentWidth;height:packetBytes.height;clip:true;model:Math.ceil(view.packetRaw.length/20);reuseItems:true
+                            id:packetRows;objectName:'siPacketRows';width:packetBytes.contentWidth;height:packetBytes.height;clip:true;model:Math.ceil(view.packetRaw.length/20);reuseItems:true
                             ScrollBar.vertical:ScrollBar{}
                             delegate:Row {
                                 id:packetLine;required property int index;height:18;spacing:0

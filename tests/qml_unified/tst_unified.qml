@@ -140,6 +140,17 @@ Item {
             inspector.selectRecord(inspector.findRecord('TDT'));
             compare(inspector.selectedFieldIndex,-1);compare(inspector.activeRange,null);
         }
+        function test_back_restores_field_identity_columns_and_horizontal_scroll() {
+            inspector.selectRecord(inspector.findRecord('PMT'));inspector.selectByte(19);
+            var field=inspector.selectedField.name;
+            inspector.resizeFieldColumn(0,800);wait(50);
+            var list=findChild(inspector,'unifiedFields');list.contentX=30;
+            var before=inspector.captureContext();verify(before.fieldX>0);
+            inspector.selectRecord(inspector.findRecord('BAT'));inspector.resizeFieldColumn(0,400);
+            inspector.back();wait(100);
+            compare(inspector.selectedField.name,field);compare(inspector.fieldColumnWidths[0],800);
+            compare(list.contentX,before.fieldX);
+        }
         function test_si_tree_table_expand_and_focus() {
             inspector.selectRecord(inspector.findRecord('PMT'));
             var index=inspector.fieldRows.findIndex(function(f){return f.groupPath && f.groupPath.indexOf('section/stream/')===0;});

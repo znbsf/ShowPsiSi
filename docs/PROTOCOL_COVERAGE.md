@@ -25,6 +25,16 @@ names are interpreted without class loading, execution or bytecode verification.
 The actual reconstructed M12/M13 content window chain is locally tested in the
 browser and Qt offscreen; native desktop and output delivery remain separate.
 
+Teletext now has a production PES-to-captured-page path with explicit DVB PID
+signalling or manual PID, source/subpage/capture identity, exact original unit
+fragments and 40-column display. Supported Latin Level 1 semantic cells include
+colours, mosaics, double-height geometry and explicit visibility controls; C4
+clear blanks retain no invented source. Enhancements, boxing and secondary
+charsets remain partial/unsupported. A known-invalid-PAT fixture is tested only
+with explicit PID 1068; its nine subtitle events match an independent SRT through
+the core, browser display and Qt offscreen. This is not PSI discovery acceptance,
+live timing or full Teletext receiver conformance.
+
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets and independently imported local

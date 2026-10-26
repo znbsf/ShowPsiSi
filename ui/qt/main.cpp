@@ -280,7 +280,7 @@ class Bridge:public QObject {
                 clearIntentions();emit stateChanged();
             }
             m_error=cancelled?QString():error["message"].toString();emit errorChanged();
-            auto reportedError=errorValue;if(method=="query_packet"||method=="query_service"||method=="query_carousel")reportedError["request"]=request.params;
+            auto reportedError=errorValue;if(method=="query_packet"||method=="query_service"||method=="query_carousel"||method=="query_teletext")reportedError["request"]=request.params;
             emit response(method,reportedError);
         }else{
             if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}

@@ -1231,6 +1231,31 @@ class BrowserTests(unittest.TestCase):
         p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content_status==="unavailable_incomplete_module"')
         self.assertNotIn('known',p.locator('.mdi-active textarea').input_value());self.assertIn('unavailable_incomplete_module',p.locator('.mdi-active [role="status"]').inner_text())
 
+    def test_classic_teletext_real_captures_cells_and_packet_return(self):
+        from test_teletext_inspection import unit,pes,packetize
+        from test_application_carriage import pat,pmt,stream
+        from test_application_summaries import packetize as psi_packets
+        from make_fixture import descriptor
+        path=self.output/'teletext.ts';path.write_bytes(psi_packets([(0,pat()),(0x100,pmt(streams=[stream(pid=0x202,kind=6,descriptors=descriptor(0x56,b'eng\x11\x00'))]))])+packetize([pes(b'\x10'+unit(0,b'12:00:00')+unit(1,b'\x01RED\x18HIDE')+unit(0,b'12:00:01')+unit(1,b'\x02NEW'))]))
+        self.show_scan_configuration();p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path);self.classic_command('teletext')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="teletext")?.view'
+        p.wait_for_function('()=>'+prefix+'?.result.cells?.length===960')
+        self.assertEqual(p.locator('.mdi-active [role="gridcell"]').count(),960)
+        self.assertEqual(p.evaluate(prefix+'.result.capture_index'),1)
+        p.locator('.mdi-active [data-action="previous"]').click();p.wait_for_function('()=>'+prefix+'?.result.capture_index===0')
+        self.assertEqual(p.locator('.mdi-active [data-cell="41"]').inner_text(),'R')
+        self.assertEqual(p.locator('.mdi-active [data-cell="41"]').evaluate('(cell)=>getComputedStyle(cell).color'),'rgb(255, 0, 0)')
+        self.assertEqual(p.locator('.mdi-active [data-cell="45"] .teletext-glyph').evaluate('(cell)=>getComputedStyle(cell).visibility'),'hidden')
+        p.locator('.mdi-active [data-reveal]').check()
+        self.assertEqual(p.locator('.mdi-active [data-cell="45"] .teletext-glyph').evaluate('(cell)=>getComputedStyle(cell).visibility'),'visible')
+        p.locator('.mdi-active [data-cell="41"]').click();packet=p.evaluate(prefix+'.result.cells[41].packet_index')
+        p.locator('.mdi-active [data-packet]').first.click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="packet"&&showpsisi.getUiState().documents.items.at(-1).view.index==='+str(packet))
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.at(-1).view.pid'),514)
+        p.keyboard.press('Control+F4');self.assertEqual(p.evaluate(prefix+'.selected'),41);self.assertEqual(p.evaluate(prefix+'.result.capture_index'),0)
+        p.locator('.mdi-active [data-action="next"]').click();p.wait_for_function('()=>'+prefix+'?.result.capture_index===1')
+        self.assertEqual(p.locator('.mdi-active [data-cell="41"]').inner_text(),'N')
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

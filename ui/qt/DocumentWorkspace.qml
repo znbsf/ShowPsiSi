@@ -9,6 +9,7 @@ Item {
  property Component sectionComponent
  property Component summaryComponent
  property Item navigationOrigin:null
+ property Component teletextComponent
  property Component carouselComponent
  property Component serviceComponent
  property Component statisticsComponent
@@ -29,6 +30,8 @@ Item {
  function arrange(command){apply(Model.documents.arrange(state,command,width,height));}
  function nextRegion(back){var frame=frames[state.active],item=frame?frame.contentItem:null;if(!item){if(navigationOrigin)navigationOrigin.forceActiveFocus();return;}if(item.nextRegion){item.focusOrigin=navigationOrigin;item.nextRegion(back);return;}var active=workspace.Window.window?workspace.Window.window.activeFocusItem:null,inside=false;for(var p=active;p;p=p.parent)if(p===frame)inside=true;if(inside&&navigationOrigin)navigationOrigin.forceActiveFocus();else item.forceActiveFocus();}
  function carouselAction(action){var f=frames[state.active];if(!f||f.documentData.kind!=='carousel'||!f.contentItem)return false;var item=f.contentItem;if(action.name==='carousel_open'){var n=Number(action.index);if(!Number.isInteger(n)||n<0||n>=item.displayedRows.length)return false;item.open(item.displayedRows[n]);return true;}if(action.name==='carousel_tab'&&['Modules','OC Files','OC Hierarchy','BIOP List'].indexOf(action.value)>=0){item.tab=action.value;return true;}if(action.name==='carousel_view'&&['Summary','Hex','Text','Class Info'].indexOf(action.value)>=0){item.contentView=action.value;return true;}if(action.name==='carousel_back'){item.back();return true;}return false;}
+ function teletextAction(action){var f=frames[state.active];if(!f||f.documentData.kind!=='teletext'||!f.contentItem)return false;var item=f.contentItem;if(action.name==='teletext_select'){var n=Number(action.index);if(!Number.isInteger(n)||n<0||n>=960)return false;item.selectCell(n);return true;}if(action.name==='teletext_capture'&&(action.delta===-1||action.delta===1)){item.selectCapture(action.delta);return true;}if(action.name==='teletext_reveal'&&typeof action.value==='boolean'){item.reveal=action.value;return true;}if(action.name==='teletext_query'){if(action.pid!==undefined){var pid=Number(action.pid);if(!Number.isInteger(pid)||pid<0||pid>8190)return false;item.pidText=String(pid);}var q=action.params||{};if(Object.keys(q).some(function(k){return ['page_hex','subcode','capture_index','national'].indexOf(k)<0;}))return false;item.request(q);return true;}return false;}
+ function receiveTeletext(result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='teletext'&&frame.contentItem)frame.contentItem.receive(result);});}
  function receiveCarousel(result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='carousel'&&frame.contentItem)frame.contentItem.receive(result);});}
  function receiveService(result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='service'&&frame.contentItem)frame.contentItem.receive(result);});}
  function focusSection(id,path,cutoff){var found=state.items.find(function(d){return d.kind==='si'&&d.payload.id===id&&d.payload.native_table_at_packet===cutoff;});if(found){activate(found.id);if(frames[found.id].contentItem)frames[found.id].contentItem.focusNode(path||'section');}}
@@ -70,7 +73,7 @@ Item {
    Loader {
     id:content;x:3;y:28;width:parent.width-6;height:Math.max(0,parent.height-31);visible:frame.documentData.mode!=='minimized'
     property var documentData:frame.documentData
-    sourceComponent:documentData.kind==='summary'?workspace.summaryComponent:documentData.kind==='decoded'?workspace.decodeComponent:documentData.kind==='packet'?workspace.packetComponent:documentData.kind==='statistics'?workspace.statisticsComponent:documentData.kind==='carousel'?workspace.carouselComponent:documentData.kind==='service'?workspace.serviceComponent:workspace.sectionComponent
+    sourceComponent:documentData.kind==='summary'?workspace.summaryComponent:documentData.kind==='decoded'?workspace.decodeComponent:documentData.kind==='packet'?workspace.packetComponent:documentData.kind==='statistics'?workspace.statisticsComponent:documentData.kind==='teletext'?workspace.teletextComponent:documentData.kind==='carousel'?workspace.carouselComponent:documentData.kind==='service'?workspace.serviceComponent:workspace.sectionComponent
    }
    MouseArea {width:12;height:12;anchors.right:parent.right;anchors.bottom:parent.bottom;visible:frame.documentData.mode==='normal';cursorShape:Qt.SizeFDiagCursor
     property point start

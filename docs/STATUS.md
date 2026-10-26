@@ -1,5 +1,13 @@
 # ShowPsiSi status
 
+2026-10-26 step 14 implemented: actual PES Teletext page/subpage/capture
+navigation in both UIs, 40-column display, supported colours/mosaics/double
+height, conceal/flash controls and exact unit source packets. 29 related local
+checks pass. Real explicit-PID test-012 page 889 has 9 subtitle events / 18
+lines matching independent SRT in core, browser display and full Qt offscreen.
+Invalid PAT remains an explicit-PID-only boundary. Next: PES/ES/media (15);
+outputs (16) and native acceptance (17) remain. No hosted CI.
+
 2026-10-26 step 13 content browsing implemented in both UIs: DSM-CC module
 identity/missing blocks, DSI ObjectLocation, BIOP inventory/bindings, paged
 immutable content, strict UTF-8 and read-only class interpretation. 45 local

@@ -603,7 +603,7 @@ application source and the verified local executable hashes remain unchanged.
 | 11 | 统计、错误与 Timing/Bitrate | 先补用户可见统计和来源说明；独立 Bitrate 条形与 Timing 页面有可信时钟、范围、单位、wrap/跳变处理；无时钟显示 unknown；诊断区分检测范围 | VIEW-009～016、APP-013/014 | 已实现：捕获流 PCR 测量、可信区间时长、原始 Timing 分页、绿条码率及跳包；无时钟 Unknown，范围明确 |
 | 12 | 服务、EIT/EPG 与 AIT 追查 | 同 SID 不同 TS、共享 PID 不串源；服务→具体 PMT/ES/EIT/应用→证据可返回；缺失关联明确显示，不靠 ID 猜测 | VIEW-024～033 | 已实现：完整 ONID/TSID/SID 服务身份、ES/EPG/AIT 来源跳转及返回；同 SID、共享 PID 与歧义反例通过 |
 | 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 内容浏览已实现：DSI→模块→对象/绑定→只读内容、Class 与配置，两端实测；导出在 16 接入，原生验收在 17 |
-| 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 待实施 |
+| 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 已实现真实 PES 页/子页/捕获、40×24 显示、颜色/马赛克/双高及来源跳包；部分 Latin Level 1 范围明确，两端真实字幕验证通过 |
 | 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 待实施 |
 | 16 | 保存、复制、输出与设置对齐 | 每种支持输出有范围/单位/来源；取消/覆盖/失败正确；配置 Cancel 不提交，分析设置标明生效时点；未支持打印/帮助入口明确 | APP-015～020、WIN-030～044 | 待实施 |
 | 17 | 全链路、DPI 与退出收尾 | 固定输入下两端逐项对照；100/150/200% 可达；保留高级功能；换源/取消/关闭验证真实进程和资源退出；记录尚未验证项 | E2E-01～16、APP-021～026、VIS | 待实施 |
@@ -754,3 +754,28 @@ SRG、目录、M12 八个 Class，再进入 M13 configuration.txt。八个内部
 输入为参考工程的完整捕获重建输入，不把它当作原始短捕获的完整对象证据。
 ignored 证据：si-carousel-final.log、si-carousel-reference-web.log、
 si-carousel-reference-qt-runtime.log、si-frame-20261026/carousel-reference.json。
+
+## Teletext 页面检查点（2026-10-26，步骤 14）
+
+两端 Teletext 窗口读取当前分析身份中的真实 TS→PES→44-byte Teletext unit，
+PID 入口采用明确 DVB PMT teletext_descriptor 声明或用户显式 PID。
+页号/子页、Previous/Next capture、分段扫描、字符选择及来源原包跳转可用，
+关闭原包后返回同一页、捕获和字符。捕获不会被当作直播时钟。
+
+40×24 显示保留原始页头文字、8 色、已支持 Latin group 0000 字符、马赛克、
+分离图形、双高上下半格、conceal/reveal 和手动 flash phase。C4 清屏后的未收行
+为已知显示空白，source_present=false，不伪造接收行或来源。断流清除页上下文，
+保留之前已验证的捕获；奇偶校验/未知字符集/扩展/boxing 均有明确限制。
+row 0 前 8 列是元数据空白，页号显示在控件中；X/28、M/29 等增强未宣称完整支持。
+默认扫描 65,536 包，上限 262,144；PES 16 MiB/4096、unit 32768、页缓存 64、
+捕获 128 有界，旧捕获和页驱逐计数可查。范围边界不借用不完整 PES。
+
+本地：29 项 Teletext/服务/对象引擎与浏览器检查通过；完整 Qt 离屏的字符、颜色、
+conceal 与捕获切换通过。实际 test-012 输入 SHA-256
+2e3a280bb6d2da71791ba18390e6d649296688782ad0a80f0dfefa8eb8c4d50b，
+显式 PID 1068，page 889 的 9 个字幕事件/18 行与独立 SRT 在引擎、浏览器显示字符、
+完整 Qt 页模型分别一致。该样本 PAT 保留位无效，仍仅作显式 PID 接收证据，
+不算 PSI 自动发现通过。检查了 Qt 的实际离屏截图，双高只作纵向缩放。
+证据：si-teletext-final.log、si-teletext-subtitle-oracle.log、
+si-teletext-reference-web.log、si-teletext-reference-qt-runtime.log。
+真实桌面鼠标、DPI 与设备输出仍归步骤 17。

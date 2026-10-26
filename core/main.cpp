@@ -280,6 +280,9 @@ struct Record {
 #include "SatelliteMetadata.h"
 #include "ApplicationSignalling.h"
 #include "CarouselContent.h"
+#include "media/pes_engine.h"
+#include "media/teletext.h"
+#include "media/teletext_body.h"
 #include "SignalTopology.h"
 #include "ApplicationCarriage.h"
 #include "TransportStatistics.h"
@@ -505,6 +508,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},{"section_offset",p},{"structure_path","section/stream/"+std::to_string(p)},
                     {"is_audio",audio},{"is_video",video},
                     {"classification_basis","TSDuck PMT classification; private stream types require namespace or descriptor evidence"}});
+                J teletext=J::array();if(standardsContext=="dvb")for(size_t q=p+5;q+2<=p+5+len;){const size_t n=b[q+1];if(q+2+n>p+5+len)break;if(b[q]==0x56&&n%5==0)for(size_t t=q+2;t<q+2+n;t+=5){unsigned magazine=b[t+3]&7;if(!magazine)magazine=8;const std::string language(reinterpret_cast<const char*>(b.data()+t),3);bool ascii=std::all_of(language.begin(),language.end(),[](unsigned char c){return c>=32&&c<=126;});teletext.push_back({{"language",ascii?language:hex(b.data()+t,3)},{"type",b[t+3]>>3},{"page_hex",(magazine<<8)|b[t+4]},{"descriptor_offset",q}});}q+=2+n;}r.fields["streams"].back()["teletext_signalling"]=teletext;
                 p+=5+len;
             }
         } else if(r.tid==1&&b.size()>=12) {
@@ -797,7 +801,7 @@ public:
         for(const auto& r:records)for(auto pos:r.positions){checkCancelled(control);size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
         out["table_groups"]=tableGroups(at,control);out["timing"]={{"packet_unit","zero-based TS packet index"},{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"bitrate_unit","bits/second for 188-byte TS packets"},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
-        out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();
+        out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();out["media_streams"]=mediaStreams(at);
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         out["table_history"]=tableHistory;
         out["scope"]["table_history"]="entire scan; content transitions per PID/table/extension/section/current/validity; at_packet is first completed occurrence; not complete-generation transitions";
@@ -806,14 +810,75 @@ public:
         return out;
     }
     // Compact transport never enumerates occurrences or copies transition logs.
+    J mediaStreams(uint64_t at) const {
+        J rows=J::array();const auto selected=latest(at);for(const auto& [key,r]:selected)if(r->tid==2&&completeGroup(*r,selected))for(const auto& stream:r->fields.value("streams",J::array())){if(rows.size()>=8192)return rows;auto entry=stream;entry["source_id"]=r->id;entry["program_number"]=r->ext;rows.push_back(entry);}return rows;
+    }
     J compactState(uint64_t at=UINT64_MAX) {
         const size_t visibleTables=at==UINT64_MAX?records.size():size_t(std::count_if(records.begin(),records.end(),[&](const Record& r){return !r.ends.empty()&&r.ends.front()<=at;}));
         J counts={{"tables",visibleTables},{"history",history.size()},{"table_history",tableHistory.size()},{"density",80},{"services",nullptr},{"events",nullptr},{"diagnostics",nullptr},{"table_groups",nullptr}};
         if(cacheCutoff==at)for(auto it=resultCache.begin();it!=resultCache.end();++it)counts[it.key()]=it.value().size();
         J cov=coverage;cov["scanned_packets"]=scannedPackets;
         J out={{"response_mode","compact"},{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"analysis_revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"bitrate",bitrate},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"text_charset",duck.charsetIn()->name().toUTF8()},{"time_reference",duck.timeReferenceName().toUTF8()},{"selected_packet",at==UINT64_MAX?J():J(at)},{"coverage",cov},{"result_counts",counts},{"progress_fraction",plannedPackets?double(scannedPackets)/plannedPackets:0.0},{"demux",demuxStatus},{"timing",{{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false}}},{"metrics",{{"scan_ms_basis","Wall elapsed time including pauses and owner finalization; excludes client result hydration"},{"first_section_ms",firstMs},{"scan_ms",(analysisStatus=="analyzing"||analysisStatus=="paused"||analysisStatus=="finalizing")?ms(began):totalMs}}}};
-        out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();
+        out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();out["media_streams"]=mediaStreams(at);
         appendStandardsMetadata(out);return out;
+    }
+    J readPes(const J& args,const mediawire::PesEngine::Observer& observer,const std::function<void()>& resetObserver={}) const {
+        if(!complete||!analysisSourceKnown||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete media analysis_revision");
+        auto unchanged=[&](){return fs::is_regular_file(source)&&fs::file_size(source)==totalBytes&&fs::last_write_time(source)==analysisSourceStamp;};if(!unchanged())throw std::runtime_error("Source changed since analysis");
+        const unsigned pid=args.at("pid");if(pid>=8191)throw std::runtime_error("PES PID must be 0..8190");
+        uint64_t start=args.value("start_packet",uint64_t(0)),count=args.value("scan_limit",uint64_t(65536)),cutoff=args.value("at_packet",totalBytes/stride-1);const uint64_t total=totalBytes/stride;if(start>=total||cutoff>=total||start>cutoff)throw std::runtime_error("Media scan range outside source");const uint64_t end=std::min(cutoff+1,start+count);
+        J diagnostics=J::array();uint64_t selected=0,delivered=0,duplicates=0,incomplete=0,discontinuities=0,errors=0,scanned=0;bool resource=false;auto engine=std::make_unique<mediawire::PesEngine>(pid);auto observe=[&](const mediawire::PesPacket& p,uint64_t a,uint64_t b){++delivered;if(delivered>4096){resource=true;return false;}const bool accepted=observer(p,a,b);if(!accepted)resource=true;return accepted;};engine->set_observer(observe);engine->set_discontinuity_observer(resetObserver);
+        auto reset=[&](){engine->abandon();if(resetObserver)resetObserver();const auto& stats=engine->stats();duplicates+=stats.duplicate_packets;incomplete+=stats.incomplete_pes;discontinuities+=stats.discontinuities;engine=std::make_unique<mediawire::PesEngine>(pid);engine->set_observer(observe);engine->set_discontinuity_observer(resetObserver);};
+        std::ifstream input(source,std::ios::binary);if(!input)throw std::runtime_error("Cannot read media source");input.seekg(std::streamoff(start*stride));Bytes frame(stride);auto ranges=coverage.value("ranges",J::array());size_t ri=0;bool wasObserved=false;
+        for(uint64_t index=start;index<end;++index){input.read(reinterpret_cast<char*>(frame.data()),std::streamsize(stride));if(size_t(input.gcount())!=stride)throw std::runtime_error("Source became unreadable during media scan");++scanned;while(ri<ranges.size()&&index>=ranges[ri]["end_packet"].get<uint64_t>())++ri;bool observed=ri<ranges.size()&&index>=ranges[ri]["start_packet"].get<uint64_t>();if(!observed){if(wasObserved){++discontinuities;reset();}wasObserved=false;continue;}wasObserved=true;
+            const auto* b=frame.data()+prefix;if(b[0]!=0x47){++errors;if(diagnostics.size()<64)diagnostics.push_back({{"packet_index",index},{"error","Invalid TS sync; PES context reset"}});reset();continue;}if((((b[1]&31)<<8)|b[2])!=pid)continue;++selected;
+            if(!engine->feed_packet(b,188,index)){if(diagnostics.size()<64)diagnostics.push_back({{"packet_index",index},{"error",engine->error()}});++errors;if(resource)break;reset();}
+        }
+        // A bounded scan/cutoff is not the delimiter of an unbounded video PES.
+        if(end==total&&wasObserved&&!resource){if(!engine->finish()){++errors;if(diagnostics.size()<64)diagnostics.push_back({{"error",engine->error()}});}}
+        if(end!=total||resource)engine->abandon();
+        const auto& stats=engine->stats();duplicates+=stats.duplicate_packets;incomplete+=stats.incomplete_pes;discontinuities+=stats.discontinuities;
+        if(!unchanged())throw std::runtime_error("Source changed during media scan");
+        return {{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",pid},{"start_packet",start},{"end_packet",end},{"scanned_packets",scanned},{"source_packets",total},{"selected_packets",selected},{"delivered_pes",delivered},{"duplicates",duplicates},{"incomplete_pes",incomplete},{"discontinuities",discontinuities},{"errors",errors},{"diagnostics",diagnostics},{"status",resource?"resource_limit":errors?"partial_with_errors":"observed"},{"scan_truncated",end<=cutoff},{"next_start_packet",end<=cutoff?J(end):J()},{"coverage",coverage},{"scope","Only original packets inside analyzed contiguous windows and the requested bounded scan; MPEG-2 PES, no pointer-field inference; range boundaries discard pending PES"}};
+    }
+    J pesFragments(const mediawire::PesPacket& p,size_t offset,size_t length) const {
+        J out=J::array();const size_t end=offset+length;for(const auto& f:p.fragments){const size_t begin=std::max(offset,f.pes_offset),stop=std::min(end,f.pes_offset+f.length);if(stop>begin)out.push_back({{"packet_index",f.packet_index},{"packet_offset",f.packet_offset+begin-f.pes_offset},{"pes_offset",begin},{"length",stop-begin},{"file_offset",f.packet_index*stride+prefix+f.packet_offset+begin-f.pes_offset},{"framing_stride",stride},{"framing_prefix",prefix}});}return out;
+    }
+    J queryTeletext(const J& args) const {
+        if(standardsContext!="dvb")throw std::runtime_error("Teletext requires explicit DVB interpretation");
+        mediawire::TeletextDecoder decoder;mediawire::TeletextPageStore store;
+        struct Unit {J sources;uint64_t first=0,last=0,pes=0;size_t offset=0;};std::vector<Unit> units;uint64_t invalid=0,parity=0,corrected=0,ignored=0;J unitErrors=J::array();
+        struct Capture{mediawire::TeletextPage page;uint64_t sequence=0;};std::vector<Capture> captures;uint64_t sequence=0,evictedCaptures=0,contextResets=0;std::map<std::pair<int,int>,std::pair<uint64_t,uint64_t>> retainedVersions;
+        auto retain=[&](const mediawire::TeletextPage& page){auto key=std::pair(page.header.page_hex,page.header.subcode);auto version=std::pair(page.header.source_unit_index,page.revision);if(retainedVersions.count(key)&&retainedVersions[key]==version)return;retainedVersions[key]=version;if(captures.size()>=128){captures.erase(captures.begin());++evictedCaptures;}captures.push_back({page,sequence++});};
+        auto scan=readPes(args,[&](const mediawire::PesPacket& p,uint64_t first,uint64_t last){
+            if(p.scrambling_control||p.stream_id!=0xbd||p.payload_offset>=p.raw.size()||p.raw[p.payload_offset]<0x10||p.raw[p.payload_offset]>0x1f){++ignored;return true;}
+            size_t pos=p.payload_offset+1;while(pos<p.raw.size()){
+                const unsigned type=p.raw[pos++];if(pos>=p.raw.size()){++invalid;mediawire::TeletextRow bad;decoder.decode(nullptr,0,bad);break;}const size_t length=p.raw[pos++];if(length>p.raw.size()-pos){++invalid;mediawire::TeletextRow bad;decoder.decode(nullptr,0,bad);break;}
+                if(type==2||type==3){if(units.size()>=32768)return false;const size_t index=units.size();auto sources=pesFragments(p,pos,length);uint64_t a=sources.empty()?first:sources.front()["packet_index"].get<uint64_t>(),b=sources.empty()?last:sources.back()["packet_index"].get<uint64_t>();units.push_back({sources,a,b,0,pos});
+                    mediawire::TeletextRow row;const bool valid=decoder.decode(p.raw.data()+pos,length,row);row.source_unit_index=index;corrected+=row.corrected_bits;parity+=row.parity_errors;
+                    if(!valid){++invalid;if(unitErrors.size()<64)unitErrors.push_back({{"source_unit",index},{"packet_index",a},{"error",row.error}});}
+                    else{if(row.packet==0)for(const auto& old:store.pages())if(old.header.page_hex==row.page_hex&&old.header.subcode==row.subcode)retain(old);store.consume(row);}
+                }pos+=length;
+            }return true;
+        },[&](){for(const auto& page:store.pages())retain(page);decoder=mediawire::TeletextDecoder();store=mediawire::TeletextPageStore();++contextResets;});
+        for(const auto& page:store.pages())retain(page);
+        J pages=J::array();std::set<std::pair<int,int>> seen;for(const auto& c:captures){const auto key=std::pair(c.page.header.page_hex,c.page.header.subcode);if(seen.insert(key).second)pages.push_back({{"page_hex",key.first},{"subcode",key.second}});}
+        J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",args.at("pid")},{"scan",scan},{"pages",pages},{"unit_count",units.size()},{"invalid_units",invalid},{"parity_errors",parity},{"corrected_bits",corrected},{"ignored_pes",ignored},{"unit_errors",unitErrors},{"page_store_evictions",store.evictions()},{"capture_evictions",evictedCaptures},{"context_resets",contextResets},{"unassociated_rows",store.unassociated()},{"profile","Default Latin group 0000 assumption; header national bits are not a universal charset selector"},{"scope","Captured page memory, not a live broadcast clock; 40 columns, row 0 header text and body rows 1..23; enhancements/boxing/secondary sets remain explicit partial support"}};
+        if(pages.empty()){out["status"]="no_acquired_pages";return out;}
+        int page=args.value("page_hex",pages.front()["page_hex"].get<int>()),sub=args.value("subcode",pages.front()["subcode"].get<int>());std::vector<const Capture*> matches;J metadata=J::array();for(const auto& c:captures)if(c.page.header.page_hex==page&&c.page.header.subcode==sub){const auto& u=units.at(c.page.header.source_unit_index);metadata.push_back({{"index",matches.size()},{"sequence",c.sequence},{"header_epoch",c.page.header.epoch},{"revision",c.page.revision},{"header_packet",u.first}});matches.push_back(&c);}
+        if(matches.empty())throw std::runtime_error("Page/subcode not acquired in retained capture range");const size_t index=args.value("capture_index",matches.size()-1);if(index>=matches.size())throw std::runtime_error("Teletext capture_index outside retained range");const auto& selected=matches[index]->page;
+        out["status"]="captured_partial_profile";out["page_hex"]=page;out["subcode"]=sub;out["capture_index"]=index;out["captures"]=metadata;out["header_epoch"]=selected.header.epoch;out["header_flags"]={{"erase",selected.header.erase},{"subtitle",selected.header.subtitle},{"newsflash",selected.header.newsflash},{"suppress_header",selected.header.suppress_header},{"inhibit_display",selected.header.inhibit_display},{"update_indicator",selected.header.update_indicator},{"serial",selected.header.serial}};out["charset_override_unsupported"]=selected.charset_override_unsupported;out["rows"]=J::array();
+        mediawire::TeletextBodyInput input;auto reverse=[](uint8_t byte){uint8_t result=0;for(unsigned i=0;i<8;++i){result=uint8_t((result<<1)|(byte&1));byte>>=1;}return result;};auto parityValid=[](uint8_t b){unsigned n=0;while(b){n+=b&1;b>>=1;}return n%2==1;};
+        auto rawUnit=[](const std::string& text){Bytes bytes;for(size_t p=0;p+1<text.size();p+=2)bytes.push_back(uint8_t(std::stoul(text.substr(p,2),nullptr,16)));return bytes;};
+        for(unsigned row=0;row<26;++row)if(selected.present[row]){const auto& r=selected.packets[row];const auto& u=units.at(r.source_unit_index);out["rows"].push_back({{"row",row},{"source_epoch",r.epoch},{"source_national",r.national},{"source_unit",r.source_unit_index},{"raw_hex",r.raw_hex},{"parity_errors",r.parity_errors},{"packet_index",u.first},{"end_packet",u.last},{"fragments",u.sources},{"supported",r.supported&&!selected.charset_override_unsupported}});if(row>=1&&row<=23){auto& in=input[row-1];in.present=true;in.input.source={int(row),r.epoch,r.national};in.context.national=args.value("national",r.national);in.context.charset_override_uninterpreted=selected.charset_override_unsupported;auto raw=rawUnit(r.raw_hex);for(unsigned col=0;col<40;++col){const uint8_t logical=reverse(raw.at(4+col));in.input.slots[col]={uint8_t(logical&127),true,parityValid(logical)};}}}
+        // C4 clears unreceived screen rows. These are known display blanks,
+        // not fabricated received packets; their source_present remains false.
+        if(selected.clear_applied)for(unsigned row=1;row<=23;++row)if(!selected.present[row]){auto& in=input[row-1];in.present=true;in.input.source={int(row),selected.header.epoch,selected.header.national};in.context.national=0;for(auto& slot:in.input.slots)slot={32,true,true};}
+        out["erase_blanks_applied"]=selected.clear_applied;
+        const auto body=mediawire::compose_teletext_body(input);out["body_layout_complete"]=body.layout_complete;out["body_issues"]=body.issues;out["cells"]=J::array();
+        auto cellJson=[&](const mediawire::TeletextSemanticCell& c,unsigned row,unsigned col,unsigned role,bool geometry,unsigned originRow,unsigned issues)->J{J unit=nullptr,packet=nullptr;if((row==0||originRow>0)&&originRow<26&&selected.present[originRow]&&!(row==0&&col<8)){const auto& r=selected.packets[originRow];unit=r.source_unit_index;packet=units.at(r.source_unit_index).first;}return {{"row",row},{"column",col},{"kind",unsigned(c.kind)},{"unicode",c.unicode_scalar},{"mosaic_mask",c.mosaic_mask},{"foreground",c.foreground},{"background",c.background},{"separated",c.separated},{"flash",c.flash},{"conceal",c.conceal},{"height",unsigned(c.height)},{"role",role},{"geometry_known",geometry},{"source_present",c.source_present&&originRow<26&&selected.present[originRow]&&!(row==0&&col<8)},{"source_parity_valid",c.source_parity_valid&&originRow<26&&selected.present[originRow]&&!(row==0&&col<8)},{"source_unit",unit},{"packet_index",packet},{"issues",c.issues},{"geometry_issues",issues}};};
+        mediawire::TeletextRenderRowInput header;header.source={1,selected.header.epoch,selected.header.national};auto raw=rawUnit(selected.header.raw_hex);for(unsigned col=0;col<40;++col){const auto logical=col<8?uint8_t(32):reverse(raw.at(4+col));header.slots[col]={uint8_t(logical&127),true,col<8||parityValid(logical)};}mediawire::TeletextRenderContext hc;hc.national=args.value("national",selected.header.national);hc.charset_override_uninterpreted=selected.charset_override_unsupported;const auto rendered=mediawire::interpret_teletext_row(header,hc);for(unsigned col=0;col<40;++col)out["cells"].push_back(cellJson(rendered.cells[col],0,col,2,true,0,0));for(const auto& c:body.cells)out["cells"].push_back(cellJson(c.cell,c.row,c.column,unsigned(c.role),c.geometry_known,c.origin_row,c.issues));
+        out["header_slot_policy"]="Columns 0..7 are metadata blanks; columns 8..39 come from the captured header. Page number is displayed separately.";out["render_national"]=args.contains("national")?args["national"]:J(selected.header.national);out["extensions"]=J::array();for(const auto& e:selected.extensions)out["extensions"].push_back({{"packet",e.packet},{"designation",e.designation},{"raw_hex",e.raw_hex},{"supported",false}});return out;
     }
     J queryCarousel(const J& args) {
         if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete carousel analysis_revision");
@@ -1647,6 +1712,7 @@ public:
         if(method=="query_transport")return queryTransport(args);
         if(method=="query_packet")return queryPacket(args);
         if(method=="query_timing")return queryTiming(args);
+        if(method=="query_teletext")return queryTeletext(args);
         if(method=="query_carousel")return queryCarousel(args);
         if(method=="query_service")return queryService(args);
         if(method=="query_cable_oob")return queryCableOob(args);
@@ -1753,7 +1819,7 @@ static int runCore(int argc,char**argv) {
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
                     }
-                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="query_carousel"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="query_carousel"||method=="query_teletext"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
                         bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
                         if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }

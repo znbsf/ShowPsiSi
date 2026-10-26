@@ -67,6 +67,7 @@ SplitView {
     property bool hexOpen: true
     property real hexFraction:0.40
     property int selectedFieldIndex: -1
+    signal teletextRequested(int pid)
     signal carouselRequested(string sourceId)
     signal serviceRequested(var service)
     property alias navigationItem:nav
@@ -292,6 +293,7 @@ SplitView {
             onObjectRemoved:function(index,object){contextMenu.removeItem(object);}
         }
         MenuItem{text:'No retained section for this object';visible:!view.contextTargets.length;enabled:false}
+        MenuItem {text:'Teletext';visible:!!view.contextRow&&view.contextRow.pid!==undefined&&(view.state.media_streams||[]).some(function(s){return s.pid===view.contextRow.pid&&(s.teletext_signalling||[]).length>0;});onTriggered:view.teletextRequested(view.contextRow.pid)}
         MenuItem {text:'DSM-CC / OC Files';visible:!!view.contextRow&&!!view.contextRow.record&&[59,60].indexOf(view.contextRow.record.table_id)>=0;onTriggered:view.carouselRequested(view.contextRow.record.id)}
         MenuItem {text:'Service / EPG';visible:!!view.contextRow&&!!view.contextRow.service;onTriggered:view.serviceRequested(view.contextRow.service)}
         MenuItem {text:'Packet Explorer';visible:!!view.contextRow&&(view.contextRow.record!==undefined||view.contextRow.pid!==undefined);onTriggered:view.packetRequested(view.contextRow.record?view.contextRow.record.pid:view.contextRow.pid)}

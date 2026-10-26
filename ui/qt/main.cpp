@@ -1,5 +1,6 @@
 #include <ctime>
 #include <QGuiApplication>
+#include <QClipboard>
 #include <QQuickTextDocument>
 #include <QSyntaxHighlighter>
 #include <QRegularExpression>
@@ -187,6 +188,7 @@ class Bridge:public QObject {
             // must never replace the active workspace.
             if(msg["event"]!="progress"||!m_busy||m_cancelling||
                msg["request_id"]!=QJsonValue(activeAnalysis)||!msg["state"].isObject())return;
+            if(m_progress.isEmpty())clearIntentions();
             m_progress=stateValue;emit progressChanged();
             const bool paused=stateValue.value("analysis_status")=="paused";
             if(paused!=m_paused || (m_pausePending && paused==m_pauseTarget)){m_paused=paused;m_pausePending=false;emit pauseChanged();}
@@ -274,16 +276,18 @@ class Bridge:public QObject {
         if(msg.contains("error")){
             const auto error=msg["error"].toObject();
             const bool cancelled=method=="analyze"&&error["code"]=="analysis_cancelled";
-            if(method=="analyze"){
+            if(method=="analyze"&&!errorValue.value("data").toMap().value("state_preserved").toBool()){
                 m_state=errorValue.value("data").toMap().value("state").toMap();
                 clearIntentions();emit stateChanged();
             }
             m_error=cancelled?QString():error["message"].toString();emit errorChanged();
-            emit response(method,errorValue);
+            auto reportedError=errorValue;if(method=="query_packet"||method=="query_service"||method=="query_carousel"||method=="query_teletext"||method=="query_pes"||method=="decode_media"||method=="audio_control")reportedError["request"]=request.params;
+            emit response(method,reportedError);
         }else{
             if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
             QVariantMap result=resultValue;
             if(cancelRequested)result["cancel_requested"]=true;
+            if(method=="analyze"&&m_progress.isEmpty())clearIntentions();
             if((method=="analyze"||method=="query")&&result.contains("result_counts")){beginHydration(method,result);return;}
             if(method=="analyze"||method=="query"){m_state=result;emit stateChanged();}
             if(method=="inspect"){result["occurrence_offset"]=request.params.value("occurrence_offset",0);m_detail=result;m_detailJson=resultJson;
@@ -502,13 +506,13 @@ public:
         if(m_availability=="disconnected"||!transport){
             backendStopped("Backend is not running. Check SHOWPSISI_CORE.");return;
         }
-        if(m_busy&&method!="cancel_analysis"&&method!="pause_analysis"&&method!="resume_analysis"&&!(method=="query_result"&&m_loadingResults))return;
+        if(m_busy&&method!="cancel_media"&&method!="audio_control"&&method!="cancel_analysis"&&method!="pause_analysis"&&method!="resume_analysis"&&!(method=="query_result"&&m_loadingResults))return;
         if(method=="cancel_analysis"&&(!m_busy||!m_cancelling))return;
         if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
         int id=++sequence;
         if(method=="analyze"){
             ++generation;clearTsRequests();activeAnalysis=id;
-            m_busy=true;m_cancelling=false;m_progress.clear();emit progressChanged();m_paused=false;m_pausePending=false;emit pauseChanged();clearIntentions();
+            m_busy=true;m_cancelling=false;m_progress.clear();emit progressChanged();m_paused=false;m_pausePending=false;emit pauseChanged();
             dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();mark("analyze_requested");
         }
         if(method=="inspect"){if(!params.contains("occurrence_offset"))params["occurrence_offset"]=0;params["occurrence_limit"]=50;latestInspect=id;const bool hadDetail=!m_detail.isEmpty(),wasInspecting=m_inspecting;m_detail.clear();m_detailJson="{}";m_inspecting=true;if(hadDetail)emit detailChanged();if(!wasInspecting)emit inspectingChanged();}
@@ -522,10 +526,17 @@ public:
         if(method=="analyze"||method=="query")params["response_mode"]="compact";
         methods.insert(id,{method,generation,params});
         params.remove("_epoch");
-        if(method=="export"){pendingExports.insert(id);emit exportPendingChanged();}
+        if(method=="export"||method=="export_asset"){pendingExports.insert(id);emit exportPendingChanged();}
         QJsonObject request{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}};
         QByteArray wire=QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
         QMetaObject::invokeMethod(transport,"write",Qt::QueuedConnection,Q_ARG(QByteArray,wire));
+    }
+    Q_INVOKABLE QVariantMap lockState() const {
+#ifdef Q_OS_WIN
+        return {{"num",bool(GetKeyState(VK_NUMLOCK)&1)},{"scroll",bool(GetKeyState(VK_SCROLL)&1)}};
+#else
+        return {};
+#endif
     }
     Q_INVOKABLE void mark(QString event){
         if(!traceWriter)return;
@@ -578,6 +589,7 @@ public:
         // creates both output and manifest and reports any competing writer.
         return {{"path",QFileInfo(path).absoluteFilePath()}};
     }
+    Q_INVOKABLE void copyText(QString text){QGuiApplication::clipboard()->setText(text);}
     Q_INVOKABLE QString json(QVariant value){return QString::fromUtf8(QJsonDocument::fromVariant(value).toJson(QJsonDocument::Indented));}
     std::unique_ptr<QSettings> layoutSettings()const{
         const QString path=qEnvironmentVariable("SHOWPSISI_SETTINGS_PATH");
@@ -609,6 +621,8 @@ public:
     }
     Q_INVOKABLE QStringList loadRecentFiles(){return layoutSettings()->value("workbenchRecentFiles").toStringList().mid(0,10);}
     Q_INVOKABLE bool saveRecentFiles(QStringList paths){auto settings=layoutSettings();settings->setValue("workbenchRecentFiles",paths.mid(0,10));settings->sync();return settings->status()==QSettings::NoError;}
+    Q_INVOKABLE QVariantMap loadScanSettings(){return QJsonDocument::fromJson(layoutSettings()->value("scanSettings").toByteArray()).object().toVariantMap();}
+    Q_INVOKABLE bool saveScanSettings(QVariantMap value){auto settings=layoutSettings();settings->setValue("scanSettings",QJsonDocument::fromVariant(value).toJson(QJsonDocument::Compact));settings->sync();return settings->status()==QSettings::NoError;}
     Q_INVOKABLE QString loadTheme(){return layoutSettings()->value("workbenchTheme","dark").toString();}
     Q_INVOKABLE void saveTheme(QString theme){auto settings=layoutSettings(); settings->setValue("workbenchTheme",theme=="light"?"light":"dark");settings->sync();}
     Q_INVOKABLE QVariantMap loadLayout(){

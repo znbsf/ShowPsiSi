@@ -1,5 +1,12 @@
 # Validation
 
+Summary/PID组件回归使用可选SHOWPSISI_BUILD_QT_COMPONENT_TESTS，
+以真实生产引擎生成数据，再运行scripts/ci/qt_components.py。
+宿主在component-tests/Release，不进入生产包；使用隔离输入/截图，
+检查实际测试总数、QML诊断、列对齐、来源/聚合、返回状态及深浅主题。
+参见[当前实现与准确测试边界](../docs/NXTSA_UI_UX_PARITY.md)。
+
+
 Responsive local-file analysis adds `test_responsive_analysis.py`,
 `test_analysis_preview_review.py` and `test_qt_analysis_modes.py` to the strict
 native gates. These exercise compact result paging, pause/resume/cancellation
@@ -270,3 +277,15 @@ python -m unittest discover -s tests -p test_ui_contrast.py -v
 The runner name does not identify the host OS. Offscreen Qt and sandboxed
 Chromium checks do not prove native Windows/macOS dialogs, WebView2, GPU,
 clean-machine installation or receiver conformance.
+
+
+### Shared classic SI frontends
+
+`test_unified_inspector.py` collects the pinned protocol vectors through the real
+engine, then `test_inspector_model.cjs` verifies their shared Qt/web hierarchy.
+`BrowserTests.test_classic_*` exercises the default classic surface; other web
+regressions explicitly select the retained advanced workspace. The exported
+`verifyClassicSi(page, output)` and `verifySummaryAndGeneric(page, output,
+referencePath)` helpers in `verify_classic_si*.mjs` additionally check a loaded
+Hotbird real-engine preview and a caller-supplied declared DVB reference bundle.
+Their browser results do not establish native WebView2 mouse acceptance.

@@ -27,6 +27,16 @@ v0.3.0 新增有界协议检查、独立 DVB-I XML 工作区和 app-local 运行
 当前功能与限制见 [协议支持范围](docs/PROTOCOL_COVERAGE.md#current-protocol-extension-support)，
 构建验收入口见 [测试契约](docs/PROTOCOL_TEST_PLAN.md)；[发布说明](docs/releases/v0.3.0.md)保留 Windows 验证边界。
 
+## NxTSA 功能对应计划（2026-10-25）
+
+先对应原版功能、信息层次与操作结果，再由用户决定 UX 优化。Qt 优先，
+保留现有编辑、导出、历史、拓扑、DVB-I 和 Tauri 功能。
+[14组差距与实施阶段](docs/NXTSA_UI_UX_PARITY.md)记录已有基础、UI/引擎缺口和待证项；
+[真实原版 / 合并版 Qt 对拍](docs/NXTSA_BEHAVIOR_REFERENCE.md)绑定同一样本、产物哈希和45个操作场景。
+原版已实测真实缩略图与双通道波形；P1源码已加入C++全PID统计与Qt Summary/Error、
+分页和来源返回，当前仅完成引擎/组件阶段，完整新Qt构建和实机验收仍待完成。
+媒体索引不能代替真实图像或波形，组件通过不能当作完整功能对应。
+
 ## 编辑器式工作台
 
 v0.3.1 候选版本新增[响应式分析、暂停／继续与区间预览](docs/RESPONSIVE_ANALYSIS.md)，

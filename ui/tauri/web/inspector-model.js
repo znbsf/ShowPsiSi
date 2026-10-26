@@ -1,0 +1,287 @@
+// Presentation only: identities, decoding and repeat counts belong to the engine.
+// Original NxTSA RT_BITMAP resources; original executable SHA256 7571823ec3f32df4f7eb1fabb3ca51745e0dddf6606b53bbb22266e69d528d8a
+// Additional resource IDs: DDB=187, UN=201.
+// Resource IDs: {"field": "145", "descriptor": "143", "file": "149", "programs": "150", "psi": "151", "unknown": "152", "program": "153", "PAT": "162", "PMT": "179", "CAT": "180", "AIT": "185", "BAT": "186", "EIT": "190", "RST": "192", "SDT": "193", "TDT": "194", "TOT": "195", "NIT": "203", "PES": "205"}
+var classicIcons = {"field":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AP//////////d3d3d3d3d39/f39/f39/f3d3d3d3d3d/f3d3d3d3f393d3d/d3d3f393d393d39/d3d3f3d3d39/d3d/d3d/f3d3d393d3d/f3d3f3d3f393d3///3d3f393d3d3d39/d3d3d3d3d39/f39/f39/f/////////9/","descriptor":"data:image/bmp;base64,Qk02BQAAAAAAADYEAAAoAAAAEAAAABAAAAABAAgAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwADA3MAA8MqmAAAgQAAAIGAAACCAAAAgoAAAIMAAACDgAABAAAAAQCAAAEBAAABAYAAAQIAAAECgAABAwAAAQOAAAGAAAABgIAAAYEAAAGBgAABggAAAYKAAAGDAAABg4AAAgAAAAIAgAACAQAAAgGAAAICAAACAoAAAgMAAAIDgAACgAAAAoCAAAKBAAACgYAAAoIAAAKCgAACgwAAAoOAAAMAAAADAIAAAwEAAAMBgAADAgAAAwKAAAMDAAADA4AAA4AAAAOAgAADgQAAA4GAAAOCAAADgoAAA4MAAAODgAEAAAABAACAAQABAAEAAYABAAIAAQACgAEAAwABAAOAAQCAAAEAgIABAIEAAQCBgAEAggABAIKAAQCDAAEAg4ABAQAAAQEAgAEBAQABAQGAAQECAAEBAoABAQMAAQEDgAEBgAABAYCAAQGBAAEBgYABAYIAAQGCgAEBgwABAYOAAQIAAAECAIABAgEAAQIBgAECAgABAgKAAQIDAAECA4ABAoAAAQKAgAECgQABAoGAAQKCAAECgoABAoMAAQKDgAEDAAABAwCAAQMBAAEDAYABAwIAAQMCgAEDAwABAwOAAQOAAAEDgIABA4EAAQOBgAEDggABA4KAAQODAAEDg4ACAAAAAgAAgAIAAQACAAGAAgACAAIAAoACAAMAAgADgAIAgAACAICAAgCBAAIAgYACAIIAAgCCgAIAgwACAIOAAgEAAAIBAIACAQEAAgEBgAIBAgACAQKAAgEDAAIBA4ACAYAAAgGAgAIBgQACAYGAAgGCAAIBgoACAYMAAgGDgAICAAACAgCAAgIBAAICAYACAgIAAgICgAICAwACAgOAAgKAAAICgIACAoEAAgKBgAICggACAoKAAgKDAAICg4ACAwAAAgMAgAIDAQACAwGAAgMCAAIDAoACAwMAAgMDgAIDgAACA4CAAgOBAAIDgYACA4IAAgOCgAIDgwACA4OAAwAAAAMAAIADAAEAAwABgAMAAgADAAKAAwADAAMAA4ADAIAAAwCAgAMAgQADAIGAAwCCAAMAgoADAIMAAwCDgAMBAAADAQCAAwEBAAMBAYADAQIAAwECgAMBAwADAQOAAwGAAAMBgIADAYEAAwGBgAMBggADAYKAAwGDAAMBg4ADAgAAAwIAgAMCAQADAgGAAwICAAMCAoADAgMAAwIDgAMCgAADAoCAAwKBAAMCgYADAoIAAwKCgAMCgwADAoOAAwMAAAMDAIADAwEAAwMBgAMDAgADAwKAA8Pv/AKSgoACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AAAAAAAAAAAAAAAAAAAAAAAApaWlpaWlpaWlpaWlpfcAAPbu9gcHB/YH9gf27vb3AADuBwcHBwcHBwcHBwfu9wAA9gcHBwcHBwcHBwcH9vcAAO4HBwf5+fn5BwcHB+73AAD2Bwf5BwcH+QcHBwf29wAA7gcH+QcHB/kHBwcH7vcAAPYHB/kHBwf5BwcHB/b3AADuBwf5BwcH+QcHBwfu9wAA9gcHB/n5+fkHBwcH9vcAAO4HBwcHBwf5BwcHB+73AAD2BwcHBwcH+QcHBwcH9wAA7gcHBwcHB/kHBwcH7vcAAPYH9gf2B/YH9gf2B/b3AAAAAAAAAAAAAAAAAAAAAAA=","file":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AP////////////////////////////////8AAAAAAA//+IiACIAIgP/4v7+/u7uA//j7+7u7u4D/+L+7u7u7gP/4+/u7u7uA//i/u7u7u4D/+Pv7+/v7gP/4iIiIv7uA//j7+/uIiI///4iIiP//////////////////////////","programs":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AP///////////////////////////////////3d3f/////9HxsSIh///9GdnZ4iI///OzERIyIiP/3RERExEiH//zMzMRER3///H53ZExv///2f/dsTH////fOzMRG/////3zGxE//////98RGf/////////////////////////","psi":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AP//////////////////////8AAAAAAA//+7u7u7u7D//7d3d3d/sP//sHBwcHuw//+wcHBwf7D//7BwcHB7sP//sHBwcH+w//+wcHBwe7D//7BwcHB/sP//sHBwcHuw//+3d3d3d7D//7u7u7u7v///////////////////////","unknown":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AP/////m/////////u5v////////5v///////////////////ub////////+5v////////7m/////////+5v/////////ub/////////7m////9m///ub////uZv/+5v///+7mZu7m/////u7u7ub/////7u7u//////////////","program":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAgAAAAICAAIAAAACAAIAAgIAAAMDAwACAgIAAAAD/AAD/AAAA//8A/wAAAP8A/wD//wAA////AP//////////////////////9mZmZkZv//9nd3d3d3b//2f7+/v7dv//Z7+/v792//9n+/v7+3b//2e/v7+/dv//Z3d3d3d2///2ZmZmZm/////////////////2b////////2/2///////2//9v////////////////////////","PAT":"data:image/bmp;base64,Qk1QAQAAAAAAAE4AAAAoAAAAEAAAABAAAAABAAgAAAAAAAAAAAASCwAAEgsAAAYAAAAGAAAAAAAAAP///wAlgFsATaB+AI/wyAD///8AAQQEBAQEBAQEBAQEBAQEAQQCAgICAgICAgICAgICBAQEBAQEBAQEBAQEBAQEBAMEBAQEBAQEBAQEBAQEBAQDBAQEAAQEBAQABAQABAQEAwQEBAAEBAQEAAQEAAQEBAMEBAQABAQEBAAEBAAEBAQDBAQEAAAABAQAAAAABAQEAwQEBAAEBAAEAAQEAAQEBAMEBAQABAQABAAEBAAEBAQDBAQEAAAABAQEAAAEBAQEAwQEBAQEBAQEBAQEBAQEBAMEBAEEBAQEBAQEBAQEBAQDBAQEAQEBAQEBAQEBAQEBBAQEBAQEBAQEBAQEBAQEBAQEAQQEBAQEBAQEBAQEBAQEAQAA","PMT":"data:image/bmp;base64,Qk1QAQAAAAAAAE4AAAAoAAAAEAAAABAAAAABAAgAAAAAAAAAAAASCwAAEgsAAAYAAAAGAAAAAAAAAP///wDk8bUAX4dEAE2gfgD///8AAQICAgICAgICAgICAgICAQIDAwMDAwMDAwMDAwMDAgICAgICAgICAgICAgICAgQCAgICAgICAgICAgICAgIEAgICAAICAgIAAgICAAICBAICAgACAgICAAIAAgACAgQCAgIAAgICAgACAAIAAgIEAgICAAAAAgIAAgACAAICBAICAgACAgACAAIAAgACAgQCAgIAAgIAAgAAAgAAAgIEAgICAAAAAgIAAgICAAICBAICAgICAgICAgICAgICAgQCAgECAgICAgICAgICAgIEAgICAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgICAQICAgICAgICAgICAgICAQAA","CAT":"data:image/bmp;base64,Qk04AwAAAAAAADYAAAAoAAAAEAAAABAAAAABABgAAAAAAAAAAAASCwAAEgsAAAAAAAAAAAAA////qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/////qu7/OIrJOIrJOIrJOIrJOIrJOIrJOIrJOIrJOIrJOIrJOIrJOIrJOIrJqu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/UKTZqu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/UKTZqu7/qu7/qu7/qu7/qu7/AAAAAAAAqu7/qu7/qu7/AAAAqu7/qu7/AAAAqu7/UKTZqu7/qu7/qu7/qu7/AAAAqu7/qu7/AAAAqu7/qu7/AAAAqu7/qu7/AAAAqu7/UKTZqu7/qu7/qu7/AAAAqu7/qu7/qu7/qu7/qu7/qu7/AAAAqu7/qu7/AAAAqu7/UKTZqu7/qu7/qu7/AAAAqu7/qu7/qu7/qu7/qu7/qu7/AAAAAAAAAAAAAAAAqu7/UKTZqu7/qu7/qu7/AAAAqu7/qu7/qu7/qu7/qu7/qu7/AAAAqu7/qu7/AAAAqu7/UKTZqu7/qu7/qu7/qu7/AAAAqu7/qu7/AAAAqu7/qu7/AAAAqu7/qu7/AAAAqu7/UKTZqu7/qu7/qu7/qu7/qu7/AAAAAAAAqu7/qu7/qu7/qu7/AAAAAAAAqu7/qu7/UKTZqu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/UKTZqu7/qu7/////qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/UKTZqu7/gNrwqu7/////////////////////////////////////////////////qu7/qu7/gNrwgNrwqu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/qu7/gNrw////gNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrwgNrw////AAA=","AIT":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wCA4N8AlO3sAA6NkgAzwcYA////AMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcABMzMzMzMzMxNERERERERDMzMzMzMzMzUzMzMzMzMzNTMzOjOjOjM1MzM6M6M6MzUzMzozozozNTMzOqqjOjM1MzM6M6M6MzUzMzozozozNTMzM6ozOjM1MzMzMzMzMzUzEzMzMzMzNTIxERERERETMiMzMzMzMzMxIiIiIiIiIh","BAT":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wDJjGUA/+bWAKZoQAD///8AgIAAAMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcABMzMzMzMzMxNERERERERDMzMzMzMzMzIzMzMzMzMzMjM6qjM6M6MyMzozozozozIzOjOjOjOjMjM6qqM6qqMyMzozozozozIzOjOjOjOjMjM6qjMzqjMyMzMzMzMzMzIzEzMzMzMzMjMxERERERETMzMzMzMzMzMxMzMzMzMzMx","EIT":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wBiYbwAmZnfANra/wD///8AgIAAAMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcABRERERERERBQiIiIiIiIkRERERERERENEREREREREQ0RESqqkSkRDRERKRERKRENEREpEREpEQ0RESqqkSkRDRERKRERKRENEREpEREpEQ0RESqqkSkRDRERERERERENEFEREREREQ0RBEREREREURERERERERERBRERERERERB","RST":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wBKiUYATLlIAM/qzgD///8AgIAAAMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcABRERERERERBQiIiIiIiIkRERERERERENEREREREREQ0RKRKRKqkRDREpKREpEpENESkpERESkQ0RKqkREqkRDREpEpEpERENESkSkSkSkQ0RKqkREqkRDRERERERERENEFEREREREQ0RBEREREREURERERERERERBRERERERERB","SDT":"data:image/bmp;base64,Qk1QAQAAAAAAAE4AAAAoAAAAEAAAABAAAAABAAgAAAAAAAAAAAASCwAAEgsAAAYAAAAGAAAAAAAAAP///wD/2N4ApFJXAMd5cwD///8AAQICAgICAgICAgICAgICAQIDAwMDAwMDAwMDAwMDAgICAgICAgICAgICAgICAgQCAgICAgICAgICAgICAgIEAgICAAAAAgIAAAACAgICBAICAgACAgACAAICAAICAgQCAgICAgIAAgACAgIAAgIEAgICAgAAAgIAAgICAAICBAICAgACAgICAAICAgACAgQCAgIAAgIAAgACAgACAgIEAgICAgAAAgIAAAACAgICBAICAgICAgICAgICAgICAgQCAgECAgICAgICAgICAgIEAgICAQEBAQEBAQEBAQEBAgICAgICAgICAgICAgICAgICAQICAgICAgICAgICAgICAQAA","TDT":"data:image/bmp;base64,Qk04AwAAAAAAADYAAAAoAAAAEAAAABAAAAABABgAAAAAAAAAAAASCwAAEgsAAAAAAAAAAAAA////zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9////zuf9YYC+YYC+YYC+YYC+YYC+YYC+YYC+YYC+YYC+YYC+YYC+YYC+YYC+zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9bJDazuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9bJDazuf9zuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAAAAAAAAAzuf9zuf9zuf9zuf9bJDazuf9zuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9AAAAzuf9zuf9zuf9bJDazuf9zuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9bJDazuf9zuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9bJDazuf9zuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9bJDazuf9zuf9zuf9zuf9AAAAzuf9zuf9zuf9AAAAzuf9zuf9AAAAzuf9zuf9zuf9bJDazuf9zuf9AAAAAAAAAAAAAAAAAAAAzuf9AAAAAAAAAAAAzuf9zuf9zuf9zuf9bJDazuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9bJDazuf9zuf9////zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9bJDazuf9pNL7zuf9////////////////////////////////////////////////zuf9zuf9pNL7pNL7zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9zuf9pNL7////pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7pNL7////AAA=","TOT":"data:image/bmp;base64,Qk04AwAAAAAAADYAAAAoAAAAEAAAABAAAAABABgAAAAAAAAAAAASCwAAEgsAAAAAAAAAAAAA//////rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//////rNlooilooilooilooilooilooilooilooilooilooilooilooilooi//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rNvbJS//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rNvbJS//rN//rN//rN//rNAAAA//rN//rN//rN//rNAAAAAAAAAAAA//rN//rN//rNvbJS//rN//rN//rN//rNAAAA//rN//rN//rNAAAA//rN//rN//rNAAAA//rN//rNvbJS//rN//rN//rN//rNAAAA//rN//rNAAAA//rN//rN//rN//rN//rNAAAA//rNvbJS//rN//rN//rN//rNAAAA//rN//rNAAAA//rN//rN//rN//rN//rNAAAA//rNvbJS//rN//rN//rN//rNAAAA//rN//rNAAAA//rN//rN//rN//rN//rNAAAA//rNvbJS//rN//rN//rN//rNAAAA//rN//rN//rNAAAA//rN//rN//rNAAAA//rN//rNvbJS//rN//rNAAAAAAAAAAAAAAAAAAAA//rN//rNAAAAAAAAAAAA//rN//rN//rNvbJS//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rNvbJS//rN//rN//////rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rNvbJS//rN8eqr//rN//////////////////////////////////////////////////rN//rN8eqr8eqr//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN//rN8eqr////8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr8eqr////AAA=","NIT":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAArYTCAMar0wBmAJkA////AAAAAADmyPUAgIAAAMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcADVVVVVVVVVTUiIiIiIiIlNVVVVVVVVVA1VVVVVVVVUDVVpVWlWlVQNVWlWqVaVVA1VaWlpVpVUDVVqlWlWlVQNVWqVaVaVVA1VaVVpVpVUDVVVVVVVVVQNVVVVVVVVVA1NVVVVVVVUDFTMzMzMzM1MRVVVVVVVVUzERERERERET","PES":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAP7eLADKUZgCJzrMA////AAAAAACB3rIAgIAAAMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcADVVVVVVVVVTUREREREREVNVVVVVVVVVA1VVVVVVVVUDWlVVqqVapQNaVVWlVaVaA1pVVaVVVVoDWqpVqqVapQNaVaWlVaVVA1pVpaVVpVoDWqpVqqVapQNVVVVVVVVVA1NVVVVVVVUDJTMzMzMzM1MiVVVVVVVVUzIiIiIiIiIj","DDB":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP///wBDgT4AyO/JAK/lsQBNoH4A////AMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcABMzMzMzMzMxMiIiIiIiIjMzMzMzMzMzUzMzMzMzMzNTM6qjM6qjM1MzozozozozUzOjM6OjM6NTM6Mzo6Mzo1MzozOjozOjUzOjOjOjOjNTM6qjM6qjM1MzMzMzMzMzUzEzMzMzMzNTQxERERERETNEMzMzMzMzMxRERERERERB","UN":"data:image/bmp;base64,Qk32AAAAAAAAAHYAAAAoAAAAEAAAABAAAAABAAQAAAAAAIAAAAAAAAAAAAAAAAAAAAAAAAAA0JbQAJxlnADbve8A////AAAAAADOz/8AgIAAAMDAwADA3MAA8MqmAAQEBAAICAgADAwMABEREQAWFhYAHBwcADVVVVVVVVUzURERERERFVNVVVVVVVVQU1VVVVVVVVBTVVqlVVpVoFNVpVpVWlWgU1WlWlVaWqBTVaVaWlpaoFNVpVpVWqWgU1WlWlVapaBTVaVaVVpVoFNVVVVVVVVQU1NVVVVVVVBTJTMzMzMzNVMiVVVVVVVVUzIiIiIiIiIz"};
+var inspector = {
+    icon: function(name){if(name==='DSMCC_download_data_message')name='DDB';if(name==='DSMCC_user_to_network_message')name='UN';return classicIcons[name] || classicIcons.unknown;},
+    navigationIcon:function(row){return row.icon || (row.kind==='family'?(row.name==='Programs'?'programs':row.name==='PSI Packets'?'psi':row.name):row.program?'program':row.kind==='record'?row.record.name:row.node&&/descriptor/i.test(row.node.label||'')?'descriptor':'field');},
+    // Presentation only: relationships and delivery parameters come from the engine.
+    programTree: function(state, records, topology, opened, query) {
+        var self=this, out=[], nodes={}, children={}, networks={}, assigned={}, used={};
+        (topology.nodes || []).concat(topology.context_nodes || []).forEach(function(n){nodes[n.node_id]=n;});
+        Object.keys(nodes).forEach(function(id){var n=nodes[id];if(n.object_type==='network')networks[id]=n;});
+        (topology.edges || []).forEach(function(e){if(e.relation==='announces' && nodes[e.from] && nodes[e.to] && nodes[e.from].object_type==='network' && nodes[e.to].object_type==='transport'){(children[e.from] || (children[e.from]=[])).push(e.to);assigned[e.to]=true;}});
+        var transports=Object.keys(nodes).map(function(k){return nodes[k];}).filter(function(n){return n.object_type==='transport';});
+        // SDT names remain useful while the optional topology request is loading/unavailable.
+        (state.services || []).forEach(function(s){if(!transports.some(function(t){return t.identity.original_network_id===s.onid && t.identity.transport_stream_id===s.ts_id;}))transports.push({node_id:'service-ts:'+s.onid+':'+s.ts_id,identity:{original_network_id:s.onid,transport_stream_id:s.ts_id},observation_status:'observed_here',attributes:{}});});
+        transports.forEach(function(t){nodes[t.node_id]=t;if(!assigned[t.node_id]){(children.unassigned || (children.unassigned=[])).push(t.node_id);}});
+        if(children.unassigned)networks.unassigned={node_id:'unassigned',identity:{},attributes:{},label:'Network unknown'};
+        function open(key,initial){return opened[key]===undefined?initial:opened[key];}
+        function current(r){return r.valid!==false && r.current!==false && r.selected_in_snapshot!==false;}
+        function source(n){var refs=n.evidence || [];for(var i=0;i<refs.length;i++){var r=(state.tables || []).find(function(r){return r.id===refs[i].section_id;});if(r)return r;}return null;}
+        function serviceLabel(s){var known=s.lcn_status==='known' && s.logical_channel_number!==null && s.logical_channel_number!==undefined;
+            return (known?'LCN '+s.logical_channel_number+'  ':'')+(s.name_from_descriptor && s.name?s.name:'Program '+s.id)+' ['+self.hex(s.id)+']'+(known?'':s.lcn_status==='conflict'?'  LCN conflict':'  LCN ?');}
+        function serviceRows(t){var id=t.identity, services=(state.services || []).filter(function(s){return s.onid===id.original_network_id && s.ts_id===id.transport_stream_id;}).slice();
+            Object.keys(nodes).forEach(function(k){var n=nodes[k],i=n.identity || {};if(n.object_type==='service' && i.original_network_id===id.original_network_id && i.transport_stream_id===id.transport_stream_id && !services.some(function(s){return s.id===i.service_id;}))services.push({id:i.service_id,onid:i.original_network_id,ts_id:i.transport_stream_id,name:(n.attributes || {}).name,name_from_descriptor:!!(n.attributes || {}).name,source_id:(source(n) || {}).id,announced:true});});
+            services.sort(function(a,b){var x=a.lcn_status==='known'?a.logical_channel_number:Infinity,y=b.lcn_status==='known'?b.logical_channel_number:Infinity;return x-y || a.id-b.id;});
+            return services.map(function(s){var pmts=records.filter(function(r){return r.name==='PMT' && current(r) && r.extension===s.id && s.pmt_pid!==null && s.pmt_pid!==undefined && r.pid===s.pmt_pid;});
+                // Never attach a same-SID PMT to a remote or ambiguous service identity.
+                var peers=(state.services || []).filter(function(x){return x.id===s.id && x.pmt_pid===s.pmt_pid;});
+                var r=peers.length===1 && pmts.length===1?pmts[0]:records.find(function(r){return r.id===s.source_id;});
+                if(r && r.name==='PMT')used[r.id]=true;
+                return {kind:r?'record':'info',key:'service:'+t.node_id+':'+s.id,label:serviceLabel(s)+(s.announced?'  [announced]':!pmts.length?'  [PMT unavailable]':peers.length>1?'  [PMT ambiguous]':''),record:r,program:true,service:s,depth:3};
+            });
+        }
+        Object.keys(networks).sort().forEach(function(nid){var n=networks[nid],group=[];
+            (children[nid] || []).filter(function(v,i,a){return a.indexOf(v)===i;}).sort().forEach(function(tid){var t=nodes[tid],i=t.identity,rows=serviceRows(t),delivery=Object.keys(nodes).map(function(k){return nodes[k];}).filter(function(d){return d.object_type==='delivery_parameters' && d.identity.transport_node_id===tid;});
+                var labels=delivery.map(function(d){var a=d.attributes || {},p=a.parameters || {},parts=[];
+                    if(p.frequency_hz)parts.push((Number(p.frequency_hz)/1000000)+' MHz');
+                    if(p.polarization)parts.push(({horizontal:'H',vertical:'V',left:'L',right:'R'})[p.polarization] || String(p.polarization));
+                    if(p.symbol_rate)parts.push((Number(p.symbol_rate)/1000)+' ksym/s');
+                    return parts.join(' ');
+                }).filter(function(x,i,a){return x && a.indexOf(x)===i;});
+                var label='TP '+(labels.length?labels.join(' / ')+'  ':'')+'TSID '+self.hex(i.transport_stream_id)+' ONID '+self.hex(i.original_network_id)+(t.observation_status==='observed_here'?'':' [announced]');
+                var key='tp:'+nid+':'+tid, match=!query || label.toLowerCase().indexOf(query)>=0 || String(n.attributes.name || n.label).toLowerCase().indexOf(query)>=0;
+                rows=rows.filter(function(r){return match || r.label.toLowerCase().indexOf(query)>=0;});
+                if(query && !match && !rows.length)return;
+                group.push({kind:'family',key:key,name:key,label:label,depth:2,defaultOpen:t.observation_status==='observed_here',icon:'SDT',sourceRecord:source(t),hint:'Advertised TP parameters. Double-click to inspect the source table.'});
+                if(open(key,t.observation_status==='observed_here'))rows.forEach(function(r){r.key=nid+':'+r.key;group.push(r);});
+            });
+            if(!group.length)return;var key='network:'+nid,label=nid==='unassigned'?'Network unknown':(n.attributes.name || 'Network')+' ['+self.hex(n.identity.network_id)+']';
+            out.push({kind:'family',key:key,name:key,label:label,depth:1,defaultOpen:true,icon:'NIT',sourceRecord:source(n)});
+            if(open(key,true))out=out.concat(group);
+        });
+        // Raw PMTs without an unambiguous service mapping stay accessible.
+        records.filter(function(r){return r.name==='PMT' && !used[r.id] && (!query || self.title(r).toLowerCase().indexOf(query)>=0);}).sort(function(a,b){return a.extension-b.extension || a.pid-b.pid;}).forEach(function(r){out.push({kind:'record',key:'program:'+r.id,label:'Program '+r.extension+' ['+self.hex(r.extension)+']  name unknown',record:r,program:true,depth:1});});
+        return out;
+    },
+    // Prefer exact selected-section loop ownership where it exists. Every other
+    // table uses the engine's recursive semantic tree, without a family allowlist.
+    transportNavigation:function(state,records,open,query){
+        var self=this,out=[],pids=state.transport_pids||[],dsmcc=records.filter(function(r){return /^DSMCC_/.test(r.name);});
+        out.push({kind:'family',key:'family:All Packets',name:'All Packets',label:'All Packets',depth:0,icon:'psi'});
+        if(open('All Packets')){
+            pids.filter(function(pid){return !query||('PID '+self.hex(pid)).toLowerCase().indexOf(query)>=0;}).forEach(function(pid){out.push({kind:'packet',key:'packet:'+pid,pid:pid,label:'PID '+self.hex(pid),depth:1,icon:'PES',hint:'PID observed in analyzed windows; use Packet Explorer to read original source packets'});});
+            if(!pids.length)out.push({kind:'info',key:'packets:empty',label:state.complete?'No observed packet PIDs':'Analyze a source to list packet PIDs',depth:1,icon:'field'});
+        }
+        out.push({kind:'family',key:'family:DSMCC',name:'DSMCC',label:'DSMCC',depth:0,icon:'UN'});
+        if(open('DSMCC')){
+            dsmcc.forEach(function(r){out.push({kind:'record',key:'dsmcc:'+r.id,record:r,label:self.navigationTitle(r,null),depth:1,icon:r.name});});
+            if(!dsmcc.length)out.push({kind:'info',key:'dsmcc:empty',label:'No observed DSM-CC sections',depth:1,icon:'field'});
+        }
+        return out;
+    },
+    contextTargets:function(row,state){
+        if(!row)return [];
+        var record=row.record||row.sourceRecord,pid=record?record.pid:row.pid;
+        if(record)return [{id:record.id,pid:record.pid,label:this.navigationTitle(record,null)}];
+        if(pid===undefined)return [];
+        var self=this;return (state.tables||[]).filter(function(r){return r.pid===pid;}).map(function(r){return {id:r.id,pid:r.pid,label:self.navigationTitle(r,null)};});
+    },
+    navigationChildren: function(node) {
+        if(!node)return [];
+        if(node.semanticName)return node.children || [];
+        if(node.descriptor_offset!==undefined)return [];
+        var children=node.children || [];
+        if(node.path==='section'){
+            var wire=children.filter(function(n){return n.path!=='section/decoded' && n.path!=='section/descriptors' && n.path!=='section/assembled';});
+            var assembled=children.find(function(n){return n.path==='section/assembled';});
+            if(wire.length)return assembled?wire.concat([assembled]):wire;
+            if(assembled)return [assembled];
+            var decoded=children.find(function(n){return n.path==='section/decoded';});
+            if(decoded && decoded.children.length)return decoded.children;
+            if(decoded && decoded.fields.length)return [decoded];
+            var descriptors=children.find(function(n){return n.path==='section/descriptors';});
+            return descriptors && descriptors.children.length?[descriptors]:[];
+        }
+        return children;
+    },
+    wireValue: function(node,name) {
+        var f=(node && node.fields || []).find(function(f){return f.name===name;});
+        return f ? String(f.value).split(' ')[0] : '';
+    },
+    wireRange: function(node) {
+        if(!node)return null;
+        if(node.range)return node.range;
+        var start=Infinity,end=-1;
+        function visit(n){
+            (n.fields || []).forEach(function(f){if(Number.isInteger(f.bit_offset) && f.bit_length>0){start=Math.min(start,f.bit_offset);end=Math.max(end,f.bit_offset+f.bit_length);}});
+            (n.children || []).forEach(visit);
+        }
+        visit(node);return end>start?{offset:Math.floor(start/8),length:Math.ceil(end/8)-Math.floor(start/8)}:null;
+    },
+    navigationLabel: function(node) {
+        if(node.semanticName)return node.label;
+        var pid=this.wireValue(node,'elementary_PID'),type=this.wireValue(node,'stream_type');
+        if(node.descriptor_offset!==undefined)return node.label+' TAG('+this.wireValue(node,'descriptor_tag')+')';
+        if(pid)return 'ES: PID='+pid+' ['+Number(pid)+'], stream_type = '+type;
+        var tsid=this.wireValue(node,'transport_stream_id'),onid=this.wireValue(node,'original_network_id');
+        if(tsid && onid)return 'ONID='+onid+' TSID = '+tsid;
+        var program=this.wireValue(node,'program_number');
+        if(program)return 'Program '+program+' PID['+this.wireValue(node,'program_map_PID')+']';
+        return node.label;
+    },
+    navigationTitle: function(record,tree) {
+        var version=' Version '+record.version, pid=' PID['+this.hex(record.pid)+']',suffix=record.last_section>0?' Section '+record.section+'/'+record.last_section:'';
+        if(record.name==='PMT'){var pcr=this.wireValue(tree,'PCR_PID');return 'Program '+this.hex(record.extension)+pid+version+(pcr?' PCR_PID['+pcr+']':'')+suffix;}
+        if(record.name==='NIT')return (record.table_id===0x40?'Actual':'Other')+' NIT NetworkID['+this.hex(record.extension)+']'+pid+version+suffix;
+        if(record.name==='BAT')return 'BouquetID['+this.hex(record.extension)+']'+pid+version+suffix;
+        return this.title(record);
+    },
+    tableNavigation: function(root,record,ownerKey,closed,limits,depth) {
+        if(!root)return [];
+        var self=this,out=[];
+        function addChildren(parent,level){
+            var children=self.navigationChildren(parent),key=ownerKey+':'+parent.path,limit=limits[key] || 100;
+            children.slice(0,limit).forEach(function(n){
+                var nodeKey=ownerKey+':'+n.path,expandable=self.navigationChildren(n).length>0;
+                out.push({kind:'node',key:nodeKey,ownerKey:ownerKey,record:record,node:n,label:self.navigationLabel(n),depth:level,expandable:expandable,icon:n.descriptor_offset!==undefined || /descriptor$/i.test(n.semanticName || '')?'descriptor':self.wireValue(n,'elementary_PID')?'PES':self.wireValue(n,'service_id')?'program':'field'});
+                if(expandable && !closed[nodeKey])addChildren(n,level+1);
+            });
+            if(children.length>limit)out.push({kind:'more',key:key+':more',limitKey:key,label:'Load next '+Math.min(100,children.length-limit)+' of '+children.length,depth:level,icon:'field'});
+        }
+        addChildren(root,depth);
+        if(!out.length)out.push({kind:'node',key:ownerKey+':section',ownerKey:ownerKey,record:record,node:root,label:'Section['+((Number(record.section)||0)+1)+'/'+((Number(record.last_section)||0)+1)+']',depth:depth,expandable:false,icon:'field'});
+        return out;
+    },
+    shortSyntax: function(r) { return r.versioning_supported === false || r.table_id === 0x70 || r.table_id === 0x73; },
+    hex: function(n) { return '0x' + Number(n).toString(16).toUpperCase().padStart(4, '0'); },
+    title: function(r) {
+        var label = r.name + ' · PID ' + this.hex(r.pid);
+        if (this.shortSyntax(r)) label += ' · ' + (r.utc_time || 'time unavailable');
+        else label += ' · ' + this.hex(r.extension) + ' · v' + r.version + (r.current ? ' current' : ' next') + ' · §' + r.section + '/' + r.last_section;
+        return label + ' · ×' + r.count + (r.valid === false ? ' · INVALID' : '');
+    },
+    help: function(key) {
+        return ({program_number:'Program identifier; 0 refers to network signalling',service_id:'Service identifier; interpret with its transport stream and original network',
+            pmt_pid:'Packet identifier carrying this program map',PCR_PID:'Packet identifier carrying the program clock reference',pcr_pid:'Packet identifier carrying the program clock reference',
+            elementary_PID:'Packet identifier carrying this elementary stream',elementary_pid:'Packet identifier carrying this elementary stream',
+            stream_type:'Signalled elementary stream coding type',UTC_time:'Broadcast UTC time',utc_time:'Broadcast UTC time',
+            transport_stream_id:'Transport stream identifier',original_network_id:'Original network identifier',network_id:'Network identifier',bouquet_id:'Bouquet identifier',
+            descriptor_tag:'Descriptor type; private tags require their namespace',descriptor_length:'Descriptor payload length in bytes',
+            count:'Identical section arrivals, aggregated by the engine',raw:'Original descriptor bytes; unknown semantics remain unknown'})[key] || '';
+    },
+    node: function(path, label, value) {
+        var n={path:path,label:label,fields:[],children:[]};
+        if (value && typeof value==='object') Object.keys(value).forEach(function(k){
+            var v=value[k];
+            if(v!==null && typeof v==='object') {
+                var childLabel=Array.isArray(value)?'['+k+']':k;
+                if(Array.isArray(value) && path.endsWith('/programs'))childLabel='Program '+v.service_id+' → PMT '+inspector.hex(v.pmt_pid);
+                if(Array.isArray(value) && path.endsWith('/streams'))childLabel='Stream PID '+inspector.hex(v.pid)+' · type '+inspector.hex(v.type);
+                if(Array.isArray(value) && path.endsWith('/transports'))childLabel='Transport '+inspector.hex(v.transport_stream_id)+' · ONID '+inspector.hex(v.original_network_id);
+                n.children.push(inspector.node(path+'/'+k,childLabel,v));
+            }
+            else n.fields.push({name:k,value:String(v===null?'Not carried':v),help:inspector.help(k)});
+        });
+        return n;
+    },
+    native: function(value,path) {
+        var a=value.attributes || {}, suffix=['service_id','program_number','elementary_PID','transport_stream_id','bouquet_id','event_id','source_id','organization_id','application_id','module_id','download_id','table_type','short_name'].filter(function(k){return a[k]!==undefined;}).map(function(k){return k+'='+a[k];}).join(' ');
+        var n=this.node(path,value.name+(suffix?' '+suffix:''),a);n.semanticName=value.name;
+        (value.children || []).forEach(function(c,i){n.children.push(inspector.native(c,path+'/'+i));});
+        if(value.text)n.fields.push({name:'text',value:value.text,help:''});
+        return n;
+    },
+    structure: function(d) {
+        if(!d.id)return null;
+        var header={table_id:this.hex(d.table_id),pid:this.hex(d.pid),bytes:d.bytes};
+        if(!this.shortSyntax(d)){header.table_id_extension=this.hex(d.extension);header.version_number=d.version;header.current_next_indicator=d.current;header.section_number=d.section;header.last_section_number=d.last_section;}
+        if(d.utc_time || (d.fields || {}).utc_time)header.utc_time=d.utc_time || d.fields.utc_time;
+        var root=d.si_structure ? JSON.parse(JSON.stringify(d.si_structure)) : this.node('section',d.name+' · selected section',header);
+        root.label=d.name+' · selected section';
+        function enrich(n){
+            var identifier=(n.fields || []).find(function(f){return ['elementary_PID','program_number','service_id','transport_stream_id','event_id'].indexOf(f.name)>=0;});
+            if(identifier && n.path!=='section'){
+                var kind={elementary_PID:'Stream PID ',program_number:'Program ',service_id:'Service ',transport_stream_id:'Transport ',event_id:'Event '}[identifier.name];
+                n.label=kind+identifier.value.split(' ')[0];
+            }
+            if(n.descriptor_offset!==undefined){
+                var descriptor=(d.descriptors || []).find(function(x){return x.offset===n.descriptor_offset;});
+                if(descriptor && descriptor.native)n.children.push(inspector.native(descriptor.native,n.path+'/decoded'));
+                if(descriptor && Object.keys(descriptor.fields || {}).length)n.children.push(inspector.node(n.path+'/fields','Decoded fields',descriptor.fields));
+            }
+            n.children.forEach(enrich);
+        }
+        if(d.si_structure)enrich(root);
+        var native=d.section_native_table;
+        if(!native && d.native_table_complete && (d.native_table_sources || []).length===1 && d.native_table_sources[0].id===d.id)native=d.native_table;
+        if(native)root.children.push(this.native(native,'section/decoded'));
+        else root.children.push(this.node('section/decoded','Decoded fields',d.fields || {}));
+        if(!native && d.native_table_complete && d.native_table && (d.native_table_sources || []).length>1 && d.native_table_sources.some(function(source){return source.id===d.id;})){
+            var assembled=this.native(d.native_table,'section/assembled');
+            assembled.label='Assembled '+d.native_table.name+' ['+d.native_table_sources.length+' sections]';
+            assembled.fields.unshift({name:'evidence_scope',value:'Complete table assembled from '+d.native_table_sources.length+' sections',help:'These semantic fields have no verified byte range in the currently selected section.'});
+            root.children.push(assembled);
+        }
+        // Raw descriptor loop ownership and offsets come exclusively from the engine.
+        if((d.descriptors || []).length){var descriptors={path:'section/descriptors',label:'Descriptors · exact section',fields:[],children:[]};
+            d.descriptors.forEach(function(x,i){
+                var n=inspector.node('section/descriptors/'+i,(x.name || 'Unknown descriptor')+' · tag '+inspector.hex(x.tag),{descriptor_tag:inspector.hex(x.tag),descriptor_length:x.length,decode_status:x.decode_status || 'unknown',raw:x.raw || ''});
+                if(x.native)n.children.push(inspector.native(x.native,n.path+'/decoded'));
+                if(Object.keys(x.fields || {}).length)n.children.push(inspector.node(n.path+'/fields','Decoded fields',x.fields));
+                // Do not guess offsets for SDK fields or assembled tables.
+                if(Number.isInteger(x.offset) && Number.isInteger(x.length))n.range={offset:x.offset,length:x.length+2};
+                descriptors.children.push(n);
+            });root.children.push(descriptors);
+        }
+        return root;
+    },
+    fieldTable: function(node,closed,depth) {
+        if(!node)return [];
+        function firstBit(n){
+            var bits=(n.fields || []).filter(function(f){return f.bit_offset!==undefined;}).map(function(f){return f.bit_offset;});
+            if(n.range)bits.push(n.range.offset*8);
+            return bits.length?Math.min.apply(null,bits):Infinity;
+        }
+        var rows=[],entries=(node.fields || []).map(function(f){return {field:f,bit:f.bit_offset===undefined?Infinity:f.bit_offset};});
+        (node.children || []).forEach(function(child){entries.push({child:child,bit:firstBit(child)});});
+        // Wire order places CRC after the loops, while SDK-only attributes stay
+        // available after all positioned evidence without invented offsets.
+        entries.sort(function(a,b){return a.bit===b.bit?0:a.bit-b.bit;});
+        entries.forEach(function(entry){
+            if(entry.field)rows.push(Object.assign({},entry.field,{depth:depth || 0,nodePath:node.path}));
+            else {
+                var child=entry.child;
+                rows.push({name:child.label,value:'',help:'',depth:depth || 0,groupPath:child.path});
+                if(!closed[child.path])rows=rows.concat(inspector.fieldTable(child,closed,(depth || 0)+1));
+            }
+        });return rows;
+    },
+    find: function(root,path) {
+        if(!root)return null;
+        if(root.path===path)return root;
+        if(path.indexOf(root.path+'/')!==0)return null;
+        for(var i=0;i<(root.children || []).length;i++){
+            var match=inspector.find(root.children[i],path);if(match)return match;
+        }
+        return null;
+    },
+    flatten: function(root,closed,depth,limits) {
+        if(!root)return [];
+        var out=[Object.assign({},root,{depth:depth || 0})];
+        var children=root.children || [],limit=limits ? (limits[root.path] || 100) : children.length;
+        if(!closed[root.path]) {
+            children.slice(0,limit).forEach(function(c){out=out.concat(inspector.flatten(c,closed,(depth || 0)+1,limits));});
+            if(children.length>limit)out.push({path:root.path+'/more',label:'Load next '+Math.min(100,children.length-limit)+' of '+children.length,fields:[],children:[],more:root.path,depth:(depth || 0)+1});
+        }
+        return out;
+    },
+    summary: function(d,state) {
+        var f=d.fields || {}, text=[];
+        if(d.name==='PAT') (f.programs || []).forEach(function(p){
+            var sid=p.service_id===undefined?p.program_number:p.service_id;
+            var services=(state.services || []).filter(function(s){return s.id===sid && s.ts_id===d.extension;});
+            // TSID + SID may still match multiple ONIDs: never choose an arbitrary name.
+            text.push('Program '+sid+' → PMT '+inspector.hex(p.pmt_pid)+(services.length>1?' · ambiguous service identity':services.length===1 && services[0].name_from_descriptor===true?' · '+services[0].name:' · name unknown'));
+        });
+        if(d.name==='PMT')text.push('Program '+d.extension+' · PCR '+(f.pcr_pid!==undefined?this.hex(f.pcr_pid):f.PCR_PID!==undefined?this.hex(f.PCR_PID):'unavailable')+' · '+(f.streams || []).length+' streams');
+        if(d.name==='TDT' || d.name==='TOT')text.push('UTC '+(f.utc_time || d.utc_time || 'unavailable')+' · '+(d.name==='TDT'?'No CRC in TDT':'TOT CRC: '+((d.crc || {}).status || 'unavailable')));
+        if(d.name==='BAT')text.push('Bouquet '+this.hex(d.extension));
+        if(d.name==='NIT')text.push('Network '+this.hex(d.extension));
+        if(d.name==='SDT')text.push('Transport stream '+this.hex(d.extension)+' · '+(d.services || []).length+' services');
+        return text.slice(0,8).join('\n')+(text.length>8?'\n'+(text.length-8)+' more entries in the structure tree':'');
+    }
+};
+if(typeof module!=='undefined')module.exports=inspector;

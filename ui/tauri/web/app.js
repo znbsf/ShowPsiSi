@@ -165,6 +165,8 @@ function distributionPanel(row) {
   return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
+let documentMode=false, documentWorkspace=null;
+let siView = null, summaryView = null, summaryVisible = false, classicMode = true, candidatePending = false, classicFrame = null, classicConfiguration = false, classicToolbar = true, classicStatus = true, classicTree = true;
 let data = {},
   detail = {},
   env = {},
@@ -581,13 +583,14 @@ async function listenForFileDrop() {
   } catch (_) {notice("File drop is unavailable. Use Open… to choose a local source.");}
 }
 window.addEventListener("pagehide",()=>{stopFileDrop?.();stopFileDrop=null;nativeFileDrop=false;});
-let theme = "dark";
-try { theme = localStorage.getItem("showpsisi.theme") === "light" ? "light" : "dark"; } catch (_) {}
+let theme = "light";
+try { theme = localStorage.getItem("showpsisi.theme") === "dark" ? "dark" : "light"; } catch (_) {}
 function applyTheme() {
-  document.documentElement.dataset.theme = theme;
+  const effective=classicMode&&$("#input-kind")?.value==="ts"?"light":theme;
+  document.documentElement.dataset.theme = effective;
   $("#theme-toggle").textContent = theme === "dark" ? "Light theme" : "Dark theme";
   $("#theme-toggle").setAttribute("aria-pressed", String(theme === "light"));
-  document.querySelector('meta[name="color-scheme"]').content = theme;
+  document.querySelector('meta[name="color-scheme"]').content = effective;
 }
 applyTheme();
 $("#theme-toggle").onclick = () => {
@@ -717,7 +720,7 @@ function disableBackendActions() {
 function disconnectBackend(reason) {
   if (backendFailure) return;
   const exportPending = [...pending.values()].some(
-    (job) => job.method === "export",
+    (job) => ["export","export_asset"].includes(job.method),
   );
   backendFailure =
     String(reason || "Native backend stopped. Restart the application.") +
@@ -756,7 +759,7 @@ function call(method, params = {}) {
     // Only idle read requests expire. Analysis may be long-running, and write
     // timeouts would leave ambiguous outcomes. Backend exit rejects every job.
     const canTimeout =
-      ["inspect", "query", "query_topology", "query_dvbi", "inspect_dvbi", "diff_snapshots", "capabilities"].includes(method) &&
+      ["inspect", "query", "query_transport", "query_topology", "query_dvbi", "inspect_dvbi", "diff_snapshots", "capabilities"].includes(method) &&
       !busy &&
       ![...pending.values()].some((job) => job.method === "analyze");
     const timer = canTimeout
@@ -821,6 +824,7 @@ function queueProgress(state) {
     progressFrame = null;
     const update = queuedProgress; queuedProgress = null;
     if (!update || update.epoch !== scanEpoch || update.requestId !== activeAnalyze || !busy || cancelling || backendFailure) return;
+    if(candidatePending){candidatePending=false;resetAnalysisViews();filter="";pidFilter=null;page=0;historyPage=0;}
     data = update.state;
     if ((pausePending === "pause" && data.analysis_status === "paused") ||
         (pausePending === "resume" && ["analyzing","finalizing"].includes(data.analysis_status))) pausePending = "";
@@ -949,6 +953,15 @@ async function cancelScan() {
     notice("Cancellation was not confirmed: " + String(error) + ". Analysis is still pending.", true);
   }
 }
+const configIds=['standards','default-charset','extra-pids','scan-mode','scan-budget-unit','scan-percent','scan-budget','scan-start','scan-end','scan-windows'];
+let configurationDraft=null;
+function captureConfiguration(){return Object.fromEntries(configIds.map(id=>[id,$('#'+id).value]));}
+function restoreConfiguration(value){for(const id of configIds)if(typeof value[id]==='string'){const e=$('#'+id);if(e.tagName!=='SELECT'||[...e.options].some(o=>o.value===value[id]))e.value=value[id];}updateScanOptions();}
+function commitConfiguration(){const error=scanSettings.validate(currentScanOptions());if(error){notice(error,'error');return false;}try{localStorage.setItem('showpsisi.scan.v1',JSON.stringify(captureConfiguration()));}catch(_){notice('Options kept for this session; preference storage unavailable','warning');}configurationDraft=null;return true;}
+function cancelConfiguration(){if(configurationDraft)restoreConfiguration(configurationDraft);configurationDraft=null;classicConfiguration=false;syncSiMode();}
+const configActions=document.createElement('div');configActions.className='configuration-actions';configActions.innerHTML='<span>Next analysis only. Current results retain their original settings.</span><button data-config-ok>OK</button><button data-config-cancel>Cancel</button>';
+$('.sourcebar').append(configActions);configActions.querySelector('[data-config-ok]').onclick=()=>{if(commitConfiguration()){classicConfiguration=false;syncSiMode();}};configActions.querySelector('[data-config-cancel]').onclick=cancelConfiguration;
+try{const raw=localStorage.getItem('showpsisi.scan.v1');if(raw){const original=captureConfiguration();restoreConfiguration(JSON.parse(raw));if(scanSettings.validate(currentScanOptions()))restoreConfiguration(original);}}catch(_){}
 async function scan() {
   if (busy || backendFailure) return;
   const path = $("#source").value.trim();
@@ -975,16 +988,11 @@ async function scan() {
       (options.scan_mode === "distributed" && (!integer(options.window_count,1) || options.window_count > 16))) {
     notice("Choose 1–100 percent or a positive integer packet budget, an increasing packet range, and 1–16 windows.", true); return;
   }
+  if(!commitConfiguration())return;
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
-  resetAnalysisViews();
-  data = {};
-  preview = {};
-  filter = "";
-  pidFilter = null;
-  page = 0;
-  historyPage = 0;
+  candidatePending = true;
   firstPaint = false;
   completePaint = false;
   render();
@@ -992,6 +1000,7 @@ async function scan() {
   let succeeded = false;
   try {
     recentFiles=normalizeRecentFiles([path,...recentFiles]);saveRecentFiles();closeRecentFiles();renderRecentFiles();
+    documentWorkspace?.stopMedia?.();
     const operation = call("analyze", {
       path,
       response_mode: "compact", scan_mode: options.scan_mode,
@@ -1005,6 +1014,7 @@ async function scan() {
     render();
     const result = await operation;
     if (epoch !== scanEpoch) return;
+    if(candidatePending){candidatePending=false;resetAnalysisViews();filter="";pidFilter=null;page=0;historyPage=0;}
     clearProgress(); activeAnalyze = null; pausePending = "";
     data = {...result,complete:false,analysis_status:"loading_results"};
     await hydrateResult(result, () => epoch === scanEpoch);
@@ -1020,7 +1030,10 @@ async function scan() {
     );
   } catch (error) {
     if (epoch !== scanEpoch) return;
-    if (error.code === "analysis_cancelled") {
+    if (error.data?.state_preserved && candidatePending && data.source) {
+      if(data.source)$("#source").value=data.source;
+      notice(String(error) + " — previous input and view retained", true);
+    } else if (error.code === "analysis_cancelled") {
       resetAnalysisViews();
       data = error.data?.state || { analysis_status: "cancelled", complete: false };
       notice("Analysis cancelled · source unchanged · ready to analyze again", "warning");
@@ -1032,12 +1045,12 @@ async function scan() {
   } finally {
     if (epoch === scanEpoch) {
       const returnFocus = cancelling && (document.activeElement === $("#cancel-scan") || document.activeElement === document.body);
-      clearProgress(); pausePending = "";
+      clearProgress(); pausePending = ""; candidatePending = false;
       busy = false;
       cancelling = false;
       activeAnalyze = null;
       render();
-      if (succeeded) {if(tab==='Topology')loadTopology();else defaultInspect();}
+      if (succeeded) {if(classicMode){classicConfiguration=false;syncSiMode();}if(tab==='Topology')loadTopology();else defaultInspect();}
       if (returnFocus && !backendFailure) $("#scan").focus();
     }
   }
@@ -1068,9 +1081,10 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
     const result = await call("inspect", {
       id, occurrence_offset:0, occurrence_limit:200,
       ...(atPacket != null ? { at_packet: atPacket } : {}),
-      ...(['topology','protocol'].includes(evidence?.kind) ? {analysis_revision:evidence.ref.analysis_revision} : {}),
+      ...(['topology','protocol'].includes(evidence?.kind) ? {analysis_revision:evidence.ref.analysis_revision} : evidence?.kind==='service'?{analysis_revision:evidence.revision}:{}),
     });
     if (epoch !== inspectEpoch) return;
+    if(evidence?.kind==='service'&&(result.id!==id||result.analysis_revision!==evidence.revision||result.native_table_at_packet!==evidence.atPacket))throw Error('Service source context mismatch');
     if(evidence?.kind==='topology') {
       if(evidence.nodeId!==topology.selected || evidence.ref!==topology.active || evidence.ref.analysis_revision!==data.revision) return;
       if(id===evidence.ref.section_id) {
@@ -1115,6 +1129,7 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
   }
 }
 function defaultInspect() {
+  if(classicMode){const table=(data.tables||[]).find(r=>r.name==='PAT'&&r.valid)||(data.tables||[])[0];if(table)inspect(table.id);else{selectionReset();renderInspector();}return;}
   const first = data.services?.[0];
   if (first)
     inspect(
@@ -1258,6 +1273,7 @@ function renderExplorer() {
   if (restoreFocus) buttons.find(el => el.dataset.explorerKey === explorerFocusKey)?.focus();
 }
 function render() {
+  syncSiMode(); siView?.update(); summaryView?.update(); syncDocuments();
   renderScanProgress(); renderResultPages();
   dvbiWorkspace?.update();
   updateScanOptions();
@@ -2092,6 +2108,7 @@ function editBlockReason() {
   return "";
 }
 function renderInspector() {
+  syncSiMode(); siView?.update(); summaryView?.update(); syncDocuments();
   if(palette.mode)renderPalette();
   const panel = $("#inspector");
   if (!panel) return;
@@ -2562,7 +2579,8 @@ $("#browse").onclick = async () => {
     });
     if (typeof path === "string") {
       $("#source").value = path;
-      scan();
+      if(classicMode){if(!classicConfiguration)configurationDraft=captureConfiguration();classicConfiguration=true;syncSiMode();notice("Ready — choose Start to analyze the selected transport stream");}
+      else scan();
     }
   } catch (error) {
     notice(String(error), true);
@@ -2697,6 +2715,12 @@ function focusNextRegion(backwards) {
 document.addEventListener("keydown", (e) => {
   if($("#shortcuts-dialog").open)return;
   const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
+  if(workbenchKeys && classicMode) {
+    if(e.key==='F6') {e.preventDefault();const origin=classicConfiguration?$('.sourcebar[role=region]'):null;if(documentMode)documentWorkspace.nextRegion(e.shiftKey,$('#unified-si>.si-left .si-navigation'));else if(summaryVisible)summaryView.nextRegion(e.shiftKey,origin);else siView.nextRegion(e.shiftKey,origin);return;}
+    if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(summaryVisible){summaryVisible=false;syncSiMode();}else siView.back();return;}
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const search=$('#unified-si .si-search');search.hidden=false;search.focus();return;}
+  }
+
   if (workbenchKeys && e.key === "F6" && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault();
     focusNextRegion(e.shiftKey);
@@ -2896,11 +2920,11 @@ function uiState() {
     runtime:{driver:env.driver,user_agent:navigator.userAgent},viewport:{width:innerWidth,height:innerHeight,device_pixel_ratio:devicePixelRatio},
     scan_control:{busy,cancelling,pause_pending:pausePending,request_id:activeAnalyze,coverage:data.coverage,result_loading:resultLoading,result_pages:resultPages},
     source:data.source || "",analysis_status:data.analysis_status || "idle",selected,selected_service:selectedService,packet:data.selected_packet,
-    theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
+    theme:document.documentElement.dataset.theme, explorer:explorerRows().map(row=>{const el=[...document.querySelectorAll(".explorer-row")].find(el=>el.dataset.explorerKey===explorerKey(row));return {...row,selected:explorerSelected(row),color:el ? getComputedStyle(el.querySelector("[data-table-name]")).color : "",glyph:el?.querySelector(".pid-table-icon").textContent};}), table_filter:{pid:pidFilter ?? -1,name:filter,count_unit:"logical_tables"},
     records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
     history:{all:allTableHistory,entries:workbench.history(data,detail,allTableHistory),page:historyPage},evidence_scope:evidenceScope,
     protocol_source:{resolution:protocolResolution,return_depth:protocolSourceHistory.length},topology:{profile:topology.snapshot?.interpretation_profile,cutoff:topology.snapshot?.at_packet,selected_node:topology.selected,focused_node:topology.focused,expanded_ids:Object.keys(topology.expanded).filter(id=>topology.expanded[id]),search:topology.search,family:topology.family,loaded_nodes:workbench.topologyNodes(topology.snapshot || {}).length,total_nodes:topology.snapshot?.counts?.nodes,loading:topology.loading,stale:topology.stale,error:topology.error,evidence_ref:topology.active,locator_resolution:topology.resolution,return_depth:topology.history.length},inspection_context:inspectionEvidence?.kind || (comparisonEvidence?"comparison":"workspace"),
-    tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
+    documents:documentWorkspace?.snapshot(),document_mode:documentMode,classic_frame:classicState(),unified:siView?.snapshot(),classic_mode:classicMode,tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
     diagnostics:{pending:pending.size,error:backendFailure || detailError,recent_responses:recentResponses.slice(),frontend_errors:frontendErrors.slice()},
@@ -3003,6 +3027,8 @@ async function boot() {
     disconnectBackend("Native backend stopped. Restart the application.");
   if (backendFailure) return;
   $("#source").value = env.sample || "";
+  classicFrame?.update();
+  if($("#classic-version"))$("#classic-version").textContent=env.version||"development";
   $("#runtime").textContent =
     env.runtime === "cloud-browser"
       ? "● CLOUD PREVIEW · REAL ENGINE"
@@ -3025,6 +3051,99 @@ window.showpsisi = {
   getDvbiDetail: () => dvbiWorkspace.getDetail(),
   getUiState: uiState,
 };
+// The classic core SI view and advanced workbench share the same live engine.
+let nativeTitle='';
+function setShellTitle(title){document.title=title;if(env.driver&&env.runtime!=='cloud-browser'&&nativeTitle!==title){nativeTitle=title;invoke('set_window_title',{title}).catch(()=>{nativeTitle='';});}}
+function syncSiMode() {
+  const active=classicMode && !dvbiWorkspace.getState().active;
+  document.body.classList.toggle('si-mode',active);applyTheme();
+  const panel=$('#unified-si');if(panel){panel.hidden=!active;panel.classList.toggle('si-summary-mode',summaryVisible&&!documentMode);panel.classList.toggle('si-document-mode',documentMode);panel.classList.toggle('si-tree-hidden',!classicTree);}
+  const documentsPanel=$('#document-workspace');if(documentsPanel)documentsPanel.hidden=!documentMode;
+  const summary=$("#transport-si");if(summary)summary.hidden=!active||!summaryVisible||documentMode;
+  const summaryButton=$("#summary-toggle");if(summaryButton)summaryButton.textContent=summaryVisible?"Return to inspector":"Summary / PID";
+  const button=$('#workspace-toggle');if(button)button.textContent=classicMode?'Advanced workspace':'SI Inspector';
+  document.body.classList.toggle('classic-configuration',classicConfiguration);document.body.classList.toggle('classic-no-status',!classicStatus);
+  const frame=$('#classic-frame');if(frame)frame.hidden=!active;classicFrame?.update();
+  setShellTitle(documentMode&&documentWorkspace.activeTitle()?'ShowPsiSi - '+documentWorkspace.activeTitle():'ShowPsiSi'+(data.source?' - '+String(data.source).split(/[\\/]/).pop():'')+(active?(summaryVisible?' - Summary':detail.id?' - '+detail.name+' PID '+hex(detail.pid):''):''));
+}
+const siPanel=document.createElement('section');siPanel.id='unified-si';siPanel.setAttribute('aria-label','PSI / SI inspector');$('#panes').before(siPanel);
+const workspaceButton=document.createElement('button');workspaceButton.id='workspace-toggle';workspaceButton.className='btn';workspaceButton.textContent='Advanced workspace';$('.titlebar').append(workspaceButton);
+workspaceButton.onclick=()=>{summaryVisible=false;classicMode=!classicMode;syncSiMode();siView.update();};
+const summaryPanel=document.createElement('section');summaryPanel.id='transport-si';summaryPanel.hidden=true;
+const summaryButton=document.createElement('button');summaryButton.id='summary-toggle';summaryButton.className='btn';summaryButton.textContent='Summary / PID';workspaceButton.before(summaryButton);
+summaryButton.onclick=()=>{classicMode=true;summaryVisible=!summaryVisible;syncSiMode();summaryView.update();};
+summaryView=TransportSi.create(summaryPanel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record,pid)=>{summaryVisible=false;classicMode=true;syncSiMode();siView.filterPid(pid);siView.selectRecord(record,record.id,null,true,false);}});
+siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),carousel:id=>openCarousel(id),teletext:pid=>openTeletext(pid),media:pid=>openMedia(pid,'PES'),topology:()=>topology.stale?null:topology.snapshot,
+  service:s=>openServices(s),packet:pid=>openPacket(pid,0),loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
+siPanel.append(summaryPanel);
+const documentsPanel=document.createElement('div');documentsPanel.id='document-workspace';documentsPanel.hidden=true;siPanel.append(documentsPanel);
+documentWorkspace=DocumentWorkspace.create(documentsPanel,{
+ create:(content,d,v)=>{
+  if(d.kind==='si'){
+   const panel=document.createElement('section');panel.className='si-document';content.append(panel);let payload=d.payload;
+   const ui=UnifiedSi.create(panel,{state:()=>payload._view_state||data,detail:()=>payload,pending:()=>false,busy:()=>busy,error:()=>'',inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,loadTopology:async()=>{}});
+   v.update=next=>{payload=next.payload;ui.update();};v.snapshot=()=>ui.snapshot();v.focusNode=path=>ui.focusNode(path);v.nextRegion=(back,origin)=>ui.nextRegion(back,origin);v.dispose=()=>ui.dispose();ui.update();
+  }else if(d.kind==='media'){const state=d.payload._view_state||data;const ui=MediaView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,packet:(pid,index,offset)=>{if(!busy&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision))openPacket(pid,index,offset);}},{pid:d.payload.pid,tab:d.payload.tab});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();v.stop=preserve=>ui.stop(preserve);
+  }else if(d.kind==='teletext'){const state=d.payload._view_state||data;const ui=TeletextView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,packet:(pid,index)=>openPacket(pid,index)},d.payload.pid);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='carousel'){const state=d.payload._view_state||data;const ui=CarouselView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,section:async(id,path,cutoff)=>{await inspect(id,-1,'carousel:'+id,{kind:'service',atPacket:cutoff,revision:state.analysis_revision||state.revision});if(detail.id===id&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision)){openDocument('si');documentWorkspace.focusSection(id,path,cutoff);}}},d.payload.source_id);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='service'){const state=d.payload._view_state||data;const ui=ServiceView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,section:async(id,path,cutoff)=>{await inspect(id,-1,'service:'+id,{kind:'service',atPacket:cutoff,label:'Service source at packet '+cutoff,revision:state.analysis_revision||state.revision});if(detail.id===id&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision)){openDocument('si');documentWorkspace.focusSection(id,path,cutoff);}}},d.payload.service);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='statistics'){const ui=StatisticsView.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,packet:(pid,index)=>openPacket(pid,index)});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='packet'){const ui=PacketExplorer.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,section:id=>inspect(id)},{pid:d.payload.pid,index:d.payload.index,byte_offset:d.payload.byte_offset});v.seekPacket=(pid,index,offset)=>ui.seek(pid,index,offset);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='summary'){
+   const panel=document.createElement('section');panel.className='transport-si';content.append(panel);
+   const ui=TransportSi.create(panel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record)=>inspect(record.id)});v.update=()=>ui.update();v.dispose=()=>ui.dispose();ui.update();
+  }else{const text=document.createElement('textarea');text.readOnly=true;text.setAttribute('aria-label','Native decoded table');content.append(text);v.update=next=>{const value=next.payload.section_native_text||next.payload.native_text||next.payload.raw_hex||'No selected table';if(text.value!==value)text.value=value;};}
+ },changed:state=>{classicFrame?.update();if(documentMode&&classicMode){const active=state.items.find(d=>d.id===state.active);setShellTitle('ShowPsiSi - '+(active?.title||documentScope()));}}
+});
+let documentIdentity='',documentLastDetail='';
+function syncDocuments(){
+ if(!documentWorkspace)return;const identity=[data.source,data.analysis_revision||data.revision].join('|');
+ if(documentIdentity!==identity){documentIdentity=identity;documentWorkspace.reset(identity);documentLastDetail='';}
+ if(documentMode&&detail.id&&!loadingDetail&&detail.id+'@'+data.selected_packet!==documentLastDetail){documentLastDetail=detail.id+'@'+data.selected_packet;openDocument('si');}
+}
+function openMedia(pid,tab='PES'){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('media',String(pid)+'@'+data.selected_packet,documentScope()+' - PES / ES / Media',{pid,tab,_view_state:structuredClone(data)});syncSiMode();}
+function openTeletext(pid){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('teletext',String(pid)+'@'+data.selected_packet,documentScope()+' - Teletext',{pid,_view_state:structuredClone(data)});syncSiMode();}
+function openCarousel(sourceId){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('carousel','carousel@'+data.selected_packet,documentScope()+' - DSM-CC / OC Files',{source_id:sourceId||detail.id,_view_state:structuredClone(data)});syncSiMode();}
+function openServices(service){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;const key=service?service.onid+':'+service.ts_id+':'+service.id:'all';documentWorkspace.open('service',key+'@'+data.selected_packet,documentScope()+' - Services / EPG',{service,_view_state:structuredClone(data)});syncSiMode();}
+function documentScope(cutoff){const at=cutoff===undefined?data.selected_packet:cutoff;return String(data.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(data.analysis_revision||data.revision||0)+', '+(at==null?'latest':'packet '+at)+']';}
+function openPacket(pid,index,byteOffset){const existing=documentWorkspace.snapshot().items.some(d=>d.kind==='packet'&&d.key===String(pid));documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid<0?null:pid,index:index||0,byte_offset:byteOffset||0});if(existing)documentWorkspace.seekPacket(pid,index||0,byteOffset||0);syncSiMode();}
+function openDocument(kind,duplicate=false){
+ if(!documentWorkspace)return;const payload=kind==='summary'?{}:structuredClone(detail),key=kind==='summary'?'summary':(detail.id||'empty')+'@'+detail.native_table_at_packet;if(kind!=='summary'){payload._view_state=structuredClone(data);payload._view_state.selected_packet=detail.native_table_at_packet;}
+ const title=documentScope(kind==='summary'?undefined:detail.native_table_at_packet)+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
+ documentWorkspace.open(kind,key,title,payload,duplicate);documentLastDetail=detail.id+'@'+data.selected_packet;syncSiMode();
+}
+document.addEventListener('keydown',event=>{if(!documentMode||!classicMode||document.querySelector('dialog[open]'))return;if(event.ctrlKey&&event.key==='F4'){event.preventDefault();documentWorkspace.close();}else if(event.ctrlKey&&event.key==='Tab'){event.preventDefault();documentWorkspace.cycle(event.shiftKey);}});
+
+const framePanel=document.createElement('header');framePanel.id='classic-frame';framePanel.className='classic-frame';$('.titlebar').before(framePanel);
+const helpDialog=document.createElement('dialog');helpDialog.id='classic-help';helpDialog.innerHTML='<h2>ShowPsiSi Help</h2><p>Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to fields and original bytes. Click text to select; double-click text or click +/− to expand. F6 / Shift+F6 changes panes. Alt+Left returns. Card Configuration contains source and scan options. Advanced workspace retains topology, editing, history and DVB-I.</p><button class="btn">Close</button>';$('#app').append(helpDialog);helpDialog.querySelector('button').onclick=()=>helpDialog.close();
+const footer=$('#app > footer');for(const [id,text] of [['product','ShowPsiSi'],['version','development'],['num',''],['scroll','']]){const cell=document.createElement('span');cell.id='classic-'+id;cell.className='classic-status-part';cell.textContent=text;footer.append(cell);}
+function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:documentMode?(documentWorkspace?.snapshot().items.length||0):(data.complete?1:0),features:{save:true,documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
+async function classicCommand(id){const state=classicState();if(!classic.enabled(id,state)){notice(classic.reason(id,state),'warning');return;}
+ if(id==='open')await $('#browse').onclick();
+ else if(id==='start')scan();else if(id==='stop')cancelScan();else if(id==='pause')pauseScan();
+ else if(id==='toolbar')classicToolbar=!classicToolbar;else if(id==='status')classicStatus=!classicStatus;else if(id==='tree')classicTree=!classicTree;
+ else if(id==='save'){outputDialog.open(data,documentMode?documentWorkspace.outputContext():{kind:'si',payload:detail,view:siView?.snapshot()||{}});}
+ else if(id==='configuration'){if(classicConfiguration)cancelConfiguration();else{configurationDraft=captureConfiguration();classicConfiguration=true;syncSiMode();$('#source').focus();}}
+ else if(id==='new'){documentMode=true;openDocument('si',true);}
+ else if(id==='decoded'){documentMode=true;openDocument('decoded');}
+ else if(id==='packets')openPacket(-1,0);
+ else if(id==='media')openMedia(-1,'PES');
+ else if(id==='teletext')openTeletext(-1);
+ else if(id==='carousel')openCarousel();
+ else if(id==='services')openServices(null);
+ else if(id==='bitrate'){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('statistics','statistics',documentScope()+' - Bitrate / Timing',{});}
+ else if(id==='close')documentWorkspace.close();
+ else if(['cascade','tile','arrange'].includes(id))documentWorkspace.arrange(id);
+ else if(id==='summary'){if(documentMode)openDocument('summary');summaryVisible=true;classicMode=true;syncSiMode();summaryView.update();}
+ else if(id==='advanced')$('#workspace-toggle').click();else if(id==='dvbi'){$('#input-kind').value='dvbi';$('#input-kind').dispatchEvent(new Event('change'));}
+ else if(id==='about')$('#about').click();else if(id==='index')helpDialog.showModal();else if(id==='messages')$('#messages').click();
+ else if(id==='diagnostics')$('#save-diagnostics').click();else if(id==='exit'){try{await invoke('close_application');}catch(error){notice(String(error),true);}}
+ syncSiMode();
+}
+const outputDialog=OutputDialog.create({native:()=>!!env.driver&&env.runtime!=='cloud-browser',call,notice,busy:value=>{exportPending=value;classicFrame?.update();},choose:o=>invoke('plugin:dialog|save',{options:{defaultPath:'selected-'+o.kind+'.'+o.extension,filters:[{name:o.label,extensions:[o.extension]}]}})});
+classicFrame=ClassicFrame.create(framePanel,{state:classicState,command:classicCommand,locks:value=>{$('#classic-num').textContent=value.num?'NUM':'';$('#classic-scroll').textContent=value.scroll?'SCRL':'';}});
+$('#source').addEventListener('input',()=>classicFrame.update());
+syncSiMode();
 boot().catch((error) => {
   disconnectBackend("Backend connection failed: " + String(error));
 });

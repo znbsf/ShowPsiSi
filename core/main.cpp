@@ -59,6 +59,8 @@ TS_LIBTSDUCK_CHECK();
 #endif
 
 using J = nlohmann::json;
+#include "SiWireFields.h"
+#include "PacketInspection.h"
 #include "NorDigMetadata.h"
 #include "DvbiInput.h"
 #include "CableOobMetadata.h"
@@ -132,6 +134,7 @@ struct AnalysisControl {
         }
     }
 };
+struct CancelledMedia : std::exception {const char* what()const noexcept override{return "Media decode cancelled";}};
 struct CancelledAnalysis : std::exception {
     const char* what() const noexcept override { return "Analysis cancelled"; }
 };
@@ -277,11 +280,22 @@ struct Record {
 #include "SignalMetadata.h"
 #include "SatelliteMetadata.h"
 #include "ApplicationSignalling.h"
+#include "CarouselContent.h"
+#include "media/pes_engine.h"
+#include "media/teletext.h"
+#include "media/teletext_body.h"
+#include "media/DecoderProcess.h"
+#include "media/AudioPlayback.h"
 #include "SignalTopology.h"
 #include "ApplicationCarriage.h"
+#include "TransportStatistics.h"
+
+class RejectedInput : public std::runtime_error { public: using std::runtime_error::runtime_error; };
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     dvbi::Store dvbiDocuments;
+    mediadecode::AudioPlayback audioPlayback;J decoderPin=J::object(),decodedPreview=J::object();fs::path decoderPath;Bytes decodedPcm;std::vector<Bytes> decodedFrames;std::string mediaToken;uint64_t mediaSequence=0;
+    fs::file_time_type analysisSourceStamp{}; bool analysisSourceKnown=false;
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
     std::vector<Record> records; std::unordered_map<std::string,size_t> ids; J history=J::array();
     std::unordered_map<std::string,std::string> previous;
@@ -289,6 +303,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     std::unordered_map<std::string,size_t> historySlots;
     uint64_t packets=0,totalBytes=0,observations=0,crcErrors=0; size_t stride=188,prefix=0;
     double bitrate=0,firstMs=-1,totalMs=0; Clock::time_point began;
+    transportstats::Statistics transportStatistics;
     std::string standardsContext="auto",analysisStatus="idle";
     J requestId; std::function<void()> onFirst; bool complete=false; size_t revision=0;
     J coverage=J::object(),resultCache=J::object();uint64_t cacheCutoff=UINT64_MAX,scannedPackets=0,plannedPackets=0,demuxOffset=0;
@@ -494,9 +509,11 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                         audio=ts::CodecTypeIsAudio(codec);video=ts::CodecTypeIsVideo(codec);
                     }
                 }
-                r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},
+                r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},{"section_offset",p},{"structure_path","section/stream/"+std::to_string(p)},
                     {"is_audio",audio},{"is_video",video},
                     {"classification_basis","TSDuck PMT classification; private stream types require namespace or descriptor evidence"}});
+                std::string format;switch(nativeStream.getCodec(duck)){case ts::CodecType::MPEG1_VIDEO:case ts::CodecType::MPEG2_VIDEO:if(video)format="mpegvideo";break;case ts::CodecType::AVC:if(video)format="h264";break;case ts::CodecType::HEVC:if(video)format="hevc";break;case ts::CodecType::MPEG1_AUDIO:case ts::CodecType::MPEG2_AUDIO:case ts::CodecType::MP3:if(audio)format="mp3";break;case ts::CodecType::AAC:case ts::CodecType::HEAAC:if(audio&&(b[p]==0x0f||b[p]==0x11))format=b[p]==0x11?"loas":"aac";break;case ts::CodecType::AC3:if(audio)format="ac3";break;case ts::CodecType::EAC3:if(audio)format="eac3";break;default:break;}r.fields["streams"].back()["codec"]=ts::CodecTypeEnum().name(int(nativeStream.getCodec(duck))).toUTF8();r.fields["streams"].back()["decoder_format"]=format.empty()?J():J(format);
+                J teletext=J::array();if(standardsContext=="dvb")for(size_t q=p+5;q+2<=p+5+len;){const size_t n=b[q+1];if(q+2+n>p+5+len)break;if(b[q]==0x56&&n%5==0)for(size_t t=q+2;t<q+2+n;t+=5){unsigned magazine=b[t+3]&7;if(!magazine)magazine=8;const std::string language(reinterpret_cast<const char*>(b.data()+t),3);bool ascii=std::all_of(language.begin(),language.end(),[](unsigned char c){return c>=32&&c<=126;});teletext.push_back({{"language",ascii?language:hex(b.data()+t,3)},{"type",b[t+3]>>3},{"page_hex",(magazine<<8)|b[t+4]},{"descriptor_offset",q}});}q+=2+n;}r.fields["streams"].back()["teletext_signalling"]=teletext;
                 p+=5+len;
             }
         } else if(r.tid==1&&b.size()>=12) {
@@ -690,13 +707,13 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     }
     J derivedSnapshot(const std::map<std::string,const Record*>& selected) const {
         J out={{"services",J::array()},{"events",J::array()}};
-        std::map<std::string,J> services; std::map<std::pair<unsigned,unsigned>,unsigned> pmts; std::map<std::pair<unsigned,unsigned>,J> components;
+        std::map<std::string,J> services; std::map<unsigned,std::set<unsigned>> actualNetworks;std::map<std::pair<unsigned,unsigned>,std::set<unsigned>> pmts; std::map<std::pair<unsigned,unsigned>,J> components;
         for(const auto& [key,item]:selected) {
             const Record& r=*item;
             if((r.tid==0||r.tid==2||r.tid==0x42)&&!completeGroup(r,selected))continue;
-            if(r.tid==0&&r.pid==0)for(const auto& p:r.fields.value("programs",J::array()))if(p["service_id"]!=0)pmts[{r.ext,p["service_id"].get<unsigned>()}]=p["pmt_pid"].get<unsigned>();
+            if(r.tid==0&&r.pid==0)for(const auto& p:r.fields.value("programs",J::array()))if(p["service_id"]!=0)pmts[{r.ext,p["service_id"].get<unsigned>()}].insert(p["pmt_pid"].get<unsigned>());
             if(r.tid==2)components[{r.pid,r.ext}]=r.fields;
-            if(r.tid==0x42&&r.pid==0x11)for(const auto& s:r.services)services[std::to_string(s["onid"].get<unsigned>())+":"+std::to_string(s["ts_id"].get<unsigned>())+":"+std::to_string(s["id"].get<unsigned>())]=s;
+            if(r.tid==0x42&&r.pid==0x11)for(const auto& s:r.services){actualNetworks[r.ext].insert(s["onid"].get<unsigned>());services[std::to_string(s["onid"].get<unsigned>())+":"+std::to_string(s["ts_id"].get<unsigned>())+":"+std::to_string(s["id"].get<unsigned>())]=s;}
             for(const auto& e:r.events)out["events"].push_back(e);
         }
         std::string groupBy=extension.value("organization",J::object()).value("group_by",std::string("group"));
@@ -706,9 +723,10 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 const auto name=ts::ServiceTypeName(s["service_type"].get<uint8_t>()).toUTF8();
                 if(name.find("unknown")==std::string::npos&&name.find("Unknown")==std::string::npos)s["service_type_name"]=name;
             }
-            auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});s["pmt_pid"]=pat!=pmts.end()?J(pat->second):J();
+            auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});const bool uniqueTransport=actualNetworks[s["ts_id"].get<unsigned>()].size()==1,uniqueMapping=pat!=pmts.end()&&pat->second.size()==1;const unsigned pmtPid=uniqueMapping?*pat->second.begin():8191;s["pmt_pid"]=uniqueTransport&&uniqueMapping?J(pmtPid):J();
             s["audio_pids"]=J::array();s["video_pids"]=J::array();s["media_status"]="PMT unavailable";
-            if(pat!=pmts.end()){auto pmt=components.find({pat->second,sid});if(pmt!=components.end()){
+            if(!uniqueTransport)s["media_status"]="Ambiguous actual SDT transport identity; PMT association withheld";else if(pat!=pmts.end()&&!uniqueMapping)s["media_status"]="Conflicting PAT mappings; PMT association withheld";
+            if(uniqueTransport&&uniqueMapping){auto pmt=components.find({pmtPid,sid});if(pmt!=components.end()){
                 s["components"]=pmt->second;s["media_status"]="decoded PMT";
                 for(const auto& stream:pmt->second.value("streams",J::array())){
                     if(stream.value("is_audio",false))s["audio_pids"].push_back(stream["pid"]);
@@ -745,7 +763,13 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     }
 
 public:
-    explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension; }
+    explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension;decoderPin=readJson(root/"api/tools.json").value("media_decoder",J::object());
+#ifdef _WIN32
+        const auto configured=_wgetenv(L"SHOWPSISI_FFMPEG");decoderPath=configured?fs::path(configured):root/".deps/ffmpeg/ffmpeg.exe";
+#else
+        const auto configured=std::getenv("SHOWPSISI_FFMPEG");decoderPath=configured?pathFromUtf8(configured):root/".deps/ffmpeg/ffmpeg";
+#endif
+    }
     void handleSection(ts::SectionDemux& demux,const ts::Section& s) override {
         // Discover dependent signalling PIDs before later packets in this block.
         if(s.tableId()==0&&s.sourcePID()==0&&s.isLongSection()&&s.size()>=12) { const auto* b=s.content(); for(size_t p=8;p+4<=s.size()-4;p+=4)demux.addPID(((b[p+2]&31)<<8)|b[p+3]); }
@@ -788,6 +812,7 @@ public:
         for(const auto& r:records)for(auto pos:r.positions){checkCancelled(control);size_t bucket=std::min<uint64_t>(bins-1,pos*bins/denominator);counts[bucket]++;if(!r.valid)bad[bucket]++;}
         for(size_t i=0;i<bins;i++)out["density"].push_back({{"count",counts[i]},{"bad",bad[i]}});
         out["table_groups"]=tableGroups(at,control);out["timing"]={{"packet_unit","zero-based TS packet index"},{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"bitrate_unit","bits/second for 188-byte TS packets"},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false},{"note","Arrival positions are TS packet indexes; seconds require supplied 188-byte TS bitrate, not measured PCR timing"}};
+        out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();out["media_streams"]=mediaStreams(at);
         out["selected_packet"]=at==UINT64_MAX?J():J(at);out["demux"]=demuxStatus;out["scope"]={{"tables_services_events","selected packet"},{"history_density_counters_demux","entire scan"},{"services","complete actual SDT on canonical PID 0x0011; nonstandard SDT PIDs remain table evidence"}};
         out["table_history"]=tableHistory;
         out["scope"]["table_history"]="entire scan; content transitions per PID/table/extension/section/current/validity; at_packet is first completed occurrence; not complete-generation transitions";
@@ -796,13 +821,211 @@ public:
         return out;
     }
     // Compact transport never enumerates occurrences or copies transition logs.
+    J mediaStreams(uint64_t at) const {
+        J rows=J::array();const auto selected=latest(at);for(const auto& [key,r]:selected)if(r->tid==2&&completeGroup(*r,selected))for(const auto& stream:r->fields.value("streams",J::array())){if(rows.size()>=8192)return rows;auto entry=stream;entry["source_id"]=r->id;entry["program_number"]=r->ext;rows.push_back(entry);}return rows;
+    }
     J compactState(uint64_t at=UINT64_MAX) {
         const size_t visibleTables=at==UINT64_MAX?records.size():size_t(std::count_if(records.begin(),records.end(),[&](const Record& r){return !r.ends.empty()&&r.ends.front()<=at;}));
         J counts={{"tables",visibleTables},{"history",history.size()},{"table_history",tableHistory.size()},{"density",80},{"services",nullptr},{"events",nullptr},{"diagnostics",nullptr},{"table_groups",nullptr}};
         if(cacheCutoff==at)for(auto it=resultCache.begin();it!=resultCache.end();++it)counts[it.key()]=it.value().size();
         J cov=coverage;cov["scanned_packets"]=scannedPackets;
         J out={{"response_mode","compact"},{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"analysis_revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"bitrate",bitrate},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"text_charset",duck.charsetIn()->name().toUTF8()},{"time_reference",duck.timeReferenceName().toUTF8()},{"selected_packet",at==UINT64_MAX?J():J(at)},{"coverage",cov},{"result_counts",counts},{"progress_fraction",plannedPackets?double(scannedPackets)/plannedPackets:0.0},{"demux",demuxStatus},{"timing",{{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false}}},{"metrics",{{"scan_ms_basis","Wall elapsed time including pauses and owner finalization; excludes client result hydration"},{"first_section_ms",firstMs},{"scan_ms",(analysisStatus=="analyzing"||analysisStatus=="paused"||analysisStatus=="finalizing")?ms(began):totalMs}}}};
+        out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();out["media_streams"]=mediaStreams(at);
         appendStandardsMetadata(out);return out;
+    }
+    J readPes(const J& args,const mediawire::PesEngine::Observer& observer,const std::function<void()>& resetObserver={},const std::shared_ptr<AnalysisControl>& mediaControl=nullptr) const {
+        if(!complete||!analysisSourceKnown||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete media analysis_revision");
+        auto unchanged=[&](){return fs::is_regular_file(source)&&fs::file_size(source)==totalBytes&&fs::last_write_time(source)==analysisSourceStamp;};if(!unchanged())throw std::runtime_error("Source changed since analysis");
+        const unsigned pid=args.at("pid");if(pid>=8191)throw std::runtime_error("PES PID must be 0..8190");
+        uint64_t start=args.value("start_packet",uint64_t(0)),count=args.value("scan_limit",uint64_t(65536)),cutoff=args.value("at_packet",totalBytes/stride-1);const uint64_t total=totalBytes/stride;if(start>=total||cutoff>=total||start>cutoff)throw std::runtime_error("Media scan range outside source");const uint64_t end=std::min(cutoff+1,start+count);
+        J diagnostics=J::array();uint64_t selected=0,delivered=0,duplicates=0,incomplete=0,discontinuities=0,errors=0,scanned=0;bool resource=false;auto engine=std::make_unique<mediawire::PesEngine>(pid);auto observe=[&](const mediawire::PesPacket& p,uint64_t a,uint64_t b){++delivered;if(delivered>4096){resource=true;return false;}const bool accepted=observer(p,a,b);if(!accepted)resource=true;return accepted;};engine->set_observer(observe);engine->set_discontinuity_observer(resetObserver);
+        auto reset=[&](){engine->abandon();if(resetObserver)resetObserver();const auto& stats=engine->stats();duplicates+=stats.duplicate_packets;incomplete+=stats.incomplete_pes;discontinuities+=stats.discontinuities;engine=std::make_unique<mediawire::PesEngine>(pid);engine->set_observer(observe);engine->set_discontinuity_observer(resetObserver);};
+        std::ifstream input(source,std::ios::binary);if(!input)throw std::runtime_error("Cannot read media source");input.seekg(std::streamoff(start*stride));Bytes frame(stride);auto ranges=coverage.value("ranges",J::array());size_t ri=0;bool wasObserved=false;
+        for(uint64_t index=start;index<end;++index){if(mediaControl&&mediaControl->cancelled.load())throw CancelledMedia();input.read(reinterpret_cast<char*>(frame.data()),std::streamsize(stride));if(size_t(input.gcount())!=stride)throw std::runtime_error("Source became unreadable during media scan");++scanned;while(ri<ranges.size()&&index>=ranges[ri]["end_packet"].get<uint64_t>())++ri;bool observed=ri<ranges.size()&&index>=ranges[ri]["start_packet"].get<uint64_t>();if(!observed){if(wasObserved){++discontinuities;reset();}wasObserved=false;continue;}wasObserved=true;
+            const auto* b=frame.data()+prefix;if(b[0]!=0x47){++errors;if(diagnostics.size()<64)diagnostics.push_back({{"packet_index",index},{"error","Invalid TS sync; PES context reset"}});reset();continue;}if((((b[1]&31)<<8)|b[2])!=pid)continue;++selected;
+            if(!engine->feed_packet(b,188,index)){if(diagnostics.size()<64)diagnostics.push_back({{"packet_index",index},{"error",engine->error()}});++errors;if(resource)break;reset();}
+        }
+        // A bounded scan/cutoff is not the delimiter of an unbounded video PES.
+        if(end==total&&wasObserved&&!resource){if(!engine->finish()){++errors;if(diagnostics.size()<64)diagnostics.push_back({{"error",engine->error()}});}}
+        if(end!=total||resource)engine->abandon();
+        const auto& stats=engine->stats();duplicates+=stats.duplicate_packets;incomplete+=stats.incomplete_pes;discontinuities+=stats.discontinuities;
+        if(!unchanged())throw std::runtime_error("Source changed during media scan");
+        return {{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",pid},{"start_packet",start},{"end_packet",end},{"scanned_packets",scanned},{"source_packets",total},{"selected_packets",selected},{"delivered_pes",delivered},{"duplicates",duplicates},{"incomplete_pes",incomplete},{"discontinuities",discontinuities},{"errors",errors},{"diagnostics",diagnostics},{"status",resource?"resource_limit":errors?"partial_with_errors":"observed"},{"scan_truncated",end<=cutoff},{"next_start_packet",end<=cutoff?J(end):J()},{"coverage",coverage},{"scope","Only original packets inside analyzed contiguous windows and the requested bounded scan; MPEG-2 PES, no pointer-field inference; range boundaries discard pending PES"}};
+    }
+    J pesFragments(const mediawire::PesPacket& p,size_t offset,size_t length) const {
+        J out=J::array();const size_t end=offset+length;for(const auto& f:p.fragments){const size_t begin=std::max(offset,f.pes_offset),stop=std::min(end,f.pes_offset+f.length);if(stop>begin)out.push_back({{"packet_index",f.packet_index},{"packet_offset",f.packet_offset+begin-f.pes_offset},{"pes_offset",begin},{"length",stop-begin},{"file_offset",f.packet_index*stride+prefix+f.packet_offset+begin-f.pes_offset},{"framing_stride",stride},{"framing_prefix",prefix}});}return out;
+    }
+    J decoderInfo(bool verify) const {
+#ifdef _WIN32
+        const bool supported=true;
+#else
+        const bool supported=false;
+#endif
+        J out=decoderPin;out["platform_supported"]=supported;out["available"]=supported&&fs::is_regular_file(decoderPath);out["verified"]=false;out["scope"]="Optional external pinned tool; not bundled or downloaded by the application";
+        if(!verify)return out;if(!supported||!fs::is_regular_file(decoderPath))throw std::runtime_error("Configure the pinned external FFmpeg tool before decoding media");if(fs::file_size(decoderPath)>256*1024*1024)throw std::runtime_error("Decoder executable exceeds the pinned-tool size bound");std::ifstream file(decoderPath,std::ios::binary);ts::SHA256 hash;if(!file||!hash.init())throw std::runtime_error("Cannot verify decoder executable");std::array<uint8_t,65536> buffer;while(file){file.read(reinterpret_cast<char*>(buffer.data()),buffer.size());const auto n=file.gcount();if(n>0&&!hash.add(buffer.data(),size_t(n)))throw std::runtime_error("Decoder hash provider failed");}uint8_t digest[ts::SHA256::HASH_SIZE];if(!file.eof()||!hash.getHash(digest,sizeof(digest)))throw std::runtime_error("Cannot complete decoder hash");auto sha=hex(digest,sizeof(digest));std::transform(sha.begin(),sha.end(),sha.begin(),[](char c){return char(std::tolower(c));});if(sha!=decoderPin.value("sha256",std::string()))throw std::runtime_error("External decoder SHA-256 does not match the reviewed pin; tool was not executed");out["verified"]=true;out["path"]=pathUtf8(fs::absolute(decoderPath));return out;
+    }
+    J pesMetadata(const mediawire::PesPacket& p,size_t index,uint64_t first,uint64_t last) const {return {{"index",index},{"pid",p.pid},{"stream_id",p.stream_id},{"stream_name",mediawire::pes_stream_id_name(p.stream_id)},{"start_packet",first},{"end_packet",last},{"bytes",p.raw.size()},{"declared_packet_length",p.packet_length},{"payload_offset",p.payload_offset},{"es_bytes",p.raw.size()-p.payload_offset},{"pts",p.has_pts?J(p.pts):J()},{"dts",p.has_dts?J(p.dts):J()},{"timestamp_unit","90 kHz clock ticks; no presentation clock inferred"},{"pes_scrambling_control",p.scrambling_control},{"source_fragment_count",p.fragments.size()},{"completion_basis",p.packet_length?"declared bounded PES length":"unbounded video PES delimited by next PUSI or original source EOF; no codec-frame completeness claim"}};}
+    J decodeMedia(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
+        if(control&&control->cancelled.load())throw CancelledMedia();if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete media analysis_revision");
+        auto tool=decoderInfo(true);const unsigned pid=args.at("pid");const size_t fromPes=args.value("from_pes_index",size_t(0));const std::string kind=args.at("kind"),requestedFormat=args.value("format",std::string("auto"));std::string format=requestedFormat;J carriage=J::array();std::set<std::string> formats;bool uncertain=false;
+        for(const auto& row:mediaStreams(args.value("at_packet",UINT64_MAX)))if(row["pid"]==pid){carriage.push_back(row);if(row["decoder_format"].is_null()||!row.value(kind=="video"?"is_video":"is_audio",false))uncertain=true;else formats.insert(row["decoder_format"].get<std::string>());}
+        if(format=="auto"){if(uncertain||formats.size()!=1)throw std::runtime_error("No unique supported codec declaration for this PID; choose an explicit input format");format=*formats.begin();}
+        const std::set<std::string> videoFormats={"mpegvideo","h264","hevc"},audioFormats={"mp3","aac","loas","ac3","eac3"};if(!(kind=="video"?videoFormats:audioFormats).count(format))throw std::runtime_error("Input format does not match chosen media kind");
+        struct Segment{Bytes bytes;J sources=J::array();};std::vector<Segment> segments(1);size_t pesIndex=0,collectedBytes=0;bool byteLimit=false,segmentLimit=false,pesLimit=false;auto cut=[&](){if(!segments.back().bytes.empty()){if(segments.size()<64)segments.emplace_back();else segmentLimit=true;}};
+        auto scan=readPes(args,[&](const mediawire::PesPacket& p,uint64_t first,uint64_t last){const size_t index=pesIndex++;if(index<fromPes)return true;if(segmentLimit)return false;if(index-fromPes>=256){pesLimit=true;return false;}const bool type=kind=="video"?(p.stream_id>=0xe0&&p.stream_id<=0xef):((p.stream_id>=0xc0&&p.stream_id<=0xdf)||p.stream_id==0xbd);if(!type||p.scrambling_control){cut();return true;}const size_t n=p.raw.size()-p.payload_offset;if(n>16*1024*1024-collectedBytes){byteLimit=true;return false;}if(!n)return true;auto& segment=segments.back();auto meta=pesMetadata(p,index,first,last);meta["segment_es_offset"]=segment.bytes.size();segment.sources.push_back(meta);segment.bytes.insert(segment.bytes.end(),p.raw.begin()+p.payload_offset,p.raw.end());collectedBytes+=n;return true;},cut,control);
+        if(segments.back().bytes.empty())segments.pop_back();if(segments.empty())throw std::runtime_error("No complete unscrambled PES payload for this media kind in the scan range");const size_t selected=args.value("segment_index",size_t(0));if(selected>=segments.size())throw std::runtime_error("Media segment_index outside collected contiguous segments");const auto& input=segments[selected].bytes;
+        std::vector<std::string> command={"-nostdin","-hide_banner","-loglevel","error","-xerror","-hwaccel","none","-threads","1","-protocol_whitelist","pipe","-f",format,"-i","pipe:0"};if(kind=="video")command.insert(command.end(),{"-map","0:v:0","-an","-vf","scale=320:180:force_original_aspect_ratio=decrease","-frames:v","16","-threads","1","-c:v","png","-f","image2pipe","pipe:1"});else command.insert(command.end(),{"-map","0:a:0","-vn","-t","3","-ar","48000","-ac","1","-c:a","pcm_s16le","-f","s16le","pipe:1"});
+        auto decoded=mediadecode::run(decoderPath,command,input,control?&control->cancelled:nullptr,[&](uint64_t pid){emit({{"event","media_progress"},{"request_id",rid},{"analysis_revision",revision},{"request_token",args.at("request_token")},{"phase","decoder_started"},{"decoder_pid",pid}});});if(decoded.cancelled||(control&&control->cancelled.load()))throw CancelledMedia();if(!decoded.error.empty())throw std::runtime_error(decoded.error);if(decoded.bytes.empty())throw std::runtime_error("Decoder produced no complete preview samples");if(!analysisSourceKnown||!fs::is_regular_file(source)||fs::file_size(source)!=this->totalBytes||fs::last_write_time(source)!=analysisSourceStamp)throw std::runtime_error("Source changed while decoding media");
+        J result={{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",pid},{"kind",kind},{"format",format},{"from_pes_index",fromPes},{"format_basis",requestedFormat=="auto"?"Unique context-aware observed PMT declaration":"Explicit user input format; not inferred protocol support"},{"carriage",carriage},{"scan",scan},{"segments",J::array()},{"segment_index",selected},{"input_bytes",input.size()},{"input_sha256",carouselcontent::sha(input)},{"byte_limit_reached",byteLimit},{"segment_limit_reached",segmentLimit},{"source_pes_limit_reached",pesLimit},{"source_pes",segments[selected].sources},{"decoder",tool},{"decoder_process",{{"pid",decoded.pid},{"exited",true},{"exit_code",decoded.exitCode}}},{"scope","Decoded bounded preview from complete captured PES in one contiguous ES segment; frame/sample byte boundaries and original A/V presentation synchronization are not inferred"}};
+        for(size_t i=0;i<segments.size();++i)result["segments"].push_back({{"index",i},{"bytes",segments[i].bytes.size()},{"pes_count",segments[i].sources.size()}});
+        std::vector<Bytes> frames;Bytes pcm;if(kind=="video"){frames=mediadecode::pngFrames(decoded.bytes);if(frames.empty())throw std::runtime_error("No decoded PNG frames");result["frames"]=J::array();for(size_t i=0;i<frames.size();++i){const auto& frame=frames[i];result["frames"].push_back({{"index",i},{"sha256",carouselcontent::sha(frame)},{"mime","image/png"},{"data_base64",mediadecode::base64(frame)}});}result["frame_count"]=frames.size();result["preview_fps"]=10;result["timing_basis"]="Derived 10 fps thumbnail sequence, maximum sixteen frames fitted within 320x180; not original frame pacing";}
+        else{pcm=std::move(decoded.bytes);if(pcm.size()%2)throw std::runtime_error("Decoder produced an incomplete PCM sample");if(pcm.size()>3*96000)throw std::runtime_error("Decoded PCM exceeded three seconds");const size_t samples=pcm.size()/2;J bins=J::array();for(size_t bin=0;bin<512&&bin<samples;++bin){size_t a=bin*samples/std::min<size_t>(512,samples),b=(bin+1)*samples/std::min<size_t>(512,samples);int low=32767,high=-32768;for(size_t n=a;n<b;++n){int value=int(pcm[n*2])|(int(pcm[n*2+1])<<8);if(value>=32768)value-=65536;low=std::min(low,value);high=std::max(high,value);}bins.push_back({{"sample_begin",a},{"sample_end",b},{"min",low},{"max",high}});}result["pcm"]={{"format","s16le"},{"sample_rate",48000},{"channels",1},{"samples",samples},{"bytes",pcm.size()},{"sha256",carouselcontent::sha(pcm)},{"waveform",bins},{"scope","Decoded mono downmix resampled to 48000 Hz, maximum three seconds; not original channel layout, native sample rate or device-clock proof"}};}
+        std::string token="media:"+std::to_string(revision)+":"+std::to_string(++mediaSequence)+":"+result["input_sha256"].get<std::string>();result["preview_token"]=token;result["request_token"]=args.at("request_token");auto publish=[&](){if(!audioPlayback.stop())throw std::runtime_error("Previous audio output could not stop");decodedPreview=result;decodedPcm=std::move(pcm);decodedFrames=std::move(frames);mediaToken=std::move(token);};if(control){if(control->finish(publish))throw CancelledMedia();}else publish();return result;
+    }
+    J audioControl(const J& args){const auto action=args.at("action").get<std::string>();auto reply=[&](J value){value["request"]=args;return value;};const bool matching=args.at("analysis_revision")==revision&&args.at("preview_token")==mediaToken&&!mediaToken.empty();if(!matching)return reply({{"matching_preview",false},{"playing",false},{"paused",false},{"status","stale_preview"},{"preview_token",args.at("preview_token")}});
+        if(action=="stop"){if(!audioPlayback.stop())throw std::runtime_error("Audio device buffer could not stop");}
+        else if(!analysisSourceKnown||!fs::is_regular_file(source)||fs::file_size(source)!=totalBytes||fs::last_write_time(source)!=analysisSourceStamp){audioPlayback.stop();if(action!="status")throw std::runtime_error("Source changed; audio preview will not play");return reply({{"matching_preview",true},{"playing",false},{"paused",false},{"status","source_changed"},{"preview_token",mediaToken}});}
+        else if(action=="play")audioPlayback.play(decodedPcm);else if(action=="pause"){if(!audioPlayback.pause(true))throw std::runtime_error("No active audio output to pause");}else if(action=="resume"){if(!audioPlayback.pause(false))throw std::runtime_error("No paused audio output to resume");}
+        const bool playing=audioPlayback.playing();return reply({{"matching_preview",true},{"playing",playing},{"paused",audioPlayback.isPaused()},{"status",playing?"device_buffer_queued":audioPlayback.isPaused()?"paused":"stopped_or_drained"},{"preview_token",mediaToken},{"scope","Windows output API state; does not establish physical audibility"}});
+    }
+    J queryPes(const J& args) const {
+        J rows=J::array(),selected=nullptr;size_t index=0;const size_t pageOffset=args.value("pes_offset",size_t(0)),pageLimit=args.value("pes_limit",size_t(100));
+        auto scan=readPes(args,[&](const mediawire::PesPacket& p,uint64_t first,uint64_t last){const auto meta=pesMetadata(p,index,first,last);if(index>=pageOffset&&rows.size()<pageLimit)rows.push_back(meta);if(args.contains("pes_index")&&args["pes_index"]==index){selected=meta;const bool es=args.value("layer",std::string("pes"))=="es";size_t base=es?p.payload_offset:0;Bytes bytes(p.raw.begin()+base,p.raw.end());auto page=carouselcontent::page(bytes,args.value("offset",size_t(0)),args.value("limit",size_t(4096)));page["layer"]=es?"collected_es_payload":"original_pes";page["pes_offset"]=base+page["offset"].get<size_t>();page.erase("class_info");selected["content"]=page;selected["source_fragments"]=pesFragments(p,base+page["offset"].get<size_t>(),page["length"].get<size_t>());}++index;return true;});
+        if(args.contains("pes_index")&&selected.is_null())throw std::runtime_error("PES index not observed in requested scan range");J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",args.at("pid")},{"scan",scan},{"pes",rows},{"pes_offset",pageOffset},{"pes_total",index},{"pes_next_offset",pageOffset+rows.size()<index?J(pageOffset+rows.size()):J()},{"selected",selected},{"scope","Original complete MPEG-2 PES envelopes within the selected contiguous scan ranges; ES is the collected payload, not codec-frame or decoder success"},{"decoder",decoderInfo(false)}};return out;
+    }
+    J queryTeletext(const J& args) const {
+        if(standardsContext!="dvb")throw std::runtime_error("Teletext requires explicit DVB interpretation");
+        mediawire::TeletextDecoder decoder;mediawire::TeletextPageStore store;
+        struct Unit {J sources;uint64_t first=0,last=0,pes=0;size_t offset=0;};std::vector<Unit> units;uint64_t invalid=0,parity=0,corrected=0,ignored=0;J unitErrors=J::array();
+        struct Capture{mediawire::TeletextPage page;uint64_t sequence=0;};std::vector<Capture> captures;uint64_t sequence=0,evictedCaptures=0,contextResets=0;std::map<std::pair<int,int>,std::pair<uint64_t,uint64_t>> retainedVersions;
+        auto retain=[&](const mediawire::TeletextPage& page){auto key=std::pair(page.header.page_hex,page.header.subcode);auto version=std::pair(page.header.source_unit_index,page.revision);if(retainedVersions.count(key)&&retainedVersions[key]==version)return;retainedVersions[key]=version;if(captures.size()>=128){captures.erase(captures.begin());++evictedCaptures;}captures.push_back({page,sequence++});};
+        auto scan=readPes(args,[&](const mediawire::PesPacket& p,uint64_t first,uint64_t last){
+            if(p.scrambling_control||p.stream_id!=0xbd||p.payload_offset>=p.raw.size()||p.raw[p.payload_offset]<0x10||p.raw[p.payload_offset]>0x1f){++ignored;return true;}
+            size_t pos=p.payload_offset+1;while(pos<p.raw.size()){
+                const unsigned type=p.raw[pos++];if(pos>=p.raw.size()){++invalid;mediawire::TeletextRow bad;decoder.decode(nullptr,0,bad);break;}const size_t length=p.raw[pos++];if(length>p.raw.size()-pos){++invalid;mediawire::TeletextRow bad;decoder.decode(nullptr,0,bad);break;}
+                if(type==2||type==3){if(units.size()>=32768)return false;const size_t index=units.size();auto sources=pesFragments(p,pos,length);uint64_t a=sources.empty()?first:sources.front()["packet_index"].get<uint64_t>(),b=sources.empty()?last:sources.back()["packet_index"].get<uint64_t>();units.push_back({sources,a,b,0,pos});
+                    mediawire::TeletextRow row;const bool valid=decoder.decode(p.raw.data()+pos,length,row);row.source_unit_index=index;corrected+=row.corrected_bits;parity+=row.parity_errors;
+                    if(!valid){++invalid;if(unitErrors.size()<64)unitErrors.push_back({{"source_unit",index},{"packet_index",a},{"error",row.error}});}
+                    else{if(row.packet==0)for(const auto& old:store.pages())if(old.header.page_hex==row.page_hex&&old.header.subcode==row.subcode)retain(old);store.consume(row);}
+                }pos+=length;
+            }return true;
+        },[&](){for(const auto& page:store.pages())retain(page);decoder=mediawire::TeletextDecoder();store=mediawire::TeletextPageStore();++contextResets;});
+        for(const auto& page:store.pages())retain(page);
+        J pages=J::array();std::set<std::pair<int,int>> seen;for(const auto& c:captures){const auto key=std::pair(c.page.header.page_hex,c.page.header.subcode);if(seen.insert(key).second)pages.push_back({{"page_hex",key.first},{"subcode",key.second}});}
+        J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",args.at("pid")},{"scan",scan},{"pages",pages},{"unit_count",units.size()},{"invalid_units",invalid},{"parity_errors",parity},{"corrected_bits",corrected},{"ignored_pes",ignored},{"unit_errors",unitErrors},{"page_store_evictions",store.evictions()},{"capture_evictions",evictedCaptures},{"context_resets",contextResets},{"unassociated_rows",store.unassociated()},{"profile","Default Latin group 0000 assumption; header national bits are not a universal charset selector"},{"scope","Captured page memory, not a live broadcast clock; 40 columns, row 0 header text and body rows 1..23; enhancements/boxing/secondary sets remain explicit partial support"}};
+        if(pages.empty()){out["status"]="no_acquired_pages";return out;}
+        int page=args.value("page_hex",pages.front()["page_hex"].get<int>()),sub=args.value("subcode",pages.front()["subcode"].get<int>());std::vector<const Capture*> matches;J metadata=J::array();for(const auto& c:captures)if(c.page.header.page_hex==page&&c.page.header.subcode==sub){const auto& u=units.at(c.page.header.source_unit_index);metadata.push_back({{"index",matches.size()},{"sequence",c.sequence},{"header_epoch",c.page.header.epoch},{"revision",c.page.revision},{"header_packet",u.first}});matches.push_back(&c);}
+        if(matches.empty())throw std::runtime_error("Page/subcode not acquired in retained capture range");const size_t index=args.value("capture_index",matches.size()-1);if(index>=matches.size())throw std::runtime_error("Teletext capture_index outside retained range");const auto& selected=matches[index]->page;
+        out["status"]="captured_partial_profile";out["page_hex"]=page;out["subcode"]=sub;out["capture_index"]=index;out["captures"]=metadata;out["header_epoch"]=selected.header.epoch;out["header_flags"]={{"erase",selected.header.erase},{"subtitle",selected.header.subtitle},{"newsflash",selected.header.newsflash},{"suppress_header",selected.header.suppress_header},{"inhibit_display",selected.header.inhibit_display},{"update_indicator",selected.header.update_indicator},{"serial",selected.header.serial}};out["charset_override_unsupported"]=selected.charset_override_unsupported;out["rows"]=J::array();
+        mediawire::TeletextBodyInput input;auto reverse=[](uint8_t byte){uint8_t result=0;for(unsigned i=0;i<8;++i){result=uint8_t((result<<1)|(byte&1));byte>>=1;}return result;};auto parityValid=[](uint8_t b){unsigned n=0;while(b){n+=b&1;b>>=1;}return n%2==1;};
+        auto rawUnit=[](const std::string& text){Bytes bytes;for(size_t p=0;p+1<text.size();p+=2)bytes.push_back(uint8_t(std::stoul(text.substr(p,2),nullptr,16)));return bytes;};
+        for(unsigned row=0;row<26;++row)if(selected.present[row]){const auto& r=selected.packets[row];const auto& u=units.at(r.source_unit_index);out["rows"].push_back({{"row",row},{"source_epoch",r.epoch},{"source_national",r.national},{"source_unit",r.source_unit_index},{"raw_hex",r.raw_hex},{"parity_errors",r.parity_errors},{"packet_index",u.first},{"end_packet",u.last},{"fragments",u.sources},{"supported",r.supported&&!selected.charset_override_unsupported}});if(row>=1&&row<=23){auto& in=input[row-1];in.present=true;in.input.source={int(row),r.epoch,r.national};in.context.national=args.value("national",r.national);in.context.charset_override_uninterpreted=selected.charset_override_unsupported;auto raw=rawUnit(r.raw_hex);for(unsigned col=0;col<40;++col){const uint8_t logical=reverse(raw.at(4+col));in.input.slots[col]={uint8_t(logical&127),true,parityValid(logical)};}}}
+        // C4 clears unreceived screen rows. These are known display blanks,
+        // not fabricated received packets; their source_present remains false.
+        if(selected.clear_applied)for(unsigned row=1;row<=23;++row)if(!selected.present[row]){auto& in=input[row-1];in.present=true;in.input.source={int(row),selected.header.epoch,selected.header.national};in.context.national=0;for(auto& slot:in.input.slots)slot={32,true,true};}
+        out["erase_blanks_applied"]=selected.clear_applied;
+        const auto body=mediawire::compose_teletext_body(input);out["body_layout_complete"]=body.layout_complete;out["body_issues"]=body.issues;out["cells"]=J::array();
+        auto cellJson=[&](const mediawire::TeletextSemanticCell& c,unsigned row,unsigned col,unsigned role,bool geometry,unsigned originRow,unsigned issues)->J{J unit=nullptr,packet=nullptr;if((row==0||originRow>0)&&originRow<26&&selected.present[originRow]&&!(row==0&&col<8)){const auto& r=selected.packets[originRow];unit=r.source_unit_index;packet=units.at(r.source_unit_index).first;}return {{"row",row},{"column",col},{"kind",unsigned(c.kind)},{"unicode",c.unicode_scalar},{"mosaic_mask",c.mosaic_mask},{"foreground",c.foreground},{"background",c.background},{"separated",c.separated},{"flash",c.flash},{"conceal",c.conceal},{"height",unsigned(c.height)},{"role",role},{"geometry_known",geometry},{"source_present",c.source_present&&originRow<26&&selected.present[originRow]&&!(row==0&&col<8)},{"source_parity_valid",c.source_parity_valid&&originRow<26&&selected.present[originRow]&&!(row==0&&col<8)},{"source_unit",unit},{"packet_index",packet},{"issues",c.issues},{"geometry_issues",issues}};};
+        mediawire::TeletextRenderRowInput header;header.source={1,selected.header.epoch,selected.header.national};auto raw=rawUnit(selected.header.raw_hex);for(unsigned col=0;col<40;++col){const auto logical=col<8?uint8_t(32):reverse(raw.at(4+col));header.slots[col]={uint8_t(logical&127),true,col<8||parityValid(logical)};}mediawire::TeletextRenderContext hc;hc.national=args.value("national",selected.header.national);hc.charset_override_uninterpreted=selected.charset_override_unsupported;const auto rendered=mediawire::interpret_teletext_row(header,hc);for(unsigned col=0;col<40;++col)out["cells"].push_back(cellJson(rendered.cells[col],0,col,2,true,0,0));for(const auto& c:body.cells)out["cells"].push_back(cellJson(c.cell,c.row,c.column,unsigned(c.role),c.geometry_known,c.origin_row,c.issues));
+        out["header_slot_policy"]="Columns 0..7 are metadata blanks; columns 8..39 come from the captured header. Page number is displayed separately.";out["render_national"]=args.contains("national")?args["national"]:J(selected.header.national);out["extensions"]=J::array();for(const auto& e:selected.extensions)out["extensions"].push_back({{"packet",e.packet},{"designation",e.designation},{"raw_hex",e.raw_hex},{"supported",false}});return out;
+    }
+    J queryCarousel(const J& args) {
+        if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete carousel analysis_revision");
+        if(standardsContext!="dvb")throw std::runtime_error("Carousel content requires explicit DVB interpretation");
+        const auto id=args.at("source_id").get<std::string>();const auto found=ids.find(id);if(found==ids.end())throw std::runtime_error("Unknown carousel source");const auto& record=records.at(found->second);
+        const uint64_t cutoff=args.value("at_packet",packets-1);if(cutoff>=packets||record.ends.empty()||record.ends.front()>cutoff||!record.current||!record.valid)throw std::runtime_error("Carousel source is not current valid evidence at cutoff");
+        auto message=dsmccsignalling::parse(duck,record);J gateway=J::object();
+        if(record.tid==0x3b&&record.raw.size()>=44&&u16(record.raw,10)==0x1006){
+            biopwire::DsiMessage dsi;std::string error;if(!biopwire::decode_dsi_message(record.raw.data()+8,record.raw.size()-12,dsi,error))throw std::runtime_error(error);
+            biopwire::BiopIor ior;J profiles=J::array();std::set<uint32_t> downloads;
+            if(!dsi.private_data.empty()&&!biopwire::decode_biop_ior(dsi.private_data.data(),dsi.private_data.size(),ior,error))throw std::runtime_error(error);
+            for(const auto& p:ior.profiles){profiles.push_back(carouselcontent::profile(p));if(p.location_parsed)downloads.insert(p.carousel_id);}
+            gateway={{"transaction_id",dsi.header.transaction_id},{"server_id_hex",hex(dsi.server_id)},{"profiles",profiles},{"download_candidates",downloads},{"scope","DSI ObjectLocation declarations only; association stays within this observed PID"}};
+            if(args.contains("download_id")){if(!downloads.count(args.at("download_id").get<uint32_t>()))throw std::runtime_error("Download is not declared by this DSI ObjectLocation");message.downloadId=args.at("download_id");}
+            else if(downloads.size()==1)message.downloadId=*downloads.begin();
+            else return {{"analysis_revision",revision},{"source",pathUtf8(source)},{"source_id",id},{"pid",record.pid},{"at_packet",cutoff},{"status","download_selection_required"},{"gateway",gateway},{"modules",J::array()},{"scope","Choose an explicitly declared download; absent/ambiguous DSI identity is not inferred"}};
+        }else{if(!message.valid)throw std::runtime_error("Unsupported or invalid DSM-CC message; inspect original section");if(args.contains("download_id")&&args.at("download_id")!=message.downloadId)throw std::runtime_error("Download disagrees with source message");}
+        const auto window=coverage.value("partial",false)?segmentRecords(cutoff):std::vector<Record>{};const auto snapshot=dsmccsignalling::reconstruct(duck,coverage.value("partial",false)?window:records,record.pid,message.downloadId,cutoff);
+        J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"source_id",id},{"pid",record.pid},{"download_id",message.downloadId},{"at_packet",cutoff},{"status",snapshot.status},{"diagnostics",snapshot.diagnostics},{"modules",J::array()},{"scope","Current announcement epoch in the captured contiguous window; DSI ObjectLocation declarations when present; no decompression, receiver installation or execution"}};
+        if(!gateway.empty())out["gateway"]=gateway;
+        for(const auto& [mid,m]:snapshot.modules){J blocks=J::array(),sources=J::array(),missing=J::array();for(size_t n=0;n<m.expectedBlocks&&missing.size()<4096;++n)if(!m.blocks.count(uint16_t(n)))missing.push_back(n);for(const auto& [number,r]:m.blocks)blocks.push_back({{"number",number},{"source_id",r->id},{"bytes",r->raw.size()-30},{"module_offset",size_t(number)*m.blockSize},{"section_offset",26}});for(const auto& [sid,source]:m.sources)sources.push_back({{"source_id",sid},{"completion_packet",source.packet},{"completion_order",source.order},{"role",source.record->tid==0x3c?"block":"announcement"}});
+            out["modules"].push_back({{"module_id",mid},{"module_version",m.version},{"announcement_epoch_order",m.epochOrder},{"announcement_epoch_packet",m.epochPacket},{"status",snapshot.status=="resource_limit"?"resource_limit":m.status},{"declared_bytes",m.size},{"block_size",m.blockSize},{"expected_blocks",m.expectedBlocks},{"received_blocks",m.blocks.size()},{"duplicate_observations",m.duplicateObservations},{"missing_blocks",missing},{"missing_total",m.expectedBlocks>=m.blocks.size()?m.expectedBlocks-m.blocks.size():0},{"sha256",m.status=="complete"?J(m.sha256):J()},{"module_info_hex",hex(m.info)},{"reasons",m.reasons},{"blocks",blocks},{"sources",sources}});
+        }
+        if(args.value("inventory",false)){
+            out["inventory"]=J::array();size_t work=0;bool limited=false;
+            for(const auto& [mid,m]:snapshot.modules){if(m.status!="complete"||snapshot.status=="resource_limit")continue;if(work+m.size>dsmccsignalling::MaxSnapshotBytes){limited=true;break;}work+=m.size;auto raw=carouselcontent::assemble(m);biopwire::BiopModule parsed;biopwire::decode_biop_module(raw.data(),raw.size(),parsed);for(size_t n=0;n<parsed.objects.size();++n){if(out["inventory"].size()>=4096){limited=true;break;}auto object=carouselcontent::object(parsed.objects[n],parsed.offsets[n]);object["module_id"]=mid;object["module_version"]=m.version;object["announcement_epoch_order"]=m.epochOrder;object["module_biop_complete"]=parsed.complete;out["inventory"].push_back(object);}if(limited)break;}
+            out["inventory_scope"]="Validated BIOP objects from complete captured modules in this PID/download; object keys retained where binding paths are not resolved";out["inventory_limited"]=limited;
+        }
+        if(!args.contains("module_id"))return out;
+        if(!args.contains("module_version")||!args.contains("announcement_epoch_order"))throw std::runtime_error("Module selection requires version and announcement epoch");
+        const unsigned mid=args.at("module_id");const auto mi=snapshot.modules.find(mid);if(mi==snapshot.modules.end()||mi->second.version!=args.at("module_version")||mi->second.epochOrder!=args.at("announcement_epoch_order"))throw std::runtime_error("Stale or unknown module identity");
+        const auto& module=mi->second;out["module_id"]=mid;out["module_version"]=module.version;out["announcement_epoch_order"]=module.epochOrder;
+        if(snapshot.status=="resource_limit"||module.status!="complete"){out["content_status"]="unavailable_incomplete_module";return out;}
+        auto bytes=carouselcontent::assemble(module);biopwire::BiopModule parsed;biopwire::decode_biop_module(bytes.data(),bytes.size(),parsed);
+        out["biop"]={{"complete",parsed.complete},{"consumed",parsed.consumed},{"error_offset",parsed.error_offset},{"error",parsed.error},{"duplicate_keys",parsed.duplicate_keys},{"objects",J::array()}};
+        for(size_t i=0;i<parsed.objects.size();++i)out["biop"]["objects"].push_back(carouselcontent::object(parsed.objects[i],parsed.offsets[i]));
+        out["content_status"]=parsed.complete?"biop_complete":"biop_validated_prefix_or_unsupported";
+        if(!args.contains("object_offset")&&!args.contains("object_key_hex")){out["module_page"]=carouselcontent::page(bytes,args.value("offset",size_t(0)),args.value("limit",size_t(4096)));return out;}
+        size_t objectOffset=args.value("object_offset",size_t(0));if(args.contains("object_key_hex")){auto key=args.at("object_key_hex").get<std::string>();std::transform(key.begin(),key.end(),key.begin(),[](char c){return char(std::toupper(c));});size_t matches=0;for(size_t n=0;n<parsed.objects.size();++n)if(hex(parsed.objects[n].object_key)==key){++matches;objectOffset=parsed.offsets[n];}if(matches!=1)throw std::runtime_error("Object key is missing or ambiguous in selected module");}const auto oi=std::find(parsed.offsets.begin(),parsed.offsets.end(),objectOffset);if(oi==parsed.offsets.end())throw std::runtime_error("Object offset is not a validated BIOP object");const auto& object=parsed.objects[size_t(oi-parsed.offsets.begin())];out["object"]=carouselcontent::object(object,objectOffset);
+        const auto& content=object.object_kind==0x66696c00?object.content:object.raw;out["content"]=carouselcontent::page(content,args.value("offset",size_t(0)),args.value("limit",size_t(4096)));out["content"]["layer"]=object.object_kind==0x66696c00?"file_content":"object_envelope";out["bindings"]=J::array();
+        // Cache each referenced module only for this bounded request. Never search another PID/download.
+        std::map<unsigned,biopwire::BiopModule> targets;targets.emplace(mid,parsed);size_t parsedBytes=bytes.size();
+        for(const auto& binding:object.bindings){J b={{"type",binding.binding_type},{"names",J::array()},{"profiles",J::array()},{"ior_type",binding.ior.type_id},{"object_info_hex",hex(binding.object_info)}};for(const auto& name:binding.names)b["names"].push_back({{"id_hex",hex(name.id)},{"kind_hex",hex(name.kind)},{"text",carouselcontent::text(name.id)}});
+            for(const auto& profile:binding.ior.profiles){auto p=carouselcontent::profile(profile);p["resolution"]="unsupported_profile";unsigned targetId=profile.location_parsed?profile.module_id:mid;const auto tm=snapshot.modules.find(targetId);
+                if((profile.body_parsed||profile.location_parsed)&&!profile.object_key.empty()){
+                    if(profile.location_parsed&&profile.carousel_id!=message.downloadId)p["resolution"]="different_carousel";
+                    else if(profile.location_parsed&&!profile.legacy_module_version&&(profile.biop_version_major!=1||profile.biop_version_minor!=0))p["resolution"]="unsupported_biop_version";
+                    else if(tm==snapshot.modules.end())p["resolution"]="missing_module";
+                    else if(profile.legacy_module_version&&profile.module_version!=tm->second.version)p["resolution"]="module_version_mismatch";
+                    else if(tm->second.status!="complete")p["resolution"]="incomplete_module";
+                    else{
+                        if(!targets.count(targetId)&&parsedBytes+tm->second.size<=dsmccsignalling::MaxSnapshotBytes){auto raw=carouselcontent::assemble(tm->second);parsedBytes+=raw.size();biopwire::BiopModule target;biopwire::decode_biop_module(raw.data(),raw.size(),target);targets.emplace(targetId,std::move(target));}
+                        if(!targets.count(targetId))p["resolution"]="resource_limit";
+                        else{const auto& target=targets.at(targetId);size_t matches=0,index=0;for(size_t n=0;n<target.objects.size();++n)if(target.objects[n].object_key==profile.object_key){++matches;index=n;}bool resolved=matches==1&&target.complete&&(!profile.body_parsed||!profile.object_kind||target.objects[index].object_kind==profile.object_kind);p["resolution"]=!target.complete?"target_biop_partial":matches==1?(resolved?"resolved":"object_kind_mismatch"):matches>1?"ambiguous_key":"missing_key";if(resolved){p["target"]={{"module_id",targetId},{"module_version",tm->second.version},{"announcement_epoch_order",tm->second.epochOrder},{"object_offset",target.offsets[index]}};p["scope"]=profile.location_parsed?(profile.legacy_module_version?"legacy module-version profile":"BIOP ObjectLocation within this PID/download"):"legacy local-module key profile";}}
+                    }
+                }b["profiles"].push_back(p);
+            }out["bindings"].push_back(b);
+        }
+        return out;
+    }
+    J queryService(const J& args) {
+        if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete service analysis_revision");
+        const uint64_t at=args.value("at_packet",packets-1);if(at>=packets)throw std::runtime_error("Service cutoff outside analysis");
+        const unsigned onid=args.at("original_network_id"),tsid=args.at("transport_stream_id"),sid=args.at("service_id");const auto selected=latest(at);const auto derived=derivedSnapshot(selected);
+        J service;for(const auto& s:derived["services"])if(s["onid"]==onid&&s["ts_id"]==tsid&&s["id"]==sid){if(!service.is_null())throw std::runtime_error("Ambiguous service identity");service=s;}
+        if(service.is_null())throw std::runtime_error("Service identity not observed in complete actual SDT at this cutoff");
+        J events=J::array(),components=J::array(),applications=J::array(),warnings=J::array();
+        for(const auto& event:derived["events"])if(event["onid"]==onid&&event["ts_id"]==tsid&&event["service_id"]==sid)events.push_back(event);
+        std::sort(events.begin(),events.end(),[](const J& a,const J& b){return std::tuple(a.value("start",std::string()),a["id"].get<unsigned>(),a["source_id"].get<std::string>())<std::tuple(b.value("start",std::string()),b["id"].get<unsigned>(),b["source_id"].get<std::string>());});
+        const Record* pmt=nullptr;if(!service["pmt_pid"].is_null())for(const auto& [key,r]:selected)if(r->tid==2&&r->pid==service["pmt_pid"].get<unsigned>()&&r->ext==sid&&completeGroup(*r,selected)){if(!pmt||r->number==0)pmt=r;}
+        if(pmt){for(const auto& stream:pmt->fields.value("streams",J::array())){auto row=stream;row["source_id"]=pmt->id;row["structure_path"]=stream.value("structure_path",std::string("section"));components.push_back(row);}}
+        else warnings.push_back(service.value("media_status",std::string("PMT unavailable")));
+        if(standardsContext!="dvb")warnings.push_back("AIT carriage requires explicit DVB interpretation; automatic or other standards contexts do not establish application association");
+        size_t aitCount=0;
+        if(pmt)for(const auto& [key,r]:selected)if(r->tid==0x74&&r->current&&r->valid&&r->number==0){
+            if(++aitCount>32){warnings.push_back("AIT association inspection limited to first 32 selected AIT groups");break;}
+            const auto inspected=inspect({{"id",r->id},{"analysis_revision",revision},{"at_packet",at}});const auto app=inspected.value("application_signalling",J::object());bool carriage=false;std::string resolution="unresolved";
+            for(const auto& object:app.value("objects",J::array()))if(object.value("object_type",std::string())=="application_carriage"){
+                const auto& i=object["identity"];if(i.value("transport_stream_id",0u)==tsid&&i.value("program_number",0u)==sid&&i.value("pmt_pid",8192u)==pmt->pid){carriage=true;resolution=object.value("resolution_status",std::string("unresolved"));}}
+            if(carriage)for(const auto& object:app.value("objects",J::array()))if(object.value("object_type",std::string())=="application"){
+                if(applications.size()>=256){warnings.push_back("Application rows limited to first 256");break;}applications.push_back({{"source_id",r->id},{"pid",r->pid},{"carriage_status",resolution},{"object",object},{"scope","Nonexclusive observed PAT/PMT/AIT carriage; no execution or exclusive ownership claim"}});
+            }
+        }
+        const size_t offset=args.value("event_offset",size_t(0)),limit=args.value("event_limit",size_t(100));J page=J::array();for(size_t i=offset;i<events.size()&&page.size()<limit;++i)page.push_back(events[i]);const auto next=offset+page.size();
+        return {{"analysis_revision",revision},{"source",pathUtf8(source)},{"at_packet",at},{"identity",{{"original_network_id",onid},{"transport_stream_id",tsid},{"service_id",sid}}},{"service",service},{"pmt_source_id",pmt?J(pmt->id):J()},{"components",components},{"events",page},{"event_offset",offset},{"event_total",events.size()},{"event_next_offset",next<events.size()?J(next):J()},{"applications",applications},{"warnings",warnings},{"coverage",coverage},{"scope","Selected current signalling at the cutoff; observed EIT only, not complete schedule or on-air validity"}};
+    }
+    J queryTiming(const J& args) const {
+        if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete timing analysis_revision");
+        auto out=transportStatistics.timingPage(args.value("offset",size_t(0)),args.value("limit",size_t(100)));out["analysis_revision"]=revision;out["source"]=pathUtf8(source);out["coverage"]=coverage;return out;
+    }
+    J queryTransport(const J& args) const {
+        if(!complete)throw std::runtime_error("Complete a successful analysis before querying transport statistics");
+        if(args.at("analysis_revision")!=revision)throw std::runtime_error("Stale transport analysis_revision");
+        auto out=transportStatistics.page(args.value("offset",size_t(0)),args.value("limit",size_t(100)),args.value("errors_only",false),args.value("sort",std::string("pid")),args.value("descending",false),bitrate);
+        out["aggregate_errors"]=J::array();
+        const auto badSync=out["summary"]["bad_sync_packets"].get<uint64_t>();
+        if(badSync)out["aggregate_errors"].push_back({{"code","transport_sync_error"},{"pid",nullptr},{"id",nullptr},{"aggregate",true},{"count",badSync},{"detail","Invalid sync byte; PID and exact source section are unavailable"}});
+        out["analysis_revision"]=revision;out["source"]=pathUtf8(source);out["coverage"]=coverage;return out;
     }
     J queryResult(const J& args) {
         if(!complete)throw std::runtime_error("Complete the requested scan before querying result pages");
@@ -950,13 +1173,49 @@ public:
     }
     void clearEvidence() {
         records.clear();ids.clear();history=J::array();previous.clear();tableHistory=J::array();historySlots.clear();pending=J::object();patchSections.clear();
-        observations=crcErrors=0;demuxStatus=J::object();resultCache=J::object();cacheCutoff=UINT64_MAX;densityCounts.fill(0);densityBad.fill(0);
+        observations=crcErrors=0;transportStatistics.clear();demuxStatus=J::object();resultCache=J::object();cacheCutoff=UINT64_MAX;densityCounts.fill(0);densityBad.fill(0);
+    }
+    // Bounded admission check, before replacing the existing analysis identity.
+    // The actual scan reopens and revalidates the source to detect later changes.
+    void validateCandidate(const J& args) const {
+        const auto candidate=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
+        std::error_code error;
+        if(!fs::is_regular_file(candidate,error))throw std::runtime_error("Source must be a regular local file");
+        std::ifstream input(candidate,std::ios::binary);
+        if(!input)throw std::runtime_error("Cannot read source file");
+        const auto bytes=fs::file_size(candidate);
+        if(bytes<188)throw std::runtime_error("Source is too small for a TS packet");
+        std::array<uint8_t,5*204> probe{};input.read(reinterpret_cast<char*>(probe.data()),probe.size());
+        const size_t got=size_t(input.gcount());size_t width=0;
+        if(input.bad())throw std::runtime_error("Cannot read source framing");
+        for(size_t candidateWidth:{size_t(188),size_t(192),size_t(204)}) {
+            const size_t offset=candidateWidth==192?4:0;bool valid=got>offset;
+            for(size_t i=0;i<5&&offset+i*candidateWidth<got;i++)valid&=probe[offset+i*candidateWidth]==0x47;
+            if(valid){width=candidateWidth;break;}
+        }
+        if(!width)throw std::runtime_error("No aligned 188/192/204-byte TS framing at file start");
+        const auto charset=args.value("default_charset",std::string());
+        if(!charset.empty()&&!ts::Charset::GetCharset(ts::UString::FromUTF8(charset)))throw std::runtime_error("Unsupported default_charset: "+charset);
+        const auto mode=args.value("scan_mode",std::string("full"));
+        if(args.contains("sample_percent")&&args.contains("max_packets"))throw std::runtime_error("Specify sample_percent or max_packets, not both");
+        if(args.contains("sample_percent")&&mode!="prefix"&&mode!="distributed")throw std::runtime_error("sample_percent is supported only for prefix or distributed scans");
+        if(mode=="range") {
+            const auto start=args.value("start_packet",uint64_t(0)),end=args.value("end_packet",bytes/width);
+            if(start>=end||end>bytes/width)throw std::runtime_error("Range must satisfy 0 <= start_packet < end_packet <= source packets");
+        }
     }
     J analyze(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
+        if(!control||!control->cancelled.load()) {
+            try { validateCandidate(args); }
+            catch(const std::exception& error) {
+                if(!control||!control->finish())throw RejectedInput(error.what());
+            }
+        }
         // A new scan owns a new revision even when opening or framing fails.
         // Never allow old evidence or preview tokens to acquire a new source label.
+        if(!audioPlayback.stop())throw RejectedInput("Audio output could not stop before changing source");decodedPreview=J::object();decodedPcm.clear();decodedFrames.clear();mediaToken.clear();
         clearEvidence();++revision;analysisStatus="analyzing";
-        source.clear();packets=totalBytes=0;complete=false;coverage=J::object();scannedPackets=plannedPackets=demuxOffset=0;compactResponse=args.value("response_mode",std::string("legacy"))=="compact";
+        source.clear();analysisSourceKnown=false;packets=totalBytes=0;complete=false;coverage=J::object();scannedPackets=plannedPackets=demuxOffset=0;compactResponse=args.value("response_mode",std::string("legacy"))=="compact";
         firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;began=Clock::now();requestId=rid;
         std::string pausedPhase;
         if(control)control->onPause=[&](bool paused){if(paused){pausedPhase=analysisStatus;analysisStatus="paused";}else analysisStatus=pausedPhase;if(!control->cancelled.load())emit({{"event","progress"},{"request_id",rid},{"state",compactState()}});};
@@ -988,7 +1247,7 @@ public:
         std::error_code sourceError;
         if(!fs::is_regular_file(source,sourceError))throw std::runtime_error("Source must be a regular local file");
         std::ifstream in(source,std::ios::binary);
-        if(!in)throw std::runtime_error("Cannot read source file");const auto sourceStamp=fs::last_write_time(source);totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
+        if(!in)throw std::runtime_error("Cannot read source file");const auto sourceStamp=fs::last_write_time(source);analysisSourceStamp=sourceStamp;analysisSourceKnown=true;totalBytes=fs::file_size(source);if(totalBytes<188)throw std::runtime_error("Source is too small for a TS packet");
         checkCancelled(control);
         std::vector<uint8_t> probe(5*204);in.read(reinterpret_cast<char*>(probe.data()),probe.size());size_t got=size_t(in.gcount());in.clear();in.seekg(0);
         bool framing=false;
@@ -1045,7 +1304,7 @@ public:
             // resetPID clears assemblers and CC expectations without altering the
             // demux's running packet index or its dynamically discovered PID set.
             for(unsigned pid=0;pid<8192;++pid)if(demux.hasPID(pid))demux.resetPID(pid);
-            demuxOffset=start-fed;packets=start;
+            transportStatistics.boundary();demuxOffset=start-fed;packets=start;
             in.clear();in.seekg(std::streamoff(start*stride));if(!in)throw std::runtime_error("Source seek failed");
             while(packets<end) {
                 checkCancelled(control);TEST_CHECKPOINT("before_read",control);checkCancelled(control);
@@ -1054,7 +1313,7 @@ public:
                 if(n!=wanted)throw std::runtime_error("Source changed or read failed; analysis is incomplete");
                 for(size_t p=0;p+stride<=n;p+=stride){
                     if((p/stride)%256==0)checkCancelled(control);
-                    ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);++packets;++scannedPackets;++fed;demux.feedPacket(packet);
+                    ts::TSPacket packet;std::memcpy(packet.b,block.data()+p+prefix,188);transportStatistics.observe(packet.b,packets);++packets;++scannedPackets;++fed;demux.feedPacket(packet);
                 }
                 if(ms(lastNotify)>=100){progress();lastNotify=Clock::now();}
             }
@@ -1119,6 +1378,95 @@ public:
         ts::DuckContext topologyDuck(&NULLREP);topologyDuck.resetStandards(duck.standards());topologyDuck.setDefaultCharsetIn(duck.charsetIn());topologyDuck.setDefaultCharsetOut(duck.charsetOut());topologyDuck.setTimeReferenceOffset(duck.timeReferenceOffset());
         topology::Builder builder(full,topologyDuck,root,standardsContext,revision,at);auto out=builder.build(args,raw,incomplete);out["coverage"]=coverage;out["semantic_scope"]="Only the contiguous window containing or preceding the cutoff; gaps remain unknown";return out;
     }
+    J queryPacket(const J& args) const {
+        if(!complete||!analysisSourceKnown)throw std::runtime_error("Complete an analysis before reading source packets");
+        if(args.at("analysis_revision")!=revision)throw std::runtime_error("Stale packet analysis_revision");
+        auto unchanged=[&](){return fs::is_regular_file(source)&&fs::file_size(source)==totalBytes&&fs::last_write_time(source)==analysisSourceStamp;};
+        if(!unchanged())throw std::runtime_error("Source changed since analysis; analyze it again before packet inspection");
+        const uint64_t total=totalBytes/stride;uint64_t index=args.at("packet_index").get<uint64_t>();if(index>=total)throw std::runtime_error("Packet index outside source bounds");
+        const auto direction=args.value("direction",std::string("exact"));const unsigned limit=args.value("scan_limit",4096u);const bool filtered=args.contains("pid");const unsigned pid=args.value("pid",0u);
+        J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"source_packets",total},{"framing_stride",stride},{"framing_prefix",prefix},{"request",args},{"found",false},{"scanned_packets",0},{"next_index",nullptr}};
+        std::ifstream input(source,std::ios::binary);if(!input)throw std::runtime_error("Cannot read accepted source");Bytes frame(stride);unsigned scanned=0;
+        while(scanned<limit){input.seekg(std::streamoff(index*stride));input.read(reinterpret_cast<char*>(frame.data()),std::streamsize(stride));if(size_t(input.gcount())!=stride)throw std::runtime_error("Source packet became unreadable");++scanned;
+            const auto* b=frame.data()+prefix;const unsigned actual=((b[1]&31)<<8)|b[2];
+            if(!filtered||(b[0]==0x47&&actual==pid)){
+                bool psi=false;for(const auto& r:records)if(r.pid==actual){psi=true;break;}
+                auto decoded=packetinspect::decode(b,psi);for(auto it=decoded.begin();it!=decoded.end();++it)out[it.key()]=it.value();
+                out["found"]=true;out["packet_index"]=index;out["frame_file_offset"]=index*stride;out["file_offset"]=index*stride+prefix;out["raw_hex"]=hex(Bytes(b,b+188));out["frame_hex"]=hex(frame);out["framing_note"]="raw_hex is the original normalized 188-byte TS packet; frame_hex includes the actual prefix/parity bytes";
+                bool observed=false;for(const auto& range:coverage.value("ranges",J::array()))if(index>=range["start_packet"].get<uint64_t>()&&index<range["end_packet"].get<uint64_t>()){observed=true;break;}out["in_analyzed_window"]=observed;out["section_links"]=J::array();
+                for(const auto& r:records)if(r.pid==actual){auto end=std::upper_bound(r.positions.begin(),r.positions.end(),index);if(end!=r.positions.begin()){const size_t n=size_t(end-r.positions.begin()-1);if(index<=r.ends[n])out["section_links"].push_back({{"id",r.id},{"name",nativeTableName(r)},{"start_packet",r.positions[n]},{"end_packet",r.ends[n]}});}}
+                break;
+            }
+            if(direction=="exact"||(direction=="backward"?index==0:index+1>=total))break;
+            if(direction=="backward")--index;else ++index;
+            if(scanned==limit)out["next_index"]=index;
+        }
+        if(!unchanged())throw std::runtime_error("Source changed while reading packets");out["scanned_packets"]=scanned;return out;
+    }
+    J sourceFragments(const Record& r) const {
+        J out={{"status","unavailable"},{"fragments",J::array()},{"scope","First observed occurrence; original normalized TS packets with file, packet and section byte coordinates"}};
+        try{
+            if(!analysisSourceKnown||r.positions.empty()||!fs::is_regular_file(source))return out;
+            auto unchanged=[&](){return fs::file_size(source)==totalBytes&&fs::last_write_time(source)==analysisSourceStamp;};
+            if(!unchanged()){out["status"]="source_changed";return out;}
+            const uint64_t first=r.positions.front(),last=r.ends.front();out["start_packet"]=first;out["end_packet"]=last;out["occurrence_index"]=0;
+            if(last<first||last-first>=65536){out["status"]="span_limit";return out;}
+            std::ifstream input(source,std::ios::binary);if(!input)return out;
+            auto read=[&](uint64_t index,Bytes& b){input.clear();input.seekg(std::streamoff(index*stride+prefix));b.resize(188);input.read(reinterpret_cast<char*>(b.data()),188);return input.gcount()==188;};
+            auto payload=[&](const Bytes& b)->size_t {if(b[0]!=0x47||(b[1]&0x80)||(b[3]&0xc0)||!(b[3]&0x10))return 188;size_t p=4;if(b[3]&0x20){if(b[4]>182)return 188;p+=b[4]+1;}return p;};
+            Bytes initial;if(!read(first,initial)||((unsigned(initial[1]&31)<<8)|initial[2])!=r.pid)return out;
+            size_t p=payload(initial);if(p>=188||!(initial[1]&0x40)||size_t(initial[p])>187-p)return out;p+=1+initial[p];
+            std::vector<size_t> starts;while(p+3<=188&&initial[p]!=0xff){const size_t size=3+((size_t(initial[p+1]&15)<<8)|initial[p+2]);if(size==r.raw.size()&&std::equal(initial.begin()+p,initial.begin()+std::min<size_t>(188,p+size),r.raw.begin()))starts.push_back(p);if(size>188-p)break;p+=size;}
+            for(const size_t start:starts){
+                J fragments=J::array();size_t consumed=0;unsigned previousCC=0;bool haveCC=false,valid=true;Bytes previous;
+                for(uint64_t index=first;index<=last&&consumed<r.raw.size();++index){
+                    Bytes b;if(!read(index,b)){valid=false;break;}if(((unsigned(b[1]&31)<<8)|b[2])!=r.pid)continue;
+                    const size_t base=payload(b);if(base>=188){if(b[0]==0x47&&!(b[1]&0x80)&&!(b[3]&0xc0)&&((b[3]>>4)&3)==2&&b[4]<=183&&(!b[4]||!(b[5]&0x80)))continue;valid=false;break;}
+                    const unsigned cc=b[3]&15;if(haveCC&&cc==previousCC&&b==previous)continue;
+                    if(haveCC&&cc!=((previousCC+1)&15)){valid=false;break;}previousCC=cc;haveCC=true;previous=b;
+                    if(index!=first&&(b[3]&0x20)&&b[4]&&((b[5]&0x80)!=0)){valid=false;break;}
+                    size_t offset=index==first?start:base,available=188-offset;
+                    if(index!=first&&(b[1]&0x40)){if(size_t(b[base])>187-base){valid=false;break;}offset=base+1;available=b[base];}
+                    const size_t count=std::min(available,r.raw.size()-consumed);if(!count||!std::equal(b.begin()+offset,b.begin()+offset+count,r.raw.begin()+consumed)){valid=false;break;}
+                    fragments.push_back({{"status","available"},{"packet_index",index},{"file_offset",index*stride+prefix},{"frame_file_offset",index*stride},{"framing_stride",stride},{"framing_prefix",prefix},{"section_offset",offset},{"section_begin",consumed},{"section_bytes",count},{"raw_hex",hex(b)}});consumed+=count;
+                    if(fragments.size()>=128&&consumed<r.raw.size()){valid=false;break;}
+                    if(consumed==r.raw.size()&&index!=last){valid=false;break;}
+                }
+                if(valid&&consumed==r.raw.size()&&unchanged()){out["status"]="complete";out["fragments"]=fragments;out["section_bytes"]=consumed;return out;}
+            }
+            out["status"]=unchanged()?"mapping_unavailable":"source_changed";
+            out["note"]="Exact original-byte and continuity verification failed or exceeded 128 fragments; no reconstructed packet is provided";
+        }catch(const fs::filesystem_error&){out["status"]="unavailable";}
+        return out;
+    }
+    J sourcePacket(const Record& r) const {
+        J out={{"status","unavailable"},{"raw_hex",""},{"section_offset",nullptr},{"section_bytes",0}};
+        // Read only the first observed 188-byte TS packet, not a reconstructed
+        // transport packet. Section linking is allowed only at real PSI starts.
+        try {
+            if(!analysisSourceKnown || r.positions.empty() || !fs::is_regular_file(source))return out;
+            if(fs::file_size(source)!=totalBytes || fs::last_write_time(source)!=analysisSourceStamp){out["status"]="source_changed";return out;}
+            const uint64_t offset=r.positions.front()*stride+prefix;
+            std::ifstream input(source,std::ios::binary);input.seekg(std::streamoff(offset));Bytes packet(188);input.read(reinterpret_cast<char*>(packet.data()),188);
+            if(input.gcount()!=188 || packet[0]!=0x47 || ((unsigned(packet[1]&31)<<8)|packet[2])!=r.pid)return out;
+            if(fs::file_size(source)!=totalBytes || fs::last_write_time(source)!=analysisSourceStamp){out["status"]="source_changed";return out;}
+            out["status"]="available";out["raw_hex"]=hex(packet);out["packet_index"]=r.positions.front();out["file_offset"]=offset;out["framing_stride"]=stride;
+            out["scope"]="First observed source TS packet, 188 bytes; framing prefix/parity excluded";
+            const unsigned afc=(packet[3]>>4)&3;
+            if((packet[1]&0xc0)!=0x40 || (packet[3]&0xc0) || !(afc&1))return out;
+            size_t p=4;if(afc&2)p+=size_t(packet[4])+1;if(p>=188)return out;
+            p+=size_t(packet[p])+1;
+            for(;p+3<=188 && packet[p]!=0xff;){
+                const size_t length=3+((size_t(packet[p+1]&15)<<8)|packet[p+2]);
+                const size_t count=std::min(length,188-p);
+                if(length==r.raw.size() && std::equal(packet.begin()+p,packet.begin()+p+count,r.raw.begin())){
+                    out["section_offset"]=p;out["section_bytes"]=count;break;
+                }
+                if(length>188-p)break;p+=length;
+            }
+        }catch(const fs::filesystem_error&){out["status"]="unavailable";}
+        return out;
+    }
     J inspect(const J& args) {
         if(args.contains("analysis_revision")&&args["analysis_revision"]!=revision)throw std::runtime_error("Stale inspection analysis_revision");
         std::string id=args.at("id");if(!ids.count(id))throw std::runtime_error("Unknown section id");const Record&r=records[ids.at(id)];
@@ -1128,6 +1476,8 @@ public:
         const size_t occurrenceCount=size_t(observed-r.ends.begin());
         J out=summary(r,cutoff);out["analysis_revision"]=revision;out["evidence_anchors"]=topology::anchors(r,standardsContext);out["native_table_at_packet"]=cutoff;out["native_table_sources"]=J::array();
         out["inspection_scope"]={{"occurrences_and_summary",args.contains("at_packet")?"at or before selected packet":"all occurrences of this section"},{"native_table",args.contains("at_packet")?"selected observed generation at or before selected packet":"selected observed generation at last occurrence of inspected section"}};
+        out["source_packet"]=sourcePacket(r);out["source_fragments"]=sourceFragments(r);
+        out["si_structure"]=siwire::inspect(r.raw,r.descriptors,r.valid && !r.j94);
         out["raw_hex"]=hex(r.raw);out["fields"]=r.fields;out["descriptors"]=r.descriptors;out["issues"]=r.issues;out["services"]=r.services;out["events"]=r.events;
         out["identifier_lookups"]=signalmeta::identifiers(r,standardsContext);
         out["satellite_associations"]=satellitemeta::inspect(root,r);
@@ -1344,6 +1694,7 @@ public:
         pending={{"token",std::to_string(revision)+":"+id+":"+fingerprint(patchSections.front().second)},{"source_id",id},{"revision",revision},{"service_id",sid},{"before",before},{"after",name},{"old_version",r.version},{"new_version",sdt.version()},{"crc_recomputed",true},{"writes_source",false}};
         return pending;
     }
+#include "AssetExport.h"
     J exportData(const J& args) {
         if(std::any_of(records.begin(),records.end(),[](const Record& r){return r.j94;}))throw std::runtime_error("J.94 snapshot export is unsupported until map/version selection is defined; original sections remain inspectable");
         if(!complete||records.empty())throw std::runtime_error("Complete a successful analysis before exporting");
@@ -1409,12 +1760,22 @@ public:
         if(method=="analyze")return analyze(args,rid,control);
         if(method=="query")return args.value("response_mode",std::string("legacy"))=="compact"?compactState(args.value("at_packet",UINT64_MAX)):state(args.value("at_packet",UINT64_MAX));
         if(method=="query_result")return queryResult(args);
+        if(method=="query_transport")return queryTransport(args);
+        if(method=="query_packet")return queryPacket(args);
+        if(method=="query_timing")return queryTiming(args);
+        if(method=="decode_media")return decodeMedia(args,rid,control);
+        if(method=="audio_control")return audioControl(args);
+        if(method=="query_pes")return queryPes(args);
+        if(method=="query_teletext")return queryTeletext(args);
+        if(method=="query_carousel")return queryCarousel(args);
+        if(method=="query_service")return queryService(args);
         if(method=="query_cable_oob")return queryCableOob(args);
         if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
         if(method=="inspect")return inspect(args);
         if(method=="preview_rename")return preview(args);
         if(method=="export")return exportData(args);
+        if(method=="export_asset")return exportAsset(args);
         if(method=="load_extension") {
             J candidate=readJson(pathFromUtf8(args.at("path").get<std::string>()));
             auto require=[](bool ok,const std::string& message){if(!ok)throw std::runtime_error("Invalid extension: "+message);};
@@ -1493,7 +1854,7 @@ static int runCore(int argc,char**argv) {
         constexpr size_t queueCapacity=64;
         std::mutex mutex;std::condition_variable ready;bool inputEnded=false;
         std::deque<QueuedRequest> queue;
-        std::map<std::string,std::shared_ptr<AnalysisControl>> analyses;
+        std::map<std::string,std::shared_ptr<AnalysisControl>> analyses,mediaRequests;
         std::thread reader([&](){
             std::string line;
             while(std::getline(std::cin,line)) {
@@ -1505,6 +1866,9 @@ static int runCore(int argc,char**argv) {
                     const std::string method=request.at("method").get<std::string>();
                     J args=request.value("params",J::object());
                     validateArguments(catalog,method,args);
+                    if(method=="cancel_media"){
+                        const auto key=J::array({args.at("analysis_revision"),args.at("request_token")}).dump();std::shared_ptr<AnalysisControl> control;{std::lock_guard<std::mutex> lock(mutex);auto found=mediaRequests.find(key);if(found!=mediaRequests.end())control=found->second;}const bool requested=control&&control->requestCancellation();emit({{"id",id},{"result",{{"request_token",args.at("request_token")},{"requested",requested},{"reason",requested?"cancellation_requested":"not_running"}}}});continue;
+                    }
                     if(method=="cancel_analysis"||method=="pause_analysis"||method=="resume_analysis"){
                         const J target=args.at("request_id");std::shared_ptr<AnalysisControl> control;
                         {std::lock_guard<std::mutex> lock(mutex);auto found=analyses.find(target.dump());if(found!=analyses.end())control=found->second;}
@@ -1513,7 +1877,7 @@ static int runCore(int argc,char**argv) {
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
                     }
-                    if(method=="query"||method=="query_result"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="query_carousel"||method=="query_teletext"||method=="query_pes"||method=="decode_media"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
                         bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
                         if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }
@@ -1532,6 +1896,9 @@ static int runCore(int argc,char**argv) {
                                     if(analyses.count(work.key))reject="duplicate_request_id";
                                     else analyses.emplace(work.key,work.control);
                                 }
+                            }
+                            if(method=="decode_media"){
+                                work.control=std::make_shared<AnalysisControl>();work.key=J::array({work.args.at("analysis_revision"),work.args.at("request_token")}).dump();if(mediaRequests.count(work.key))reject="duplicate_request_id";else mediaRequests.emplace(work.key,work.control);
                             }
                             if(reject.empty())queue.push_back(std::move(work));
                         }
@@ -1555,6 +1922,10 @@ static int runCore(int argc,char**argv) {
             try {
                 J result=engine.dispatch(work.method,work.args,work.id,work.control);
                 terminal={{"id",work.id},{"result",std::move(result)}};
+            } catch(const RejectedInput& e){
+                terminal={{"id",work.id},{"error",{{"code","input_rejected"},{"message",e.what()},{"data",{{"state_preserved",true}}}}}};
+            } catch(const CancelledMedia& e){
+                terminal={{"id",work.id},{"error",{{"code","media_cancelled"},{"message",e.what()},{"data",{{"request_token",work.args.value("request_token",J())}}}}}};
             } catch(const CancelledAnalysis& e){
                 terminal={{"id",work.id},{"error",{{"code","analysis_cancelled"},{"message",e.what()},{"data",{{"state",engine.state()}}}}}};
             } catch(const std::exception& e){
@@ -1563,8 +1934,8 @@ static int runCore(int argc,char**argv) {
             if(work.control){
                 work.control->finish();
                 std::lock_guard<std::mutex> lock(mutex);
-                auto found=analyses.find(work.key);
-                if(found!=analyses.end()&&found->second==work.control)analyses.erase(found);
+                auto& registry=work.method=="decode_media"?mediaRequests:analyses;auto found=registry.find(work.key);
+                if(found!=registry.end()&&found->second==work.control)registry.erase(found);
             }
             // Retire the registry entry before publishing the response, so a
             // client can immediately reuse a completed ID without a false duplicate.

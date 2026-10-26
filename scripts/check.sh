@@ -4,6 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python scripts/make_fixture.py
 python -m unittest discover -s tests -p test_engine.py -v
+python -m unittest discover -s tests -p test_transport_statistics.py -v
+python -m unittest discover -s tests -p test_qt_components_harness.py -v
 python -m unittest discover -s tests -p test_topology.py -v
 python -m unittest discover -s tests -p test_topology_presentation.py -v
 python -m unittest discover -s tests -p test_signal_metadata.py -v

@@ -7,11 +7,52 @@ It does not establish spacecraft identity, transponder correctness, RF reception
 capture-date assignments or S2X identity support. See
 [satellite association](SATELLITE_ASSOCIATION.md) for tests and source boundaries.
 
+Service inspection now scopes EIT and component evidence by complete actual-SDT
+ONID/TSID/SID identity and the selected capture cutoff. Conflicting actual
+networks or PAT mappings withhold PMT association. AIT carriage is nonexclusive
+and requires explicit DVB interpretation; no runtime application execution,
+complete EPG schedule or on-air validity is inferred. The service/ES/EPG/AIT
+source navigation is tested through the production core and browser UI; real
+Qt service rendering is separately covered by full-application offscreen checks.
+
+DSM-CC content inspection now exposes verified uncompressed module bytes,
+bounded BIOP objects and exact-key bindings within one PID/download/announcement
+epoch. DSI ObjectLocation is a declaration, not receiver activation. Incomplete
+modules never yield fabricated bytes or a complete hash; damaged BIOP retains a
+validated prefix and does not resolve partial targets as complete. Unknown
+compression/profile/encoding stays explicit. Read-only Java class envelope and
+names are interpreted without class loading, execution or bytecode verification.
+The actual reconstructed M12/M13 content window chain is locally tested in the
+browser and Qt offscreen; native desktop and output delivery remain separate.
+
+Teletext now has a production PES-to-captured-page path with explicit DVB PID
+signalling or manual PID, source/subpage/capture identity, exact original unit
+fragments and 40-column display. Supported Latin Level 1 semantic cells include
+colours, mosaics, double-height geometry and explicit visibility controls; C4
+clear blanks retain no invented source. Enhancements, boxing and secondary
+charsets remain partial/unsupported. A known-invalid-PAT fixture is tested only
+with explicit PID 1068; its nine subtitle events match an independent SRT through
+the core, browser display and Qt offscreen. This is not PSI discovery acceptance,
+live timing or full Teletext receiver conformance.
+
+PES/ES inspection now retains original TS fragments, header/timestamp metadata
+and exact paged bytes. A private numeric stream type does not establish codec.
+The optional external decoder is verified before execution and has independent
+process/memory/output/time bounds. Real MPEG-2 frames and MPEG-audio PCM are
+locally tested in both UIs; thumbnail pacing and mono resampling are explicitly
+derived. Other advertised input formats remain unverified application paths.
+Windows output control uses an exact preview token and an owned buffer; silence
+checks establish API queue/stop behavior, not physical audibility. The accepted
+single-I-frame remux is a positive pixel fixture; the whole original capture
+is not accepted as clean video or original timing. FFmpeg is not bundled.
+
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets and independently imported local
 DVB-I XML metadata. It does not tune, demodulate,
-decrypt conditional-access content, decode audio/video, or certify a receiver.
+decrypt conditional-access content or certify a receiver. An optional external,
+hash-pinned Windows decoder now provides bounded video-frame and PCM previews;
+this is distinct from parsing support, device output and original A/V timing.
 Three claims must remain separate:
 
 1. **Verified application path:** a fixture or captured stream passed through the
@@ -398,3 +439,21 @@ Offscreen Qt and Chromium checks do not establish Windows/macOS desktop dialogs,
 WebView2/GPU behavior, clean-machine installation or standard-wide conformance.
 Exact-revision Windows packaging/runtime checks and clean-host acceptance remain
 separate release gates; an earlier build's pass cannot certify a later candidate.
+
+
+## Original packet and timing inspection (local 2026-10-26 increment)
+
+Application-tested query_packet reads unchanged accepted source files and returns
+188-byte TS plus actual 192-byte prefix / 204-byte parity framing bytes. PID
+search is bounded and continuation-based. inspect.source_fragments verifies
+first-occurrence packet/section coordinate mapping, including continuation
+packets; unavailable mappings remain explicit. No media decoding is implied.
+query_timing exposes bounded PCR observations, wrap-aware captured-TS bitrate
+and trusted-interval duration; gaps, discontinuities, malformed/errored packets,
+non-increasing clocks and intervals over ten seconds break measurement chains.
+Continuity counters are an observed-window diagnostic, not full TR 101 290
+conformance. Raw PCR samples cap at 4096; total counters remain scan-global.
+Tests: test_packet_inspection.py, test_transport_timing.py and the original
+section/source mapping regressions in test_unified_inspector.py. Native Windows
+mouse/DPI acceptance remains distinct from real-engine component/browser and
+Qt offscreen integration checks.

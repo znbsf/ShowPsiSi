@@ -243,3 +243,46 @@ then from the repository root set `PATH`, `TSPLUGINS_PATH`, `TEMP`/`TMP` and
 `scripts/ci/windows_native_checks.py --qt` lists the full Qt suite set. Local
 passes do not replace the hosted `qt-native` job and do not establish
 interactive Windows UI behaviour.
+
+
+## Local Qt generator integrity mismatch (2026-10-25)
+
+When `qmlimportscanner` cannot write its CMake output, inspect both the SDK
+executable and output directory integrity labels. On the owner machine the
+shared SDK inherits Low from its original workspace root, while the new
+worktree is Medium. A measured Low scanner token writes successfully to an
+already-Low output location and fails against the Medium location. This is
+Windows mandatory integrity control, independent of ordinary user write ACLs.
+It does not establish who set the root label. Do not relabel the SDK or disable
+security controls. Preserve the old failure evidence in `NXTSA_UI_UX_PARITY.md`.
+
+The build script supports a separate native output directory and existing SDK:
+
+```powershell
+$env:QT_ROOT = '<existing Qt SDK root>'
+$env:TSDUCK_ROOT = '<existing matching TSDuck SDK root>'
+./scripts/build.ps1 -SkipTauri -BuildDirectory '<existing compatible output root>/qt-build'
+```
+
+Select an existing output root writable by the generator; do not create a new
+security exception. The script does not change labels or ACLs. Custom outputs
+require `-SkipTauri` or `-CoreOnly`, since Tauri packaging still expects
+`build/bin`. Relative output paths resolve against the source repository.
+For this Low SDK route, isolated runtime settings, agent capture directories
+and export destinations must also be writable by the resulting Low process.
+The original-workspace artifacts directory was verified for this purpose.
+
+
+### Tauri local build with the same inherited integrity boundary
+
+The installed toolchain may also launch Low-integrity linker/build helpers.
+A successful local route is process-only `TMP`/`TEMP` in the existing writable
+artifact root, followed by an exact SHA-256-checked copy of `ui/tauri/web` and
+`ui/tauri/src-tauri` sources into that same root (exclude `target` and `gen`).
+`tauri-build` generates `gen/schemas` beside its manifest, so merely moving the
+Cargo target directory does not resolve a source-directory write failure.
+Build the copied manifest with `cargo build --locked --offline --release`,
+reuse the pinned installed Cargo/Rust homes and preserve the file hash manifest.
+Re-copy and reverify after any frontend change. This changes build outputs only;
+it does not relabel SDKs, source trees or security settings. Native execution and
+interaction remain separate gates from build success.

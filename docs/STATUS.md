@@ -1,5 +1,135 @@
 # ShowPsiSi status
 
+2026-10-27 step 15 implemented: stable PES/ES inventory, exact source-byte
+jumps (including existing packet-window relocation), bounded real frame/PCM
+preview and token-scoped Windows output. 29 media/analysis-cancellation checks
+plus two browser chains pass; full Qt video, waveform, silent pause/resume and
+close-release pass. The accepted single-I-frame remux also renders in Qt with
+exact source ES identity. External pinned FFmpeg is optional and not bundled;
+preview pacing/downmix is derived, original A/V synchronization is not inferred.
+Next: outputs/copy/settings (16), then native/DPI/exit acceptance (17). No CI.
+
+2026-10-26 step 14 implemented: actual PES Teletext page/subpage/capture
+navigation in both UIs, 40-column display, supported colours/mosaics/double
+height, conceal/flash controls and exact unit source packets. 29 related local
+checks pass. Real explicit-PID test-012 page 889 has 9 subtitle events / 18
+lines matching independent SRT in core, browser display and full Qt offscreen.
+Invalid PAT remains an explicit-PID-only boundary. Next: PES/ES/media (15);
+outputs (16) and native acceptance (17) remain. No hosted CI.
+
+2026-10-26 step 13 content browsing implemented in both UIs: DSM-CC module
+identity/missing blocks, DSI ObjectLocation, BIOP inventory/bindings, paged
+immutable content, strict UTF-8 and read-only class interpretation. 45 local
+checks pass; real reconstructed M12 eight-class and M13 configuration window
+chains pass in browser and full Qt offscreen. Export remains step 16; native
+mouse/DPI remains step 17. Next: Teletext pages (14). No hosted CI.
+
+2026-10-26 step 12 implemented: scoped Service / ES / EPG / Applications
+windows in both UIs, exact section navigation and restored context. Ambiguous
+SDT/PAT identities withhold PMT association. 36 related local checks pass; full
+Qt offscreen service inspection passes. Next: DSM-CC/BIOP contents (13).
+No hosted CI. Native mouse/DPI acceptance remains step 17.
+
+2026-10-26 steps 07–11 implemented: independent document instances, observed-PID
+and DSMCC branches with exact pointer context, source packet navigation,
+verified cross-packet section fragments, and bounded PCR/continuity evidence
+with Bitrate/Timing views. Latest combined local suite: 40 passed, no skips.
+Qt components: 52 actual cases / 60 PASS including lifecycle; complete Qt
+offscreen checks cover real Hotbird windows, packet bytes and measured PCR.
+Final native Tauri restaging and mouse/DPI acceptance remain step 17.
+Next: step 12 service / EIT / AIT provenance navigation. No hosted CI.
+
+2026-10-26 step 06 implemented: original toolbar bitmap and shared menu rules,
+Ready/Start file flow, reversible tree/toolbar/status visibility, and Summary
+alongside the left tree. Qt local build + 10 full-app offscreen observations,
+47 component cases and 10 browser/resource checks pass. Native desktop
+interaction and pixel matching remain separate acceptance. Next: step 07
+independent document windows. No hosted CI.
+
+2026-10-26 ordered plan steps 01–05 implemented and pushed (application source
+`ec2b993`): rejected candidates preserve the old session; Back restores exact
+field and pane positions; unmapped bytes clear stale ranges; Summary has six
+matching metrics; tree/hex/focus keyboard navigation is aligned. Both native
+release candidates build locally and display the same real Hotbird PMT.
+Local evidence and the corrected asynchronous preview test are recorded in
+[NXTSA parity checkpoint](NXTSA_UI_UX_PARITY.md#前五项交付检查点2026-10-26源码-ec2b993).
+No hosted CI was started or polled. Plan 06–17 remains pending; the next item is
+the original application frame. The proposed delayed-start card never became
+a saved automation; work resumed directly after the user follow-up.
+
+
+2026-10-25 generic SI hierarchy and interaction correction: available native
+structures are now projected for every table family, preserving exact wire
+loops and explicit assembled-table scope. The 52 pinned reference inputs pass
+904 model assertions. Both trees now distinguish text single/double click from
+single-click +/-. Field grid columns remain aligned on resize/scroll, and field
+folding retains viewport position. 38 component cases and 22 full-app checks
+passed; native Windows mouse checks verified the repaired behavior and column
+drag alignment. Final local candidate is open; patch remains uncommitted.
+[Scope and evidence](NXTSA_UI_UX_PARITY.md#generic-hierarchy-and-interaction-local-acceptance).
+
+2026-10-25 SI internal hierarchy correction: left trees now expose PMT ES and
+descriptors, NIT/BAT ONID/TSID transports and descriptors, and other supported
+wire-loop nodes. Cached branches coexist and child selection restores the exact
+owner before field/hex navigation. Long labels scroll horizontally. 83 model
+assertions, 33 component cases and 14 full-app checks passed; a native Windows
+teletext-descriptor click also verified field/dual-hex positioning. Candidate
+is open locally; these changes remain uncommitted.
+[Scope and evidence](NXTSA_UI_UX_PARITY.md#internal-si-tree-local-acceptance).
+
+2026-10-25 local interaction repair: SI detail no longer clears during an
+in-flight selection, and keyed navigation preserves clicked-row position.
+Field columns support drag sizing, double-click fit and horizontal scrolling.
+31 component test cases and nine full-app SI checks passed; the new local
+candidate is open for user review. Native click/drag automation stopped when
+concurrent user input was detected. See [evidence](NXTSA_UI_UX_PARITY.md#treecolumns-local-candidate-result).
+Changes remain local and uncommitted.
+
+2026-10-25 local Qt build blocker resolved: the actual Qt scanner runs at Low
+integrity and cannot write to the Medium worktree. Building current sources
+into an existing inherited-Low output directory succeeds without ACL changes.
+The locally built full app passed nine offscreen classic-SI checks. See
+[diagnosis and evidence](NXTSA_UI_UX_PARITY.md#local-build-blocker-resolved-2026-10-25).
+The earlier pending-build notes below are historical; native desktop/dialog
+acceptance remains separate. Build-script follow-up changes are local only.
+
+2026-10-25 follow-up: the classic SI tree now organizes declared networks / TP /
+programs, with SDT names and resolved LCN. Unknown or conflicting identities
+remain explicit; program selection retains field/hex linkage. Local real-engine
+checks: 4 inspector + 35 topology tests; 70 model assertions; 31 Qt component
+passes at 150% (including setup/cleanup). Complete Windows build is moving to
+the existing hosted route because the shared SDK integrity labels are unchanged.
+Hosted and complete application acceptance are pending, not implied by these checks.
+
+2026-10-25 latest user correction: core SI now follows original NxTSA visuals:
+white/light-gray surfaces, actual original bitmap icons, boxed/dotted trees,
+red field values, yellow selection, and source-packet / Section dual hex panes.
+The source-packet pane and both directions of selection are functional with
+real engine output, not screenshot mockups. See [visual requirements](UI_UX_STANDARDS.md)
+and [current parity evidence](NXTSA_UI_UX_PARITY.md). Complete app/native acceptance
+remains pending under the previously documented Qt generator write blocker.
+The earlier dark core-SI preview below is superseded by this visual slice.
+
+2026-10-25 core SI priority: Qt now has table-family navigation, an expandable
+Field / Bits / Value / Comment table and bidirectional Section-byte selection.
+C++ `inspect.si_structure` supplies exact MSB-first ranges; unknown ranges stay
+explicit. Real-engine component checks and original Hotbird PMT evidence are in
+[the current UI parity record](NXTSA_UI_UX_PARITY.md). This is source/component
+implementation; complete new Qt build/native acceptance and the original
+separate TS-packet hex pane remain pending.
+
+2026-10-25 — NxTSA复刻P1（源码/组件阶段）：
+已fetch远端main de2b1d5，在codex/nxtsa-summary-pid保留当前改动。
+新增C++全PID统计/query_transport与Qt Summary/Error、排序分页、来源导航和返回状态，
+修复PID/extension碰撞、聚合来源误跳和筛选后Back；保留既有工作区。
+严格引擎30组/650项（649通过、1项可选样本缺失skip），
+Qt组件100%/150%各25 PASS（21实际用例+4setup/cleanup），深浅主题截图已复核。
+**完整新Qt仍受SDK生成工具写入权限阻塞；新代码实机NOT_RUN**，
+用户可见Qt仍为旧main CI产物，不能把组件测试等同完整应用通过。
+[当前P1合同、准确边界和下一Raw Packet设计](NXTSA_UI_UX_PARITY.md)；
+[初始45个原版/旧main Qt操作场景](NXTSA_BEHAVIOR_REFERENCE.md)保留版本范围。
+本阶段未push、发布或安装；托管CI与完整候选包仍是后续门槛。
+
 Latest operation audit and handoff, 2026-10-18, on merged main `88506ba`:
 real Windows Qt/WebView2 edit, export and A/B comparison checks found remaining
 functional gaps, including Web BIN export / Use snapshot, Qt selection restore
@@ -396,3 +526,49 @@ constrain this cloud iteration.
 SDKs, binaries, downloaded streams, local profiles and transient evidence remain
 ignored. Source screenshots and reproducible tests are committed. Read
 [CLOUD_DEVELOPMENT.md](CLOUD_DEVELOPMENT.md) before repeating environment diagnosis.
+
+
+## 2026-10-26 — Qt / Tauri core SI synchronization
+
+The two frontends now consume one inspector model and original bitmap assets.
+Tauri gains the matching classic SI tree/field/dual-hex view, stable selection,
+explicit single-click +/- versus double-click labels, resizable columns with
+vertical grid lines, network/TP/program/LCN organization and Summary/PID return.
+The prior advanced workspace remains accessible. No protocol parser changed.
+
+Local evidence: shared catalog 904 assertions, Qt 38 component and 22 full-app
+checks, real-engine browser 20 core plus 14 extended interaction checks, and the
+uncached double-click regression. Current Qt and Tauri native previews both
+complete the same Hotbird scan. Native WebView2 capture is verified; Tauri native
+mouse automation remains unverified because application authorization timed out.
+See [parity evidence and exact binaries](NXTSA_UI_UX_PARITY.md#dual-frontend-local-acceptance-2026-10-26).
+Publication continues on the authorized draft PR #30; hosted results must be
+read against the new commit, not the earlier branch head.
+
+
+### 2026-10-27 classic parity step 16
+
+Both UIs now expose source-identified Save/Copy for the active view, bounded
+original/derived exports with SHA-256 manifests, and validated OK/Cancel scan
+preferences. Existing advanced rename/SI snapshot export remains available.
+Six engine export checks, three browser chains and seven full-Qt offscreen
+checks passed. Native dialog/mouse/DPI/normal exit remain step 17; no CI used.
+
+
+### 2026-10-27 classic parity step 17 local delivery
+
+The ordered implementation has reached final local delivery. Both native UIs
+were rebuilt, exercised through real Windows mouse interaction and native save
+cancellation, and normally closed with recorded UI/core/WebView PIDs gone.
+Qt's real 200% oversized initial window was fixed; reduced classic web viewports
+keep controls reachable. Active MDI titles and readable Save scope now agree.
+41 focused engine checks, 21 classic browser chains (including three viewport
+scales), four advanced chains, 52 actual Qt component cases (60 lifecycle-inclusive
+PASS) and five full-Qt runtime chains passed. No hosted CI was triggered or polled.
+Cross-monitor Windows DPI transitions and subjective pixel-perfect acceptance
+remain unverified; Tauri's ignored scale flag is explicitly not native 200% proof.
+See NXTSA_UI_UX_PARITY.md step 17 for the exact evidence and unsupported boundaries.
+
+Final parity follow-up: classic startup now selects valid PAT in both UIs;
+Open-file configuration captures old values before Cancel. The picker-boundary
+browser regression and default-selection assertion pass.

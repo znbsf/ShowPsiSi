@@ -730,6 +730,625 @@
       "annotations": {
         "readOnlyHint": true
       }
+    },
+    {
+      "name": "query_transport",
+      "description": "Read bounded per-PID transport counters for all observed scan windows. Scan-global even when an inspector has a historical cutoff. Rates/duration use only supplied normalized 188-byte TS bitrate; no PCR clock measurement. Error packets exclude continuity, CRC, PES and decoder errors.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8192
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "sort": {
+            "type": "string",
+            "enum": [
+              "pid",
+              "packets"
+            ]
+          },
+          "descending": {
+            "type": "boolean"
+          },
+          "errors_only": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "analysis_revision"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_packet",
+      "description": "Read actual source TS packet and framing bytes with bounded PID search. Packet indexes are zero based. No reconstructed packets; unmatched batch returns a continuation index. Source must remain unchanged.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "packet_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "forward",
+              "backward"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8191
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536
+          },
+          "client_token": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "packet_index"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_timing",
+      "description": "Read bounded raw PCR observations and measured normalized TS bitrate. Wrap-aware consecutive intervals only; excludes gaps, discontinuities and intervals over ten seconds. Not a complete timing/conformance checker.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "analysis_revision"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_service",
+      "description": "Read full ONID/TSID/SID scoped service, exact PMT component sources, observed EIT and bounded nonexclusive AIT carriage. Ambiguous PAT/actual SDT identity withholds media associations. No runtime or schedule completeness claim.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "original_network_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "transport_stream_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "service_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "event_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "event_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "original_network_id",
+          "transport_stream_id",
+          "service_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_carousel",
+      "description": "Read exact DSM-CC module epoch, verified BIOP objects and paged immutable content; read-only class interpretation. No execution or inferred cross-carousel association.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "module_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "module_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "announcement_epoch_order": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "object_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "download_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "object_key_hex": {
+            "type": "string",
+            "maxLength": 510
+          },
+          "inventory": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "source_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_teletext",
+      "description": "Read bounded actual DVB Teletext page/subpage captures, 40-column partial Latin Level 1 semantic cells and exact original PES/TS sources. No live clock or complete enhanced Teletext claim.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8190
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "page_hex": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 2303
+          },
+          "subcode": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 16383
+          },
+          "capture_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "national": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 6
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "pid"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_pes",
+      "description": "Read bounded original PES inventory, exact paged PES/ES bytes and source TS fragments. Does not imply frame completeness, successful decoding or device output.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8190
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pes_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pes_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "pes_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layer": {
+            "type": "string",
+            "enum": [
+              "pes",
+              "es"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "pid"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "decode_media",
+      "description": "Decode bounded collected ES using a hash-pinned external tool. Produces derived preview frames or PCM without device output; cancellation uses its exact revision/request_token.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8190
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "segment_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 63
+          },
+          "request_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "video",
+              "audio"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "mpegvideo",
+              "h264",
+              "hevc",
+              "mp3",
+              "aac",
+              "loas",
+              "ac3",
+              "eac3"
+            ]
+          },
+          "from_pes_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "pid",
+          "request_token",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "cancel_media",
+      "description": "Cancel only the matching queued/running decode request flag. Does not inspect or mutate Engine evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "request_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "request_token"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "audio_control",
+      "description": "Control this exact decoded preview buffer on the local Windows output device. Stale tokens cannot stop another preview.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "play",
+              "pause",
+              "resume",
+              "stop",
+              "status"
+            ]
+          },
+          "client_token": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "preview_token",
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "export_asset",
+      "description": "Save exactly selected original bytes or a derived preview, with a source-identity manifest. Bounded resources only; never overwrite. Dialog cancellation sends no request.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8191
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pes_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "module_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "module_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "announcement_epoch_order": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "object_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "download_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "object_key_hex": {
+            "type": "string",
+            "maxLength": 510
+          },
+          "packet_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "section",
+              "packet",
+              "packet_frame",
+              "pes",
+              "es",
+              "module",
+              "object",
+              "png",
+              "wav",
+              "report"
+            ]
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "frame_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 15
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "path",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false
+      }
     }
-  ]
+  ],
+  "media_decoder": {
+    "name": "FFmpeg",
+    "build": "9.0.2-essentials_build-www.gyan.dev",
+    "platform": "windows-x64",
+    "sha256": "3256173f3f8bffd7df12227c68adf68025edb1832273a9530688a7bb1ed8edec",
+    "license": "GPL-3.0 build; separate external process",
+    "distribution": "external_only; not included in application packages",
+    "origin": "Existing user-provided reference binary, locally version/hash checked 2026-10-26"
+  }
 }

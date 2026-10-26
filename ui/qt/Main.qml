@@ -4,20 +4,31 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtQml.Models
 import "qrc:/shared/workbench.js" as Shared
+import "../tauri/web/classic-model.js" as Classic
+import "../tauri/web/output-model.js" as Output
 
 ApplicationWindow {
     id: win
-    width: 1440
-    height: 900
-    minimumWidth: 1000
-    minimumHeight: 680
+    // Keep controls and the native close button reachable at large desktop scale.
+    width: Math.min(1440, Math.max(640, Screen.width-40))
+    height: Math.min(900, Math.max(400, Screen.height-60))
+    minimumWidth: Math.min(1000, Math.max(640, Screen.width-40))
+    minimumHeight: Math.min(680, Math.max(400, Screen.height-60))
     visible: true
-    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : "ShowPsiSi · Transport stream inspector"
+    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : advancedMode ? "ShowPsiSi · Transport stream inspector" : documentMode&&documentWorkspace.state.active ? "ShowPsiSi - "+((documentWorkspace.state.items.find(function(d){return d.id===documentWorkspace.state.active;})||{}).title||documentScope()) : "ShowPsiSi"+(analysisState.source?" - "+String(analysisState.source).split(/[\\/]/).pop():"")+(transportSummaryVisible?" - Summary":detail.id?" - "+detail.name+" PID "+hex(detail.pid):"")
     property string inputKind: "ts"
+    property bool classicToolbarVisible:true
+    property bool classicStatusVisible:true
+    property bool classicTreeVisible:true
+    property bool classicConfigurationVisible:false
+    property var classicLocks: ({})
+    property bool documentMode:false
+    property bool transportSummaryVisible: false
+    readonly property bool transportQueryReady: backendReady && !core.busy
     property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
     readonly property bool coreInspecting: core.inspecting
     readonly property bool metadataMode: inputKind === "dvbi"
-    property bool lightTheme: core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
+    property bool lightTheme: (!metadataMode && !advancedMode) || core.env("SHOWPSISI_THEME") === "light" || (!core.env("SHOWPSISI_THEME") && core.loadTheme() === "light")
     property color surface: lightTheme ? "#f5f6f8" : "#181a1f"
     property color panel: lightTheme ? "#ffffff" : "#20232a"
     property color raised: lightTheme ? "#eef0f3" : "#2a2e37"
@@ -265,6 +276,7 @@ ApplicationWindow {
     function acceptTopology(result) {
         result=JSON.parse(JSON.stringify(result));
         topologyLoading=false;
+        if(topologyRequest.revision!==analysisState.analysis_revision || topologyRequest.cutoff!==(topologyCutoff===null?currentPacket():topologyCutoff)){siOrganizationTimer.restart();return;}
         if(result.message){topologyError=result.message;topologyFailed=true;return;}
         let contractError=Shared.workbench.validateTopology(result,topologyRequest.revision,topologyRequest.cutoff);
         if(contractError){topologyError=contractError;topologyFailed=true;return;}
@@ -278,11 +290,23 @@ ApplicationWindow {
             });
             topologyData=merged;
         }else topologyData=result;
+        if(unifiedInspector.visible)siOrganizationTimer.restart();
         let families=result.projections || [];
         if(!families.some(function(p){return p.family===topologyFamily;}))topologyFamily=families.length ? families[0].family : "";
         if(!topologyFocus && topologyRows.length)topologyFocus=topologyRows[0].node_id;
         if(topologySelection && !topologyNode && !(result.page || {}).has_more)topologyError="The previous object is not observed at this cutoff. Choose an available object.";
     }
+    // Reuse the engine's paged, revision-bound topology for the classic SI tree.
+    Timer {
+        id: siOrganizationTimer; interval: 150; repeat: false
+        onTriggered: {
+            if(!unifiedInspector.visible || !backendReady || !analysisState.complete || topologyLoading)return;
+            if(topologyFailed)return;
+            if(!topologyData.analysis_revision || topologyStale){topologyCutoff=null;loadTopology(false);}
+            else if((topologyData.page || {}).has_more)loadTopology(true);
+        }
+    }
+    onBackendReadyChanged: if(backendReady)siOrganizationTimer.restart()
     function topologyNavigationPoint() {
         return {selection:topologySelection,focus:topologyFocus,expanded:topologyExpanded,search:topologySearch.query,family:topologyFamily,
             evidence:topologyEvidenceRef,sectionContext:topologySectionContext,resolution:topologyResolution,view:inspectorView,scope:evidenceScope,tab:tab,
@@ -634,7 +658,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            unified: {services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            window_geometry:{width:win.width,height:win.height,screen_width:Screen.width,screen_height:Screen.height},media_audio_last_response:mediaAudioLastResponse,documents:documentWorkspace.snapshot(),output:{visible:outputDialog.visible,options:outputDialog.options},configuration:{visible:classicConfigurationVisible,values:configurationValues()},document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -649,10 +673,20 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(action.name==='output_cancel'&&outputDialog.visible){outputDialog.close();return JSON.stringify({accepted:true});}
+        if(action.name==='configuration_cancel'&&classicConfigurationVisible){cancelConfiguration();return JSON.stringify({accepted:true});}
+        if(action.name==='configuration_ok'&&classicConfigurationVisible){var ok=commitConfiguration();if(ok)classicConfigurationVisible=false;return JSON.stringify({accepted:ok});}
+        if(action.name==='configuration_charset'&&classicConfigurationVisible&&typeof action.value==='string'&&action.value.length<=128){defaultCharset.text=action.value;return JSON.stringify({accepted:true});}
+
+        if(['media_select','media_tab','media_decode','media_play','media_pause','media_stop','media_source','media_cursor'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.mediaAction(action)});
+        if(['teletext_select','teletext_capture','teletext_reveal','teletext_query'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.teletextAction(action)});
+        if(['carousel_open','carousel_tab','carousel_view','carousel_back'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.carouselAction(action)});
+        if(action.name==='classic_command' && ['save','toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate','services','carousel','teletext','media'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
         if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
         if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
         if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
-        if(action.name==="unified_path" && !advancedMode && unifiedInspector.nodes.some(function(n){return n.path===action.path;})){unifiedInspector.selectedPath=action.path;return JSON.stringify({accepted:true});}
+        if(action.name==="unified_path" && !advancedMode && unifiedInspector.nodes.some(function(n){return n.path===action.path;})){unifiedInspector.focusNode(action.path);return JSON.stringify({accepted:true});}
+        if(action.name==="unified_node" && !advancedMode){let row=unifiedInspector.navigation.find(function(r){return r.key===action.key && r.kind==='node';});if(!row)return JSON.stringify({error:"Unknown tree node"});unifiedInspector.activate(row);return JSON.stringify({accepted:true});}
         if(action.name==="unified_back" && !advancedMode){unifiedInspector.back();return JSON.stringify({accepted:true});}
         if(action.name==="unified_hex" && typeof action.value==="boolean"){unifiedInspector.hexOpen=action.value;return JSON.stringify({accepted:true});}
         if(action.name==="open_source" && typeof action.path==="string" && backendReady){source.text=action.path;scan();return JSON.stringify({accepted:true});}
@@ -1164,6 +1198,72 @@ ApplicationWindow {
             params.at_packet = analysisState.selected_packet;
         core.mark("inspect_send_begin");core.send("inspect", params);core.mark("inspect_send_end");
     }
+    property var mediaAudioLastResponse:({})
+    property var pendingServiceSource:null
+    function openServiceSource(id,path,cutoff){pendingServiceSource={id:id,path:path,cutoff:cutoff};inspect(id,-1,cutoff);}
+    function openMedia(pid,tab){documentMode=true;advancedMode=false;documentWorkspace.open('media',String(pid)+'@'+analysisState.selected_packet,documentScope()+' - PES / ES / Media',{pid:pid,tab:tab||'PES',_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
+    function openTeletext(pid){documentMode=true;advancedMode=false;documentWorkspace.open('teletext',String(pid)+'@'+analysisState.selected_packet,documentScope()+' - Teletext',{pid:pid,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
+    function openCarousel(sourceId){documentMode=true;advancedMode=false;documentWorkspace.open('carousel','carousel@'+analysisState.selected_packet,documentScope()+' - DSM-CC / OC Files',{source_id:sourceId||detail.id,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
+    function openServices(service){documentMode=true;advancedMode=false;var key=service?service.onid+':'+service.ts_id+':'+service.id:'all';documentWorkspace.open('service',key+'@'+analysisState.selected_packet,documentScope()+' - Services / EPG',{service:service,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
+    function documentScope(cutoff){var at=cutoff===undefined?analysisState.selected_packet:cutoff;return String(analysisState.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(analysisState.analysis_revision||analysisState.revision||0)+', '+(at==null?'latest':'packet '+at)+']';}
+    function openPacket(pid,index,byteOffset){var existing=documentWorkspace.state.items.some(function(d){return d.kind==='packet'&&d.key===String(pid);});documentMode=true;advancedMode=false;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid,index:index||0,byte_offset:byteOffset||0},false);if(existing)documentWorkspace.seekPacket(pid,index||0,byteOffset||0);}
+    function openDocument(kind,duplicate){
+        var payload=kind==='summary'?{}:JSON.parse(JSON.stringify(detail));if(kind!=='summary'){payload._view_state=JSON.parse(JSON.stringify(analysisState));payload._view_state.selected_packet=detail.native_table_at_packet;}
+        var title=documentScope(kind==='summary'?undefined:detail.native_table_at_packet)+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
+        documentWorkspace.open(kind,kind==='summary'?'summary':(detail.id||'empty')+'@'+detail.native_table_at_packet,title,payload,!!duplicate);
+    }
+    property string documentIdentity:(analysisState.source||'')+'|'+(analysisState.analysis_revision||analysisState.revision||'')
+    onDocumentIdentityChanged:{pendingServiceSource=null;if(documentWorkspace)documentWorkspace.reset(documentIdentity)}
+    onDetailChanged:if(documentMode&&detail.id&&!advancedMode&&!metadataMode)Qt.callLater(function(){if(detail.id){openDocument('si');if(pendingServiceSource&&pendingServiceSource.id===detail.id){var source=pendingServiceSource;pendingServiceSource=null;documentWorkspace.focusSection(source.id,source.path,source.cutoff);}}})
+    Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.close()}
+    Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(false)}
+    Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(true)}
+    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{save:true,documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
+    function classicCommand(name){
+        var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
+        if(name==='open')fileDialog.open();
+        else if(name==='save')outputDialog.prepare(analysisState,documentMode?documentWorkspace.outputContext():{kind:'si',payload:detail,view:{copyField:unifiedInspector.selectedField,raw_hex:unifiedInspector.rawHex}});
+        else if(name==='start')scan();
+        else if(name==='stop')cancelScan();
+        else if(name==='pause')core.pauseAnalysis();
+        else if(name==='toolbar')classicToolbarVisible=!classicToolbarVisible;
+        else if(name==='status')classicStatusVisible=!classicStatusVisible;
+        else if(name==='tree')classicTreeVisible=!classicTreeVisible;
+        else if(name==='new'){documentMode=true;openDocument('si',true);}
+        else if(name==='decoded'){documentMode=true;openDocument('decoded');}
+        else if(name==='packets')openPacket(-1,0);
+        else if(name==='media')openMedia(-1,'PES');
+        else if(name==='teletext')openTeletext(-1);
+        else if(name==='carousel')openCarousel();
+        else if(name==='services')openServices(null);
+        else if(name==='bitrate'){documentMode=true;advancedMode=false;documentWorkspace.open('statistics','statistics',documentScope()+' - Bitrate / Timing',{},false);}
+        else if(name==='close')documentWorkspace.close();
+        else if(['cascade','tile','arrange'].indexOf(name)>=0)documentWorkspace.arrange(name);
+        else if(name==='summary'){if(documentMode)openDocument('summary');transportSummaryVisible=true;advancedMode=false;}
+        else if(name==='configuration'){if(classicConfigurationVisible)cancelConfiguration();else{configurationDraft=configurationValues();classicConfigurationVisible=true;source.forceActiveFocus();}}
+        else if(name==='advanced'){transportSummaryVisible=false;advancedMode=true;}
+        else if(name==='dvbi')inputKind='dvbi';
+        else if(name==='about')updateDialog.open();
+        else if(name==='index')classicHelpDialog.open();
+        else if(name==='messages')messagesDialog.open();
+        else if(name==='diagnostics'){var result=uiAgent.saveBundle();showMessage(result,result.indexOf('Diagnostics failed:')===0?'error':'info');}
+        else if(name==='exit')win.close();
+    }
+    Timer {interval:500;running:!metadataMode&&!advancedMode&&classicStatusVisible;repeat:true;onTriggered:classicLocks=core.lockState()}
+    Dialog {
+        id:classicHelpDialog;title:'ShowPsiSi Help';modal:true;width:Math.min(600,win.width-40);anchors.centerIn:parent;standardButtons:Dialog.Close
+        contentItem:Label {text:'Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to table fields and original bytes. Single-click selects; double-click text or click +/− to expand. F6 / Shift+F6 moves between panes. Alt+Left returns. Card Configuration opens source and scan options. Advanced workspace retains editing, topology, history and DVB-I. Disabled commands describe features not yet available.';wrapMode:Text.WordWrap;color:'#000';padding:14}
+        background:Rectangle{color:'#efefef';border.color:'#808080'}
+    }
+    property var configurationDraft:null
+    function configurationValues(){return {standards:standardChoice.currentValue,default_charset:defaultCharset.text,extra_pids:extraPidsValue,scan_mode:scanMode.currentValue,budget_unit:scanBudgetUnit.currentIndex===0?'percent':'packets',sample_percent:Number(scanBudget.text),max_packets:Number(scanBudget.text),start_packet:Number(scanStart.text),end_packet:Number(scanEnd.text),window_count:4};}
+    function restoreConfiguration(value){if(!value||!Object.keys(value).length||Output.scanSettings.validate(value))return;standardChoice.currentIndex=standardChoice.model.findIndex(function(x){return x.value===value.standards;});defaultCharset.text=value.default_charset;extraPids.text=value.extra_pids.join(', ');scanMode.currentIndex=scanMode.model.findIndex(function(x){return x.value===value.scan_mode;});scanBudgetUnit.currentIndex=value.budget_unit==='percent'?0:1;scanBudget.text=String(value.budget_unit==='percent'?value.sample_percent:value.max_packets);scanStart.text=String(value.start_packet);scanEnd.text=String(value.end_packet);}
+    function commitConfiguration(){var value=configurationValues(),error=Output.scanSettings.validate(value);if(error){showMessage(error,'error');return false;}if(!core.saveScanSettings(value))showMessage('Options kept for this session; preference storage unavailable','warning');configurationDraft=null;return true;}
+    function cancelConfiguration(){if(configurationDraft)restoreConfiguration(configurationDraft);configurationDraft=null;classicConfigurationVisible=false;}
+    Timer{interval:0;running:true;repeat:false;onTriggered:restoreConfiguration(core.loadScanSettings())}
+    property var assetSaveIntent:({})
+    OutputDialog {id:outputDialog;onCopyRequested:function(text){core.copyText(text);showMessage('Copied selected content','info');}onSaveRequested:function(output){assetSaveIntent=output;assetSaveDialog.currentFolder=lastExportFolder;assetSaveDialog.selectedFile=core.fileUrl(core.localPath(lastExportFolder)+'/selected-'+output.kind+'.'+output.extension);assetSaveDialog.open();}}
+    FileDialog {id:assetSaveDialog;title:'Save selected content - existing files are refused';fileMode:FileDialog.SaveFile;options:FileDialog.DontConfirmOverwrite;defaultSuffix:assetSaveIntent.extension||'bin';nameFilters:[(assetSaveIntent.label||'Selected content')+' (*.'+(assetSaveIntent.extension||'bin')+')'];onAccepted:{var path=core.localPath(selectedFile);if(path){var params=Object.assign({},assetSaveIntent.params,{path:path});core.send('export_asset',params);}}onRejected:showMessage('Save cancelled; no output written','info')}
     function openExportDialog() {
         if (!exportButton.enabled || saveDialog.visible) return;
         let format = exportFormat.currentValue;
@@ -1232,12 +1332,8 @@ ApplicationWindow {
             return;
         recentMenu.close();
         if(warningMessage.indexOf("Scan cancelled")===0){warningMessage="";warningRepeat=0;}
-        clearWorkspaceIntentions();
-        filter = ""; pidFilter = -1; expandedTables = {};
-        recordSearch.clear();
-        treeSearch.clear();
-        tab = "Services";
         notice = "Scanning source…";
+        if(!commitConfiguration())return;
         pendingCoverageKey=requestedCoverageKey;
         pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
         rememberSource(source.text.trim());
@@ -1253,6 +1349,7 @@ ApplicationWindow {
             params[scanBudgetUnit.currentIndex===0 ? "sample_percent" : "max_packets"]=Number(scanBudget.text);
             if(scanMode.currentValue==="distributed")params.window_count=4;
         }
+        documentWorkspace.stopMedia();
         core.send("analyze",params);
     }
     function focusNextRegion(backwards) {
@@ -1825,11 +1922,15 @@ ApplicationWindow {
             const staged=state.response_mode==="compact" && !!state.complete;
             presentationPending=staged;
             core.mark("state_js_assembled");analysisState=state;core.mark("state_js_end");
+            if(unifiedInspector.visible){topologyFailed=false;siOrganizationTimer.restart();}
             if(staged)Qt.callLater(function(){publishViewStage(state,token,epoch,0);});
             else {tableViewState=state;explorerViewState=state;historyViewState=state;recordViewState=state;}
         }
         function onErrorChanged() { if(core.error)showMessage(core.error, "error"); }
-        function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
+        function onWorkspaceInvalidated() {
+            clearWorkspaceIntentions();
+            if(core.busy){filter="";pidFilter=-1;expandedTables={};recordSearch.clear();treeSearch.clear();tab="Services";}
+        }
         function onAvailabilityChanged() {
             if (core.availability === "disconnected") {
                 pendingScanOptions=null;
@@ -1840,8 +1941,16 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if(["query_pes","decode_media","audio_control","cancel_media"].indexOf(method)>=0){if(method==="audio_control")mediaAudioLastResponse=result;documentWorkspace.receiveMedia(method,result);return;}
+            if(method=="query_teletext"){documentWorkspace.receiveTeletext(result);return;}
+            if(method=="query_carousel"){documentWorkspace.receiveCarousel(result);return;}
+            if(method=="query_service"){documentWorkspace.receiveService(result);return;}
+            if(method=="query_timing"){documentWorkspace.receiveStatistics(method,result);return;}
+            if(method=="query_packet"){documentWorkspace.receivePacket(result);return;}
+            if(method=="query_transport"){transportSummary.receive(result);documentWorkspace.receiveTransport(result);documentWorkspace.receiveStatistics(method,result);return;}
             if(method==="capabilities" && analysisModesTestTimer.running){analysisModesTestTimer.barrier=true;return;}
             if(method === "analyze") {
+                if(result.complete && !advancedMode)classicConfigurationVisible=false;
                 if(result.complete && pendingScanOptions !== null){completedScanOptions=pendingScanOptions;completedCoverageKey=pendingCoverageKey;}
                 pendingScanOptions=null;
             }
@@ -1874,10 +1983,16 @@ ApplicationWindow {
                 return;
             }
             if (method === "fixture_late_frames") { lifecycleTestTimer.lateFramesAcknowledged = true; return; }
+            if (method === "analyze" && result.data && result.data.state_preserved) {
+                if(analysisState.source)source.text=analysisState.source;
+                showMessage(result.message + " — previous input and view retained", "error");
+                return;
+            }
             if (method === "analyze" && result.code === "analysis_cancelled") {
                 showMessage("Scan cancelled · source unchanged · analyze again when ready", "warning");
                 return;
             }
+            if(method==='export_asset'){if(result.message)showMessage(result.message,'error');else{lastExportFolder=core.parentFolder(result.path);showMessage('Saved '+result.kind+': '+num(result.bytes)+' bytes + manifest\n'+result.path,'info');}return;}
             if (result.message) {
                 if (method === "export") {
                     exporting = false;
@@ -3878,13 +3993,14 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            transportSummaryVisible=false;
             if(!advancedMode){unifiedInspector.focusSearch();return;}
             let field=tab==="Topology"?topologySearch:recordSearch;
             if(win.activeFocusItem!==field)paletteReturnFocus=win.activeFocusItem;
             field.forceActiveFocus();field.selectAll();
         }
     }
-    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(transportSummaryVisible){transportSummaryVisible=false;return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
     // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
     Shortcut { sequence: "Ctrl+Alt+Left"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
     Shortcut { sequence: "Ctrl+Alt+Right"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
@@ -3895,16 +4011,19 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
-            if(!advancedMode){unifiedInspector.nextRegion();return;}
+            if(documentMode&&!advancedMode){documentWorkspace.nextRegion(false);return;}
+            if(transportSummaryVisible){transportSummary.nextRegion(false);return;}
+            if(!advancedMode){unifiedInspector.nextRegion(false);return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:advancedMode?focusNextRegion(true):unifiedInspector.nextRegion() }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:documentMode&&!advancedMode?documentWorkspace.nextRegion(true):transportSummaryVisible?transportSummary.nextRegion(true):advancedMode?focusNextRegion(true):unifiedInspector.nextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
+            transportSummaryVisible=false;
             if(!advancedMode){unifiedInspector.focusSearch();return;}
             inspectorView = "Structure";
             treeSearch.forceActiveFocus();
@@ -3932,7 +4051,7 @@ ApplicationWindow {
         nameFilters: ["Transport streams (*.ts *.mts *.m2ts)", "All files (*)"]
         onAccepted: {
             source.text = core.localPath(selectedFile);
-            scan();
+            if(advancedMode)scan();else {if(!classicConfigurationVisible)configurationDraft=configurationValues();classicConfigurationVisible=true;showMessage("Ready — choose Start to analyze the selected transport stream","info");}
         }
     }
     FileDialog {
@@ -3977,8 +4096,14 @@ ApplicationWindow {
             }
         }
     }
-    header: Rectangle {
-        height: 42
+    header: Column {
+        width:parent.width
+        spacing:0
+        ClassicFrame {host:win;visible:!metadataMode&&!advancedMode;width:parent.width;onCommand:function(name){win.classicCommand(name);}}
+        Rectangle {
+        width:parent.width
+        visible:metadataMode || advancedMode
+        height: visible?42:0
         color: surface
         border.color: dividerColor
         RowLayout {
@@ -4044,9 +4169,15 @@ ApplicationWindow {
                 onClicked: updateDialog.open()
             }
             Action {
+                objectName:"transportSummaryButton"
+                visible:!metadataMode
+                text:transportSummaryVisible ? "Return to inspector" : "Summary / PID"
+                onClicked:transportSummaryVisible=!transportSummaryVisible
+            }
+            Action {
                 objectName: "workspaceMode"
                 text: advancedMode ? "Inspector" : "Advanced workspace"
-                onClicked: advancedMode = !advancedMode
+                onClicked: {transportSummaryVisible=false;advancedMode = !advancedMode;}
             }
             Action {
                 objectName: "agentApi"
@@ -4064,6 +4195,7 @@ ApplicationWindow {
                 SafeTip { visible: anchorHovered; text: "Save a real screenshot and structured UI state for debugging. Includes source paths and visible stream metadata." }
             }
         }
+    }
     }
     ColumnLayout {
         anchors.fill: parent
@@ -4101,7 +4233,7 @@ ApplicationWindow {
         }
         ColumnLayout {
             id: sourceBar
-            visible: !metadataMode
+            visible: !metadataMode && (advancedMode || classicConfigurationVisible)
             Layout.fillWidth: true
             Layout.margins: 10
             spacing: 6
@@ -4335,6 +4467,11 @@ ApplicationWindow {
                 font.pixelSize: 11
             }
         }
+        RowLayout{visible:!advancedMode&&classicConfigurationVisible;Layout.fillWidth:true
+            Label{Layout.fillWidth:true;text:'Next analysis only. Current results retain their original settings.';wrapMode:Text.WordWrap;color:'#000'}
+            ClassicButton{text:'OK';objectName:'configurationOK';onClicked:if(commitConfiguration())classicConfigurationVisible=false}
+            ClassicButton{text:'Cancel';objectName:'configurationCancel';onClicked:cancelConfiguration()}
+        }
         ProgressBar {
             Layout.fillWidth: true
             Layout.preferredHeight: 2
@@ -4406,14 +4543,131 @@ ApplicationWindow {
         }
         UnifiedInspector {
             id: unifiedInspector
+            focusOrigin:sourceBar.visible?sourceBar:null
+            onMediaRequested:function(pid){win.openMedia(pid,'PES');}
+            onTeletextRequested:function(pid){win.openTeletext(pid);}
+            onCarouselRequested:function(sourceId){win.openCarousel(sourceId);}
+            onServiceRequested:function(service){win.openServices(service);}
+            onPacketRequested:function(pid){win.openPacket(pid,0);}
+            treeVisible:win.classicTreeVisible
+            externalVisible:win.transportSummaryVisible||win.documentMode
             host: win
+            organization: !topologyStale && topologyData.analysis_revision===analysisState.analysis_revision ? topologyData : ({})
+            organizationStatus: topologyLoading ? "Loading networks / TP..." : topologyError ? "Network organization unavailable" : (topologyData.page || {}).has_more ? "Loading more networks / TP..." : ""
+            onVisibleChanged: if(visible)siOrganizationTimer.restart()
             visible: !metadataMode && !advancedMode
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
+        DocumentWorkspace {
+            id:documentWorkspace
+            navigationOrigin:unifiedInspector.navigationItem
+            parent:unifiedInspector.externalContainer;anchors.fill:parent
+            visible:documentMode&&!advancedMode&&!metadataMode
+            sectionComponent:Component {
+                UnifiedInspector {
+                    id:childInspector;treeVisible:false
+                    onPacketRequested:function(pid){win.openPacket(pid,0);}
+                    host:QtObject {
+                        property var analysisState:detail._view_state||win.analysisState
+                        property var detail:childInspector.parent.documentData.payload
+                        property bool coreInspecting:false
+                        property bool backendReady:win.backendReady
+                        function inspect(id){win.inspect(id);}
+                        property var tableFamilies:win.tableFamilies
+                    }
+                }
+            }
+            summaryComponent:Component {
+                TransportSummary {
+                    host:win
+                    onPageRequested:function(offset,sort,descending,errorsOnly){if(!core.busy)core.send('query_transport',{analysis_revision:analysisState.analysis_revision||analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});}
+                    onEntryActivated:function(entry){var record=(analysisState.tables||[]).find(function(row){return row.pid===entry.pid;});if(record)win.inspect(record.id);}
+                    Component.onCompleted:if(!core.busy&&analysisState.complete)request(0)
+                }
+            }
+            mediaComponent:Component {
+                MediaView {
+                    id:mediaDocument
+                    initialPid:parent.documentData.payload.pid
+                    initialTab:parent.documentData.payload.tab||'PES'
+                    host:QtObject{property var analysisState:mediaDocument.parent.documentData.payload._view_state;property bool backendReady:win.backendReady}
+                    onRequested:function(method,params){if(!core.busy||method==='cancel_media'||method==='audio_control')core.send(method,params);else receive(method,{request:params,message:'Wait for current analysis to finish'});}
+                    onPacketActivated:function(pid,index,offset){if(!core.busy&&mediaDocument.sourceRevision===(analysisState.analysis_revision||analysisState.revision)&&mediaDocument.sourcePath===analysisState.source)win.openPacket(pid,index,offset);}
+                }
+            }
+            teletextComponent:Component {
+                TeletextView {
+                    id:teletextDocument
+                    initialPid:parent.documentData.payload.pid
+                    host:QtObject{property var analysisState:teletextDocument.parent.documentData.payload._view_state;property bool backendReady:win.backendReady}
+                    onRequested:function(params){if(!core.busy)core.send('query_teletext',params);else receive({request:params,message:'Wait for current analysis to finish'});}
+                    onPacketActivated:function(pid,index){win.openPacket(pid,index);}
+                }
+            }
+            carouselComponent:Component {
+                CarouselView {
+                    id:carouselDocument
+                    initialSource:parent.documentData.payload.source_id||''
+                    host:QtObject{property var analysisState:carouselDocument.parent.documentData.payload._view_state;property bool backendReady:win.backendReady}
+                    onRequested:function(params){if(!core.busy)core.send('query_carousel',params);else receive({request:params,message:'Wait for current analysis to finish'});}
+                    onSectionActivated:function(id,path,cutoff){win.openServiceSource(id,path,cutoff);}
+                }
+            }
+            serviceComponent:Component {
+                ServiceView {
+                    id:serviceDocument
+                    initialService:parent.documentData.payload.service
+                    host:QtObject{property var analysisState:serviceDocument.parent.documentData.payload._view_state;property bool backendReady:win.backendReady}
+                    onRequested:function(params){if(!core.busy)core.send('query_service',params);else receive({request:params,message:'Wait for current analysis to finish'});}
+                    onSectionActivated:function(id,path,cutoff){win.openServiceSource(id,path,cutoff);}
+                }
+            }
+            statisticsComponent:Component {
+                StatisticsView {
+                    host:win
+                    onRequested:function(method,params){if(!core.busy)core.send(method,params);else receive(method,{message:'Wait for current analysis to finish'});}
+                    onPacketActivated:function(pid,index){win.openPacket(pid,index);}
+                }
+            }
+            packetComponent:Component {
+                PacketExplorer {
+                    id:packetDocument;host:win
+                    initialPid:parent.documentData.payload.pid
+                    initialIndex:parent.documentData.payload.index
+                    initialByte:parent.documentData.payload.byte_offset||0
+                    onRequested:function(params){if(!core.busy)core.send('query_packet',params);else receive({request:params,code:'busy',message:'Wait for current analysis to finish'});}
+                    onSectionActivated:function(id){win.inspect(id);}
+                }
+            }
+            decodeComponent:Component {
+                ScrollView {
+                    id:decodedDocument
+                    TextArea {readOnly:true;selectByMouse:true;wrapMode:TextEdit.NoWrap;font.family:'Courier New';font.pixelSize:13;color:'#000';background:Rectangle{color:'#fff'}text:decodedDocument.parent.documentData.payload.section_native_text||decodedDocument.parent.documentData.payload.native_text||decodedDocument.parent.documentData.payload.raw_hex||'No selected table'}
+                }
+            }
+        }
+        TransportSummary {
+            id:transportSummary
+            parent:unifiedInspector.externalContainer
+            anchors.fill:parent
+            focusOrigin:sourceBar.visible?sourceBar:null
+            host:win
+            visible:!metadataMode && transportSummaryVisible && !documentMode
+            onPageRequested:function(offset,sort,descending,errorsOnly){
+                if(core.busy){reject("Wait for the current operation, then Refresh.");return;}
+                core.send("query_transport",{analysis_revision:analysisState.analysis_revision || analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});
+            }
+            onEntryActivated:function(entry){
+                if(entry.aggregate || entry.pid===null || entry.pid===undefined){showMessage("No exact packet/section identity is retained for this aggregate.","warning");return;}
+                let record=(analysisState.tables || []).find(function(row){return entry.id ? row.id===entry.id : row.pid===entry.pid;});
+                if(!record){showMessage(entry.id ? "The exact diagnostic section is unavailable in this result." : "PID "+hex(entry.pid)+" has no retained PSI/SI section. PES/media views are not implemented yet.","warning");return;}
+                transportSummaryVisible=false;advancedMode=false;unifiedInspector.filterPid(entry.pid);unifiedInspector.selectRecord(record);
+            }
+        }
         SplitView {
             id: verticalWorkspace
-            visible: !metadataMode && advancedMode
+            visible: !metadataMode && advancedMode && !transportSummaryVisible
             Layout.fillWidth: true
             Layout.fillHeight: true
             orientation: Qt.Vertical
@@ -6260,6 +6514,7 @@ ApplicationWindow {
         }
         Rectangle {
             id: statusFooter
+            visible:metadataMode || advancedMode || classicStatusVisible
             readonly property bool errorStatus: metadataMode ? !!dvbiWorkspace.error : messageLevel === "error"
             Layout.fillWidth: true
             height: 28
@@ -6272,8 +6527,8 @@ ApplicationWindow {
                     objectName: "statusMessage"
                     text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : notice || (core.availability === "starting" ? "Starting backend…" : "Ready · all processing stays on this machine")
                     color: statusFooter.errorStatus ? errorInk : !metadataMode && messageLevel === "warning" ? warningColor : muted
-                    opacity: !metadataMode && messageLevel === "info" && messageExpired ? 0 : 1
-                    Accessible.ignored: !metadataMode && messageLevel === "info" && messageExpired
+                    opacity: !metadataMode && advancedMode && messageLevel === "info" && messageExpired ? 0 : 1
+                    Accessible.ignored: !metadataMode && advancedMode && messageLevel === "info" && messageExpired
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle
@@ -6308,14 +6563,23 @@ ApplicationWindow {
                     }
                 }
                 PlainLabel {
+                    visible:metadataMode || advancedMode
                     text: metadataMode ? "Independent document · C++ / Expat" : num(analysisState.packets) + " packets · C++ / TSDuck"
                     color: statusFooter.errorStatus ? errorInk : muted
                     font.pixelSize: 11
                 }
+                Repeater {
+                    model:!metadataMode&&!advancedMode?["ShowPsiSi",Qt.application.version,classicLocks.num?"NUM":"",classicLocks.scroll?"SCRL":""]:[]
+                    delegate:Rectangle {
+                        required property var modelData
+                        implicitWidth:Math.max(38,classicStatusText.implicitWidth+14);implicitHeight:22;color:'#efefef';border.color:'#a0a0a0'
+                        Text {id:classicStatusText;anchors.centerIn:parent;text:String(modelData);font.family:'Tahoma';font.pixelSize:11;color:'#000'}
+                    }
+                }
                 Action {
                     id: messagesButton
                     objectName: "messagesButton"
-                    visible: !metadataMode
+                    visible: !metadataMode && advancedMode
                     text: "Messages"
                     implicitHeight: 22
                     Accessible.name: "Messages · " + messagesModel.count + " recent messages"

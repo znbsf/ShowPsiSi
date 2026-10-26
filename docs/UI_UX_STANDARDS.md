@@ -1,5 +1,32 @@
 # Desktop workbench UX: standards-informed pass
 
+## Current core SI visual requirement (2026-10-25)
+
+The user explicitly requires the original NxTSA appearance, not a modern dark
+redesign. For the core SI workbench this supersedes the historical editor-theme
+choices below: white tree/table, light-gray raised controls, original 16x16
+bitmap icons, Courier New field/tree text, red values, solid yellow selection,
+boxed expanders and dotted connectors. The two hex panes use ten bytes per row,
+red offsets, blue payload bytes and green-tinted ASCII cells. Field/Bits/Value/
+Comment proportions follow the original reference (37/12/12/39 percent).
+Fonts and rendering remain a close visual match, not proven original LOGFONT or
+pixel equivalence. Existing advanced workbench theme controls remain available;
+the core SI component has its own fixed original-style palette.
+
+The selected RT_BITMAP assets are embedded in shared `ui/tauri/web/inspector-model.js` with resource
+IDs and the installed original executable hash. Raw extraction/atlas files stay
+ignored under `artifacts/nxtsa-parity-20261025/classic-icons`. No new dependency,
+installation, foreground window operation or remote distribution was performed.
+
+2026-10-25 addendum: the NxTSA functional correspondence work now follows the
+[14-group contract](NXTSA_UI_UX_PARITY.md) and
+[native behavior reference](NXTSA_BEHAVIOR_REFERENCE.md).
+Preserve the original's information grouping and user-visible operations before
+further aesthetic changes; the user decides later UX differences after functional
+acceptance. The standards-informed pass below remains historical evidence for its
+stated revision and does not establish NxTSA parity.
+
+
 Reviewed 2026-10-17 UTC, starting from `4d2635d`. Development and tests use the
 assistant's Linux cloud workspace only. This is a bounded improvement to the
 existing professional PSI/SI inspector, not a replacement design system or a

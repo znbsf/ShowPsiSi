@@ -1,4 +1,4 @@
-const assert=require('node:assert/strict'),fs=require('node:fs'),model=require('../ui/qt/InspectorModel.js');
+const assert=require('node:assert/strict'),fs=require('node:fs'),model=require('../ui/tauri/web/inspector-model.js');
 const cases=JSON.parse(fs.readFileSync('artifacts/unified-inspector/service-identity-evidence.json','utf8'));
 for(const [name,e] of Object.entries(cases)) {
   const primary=model.summary(e.details.find(d=>d.extension===0x1001),e.state);

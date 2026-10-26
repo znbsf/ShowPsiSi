@@ -4,6 +4,8 @@ const fs=require('node:fs');
  const browser=await chromium.connectOverCDP('http://127.0.0.1:9333');
  const pages=browser.contexts().flatMap(c=>c.pages());const page=pages.find(p=>p.url().includes('tauri.localhost'))||pages[0];
  const errors=[];page.on('pageerror',e=>errors.push(String(e)));
+ await page.waitForSelector('#workspace-toggle');
+ if(await page.locator('body').evaluate(e=>e.classList.contains('si-mode')))await page.locator('#workspace-toggle').click();
  await page.waitForFunction(()=>window.showpsisi?.getState().complete,{},{timeout:20000});
  await page.waitForFunction(()=>window.showpsisi?.getDetail().name==='SDT');
  if(process.env.SHOWPSISI_CAPTURE_REAL==='1'){

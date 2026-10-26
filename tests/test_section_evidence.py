@@ -45,7 +45,7 @@ class SectionEvidenceTests(unittest.TestCase):
                     state=self.scan([(pid,raw)],standards='dvb',extra_pids=[pid])
                     row=next(r for r in state['tables'] if r['table_id']==tid)
                     self.assertFalse(row['valid']);self.assertTrue(any(d['code']=='long_section_required' for d in state['diagnostics']))
-                    detail=self.core.call('inspect',{'id':row['id']});self.assertEqual(detail['raw_hex'],raw.hex().upper());self.assertNotIn('programs',detail['fields']);self.assertNotIn('streams',detail['fields'])
+                    detail=self.core.call('inspect',{'id':row['id']});self.assertEqual(detail['raw_hex'],raw.hex().upper());self.assertNotIn('programs',detail['fields']);self.assertNotIn('streams',detail['fields']);self.assertEqual(detail['si_structure']['children'],[])
                     graph=self.core.call('query_topology',{});self.assertFalse(any(n['object_type'] in ('program','component') for n in graph['nodes']))
     def test_short_pat_pmt_cannot_discover_forged_dependent_pids(self):
         pat=bytearray(section(0,1,1,word(100)+word(0xe321)));pat[1]&=0x7f;pat[-4:]=crc(pat[:-4]).to_bytes(4,'big')

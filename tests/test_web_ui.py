@@ -910,8 +910,387 @@ class BrowserTests(unittest.TestCase):
         self.page=self.browser.new_page(viewport={'width':1440,'height':1000},device_scale_factor=1)
         self.page_errors=[]
         self.page.on('pageerror',lambda error:self.page_errors.append(str(error)))
+        # Existing tests exercise the retained advanced workspace explicitly.
+        # Classic SI has separate default-surface and interaction regressions.
+        if not self._testMethodName.startswith('test_classic_'):
+            self.page.add_init_script("""if(!localStorage.getItem('showpsisi.theme'))localStorage.setItem('showpsisi.theme','dark');
+                window.addEventListener('DOMContentLoaded',()=>document.querySelector('#workspace-toggle').click());""")
         self.page.goto(self.server.url)
-        self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+        try:
+            self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+        except Exception:
+            self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'-startup.png')),full_page=True)
+            (self.artifacts/(self._testMethodName+'-startup.json')).write_text(json.dumps({'page_errors':self.page_errors,'visible_text':self.page.locator('body').inner_text(),'source':self.page.locator('#source').input_value() if self.page.locator('#source').count() else None,'backend_alive':self.bridge.proc.poll() is None}),encoding='utf-8')
+            self.page.close()
+            raise
+
+    def test_classic_default_fields_mouse_grid_and_advanced_return(self):
+        p=self.page
+        self.assertTrue(p.locator('#unified-si').is_visible())
+        self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
+        self.analyze();p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getDetail().id')
+        self.assertEqual(p.evaluate('window.showpsisi.getDetail().table_id'),0)
+        root=p.locator('.si-field-row[aria-expanded]').first
+        root.locator('.si-field-name').click();self.assertEqual(root.get_attribute('aria-expanded'),'true')
+        root.locator('.si-field-name').dblclick();self.assertEqual(root.get_attribute('aria-expanded'),'false')
+        root.locator('.si-fold').click();self.assertEqual(root.get_attribute('aria-expanded'),'true')
+        self.assertTrue(p.evaluate("""()=>{const h=[...document.querySelectorAll('.si-field-header>div')],c=[...document.querySelector('.si-field-row').children];return h.every((n,i)=>Math.abs(n.getBoundingClientRect().right-c[i].getBoundingClientRect().right)<1&&getComputedStyle(c[i]).borderRightWidth==='1px');}"""))
+        selected=p.evaluate('showpsisi.getUiState().unified.selected')
+        self.classic_command('advanced');self.assertTrue(p.locator('#panes').is_visible())
+        p.locator('#workspace-toggle').click();self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selected'),selected)
+
+    def test_classic_uncached_raw_record_double_click_keeps_target(self):
+        self.analyze();p=self.page;p.wait_for_function('()=>showpsisi.getUiState().settled')
+        p.locator('.si-nav-row[data-key="family:PMT"] .si-fold').click()
+        row=p.locator('.si-navigation .si-nav-row').filter(has=p.locator('.si-row-label',has_text='Program 0x')).first
+        key=row.get_attribute('data-key');label=row.locator('.si-row-label')
+        label.evaluate('(node)=>window.savedSiClickTarget=node')
+        label.dblclick();p.wait_for_function('(key)=>showpsisi.getUiState().settled && showpsisi.getUiState().unified.navigation.some(r=>r.key===key&&r.expanded)',arg=key)
+        self.assertTrue(p.evaluate('window.savedSiClickTarget.isConnected'))
+        # This fixture deliberately has an empty PMT; its decoded root must still appear.
+        self.assertTrue(p.evaluate('(key)=>showpsisi.getUiState().unified.navigation.some(r=>r.kind==="node"&&r.record_id===key&&r.path==="section/decoded")',key))
+
+    def test_classic_rejected_input_preserves_selected_field_and_scroll(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
+        before=p.evaluate('({unified:showpsisi.getUiState().unified,state:showpsisi.getState(),detail:showpsisi.getDetail()})')
+        self.show_scan_configuration()
+        for path in [self.output/'missing-candidate.ts',self.output/'invalid-candidate.ts']:
+            if path.name.startswith('invalid'):path.write_bytes(b'x'*940)
+            p.locator('#source').fill(str(path));p.locator('#scan').click()
+            p.wait_for_function('()=>!document.querySelector("#scan").disabled && document.querySelector("#notice").textContent.includes("retained")')
+            after=p.evaluate('({unified:showpsisi.getUiState().unified,state:showpsisi.getState(),detail:showpsisi.getDetail()})')
+            self.assertEqual(after['state'],before['state'])
+            self.assertEqual(after['detail'],before['detail'])
+            for name in ['selected','path','range','columnWidths','scroll']:
+                self.assertEqual(after['unified'][name],before['unified'][name],name)
+            self.assertEqual(p.locator('#source').input_value(),before['state']['source'])
+
+    def test_classic_back_restores_exact_field_and_both_axis_scroll(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        field=p.evaluate('showpsisi.getUiState().unified.fields.findIndex((r,i)=>i>6&&!r.groupPath&&r.bit_offset!==undefined)')
+        self.assertGreater(field,6)
+        p.locator('.si-field-row').nth(field).locator('.si-field-name').click()
+        grip=p.locator('.si-column-grip[data-column="0"]');grip.press('ArrowRight')
+        p.locator('.si-fields').evaluate('(node)=>{node.scrollLeft=10;node.scrollTop=60;}')
+        before=p.evaluate('showpsisi.getUiState().unified')
+        self.assertIsNotNone(before['selectedField']);self.assertGreater(before['scroll']['fieldsX'],0)
+        p.locator('.si-nav-row[data-key="family:PMT"] .si-fold').click()
+        p.locator('.si-nav-row').filter(has=p.locator('.si-row-label',has_text='Program 0x')).first.locator('.si-row-label').click()
+        p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getUiState().unified.selected!==id',arg=before['selected'])
+        p.locator('[data-command="back"]').click()
+        p.wait_for_function('(field)=>showpsisi.getUiState().settled && showpsisi.getUiState().unified.selectedField?.name===field.name',arg=before['selectedField'])
+        after=p.evaluate('showpsisi.getUiState().unified')
+        for name in ['selected','path','range','selectedField','columnWidths']:
+            self.assertEqual(after[name],before[name],name)
+        self.assertEqual(after['scroll']['fields'],before['scroll']['fields'])
+        self.assertEqual(after['scroll']['fieldsX'],before['scroll']['fieldsX'])
+
+    def test_classic_unmapped_packet_byte_clears_old_field_highlight(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
+        self.assertIsNotNone(p.evaluate('showpsisi.getUiState().unified.range'))
+        self.assertGreater(p.locator('.si-hex [data-byte].si-selected').count(),0)
+        p.locator('.si-packet [data-byte="0"]').click()
+        self.assertIsNone(p.evaluate('showpsisi.getUiState().unified.range'))
+        self.assertEqual(p.locator('.si-hex [data-byte].si-selected').count(),0)
+        self.assertEqual(p.locator('.si-field-row.si-selected').count(),0)
+        self.assertIn('no SI field mapping',p.locator('.si-status').inner_text())
+        p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
+        self.assertIsNotNone(p.evaluate('showpsisi.getUiState().unified.range'))
+
+    def test_classic_summary_has_six_counters_in_two_rows_and_stable_tabs(self):
+        self.analyze();p=self.page
+        self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll("#transport-si tbody tr").length>0')
+        labels=p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.getAttribute("aria-label"))')
+        self.assertEqual(labels,['FileSize','Total Packets','BitRates','Errors','Duration','Packet Size'])
+        source=p.evaluate('showpsisi.getState().source_bytes')
+        self.assertEqual(p.get_by_label('FileSize',exact=True).input_value(),f'{source:,} bytes')
+        tops=p.locator('.si-summary-counters label').evaluate_all('(nodes)=>nodes.map(n=>n.getBoundingClientRect().top)')
+        self.assertEqual(tops[:3],[tops[0]]*3);self.assertEqual(tops[3:],[tops[3]]*3);self.assertGreater(tops[3],tops[0])
+        before=p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.value)')
+        p.locator('#transport-si [data-action="error"]').click()
+        p.wait_for_function('()=>document.querySelector("#transport-si [data-action=error]").getAttribute("aria-pressed")==="true"')
+        self.assertEqual(p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.value)'),before)
+        self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
+
+    def test_classic_keyboard_tree_parents_and_f6_reverse_cycle(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        self.show_scan_configuration()
+        nav=p.locator('.si-navigation');nav.press('Home')
+        parent=p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key')
+        nav.press('ArrowRight')
+        self.assertNotEqual(p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key'),parent)
+        nav.press('ArrowLeft');nav.press('ArrowLeft')
+        self.assertEqual(p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key'),parent)
+        nav.focus()
+        for selector in ['.si-fields','.si-packet','.si-section','.sourcebar[role=region]','.si-navigation']:
+            p.keyboard.press('F6');self.assertTrue(p.locator(selector).evaluate('(node)=>node===document.activeElement||node.contains(document.activeElement)'),selector)
+        p.keyboard.press('Shift+F6');self.assertTrue(p.locator('.sourcebar[role=region]').evaluate('(node)=>node===document.activeElement'))
+        p.keyboard.press('Shift+F6');self.assertTrue(p.locator('.si-section').evaluate('(node)=>node===document.activeElement'))
+
+    def test_classic_both_hex_panes_have_keyboard_byte_navigation(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        packet=p.locator('.si-packet');packet.press('Home')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.packetCursor'),0)
+        packet.press('ArrowDown');self.assertEqual(p.evaluate('showpsisi.getUiState().unified.packetCursor'),10)
+        packet.press('End');self.assertEqual(p.evaluate('showpsisi.getUiState().unified.packetCursor'),187)
+        section=p.locator('.si-section');section.press('End')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.byteCursor'),p.evaluate('showpsisi.getDetail().raw_hex.length/2-1'))
+        section.press('Home');section.press('ArrowRight')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.byteCursor'),1)
+
+    def test_classic_frame_original_toolbar_menu_states_and_tree_retention(self):
+        p=self.page
+        self.assertTrue(p.locator('#classic-frame').is_visible())
+        self.assertTrue(p.locator('.titlebar').is_hidden())
+        self.assertEqual(p.locator('.classic-menubar>[class=classic-menu]>[data-menu]').all_text_contents(),['File','View','Analyzer','Help'])
+        self.assertEqual(p.locator('.classic-toolbar>button').count(),7)
+        self.assertEqual(p.locator('.classic-toolbar>.classic-tool-separator').count(),2)
+        self.assertTrue(p.locator('.classic-toolbar [data-command="save"]').is_disabled())
+        self.analyze();p.wait_for_function('()=>showpsisi.getUiState().settled')
+        before=p.evaluate('showpsisi.getUiState().unified')
+        self.classic_command('tree');self.assertTrue(p.locator('.si-navigation').is_hidden())
+        self.classic_command('tree');self.assertTrue(p.locator('.si-navigation').is_visible())
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.navigation'),before['navigation'])
+        self.classic_command('summary')
+        self.assertTrue(p.locator('#transport-si').is_visible());self.assertTrue(p.locator('.si-navigation').is_visible())
+        self.classic_command('status');self.assertTrue(p.locator('#app > footer').is_hidden())
+        self.classic_command('status');self.assertTrue(p.locator('#app > footer').is_visible())
+        self.classic_command('toolbar');self.assertTrue(p.locator('.classic-toolbar').is_hidden())
+        self.classic_command('toolbar');self.assertTrue(p.locator('.classic-toolbar').is_visible())
+        self.classic_command('index');self.assertTrue(p.locator('#classic-help').is_visible());p.locator('#classic-help button').click()
+
+    def test_classic_documents_keep_real_views_and_close_restores_previous(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        original=p.evaluate('showpsisi.getDetail().id')
+        self.classic_command('new')
+        active=p.locator('.mdi-active')
+        self.assertGreater(active.locator('.si-field-row').count(),0)
+        active.locator('.si-fields').evaluate('(n)=>{n.scrollTop=80;n.scrollLeft=35;}')
+        before=p.evaluate('showpsisi.getUiState().documents.items[0].view')
+        self.classic_command('decoded')
+        self.assertTrue(p.locator('.mdi-active textarea').input_value())
+        self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll(".mdi-active .si-summary-list tbody tr").length>0')
+        docs=p.evaluate('showpsisi.getUiState().documents')
+        self.assertEqual([d['kind'] for d in docs['items']],['si','decoded','summary'])
+        self.classic_command('tile')
+        self.assertTrue(all(d['mode']=='normal' for d in p.evaluate('showpsisi.getUiState().documents.items')))
+        self.classic_command('cascade')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items[1].x'),24)
+        p.keyboard.press('Control+F4')
+        self.assertTrue(p.locator('.mdi-active textarea').is_visible())
+        p.keyboard.press('Control+F4')
+        after=p.evaluate('showpsisi.getUiState().documents.items[0].view')
+        self.assertEqual(after['selected'],original)
+        self.assertEqual(after['scroll'],before['scroll'])
+        self.assertGreater(p.locator('.mdi-active .si-field-row').count(),0)
+
+    def test_classic_all_packet_tree_context_uses_pointer_owner_and_original_packet(self):
+        self.analyze();p=self.page;p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        nav=p.locator('#unified-si>.si-left .si-navigation')
+        all_packets=nav.locator('[data-key="family:All Packets"]')
+        all_packets.locator('.si-fold').click()
+        self.assertGreater(nav.locator('[data-key^="packet:"]').count(),0)
+        rows=p.evaluate('showpsisi.getState().tables')
+        target=next(r for r in rows if r['id']!=p.evaluate('showpsisi.getDetail().id'))
+        family=nav.locator('[data-key="family:'+target['name']+'"]')
+        if family.get_attribute('aria-expanded')!='true':family.locator('.si-fold').click()
+        row=nav.locator('[data-key="'+target['id']+'"]')
+        row.click(button='right')
+        menu=p.locator('#unified-si>.si-context-menu')
+        self.assertTrue(menu.is_visible());menu.get_by_role('menuitem').first.click()
+        p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getDetail().id===id',arg=target['id'])
+        self.classic_command('packets')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.some(d=>d.kind==="packet"&&d.view?.raw_hex)')
+        packet=p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view')
+        self.assertEqual(len(packet['raw_hex']),376);self.assertEqual(packet['index'],0)
+        self.assertEqual(packet['raw_hex'][:2],'47')
+        active=p.locator('.mdi-active')
+        active.get_by_role('button',name='Next packet',exact=True).click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view.index===1')
+        active.locator('.packet-index').fill('999999999999')
+        active.get_by_role('button',name='Search',exact=True).click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view.error.includes("Packet index must")')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view.index'),1)
+        p.keyboard.press('Control+F4');self.assertTrue(nav.is_visible())
+
+    def test_classic_cross_packet_fragment_keeps_global_section_offsets(self):
+        from make_fixture import section,word
+        raw=section(0,2,1,b''.join(word(100+i)+word(0xe100+i) for i in range(60)))
+        first=bytes([0x47,0x40,0,0x10,0])+raw[:183]
+        tail=(bytes([0x47,0,0,0x11])+raw[183:]).ljust(188,b'\xff')
+        null=bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184
+        path=self.output/'cross-packet.ts';path.write_bytes(first+tail+null*4)
+        self.analyze(path);p=self.page;p.wait_for_function('()=>showpsisi.getUiState().settled&&!!showpsisi.getDetail().id')
+        parts=p.evaluate('showpsisi.getDetail().source_fragments')
+        self.assertEqual(parts['status'],'complete');self.assertEqual(len(parts['fragments']),2)
+        p.get_by_label('Source packet fragment',exact=True).select_option('1')
+        p.locator('.si-packet [data-byte="8"]').click()
+        state=p.evaluate('showpsisi.getUiState().unified')
+        self.assertEqual(state['byteCursor'],187);self.assertEqual(state['packetFragment'],1)
+        self.assertLessEqual(state['range']['offset'],187)
+        self.assertGreater(state['range']['offset']+state['range']['length'],187)
+        self.assertTrue('si-selected' in p.locator('.si-packet [data-byte="8"]').get_attribute('class'))
+        p.locator('.si-packet [data-byte="0"]').click();self.assertIsNone(p.evaluate('showpsisi.getUiState().unified.range'))
+
+    def test_classic_bitrate_timing_measured_clock_and_exact_packet_jump(self):
+        from test_transport_timing import clock_fixture
+        path=self.output/'measured-clock.ts';path.write_bytes(clock_fixture([0,270000,540000]))
+        self.analyze(path);p=self.page
+        self.classic_command('summary')
+        self.assertIn('1,504,000 bps (PCR)',p.get_by_label('BitRates',exact=True).input_value())
+        self.classic_command('bitrate')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="statistics")?.view.rows.length>0')
+        self.assertTrue(p.locator('.mdi-active .bitrate-track').first.is_visible())
+        p.locator('.mdi-active [data-tab="timing"]').click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="statistics")?.view.timing&&showpsisi.getUiState().documents.items.find(d=>d.kind==="statistics")?.view.rows.length===3')
+        p.locator('.mdi-active tbody tr').nth(1).dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="packet")?.view.index===10')
+        packet=p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view')
+        self.assertEqual(packet['pid'],256)
+        p.keyboard.press('Control+F4')
+        self.assertTrue(p.locator('.mdi-active [data-tab="timing"]').is_visible())
+        self.assertEqual(p.locator('.mdi-active tbody tr').count(),3)
+
+    def test_classic_service_epg_ait_source_jumps_preserve_service_context(self):
+        from test_service_inspection import ts,sdt,eit
+        from test_application_carriage import pat,pmt
+        from test_application_summaries import ait
+        path=self.output/'service-chain.ts';path.write_bytes(ts([(0,pat(((101,0x100),(102,0x101)))),(0x100,pmt()),(0x101,pmt(program=102)),(0x11,sdt(services=(101,102))),(0x12,eit()),(0x12,eit(tsid=2,event=8)),(0x150,ait())]))
+        self.show_scan_configuration();self.page.locator('#standards').select_option('dvb')
+        self.analyze(path);p=self.page
+        self.classic_command('services')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="service")?.view.result.identity?.service_id===101')
+        active=p.locator('.mdi-active')
+        active.locator('[data-tab="EPG"]').click()
+        self.assertEqual(active.locator('tbody tr').count(),1)
+        active.locator('tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"&&showpsisi.getDetail().name==="EIT"')
+        p.keyboard.press('Control+F4')
+        self.assertEqual(p.locator('.mdi-active [data-tab="EPG"]').get_attribute('aria-pressed'),'true')
+        p.locator('.mdi-active [data-tab="ES"]').click()
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"&&showpsisi.getUiState().documents.items.at(-1).view.path==="section/stream/12"')
+        self.assertEqual(p.evaluate('showpsisi.getDetail().pid'),256)
+        p.keyboard.press('Control+F4')
+        p.locator('.mdi-active [data-tab="Applications"]').click()
+        self.assertEqual(p.locator('.mdi-active tbody tr').count(),1)
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"&&showpsisi.getDetail().name==="AIT"')
+        p.keyboard.press('Control+F4')
+        p.locator('.mdi-active select[aria-label="Service identity"]').select_option('1')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="service")?.view.result.identity?.service_id===102')
+        self.assertEqual(p.locator('.mdi-active tbody tr').count(),1)
+
+    def test_classic_carousel_objects_binding_content_and_back(self):
+        from test_carousel_content import carousel,file,directory
+        from test_dsmcc_summaries import packetize
+        path=self.output/'objects.ts';path.write_bytes(packetize(carousel([(7,directory()+file(b'configuration=true\n'))])))
+        self.show_scan_configuration();self.open_scan_options();p=self.page;p.locator('#standards').select_option('dvb');p.locator('#extra-pids').fill('0x150');self.analyze(path)
+        self.classic_command('carousel')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.modules?.length===1')
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.biop?.objects.length===2')
+        p.locator('.mdi-active tbody tr').first.dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.object?.type==="dir"')
+        p.locator('.mdi-active [data-tab="OC Hierarchy"]').click()
+        self.assertIn('resolved',p.locator('.mdi-active tbody').inner_text())
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.object?.type==="fil"')
+        p.locator('.mdi-active [data-view="Text"]').click()
+        self.assertEqual(p.locator('.mdi-active textarea').input_value(),'configuration=true\n')
+        p.locator('.mdi-active [data-action="back"]').click()
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel").view.result.object.type'),'dir')
+        self.assertIn('resolved',p.locator('.mdi-active tbody').inner_text())
+        p.locator('.mdi-active [data-source]').first.click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"')
+        p.keyboard.press('Control+F4')
+        self.assertTrue(p.locator('.mdi-active [data-tab="OC Hierarchy"]').is_visible())
+
+    def test_classic_carousel_missing_blocks_and_inventory_do_not_show_old_content(self):
+        from test_carousel_content import carousel,file
+        from test_dsmcc_summaries import packetize
+        self.show_scan_configuration();self.open_scan_options();p=self.page;p.locator('#standards').select_option('dvb');p.locator('#extra-pids').fill('0x150')
+        path=self.output/'objects.ts';path.write_bytes(packetize(carousel([(7,file(b'known'))])))
+        self.analyze(path);self.classic_command('carousel')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result'
+        p.wait_for_function('()=>'+prefix+'?.modules.length===1')
+        p.locator('.mdi-active [data-tab="OC Files"]').click();p.wait_for_function('()=>'+prefix+'?.inventory?.length===1')
+        p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content?.text==="known"')
+        p.locator('.mdi-active [data-view="Text"]').click();self.assertEqual(p.locator('.mdi-active textarea').input_value(),'known')
+        path=self.output/'missing.ts';path.write_bytes(packetize(carousel([(7,file(b'x'*300))],missing=((7,1),))))
+        self.analyze(path);self.classic_command('carousel');p.wait_for_function('()=>'+prefix+'?.modules[0]?.status==="incomplete"')
+        p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content_status==="unavailable_incomplete_module"')
+        self.assertNotIn('known',p.locator('.mdi-active textarea').input_value());self.assertIn('unavailable_incomplete_module',p.locator('.mdi-active [role="status"]').inner_text())
+
+    def test_classic_teletext_real_captures_cells_and_packet_return(self):
+        from test_teletext_inspection import unit,pes,packetize
+        from test_application_carriage import pat,pmt,stream
+        from test_application_summaries import packetize as psi_packets
+        from make_fixture import descriptor
+        path=self.output/'teletext.ts';path.write_bytes(psi_packets([(0,pat()),(0x100,pmt(streams=[stream(pid=0x202,kind=6,descriptors=descriptor(0x56,b'eng\x11\x00'))]))])+packetize([pes(b'\x10'+unit(0,b'12:00:00')+unit(1,b'\x01RED\x18HIDE')+unit(0,b'12:00:01')+unit(1,b'\x02NEW'))]))
+        self.show_scan_configuration();p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path);self.classic_command('teletext')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="teletext")?.view'
+        p.wait_for_function('()=>'+prefix+'?.result.cells?.length===960')
+        self.assertEqual(p.locator('.mdi-active [role="gridcell"]').count(),960)
+        self.assertEqual(p.evaluate(prefix+'.result.capture_index'),1)
+        p.locator('.mdi-active [data-action="previous"]').click();p.wait_for_function('()=>'+prefix+'?.result.capture_index===0')
+        self.assertEqual(p.locator('.mdi-active [data-cell="41"]').inner_text(),'R')
+        self.assertEqual(p.locator('.mdi-active [data-cell="41"]').evaluate('(cell)=>getComputedStyle(cell).color'),'rgb(255, 0, 0)')
+        self.assertEqual(p.locator('.mdi-active [data-cell="45"] .teletext-glyph').evaluate('(cell)=>getComputedStyle(cell).visibility'),'hidden')
+        p.locator('.mdi-active [data-reveal]').check()
+        self.assertEqual(p.locator('.mdi-active [data-cell="45"] .teletext-glyph').evaluate('(cell)=>getComputedStyle(cell).visibility'),'visible')
+        p.locator('.mdi-active [data-cell="41"]').click();packet=p.evaluate(prefix+'.result.cells[41].packet_index')
+        p.locator('.mdi-active [data-packet]').first.click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="packet"&&showpsisi.getUiState().documents.items.at(-1).view.index==='+str(packet))
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.at(-1).view.pid'),514)
+        p.keyboard.press('Control+F4');self.assertEqual(p.evaluate(prefix+'.selected'),41);self.assertEqual(p.evaluate(prefix+'.result.capture_index'),0)
+        p.locator('.mdi-active [data-action="next"]').click();p.wait_for_function('()=>'+prefix+'?.result.capture_index===1')
+        self.assertEqual(p.locator('.mdi-active [data-cell="41"]').inner_text(),'N')
+
+    def test_classic_media_pes_es_cursor_packet_reuse_and_real_video(self):
+        from media_fixture import make_media
+        if not Path(os.environ.get('SHOWPSISI_FFMPEG','')).is_file():self.skipTest('External pinned decoder required')
+        path=make_media(self.output/'video.ts');self.show_scan_configuration();p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path);self.classic_command('media')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="media")?.view'
+        p.wait_for_function('()=>'+prefix+'?.result.pes_total>0')
+        p.locator('.mdi-active [data-pes]').first.click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===0')
+        p.locator('.mdi-active [data-tab="ES"]').click();p.wait_for_function('()=>'+prefix+'?.result.selected?.content.layer==="collected_es_payload"')
+        raw=p.locator('.mdi-active [aria-label="Original PES or ES bytes"]');raw.focus();raw.evaluate('(area)=>area.setSelectionRange(12,12)');raw.press('ArrowRight')
+        source=p.evaluate('mediaModel.sourceAt('+prefix+'.result,'+prefix+'.cursor)');self.assertIsNotNone(source)
+        p.locator('.mdi-active [data-action="source"]').click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).view?.index==='+str(source['packet_index'])+'&&showpsisi.getUiState().documents.items.at(-1).view?.cursor==='+str(source['packet_offset']))
+        self.classic_command('media');p.locator('.mdi-active [data-pes]').nth(1).click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===1')
+        source=p.evaluate('mediaModel.sourceAt('+prefix+'.result,0)');p.locator('.mdi-active [data-action="source"]').click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).view?.index==='+str(source['packet_index'])+'&&showpsisi.getUiState().documents.items.at(-1).view?.cursor==='+str(source['packet_offset']))
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.filter(d=>d.kind==="packet").length'),1)
+        p.keyboard.press('Control+F4');p.locator('.mdi-active [data-pes]').first.click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===0')
+        p.locator('.mdi-active [data-tab="Video"]').click();p.locator('.mdi-active [data-action="decode"]').click();p.wait_for_function('()=>'+prefix+'?.preview.frame_count===5')
+        p.wait_for_function('()=>document.querySelector(".mdi-active img").complete&&document.querySelector(".mdi-active img").naturalWidth>0')
+        self.assertEqual(p.evaluate(prefix+'.preview.from_pes_index'),0)
+        p.locator('.mdi-active [data-action="play"]').click();p.wait_for_function('()=>'+prefix+'?.playing===true');p.wait_for_function('()=>'+prefix+'?.playing===false&&'+prefix+'?.frame_index===4')
+
+    def test_classic_audio_waveform_silent_output_and_close_release(self):
+        from media_fixture import make_media
+        if not Path(os.environ.get('SHOWPSISI_FFMPEG','')).is_file():self.skipTest('External pinned decoder required')
+        path=make_media(self.output/'silence.ts',kind='audio',silence=True);self.show_scan_configuration();p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path);self.classic_command('media')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="media")?.view'
+        p.wait_for_function('()=>'+prefix+'?.result.pes_total>0');p.locator('.mdi-active [data-pes]').first.click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===0');p.locator('.mdi-active [data-tab="Audio"]').click();p.locator('.mdi-active [data-action="decode"]').click();p.wait_for_function('()=>'+prefix+'?.preview.pcm?.samples>48000')
+        preview=p.evaluate(prefix+'.preview');self.assertEqual(preview['pcm']['sample_rate'],48000);self.assertTrue(all(abs(b['min'])+abs(b['max'])<=2 for b in preview['pcm']['waveform']))
+        p.evaluate("()=>{window.mediaTimers=new Set();const set=window.setInterval.bind(window),clear=window.clearInterval.bind(window);window.setInterval=(fn,ms,...args)=>{const id=set(fn,ms,...args);mediaTimers.add(id);return id;};window.clearInterval=id=>{mediaTimers.delete(id);clear(id);};}")
+        p.locator('.mdi-active [data-action="play"]').click();p.wait_for_function('()=>'+prefix+'?.playing===true');p.locator('.mdi-active [data-action="pause"]').click();p.wait_for_function('()=>'+prefix+'?.paused===true');p.locator('.mdi-active [data-action="play"]').click();p.wait_for_function('()=>'+prefix+'?.playing===true')
+        p.keyboard.press('Control+F4');self.assertEqual(p.evaluate('mediaTimers.size'),0)
+        status=p.evaluate('(args)=>call("audio_control",args)',{'analysis_revision':preview['analysis_revision'],'preview_token':preview['preview_token'],'action':'status'})
+        self.assertTrue(status['matching_preview']);self.assertFalse(status['playing']);self.assertFalse(status['paused'])
 
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
@@ -922,7 +1301,40 @@ class BrowserTests(unittest.TestCase):
         if self.page.locator('#scan-options').is_hidden():
             self.page.locator('#scan-options-toggle').click()
 
+    def classic_command(self,command):
+        menu=self.page.locator('#classic-frame .classic-menu').filter(has=self.page.locator('[data-command="'+command+'"]')).first
+        menu.locator('[data-menu]').click()
+        menu.locator('[data-command="'+command+'"]').click()
+
+    def test_classic_output_config_cancel_commit_and_source_bytes(self):
+        self.analyze();p=self.page
+        def picker(route):
+            if route.request.post_data_json.get('command')=='plugin:dialog|open':route.fulfill(status=200,content_type='application/json',body=json.dumps(str(self.sample)))
+            else:route.continue_()
+        p.route('**/__bridge/invoke',picker)
+        old_charset=p.locator('#default-charset').input_value();self.classic_command('open');self.open_scan_options();p.locator('#default-charset').fill('UTF-8');p.locator('[data-config-cancel]').click();self.assertEqual(p.locator('#default-charset').input_value(),old_charset)
+        original=p.locator('#standards').input_value();self.show_scan_configuration();p.locator('#standards').select_option('dvb');p.locator('[data-config-cancel]').click();self.assertEqual(p.locator('#standards').input_value(),original)
+        self.show_scan_configuration();self.open_scan_options();p.locator('#extra-pids').fill('99999');p.locator('[data-config-ok]').click();self.assertTrue(p.locator('[data-config-ok]').is_visible())
+        p.locator('#extra-pids').fill('0x150');p.locator('[data-config-ok]').click();self.assertFalse(p.locator('[data-config-ok]').is_visible());stored=json.loads(p.evaluate("localStorage.getItem('showpsisi.scan.v1')"));self.assertEqual(stored['extra-pids'],'0x150')
+        self.classic_command('save');d=p.locator('#output-dialog');self.assertTrue(d.is_visible());kinds=p.evaluate('outputModel.options(window.showpsisi.getState(),{kind:"si",payload:window.showpsisi.getDetail(),view:{}}).map(x=>x.kind)');self.assertEqual(kinds,['section','report']);self.assertGreater(d.locator('[aria-label="Output kind"]').locator('option').count(),1)
+        folder=self.output/'artifacts';folder.mkdir(exist_ok=True);dest=folder/'selected-section.bin';d.locator('[aria-label="Output path"]').fill(str(dest));d.locator('[data-save]').click();p.wait_for_function('()=>document.querySelector("#output-dialog [role=status]").textContent.startsWith("Saved section")');detail=p.evaluate('window.showpsisi.getDetail()');manifest=json.loads(Path(str(dest)+'.manifest.json').read_text());self.assertEqual(dest.read_bytes(),bytes.fromhex(detail['raw_hex']));self.assertEqual(dest.stat().st_size,manifest['bytes']);self.assertEqual(hashlib.sha256(dest.read_bytes()).hexdigest(),manifest['sha256']);self.assertEqual(manifest['selection']['source_id'],detail['id'])
+        d.locator('[data-save]').click();p.wait_for_function('()=>document.querySelector("#output-dialog [role=status]").textContent.includes("already exists")');d.locator('[data-cancel]').click();self.assertFalse(d.is_visible());self.assertFalse(list(folder.glob('*.tmp*')));self.assertEqual(self.page_errors,[])
+
+    def test_classic_scale_viewports_keep_controls_reachable(self):
+        self.analyze();p=self.page
+        for scale in (1,1.5,2):
+            p.set_viewport_size({'width':round(1440/scale),'height':round(900/scale)})
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+            boxes=p.evaluate("""()=>[document.querySelector('#classic-frame'),document.querySelector('#classic-version'),document.querySelector('.si-nav-tools'),document.querySelector('.si-field-header')].map(e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width};})""")
+            self.assertTrue(all(b['top']>=0 and b['bottom']<=round(900/scale)+1 and b['width']>0 for b in boxes),(scale,boxes))
+            self.classic_command('save');d=p.locator('#output-dialog');self.assertTrue(d.is_visible());self.assertNotIn('analysis_revision',d.locator('.output-scope').inner_text());self.assertEqual(d.evaluate('(e)=>getComputedStyle(e).backgroundColor'),'rgb(239, 239, 239)');d.locator('[data-cancel]').click()
+        self.assertEqual(self.page_errors,[])
+
+    def show_scan_configuration(self):
+        if self.page.locator('#source').is_hidden():self.classic_command('configuration')
+
     def analyze(self,path=None):
+        self.show_scan_configuration()
         self.page.locator('#source').fill(str(path or self.sample))
         self.page.locator('#source').press('Enter')
         self.page.wait_for_function('() => window.showpsisi.getState().complete === true')
@@ -1348,6 +1760,9 @@ class BrowserTests(unittest.TestCase):
         # must close the dialog and invalidate its target, including its finally.
         self.page.evaluate('() => {window.showpsisi.scan()}')
         self.wait_checkpoint()
+        # Admission is asynchronous: the native gate may precede delivery of
+        # its progress event to the GUI. Wait for the admitted UI transition.
+        self.page.wait_for_function('()=>!document.querySelector("#edit-dialog").open')
         self.assertFalse(self.page.locator('#edit-dialog').is_visible())
         self.page.locator('#cancel-scan').click()
         self.page.wait_for_function('() => window.showpsisi.getState().analysis_status === "cancelled" && !document.querySelector("#scan").disabled')
@@ -2078,7 +2493,7 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator('.evidence').inner_text(),detail['merged']['tsduck_xml'])
         self.page.locator('[data-view="tree"]').click()
         self.page.locator('#tree-search').fill('')
-        root=self.page.locator('[data-path="section"]')
+        root=self.page.locator('#tree-area [data-path="section"]')
         for unused in range(5):
             self.page.locator('#collapse-tree').click()
             self.assertEqual(root.get_attribute('aria-expanded'),'false')

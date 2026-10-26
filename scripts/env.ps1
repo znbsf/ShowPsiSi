@@ -15,7 +15,7 @@ $CompilerEnvironment | ForEach-Object {
 $env:RUSTUP_HOME = Join-Path $ProjectRoot '.deps\rustup'
 $env:CARGO_HOME = Join-Path $ProjectRoot '.deps\cargo'
 # Qt's official 6.7.3 kit keeps this name; VS 2022 consumes its compatible ABI.
-$env:QT_ROOT = Join-Path $ProjectRoot '.deps\Qt\6.7.3\msvc2019_64'
+if (-not $env:QT_ROOT) { $env:QT_ROOT = Join-Path $ProjectRoot '.deps\Qt\6.7.3\msvc2019_64' }
 if (-not $env:TSDUCK_ROOT) { $env:TSDUCK_ROOT = Join-Path $ProjectRoot '.deps\TSDuck-3.45-4798' }
 & "$PSScriptRoot/setup-tsduck.ps1" -Sdk $env:TSDUCK_ROOT -ValidateOnly
 $env:TSPLUGINS_PATH = Join-Path $env:TSDUCK_ROOT 'bin'

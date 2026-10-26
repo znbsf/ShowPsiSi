@@ -1,4 +1,5 @@
 #pragma once
+#include <tsNetworkNameDescriptor.h>
 #include "tsTVCT.h"
 #include "tsCVCT.h"
 #include "tsTSInformationDescriptor.h"
@@ -51,6 +52,7 @@ inline J anchors(const Record& r,const std::string& profile) {
         for(size_t p=start;p+2<=stop&&stop<=end;){const size_t n=b[p+1],next=p+2+n;if(next>stop)break;
             add("descriptor",p,n+2,p,"container");
             if((r.tid==0x42||r.tid==0x46)&&b[p]==0x48&&n>=3){const size_t q=p+3,provider=b[q];if(q+1+provider<next){const size_t name=q+1+provider;add("service_type",p+2,1,p);if(provider)add("provider",q+1,provider,p);if(name+1+b[name]<=next&&b[name])add("name",name+1,b[name],p);}}
+            if((r.tid==0x40||r.tid==0x41)&&b[p]==0x40&&n)add("network_name",p+2,n,p);
             if(profile=="isdb-japan"&&(r.tid==0x40||r.tid==0x41)&&b[p]==0xcd&&n>=2){add("remote_control_key_id",p+2,1,p);size_t len=b[p+3]>>2;if(p+4+len<=next&&len)add("ts_name",p+4,len,p);}
             if(profile=="isdb-japan"&&(r.tid==0x40||r.tid==0x41)&&b[p]==0xfb&&n%2==0)for(size_t q=p+2;q+2<=next;q+=2)add("partial_reception_service_id",q,2,p);
             p=next;
@@ -258,6 +260,12 @@ class Builder {
     void nit(){
         for(auto* r:sections)if(r->pid==0x10&&(r->tid==0x40||r->tid==0x41)){
             const std::string nid=family+":network:"+num(r->ext);auto& network=node(nid,"network",{{"network_id",r->ext}},"Network "+hexid(r->ext));addEvidence(network,ref(*r,"table_id_extension",3));
+            const size_t networkEnd=10+(u16(r->raw,8)&4095);
+            for(const auto& d:r->descriptors){const size_t p=d["offset"],len=d["length"];
+                if(p<10||p+2+len>networkEnd||d.value("name",std::string())!="network_name_descriptor"||d.value("decode_status",std::string())!="decoded")continue;
+                ts::Descriptor binary(r->raw.data()+p,len+2);ts::NetworkNameDescriptor typed(duck,binary);
+                if(typed.isValid())attribute(network,"name",typed.name.toUTF8(),ref(*r,"network_name",p+2));
+            }
             for(const auto& t:r->fields.value("transports",J::array())){unsigned onid=t["original_network_id"],tsid=t["transport_stream_id"];size_t start=t["descriptor_offset"],length=t["descriptor_bytes"];
                 const std::string tid=transport(onid,tsid);auto& n=node(tid,"transport",{{"original_network_id",onid},{"transport_stream_id",tsid}},"Transport "+hexid(onid)+" / "+hexid(tsid),"announced_only",nid);
                 auto e=ref(*r,"transport",start-6);addEvidence(n,e);edge(nid,tid,"announces",J::array({ref(*r,"table_id_extension",3),e}));

@@ -3917,12 +3917,12 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
-            if(transportSummaryVisible){transportSummary.nextRegion();return;}
-            if(!advancedMode){unifiedInspector.nextRegion();return;}
+            if(transportSummaryVisible){transportSummary.nextRegion(false);return;}
+            if(!advancedMode){unifiedInspector.nextRegion(false);return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:transportSummaryVisible?transportSummary.nextRegion():advancedMode?focusNextRegion(true):unifiedInspector.nextRegion() }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:transportSummaryVisible?transportSummary.nextRegion(true):advancedMode?focusNextRegion(true):unifiedInspector.nextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         enabled: !shortcutDialog.visible
@@ -4446,6 +4446,7 @@ ApplicationWindow {
         }
         TransportSummary {
             id:transportSummary
+            focusOrigin:sourceBar
             host:win
             visible:!metadataMode && transportSummaryVisible
             Layout.fillWidth:true;Layout.fillHeight:true

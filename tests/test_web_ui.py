@@ -1010,6 +1010,33 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.value)'),before)
         self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
 
+    def test_classic_keyboard_tree_parents_and_f6_reverse_cycle(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        nav=p.locator('.si-navigation');nav.press('Home')
+        parent=p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key')
+        nav.press('ArrowRight')
+        self.assertNotEqual(p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key'),parent)
+        nav.press('ArrowLeft');nav.press('ArrowLeft')
+        self.assertEqual(p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key'),parent)
+        nav.focus()
+        for selector in ['.si-fields','.si-packet','.si-section','.sourcebar[role=region]','.si-navigation']:
+            p.keyboard.press('F6');self.assertTrue(p.locator(selector).evaluate('(node)=>node===document.activeElement||node.contains(document.activeElement)'),selector)
+        p.keyboard.press('Shift+F6');self.assertTrue(p.locator('.sourcebar[role=region]').evaluate('(node)=>node===document.activeElement'))
+        p.keyboard.press('Shift+F6');self.assertTrue(p.locator('.si-section').evaluate('(node)=>node===document.activeElement'))
+
+    def test_classic_both_hex_panes_have_keyboard_byte_navigation(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        packet=p.locator('.si-packet');packet.press('Home')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.packetCursor'),0)
+        packet.press('ArrowDown');self.assertEqual(p.evaluate('showpsisi.getUiState().unified.packetCursor'),10)
+        packet.press('End');self.assertEqual(p.evaluate('showpsisi.getUiState().unified.packetCursor'),187)
+        section=p.locator('.si-section');section.press('End')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.byteCursor'),p.evaluate('showpsisi.getDetail().raw_hex.length/2-1'))
+        section.press('Home');section.press('ArrowRight')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.byteCursor'),1)
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

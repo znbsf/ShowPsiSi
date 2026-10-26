@@ -158,6 +158,34 @@ Item {
             verify(findChild(inspector,'siRange').text.indexOf('no SI field mapping')>=0);
             inspector.selectByte(19);compare(inspector.selectedField.name,'component_tag');verify(inspector.activeRange!==null);
         }
+        function test_both_hex_panes_keyboard_first_last_and_rows() {
+            inspector.selectRecord(inspector.findRecord('PMT'));
+            var packet=findChild(inspector,'siPacketRows');packet.forceActiveFocus();
+            keyClick(Qt.Key_Home);compare(inspector.selectedPacketByte,0);
+            keyClick(Qt.Key_Down);compare(inspector.selectedPacketByte,10);
+            keyClick(Qt.Key_End);compare(inspector.selectedPacketByte,187);
+            var bytes=findChild(inspector,'siHexRows');bytes.forceActiveFocus();
+            keyClick(Qt.Key_End);compare(inspector.selectedByte,inspector.rawHex.length/2-1);
+            keyClick(Qt.Key_Home);keyClick(Qt.Key_Right);compare(inspector.selectedByte,1);
+        }
+        function test_region_cycle_has_packet_and_reverses() {
+            inspector.selectRecord(inspector.findRecord('PMT'));inspector.hexOpen=true;
+            inspector.focusNavigation();inspector.nextRegion(false);verify(findChild(inspector,'unifiedFields').activeFocus);
+            inspector.nextRegion(false);verify(findChild(inspector,'siPacketRows').activeFocus);
+            inspector.nextRegion(false);verify(findChild(inspector,'siHexRows').activeFocus);
+            inspector.nextRegion(true);verify(findChild(inspector,'siPacketRows').activeFocus);
+            inspector.hexOpen=false;findChild(inspector,'unifiedFields').forceActiveFocus();
+            inspector.nextRegion(false);verify(findChild(inspector,'unifiedTree').activeFocus);
+            inspector.hexOpen=true;
+        }
+        function test_field_left_right_expand_and_parent() {
+            inspector.selectRecord(inspector.findRecord('PMT'));inspector.fieldClosed={};
+            var fields=findChild(inspector,'unifiedFields');fields.forceActiveFocus();keyClick(Qt.Key_Home);
+            keyClick(Qt.Key_Left);compare(inspector.fieldRows.length,1);
+            keyClick(Qt.Key_Right);verify(inspector.fieldRows.length>1);
+            keyClick(Qt.Key_Right);compare(inspector.selectedField.name,'table_id');
+            keyClick(Qt.Key_Left);compare(inspector.selectedFieldIndex,0);
+        }
         function test_si_tree_table_expand_and_focus() {
             inspector.selectRecord(inspector.findRecord('PMT'));
             var index=inspector.fieldRows.findIndex(function(f){return f.groupPath && f.groupPath.indexOf('section/stream/')===0;});
@@ -166,7 +194,8 @@ Item {
             inspector.selectField(index);verify(inspector.fieldClosed[path]);verify(inspector.fieldRows.length<before);
             inspector.selectField(index);compare(inspector.fieldRows.length,before);
             inspector.focusNavigation();inspector.nextRegion();verify(findChild(inspector,'unifiedFields').activeFocus);
-            inspector.hexOpen=true;inspector.nextRegion();verify(findChild(inspector,'siHexRows').activeFocus);
+            inspector.hexOpen=true;inspector.nextRegion();verify(findChild(inspector,'siPacketRows').activeFocus);
+            inspector.nextRegion();verify(findChild(inspector,'siHexRows').activeFocus);
             inspector.nextRegion();verify(findChild(inspector,'unifiedTree').activeFocus);
         }
         function test_classic_palette_icons_and_packet_link() {

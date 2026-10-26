@@ -16,5 +16,6 @@ const TransportSi = {create(container,host){
  }
  function activate(row){if(!row)return;if(row.aggregate||row.pid==null){error='This aggregate has no exact packet or section identity; source navigation is unavailable.';render();return;}const record=(host.state().tables||[]).find(r=>row.id?r.id===row.id:r.pid===row.pid);if(!record){error='PID '+hex(row.pid)+' has no retained PSI/SI section. PES/media views are not implemented yet.';render();return;}host.activate(record,row.pid);}
  function update(){const s=host.state(),next=[s.source,s.analysis_revision||s.revision,!!s.complete].join('|');if(next!==identity){identity=next;epoch++;loading=false;page={};selected=-1;error='';}if(!container.hidden&&!page.items&&!loading)request();else if(!container.hidden)render();}
- return {update};
+ function nextRegion(backwards,origin){const regions=[origin,container.querySelector('.si-summary-list'),container.querySelector('.si-summary-tabs [aria-pressed="true"]')].filter(Boolean),i=regions.findIndex(r=>r===document.activeElement||r.contains(document.activeElement));regions[(i+(backwards?regions.length-1:1)+regions.length)%regions.length].focus({preventScroll:true});}
+ return {update,nextRegion};
 }};

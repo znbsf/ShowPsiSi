@@ -1,9 +1,11 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
 
 Pane {
     id: view
+    property Item focusOrigin:null
     required property var host
     property var state: host.analysisState
     property var page: ({})
@@ -33,7 +35,7 @@ Pane {
         returnContext={offset:page.offset,index:rows.currentIndex,scroll:rows.contentY};
         entryActivated(row);
     }
-    function nextRegion(){if(rows.activeFocus && tabs.currentItem)tabs.currentItem.forceActiveFocus();else rows.forceActiveFocus();}
+    function nextRegion(backwards){var regions=focusOrigin?[focusOrigin,rows,tabs]:[rows,tabs],active=view.Window.window?view.Window.window.activeFocusItem:null,index=regions.findIndex(function(region){for(var item=active;item;item=item.parent)if(item===region)return true;return false;});var target=regions[(index+(backwards?regions.length-1:1)+regions.length)%regions.length];if(target===tabs&&tabs.currentItem)tabs.currentItem.forceActiveFocus();else target.forceActiveFocus();}
     function restoreContext() {
         if(!returnContext || returnContext.offset!==page.offset)return;
         rows.currentIndex=returnContext.index;

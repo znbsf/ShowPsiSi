@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
 import "../tauri/web/inspector-model.js" as Model
@@ -39,7 +40,7 @@ SplitView {
         var path=pendingNode.path;pendingNode=null;focusNode(path);
     }
     function focusNode(path){
-        unmappedSelection=false;
+        unmappedSelection=false;selectedPacketByte=-1;
         var node=Model.inspector.find(root,path);if(!node)return;
         var opened=Object.assign({},fieldClosed);
         Object.keys(opened).forEach(function(k){if(path===k || path.indexOf(k+'/')===0)delete opened[k];});fieldClosed=opened;
@@ -65,6 +66,8 @@ SplitView {
     property bool hexOpen: true
     property real hexFraction:0.40
     property int selectedFieldIndex: -1
+    property Item focusOrigin:null
+    property int selectedPacketByte:-1
     property int selectedByte: -1
     property bool unmappedSelection:false
     property var selectedField: fieldRows[selectedFieldIndex] && !fieldRows[selectedFieldIndex].groupPath ? fieldRows[selectedFieldIndex] : null
@@ -73,7 +76,7 @@ SplitView {
         : selectedField || selectedPath==='section' ? null : Model.inspector.wireRange(selectedNode)
     property string rawHex: (detail.raw_hex || '').replace(/\s/g,'')
     function selectField(index) {
-        unmappedSelection=false;
+        unmappedSelection=false;selectedPacketByte=-1;
         var row=fieldRows[index];
         if(row && row.groupPath){
             var scroll=fieldList.contentY;
@@ -87,7 +90,7 @@ SplitView {
         if(activeRange){hexOpen=true;hexRows.positionViewAtIndex(Math.floor(activeRange.offset/10),ListView.Contain);}
     }
     function focusField(index) {
-        unmappedSelection=false;
+        unmappedSelection=false;selectedPacketByte=-1;
         var row=fieldRows[index];if(!row)return;
         if(row.groupPath){selectedPath=row.groupPath;selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;}
         else selectField(index);
@@ -179,7 +182,7 @@ SplitView {
     onSelectedPathChanged: {selectedFieldIndex=-1;selectedByte=-1;}
     function captureContext() {
         return {expandedRecords:expandedRecords,treeClosed:treeClosed,treeLimits:treeLimits,openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
-            unmapped:unmappedSelection,byteCursor:selectedByte,fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,field:selectedField?{nodePath:selectedField.nodePath,name:selectedField.name,bit_offset:selectedField.bit_offset,bit_length:selectedField.bit_length}:null,fieldColumns:fieldColumnWidths.slice(),fieldScroll:fieldList.contentY,fieldX:fieldList.contentX,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexX:bytes.contentX,packetScroll:packetRows.contentY,packetX:packetBytes.contentX,hexOpen:hexOpen,scroll:nav.contentY,navX:nav.contentX,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
+            unmapped:unmappedSelection,byteCursor:selectedByte,packetCursor:selectedPacketByte,fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,field:selectedField?{nodePath:selectedField.nodePath,name:selectedField.name,bit_offset:selectedField.bit_offset,bit_length:selectedField.bit_length}:null,fieldColumns:fieldColumnWidths.slice(),fieldScroll:fieldList.contentY,fieldX:fieldList.contentX,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexX:bytes.contentX,packetScroll:packetRows.contentY,packetX:packetBytes.contentX,hexOpen:hexOpen,scroll:nav.contentY,navX:nav.contentX,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
     }
     function filterPid(pid) {
         if(detail.id && !navigationOrigin.id)navigationOrigin=captureContext();
@@ -197,7 +200,7 @@ SplitView {
             fieldClosed=saved.fieldClosed || {};hexFraction=saved.hexFraction || 0.40;hexOpen=saved.hexOpen===undefined?true:saved.hexOpen;
             if(saved.fieldColumns)fieldColumnWidths=saved.fieldColumns.slice();
             selectedFieldIndex=saved.field ? fieldRows.findIndex(function(f){return !f.groupPath && f.nodePath===saved.field.nodePath && f.name===saved.field.name && f.bit_offset===saved.field.bit_offset && f.bit_length===saved.field.bit_length;}) : saved.fieldIndex===undefined?-1:saved.fieldIndex;
-            unmappedSelection=!!saved.unmapped;selectedByte=saved.byteCursor===undefined?-1:saved.byteCursor;
+            unmappedSelection=!!saved.unmapped;selectedByte=saved.byteCursor===undefined?-1:saved.byteCursor;selectedPacketByte=saved.packetCursor===undefined?-1:saved.packetCursor;
             fieldList.contentY=saved.fieldScroll || 0;fieldList.contentX=saved.fieldX || 0;hexRows.contentY=saved.hexScroll || 0;bytes.contentX=saved.hexX || 0;
             packetRows.contentY=saved.packetScroll || 0;packetBytes.contentX=saved.packetX || 0;nav.contentX=saved.navX || 0;
             var focused=navigation.findIndex(function(row){return row.key===saved.focusKey;});
@@ -267,7 +270,11 @@ SplitView {
         var next=Object.assign({},treeClosed);next[row.key]=!next[row.key];treeClosed=next;
     }
     function focusNavigation(){nav.forceActiveFocus();}
-    function nextRegion(){if(nav.activeFocus)fieldList.forceActiveFocus();else if(fieldList.activeFocus && hexOpen)hexRows.forceActiveFocus();else nav.forceActiveFocus();}
+    function nextRegion(backwards){
+        var regions=focusOrigin?[focusOrigin,nav,fieldList]:[nav,fieldList];if(hexOpen)regions=regions.concat([packetRows,hexRows]);
+        var active=view.Window.window?view.Window.window.activeFocusItem:null,index=regions.findIndex(function(region){for(var item=active;item;item=item.parent)if(item===region)return true;return false;});
+        regions[(index+(backwards?regions.length-1:1)+regions.length)%regions.length].forceActiveFocus();
+    }
     function focusSearch(){searchVisible=true;search.forceActiveFocus();search.selectAll();}
     function findRecord(name){return records.find(function(r){return r.name===name;});}
 
@@ -293,7 +300,7 @@ SplitView {
     readonly property string packetRaw:sourcePacket.raw_hex || ''
     function fieldValue(value){return String(value || '').replace(/^0x0+([0-9A-F])/,'0x$1').replace(' [','[');}
     function packetSelected(offset){return sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes && byteSelected(offset-sourcePacket.section_offset);}
-    function packetClick(offset){if(sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes)selectByte(offset-sourcePacket.section_offset);else {selectedFieldIndex=-1;selectedByte=-1;unmappedSelection=true;}}
+    function packetClick(offset){if(sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes)selectByte(offset-sourcePacket.section_offset);else {selectedFieldIndex=-1;selectedByte=-1;unmappedSelection=true;}selectedPacketByte=offset;}
     component ClassicButton:Button {
         implicitHeight:23;implicitWidth:Math.max(44,contentItem.implicitWidth+14)
         contentItem:TextLabel {text:parent.text;font.family:'Tahoma';font.pixelSize:11;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter;color:parent.enabled?'black':'#808080'}
@@ -348,7 +355,7 @@ SplitView {
                 ScrollBar.vertical:ScrollBar{policy:ScrollBar.AsNeeded}
                 Keys.onReturnPressed:view.activate(view.navigation[currentIndex])
                 Keys.onSpacePressed:view.fold(view.navigation[currentIndex])
-                Keys.onRightPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && !view.rowOpen(r))view.fold(r);else currentIndex=Math.min(count-1,currentIndex+1);}
+                Keys.onRightPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && !view.rowOpen(r))view.fold(r);else if(navigation[currentIndex+1] && navigation[currentIndex+1].depth>r.depth)currentIndex++;}
                 Keys.onLeftPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && view.rowOpen(r))view.fold(r);else if(r){for(var i=currentIndex-1;i>=0;--i)if(view.navigation[i].depth<r.depth){currentIndex=i;break;}}}
                 Keys.onPressed:function(e){if(e.key===Qt.Key_Home){currentIndex=0;e.accepted=true;}else if(e.key===Qt.Key_End){currentIndex=count-1;e.accepted=true;}}
                 onCurrentIndexChanged:if(!view.syncingNavigation)positionViewAtIndex(currentIndex,ListView.Contain)
@@ -443,7 +450,15 @@ SplitView {
                 Keys.onSpacePressed:view.selectField(currentIndex)
                 Keys.onUpPressed:{view.focusField(Math.max(0,view.selectedFieldIndex-1));positionViewAtIndex(currentIndex,ListView.Contain);}
                 Keys.onDownPressed:{view.focusField(Math.min(count-1,view.selectedFieldIndex+1));positionViewAtIndex(currentIndex,ListView.Contain);}
-                Keys.onPressed:function(e){if(e.key===Qt.Key_Home){view.focusField(0);positionViewAtBeginning();e.accepted=true;}else if(e.key===Qt.Key_End){view.focusField(count-1);positionViewAtEnd();e.accepted=true;}}
+                Keys.onPressed:function(e){
+                    var index=Math.max(0,view.selectedFieldIndex),row=view.fieldRows[index];
+                    if(e.key===Qt.Key_Home){view.focusField(0);positionViewAtBeginning();}
+                    else if(e.key===Qt.Key_End){view.focusField(count-1);positionViewAtEnd();}
+                    else if(e.key===Qt.Key_Right){if(row && row.groupPath && view.fieldClosed[row.groupPath])view.selectField(index);else if(view.fieldRows[index+1] && view.fieldRows[index+1].depth>row.depth)view.focusField(index+1);}
+                    else if(e.key===Qt.Key_Left){if(row && row.groupPath && !view.fieldClosed[row.groupPath])view.selectField(index);else for(var parent=index-1;parent>=0;parent--)if(view.fieldRows[parent].depth<row.depth){view.focusField(parent);break;}}
+                    else return;
+                    e.accepted=true;
+                }
                 delegate:ItemDelegate {
                     required property var modelData
                     required property int index
@@ -502,7 +517,14 @@ SplitView {
                         ScrollBar.horizontal:ScrollBar{}
                         Rectangle {width:packetBytes.contentWidth;height:packetBytes.height;color:'#d4d4d4'}
                         ListView {
-                            id:packetRows;objectName:'siPacketRows';width:packetBytes.contentWidth;height:packetBytes.height;clip:true;model:Math.ceil(view.packetRaw.length/20);reuseItems:true
+                            id:packetRows;objectName:'siPacketRows';activeFocusOnTab:true
+                            function move(delta){var at=Math.max(0,Math.min(view.packetRaw.length/2-1,(view.selectedPacketByte<0?0:view.selectedPacketByte)+delta));view.packetClick(at);positionViewAtIndex(Math.floor(at/10),ListView.Contain);}
+                            Keys.onLeftPressed:move(-1)
+                            Keys.onRightPressed:move(1)
+                            Keys.onUpPressed:move(-10)
+                            Keys.onDownPressed:move(10)
+                            Keys.onPressed:function(e){if(e.key===Qt.Key_Home){view.packetClick(0);positionViewAtBeginning();}else if(e.key===Qt.Key_End){view.packetClick(view.packetRaw.length/2-1);positionViewAtEnd();}else if(e.key===Qt.Key_PageUp)move(-100);else if(e.key===Qt.Key_PageDown)move(100);else return;e.accepted=true;}
+                            width:packetBytes.contentWidth;height:packetBytes.height;clip:true;model:Math.ceil(view.packetRaw.length/20);reuseItems:true
                             ScrollBar.vertical:ScrollBar{}
                             delegate:Row {
                                 id:packetLine;required property int index;height:18;spacing:0
@@ -510,7 +532,7 @@ SplitView {
                                 Repeater {model:10
                                     delegate:Rectangle {required property int index;property int offset:packetLine.index*10+index;width:24;height:18;color:view.packetSelected(offset)?'#ffff00':'transparent'
                                         TextLabel {anchors.centerIn:parent;text:view.packetRaw.slice(parent.offset*2,parent.offset*2+2);color:parent.offset<4?'#ff0000':'#0000ff'}
-                                        MouseArea {anchors.fill:parent;enabled:parent.offset<view.packetRaw.length/2;onClicked:view.packetClick(parent.offset)}
+                                        MouseArea {anchors.fill:parent;enabled:parent.offset<view.packetRaw.length/2;onClicked:{packetRows.forceActiveFocus();view.packetClick(parent.offset);}}
                                     }
                                 }
                                 Rectangle {width:100;height:18;color:'#c0d8c8'
@@ -540,6 +562,7 @@ SplitView {
                             Keys.onRightPressed:move(1)
                             Keys.onUpPressed:move(-10)
                             Keys.onDownPressed:move(10)
+                            Keys.onPressed:function(e){if(e.key===Qt.Key_Home){view.selectByte(0);positionViewAtBeginning();}else if(e.key===Qt.Key_End){view.selectByte(view.rawHex.length/2-1);positionViewAtEnd();}else if(e.key===Qt.Key_PageUp)move(-100);else if(e.key===Qt.Key_PageDown)move(100);else return;e.accepted=true;}
                             delegate:Row {
                                 id:hexLine;required property int index;height:18;spacing:0
                                 TextLabel {width:42;height:18;text:(hexLine.index*10).toString(16).toUpperCase().padStart(4,'0');color:'#ff0000'}

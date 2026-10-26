@@ -594,7 +594,7 @@ application source and the verified local executable hashes remain unchanged.
 | 02 | 两端返回恢复具体字段和位置 | 字段→另一表→返回，恢复字段身份、展开、过滤、字段/hex 横纵位置和面板状态；两端结果一致 | APP-011、VIEW-003/050 | 已完成：按字段身份恢复列宽和双轴位置，浏览器/Qt 组件通过 |
 | 03 | 无映射字节清理旧高亮 | 点击未解释字节或 TS header 时，不保留另一字段的旧映射；有可靠范围的字段仍准确双向定位 | APP-010、VIEW-020/021 | 已完成：无映射选择清除旧范围，两端本地回归通过 |
 | 04 | Summary 六项和原版布局对齐 | 两端有 FileSize、Total Packets、BitRates、Errors、Duration、Packet Size；两排指标、Summary/Error tab；未知/部分范围和单位明确 | VIEW-007/008、VIS-005 | 已完成：六项指标、两排自适应布局和经典浅色一致 |
-| 05 | 键盘、焦点、选中行为同步 | 树方向键进入子项/返回父项、字段/hex 导航、F6/Shift+F6、Home/End 等价；文本单击、双击和 +/- 规则保持 | APP-009、VIEW-051、VIS-018 | 待实施 |
+| 05 | 键盘、焦点、选中行为同步 | 树方向键进入子项/返回父项、字段/hex 导航、F6/Shift+F6、Home/End 等价；文本单击、双击和 +/- 规则保持 | APP-009、VIEW-051、VIS-018 | 已完成：树/字段父子键、双 hex 光标及正反 F6，本地回归通过 |
 | 06 | 原版主框架、菜单、工具栏与状态栏 | 依据资源还原主菜单和 7 个命令按钮/2 分隔位；可见命令有实际行为或明确禁用原因；帮助、树显隐和分析状态一致 | WIN-001～005/008～018 | 待实施 |
 | 07 | 多窗口与工作上下文 | 至少三类已支持视图可切换、关闭、恢复；窗口身份独立；平铺/层叠/最小化与焦点正确；重复打开实例规则明确 | WIN-006/007、APP-006/011、VIS-008/009 | 待实施 |
 | 08 | 完整树分支与右键导航 | Programs/PSI/All Packets/DSMCC 等有依据入口；右键命中当前指针对象，View Tables→具体 PID/版本；无数据与未支持有明确状态 | VIEW-017/018/023～026 | 待实施 |
@@ -659,3 +659,11 @@ application source and the verified local executable hashes remain unchanged.
 第 04 项：Tauri 补 FileSize 并采用与 Qt 相同的六项顺序和两排指标；窄视口降为
 两列/单列。经典 Summary 在两端均保持浅色。真实引擎浏览器用例验证 FileSize
 值、六项位置和切 Error tab 后指标不变，见 `si-ordered-web-step04.log`。
+
+
+第 05 项：树/字段的父子方向导航、原包和 section 的首末/逐字节/行/页键，以及
+F6/Shift+F6 来源栏和各窗格的正反切换已经对齐。浏览器 4 个相关用例通过；
+Qt 组件 43 个实际用例通过（47 PASS 含生命周期），无失败/跳过。
+旧焦点测试已纳入新增原包窗格；Summary TabBar 切换明确聚焦实际 TabButton。
+证据 `si-ordered-web-step05.log`（TS 来源栏定位修正见 `si-ordered-web-keyboard-final.log`）
+及 `si-ordered-components-step05-final.log`。下一项为 06 原版主框架。

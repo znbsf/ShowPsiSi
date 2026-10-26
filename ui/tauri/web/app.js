@@ -2701,7 +2701,7 @@ document.addEventListener("keydown", (e) => {
   if($("#shortcuts-dialog").open)return;
   const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
   if(workbenchKeys && classicMode) {
-    if(e.key==='F6') {e.preventDefault();const regions=summaryVisible?[$('.sourcebar'),$('#transport-si .si-summary-list')]:[$('.sourcebar'),$('#unified-si .si-navigation'),$('#unified-si .si-fields'),$('#unified-si .si-section')];const i=regions.findIndex(r=>r?.contains(document.activeElement));regions[(i+(e.shiftKey?regions.length-1:1)+regions.length)%regions.length]?.focus();return;}
+    if(e.key==='F6') {e.preventDefault();if(summaryVisible)summaryView.nextRegion(e.shiftKey,$('.sourcebar'));else siView.nextRegion(e.shiftKey,$('.sourcebar'));return;}
     if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(summaryVisible){summaryVisible=false;syncSiMode();}else siView.back();return;}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const search=$('#unified-si .si-search');search.hidden=false;search.focus();return;}
   }

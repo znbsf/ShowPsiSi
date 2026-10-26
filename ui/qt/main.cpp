@@ -1,5 +1,6 @@
 #include <ctime>
 #include <QGuiApplication>
+#include <QClipboard>
 #include <QQuickTextDocument>
 #include <QSyntaxHighlighter>
 #include <QRegularExpression>
@@ -525,7 +526,7 @@ public:
         if(method=="analyze"||method=="query")params["response_mode"]="compact";
         methods.insert(id,{method,generation,params});
         params.remove("_epoch");
-        if(method=="export"){pendingExports.insert(id);emit exportPendingChanged();}
+        if(method=="export"||method=="export_asset"){pendingExports.insert(id);emit exportPendingChanged();}
         QJsonObject request{{"id",id},{"method",method},{"params",QJsonObject::fromVariantMap(params)}};
         QByteArray wire=QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
         QMetaObject::invokeMethod(transport,"write",Qt::QueuedConnection,Q_ARG(QByteArray,wire));
@@ -588,6 +589,7 @@ public:
         // creates both output and manifest and reports any competing writer.
         return {{"path",QFileInfo(path).absoluteFilePath()}};
     }
+    Q_INVOKABLE void copyText(QString text){QGuiApplication::clipboard()->setText(text);}
     Q_INVOKABLE QString json(QVariant value){return QString::fromUtf8(QJsonDocument::fromVariant(value).toJson(QJsonDocument::Indented));}
     std::unique_ptr<QSettings> layoutSettings()const{
         const QString path=qEnvironmentVariable("SHOWPSISI_SETTINGS_PATH");
@@ -619,6 +621,8 @@ public:
     }
     Q_INVOKABLE QStringList loadRecentFiles(){return layoutSettings()->value("workbenchRecentFiles").toStringList().mid(0,10);}
     Q_INVOKABLE bool saveRecentFiles(QStringList paths){auto settings=layoutSettings();settings->setValue("workbenchRecentFiles",paths.mid(0,10));settings->sync();return settings->status()==QSettings::NoError;}
+    Q_INVOKABLE QVariantMap loadScanSettings(){return QJsonDocument::fromJson(layoutSettings()->value("scanSettings").toByteArray()).object().toVariantMap();}
+    Q_INVOKABLE bool saveScanSettings(QVariantMap value){auto settings=layoutSettings();settings->setValue("scanSettings",QJsonDocument::fromVariant(value).toJson(QJsonDocument::Compact));settings->sync();return settings->status()==QSettings::NoError;}
     Q_INVOKABLE QString loadTheme(){return layoutSettings()->value("workbenchTheme","dark").toString();}
     Q_INVOKABLE void saveTheme(QString theme){auto settings=layoutSettings(); settings->setValue("workbenchTheme",theme=="light"?"light":"dark");settings->sync();}
     Q_INVOKABLE QVariantMap loadLayout(){

@@ -1305,6 +1305,15 @@ class BrowserTests(unittest.TestCase):
         menu.locator('[data-menu]').click()
         menu.locator('[data-command="'+command+'"]').click()
 
+    def test_classic_output_config_cancel_commit_and_source_bytes(self):
+        self.analyze();p=self.page
+        original=p.locator('#standards').input_value();self.show_scan_configuration();p.locator('#standards').select_option('dvb');p.locator('[data-config-cancel]').click();self.assertEqual(p.locator('#standards').input_value(),original)
+        self.show_scan_configuration();self.open_scan_options();p.locator('#extra-pids').fill('99999');p.locator('[data-config-ok]').click();self.assertTrue(p.locator('[data-config-ok]').is_visible())
+        p.locator('#extra-pids').fill('0x150');p.locator('[data-config-ok]').click();self.assertFalse(p.locator('[data-config-ok]').is_visible());stored=json.loads(p.evaluate("localStorage.getItem('showpsisi.scan.v1')"));self.assertEqual(stored['extra-pids'],'0x150')
+        self.classic_command('save');d=p.locator('#output-dialog');self.assertTrue(d.is_visible());kinds=p.evaluate('outputModel.options(window.showpsisi.getState(),{kind:"si",payload:window.showpsisi.getDetail(),view:{}}).map(x=>x.kind)');self.assertEqual(kinds,['section','report']);self.assertGreater(d.locator('[aria-label="Output kind"]').locator('option').count(),1)
+        folder=self.output/'artifacts';folder.mkdir(exist_ok=True);dest=folder/'selected-section.bin';d.locator('[aria-label="Output path"]').fill(str(dest));d.locator('[data-save]').click();p.wait_for_function('()=>document.querySelector("#output-dialog [role=status]").textContent.startsWith("Saved section")');detail=p.evaluate('window.showpsisi.getDetail()');manifest=json.loads(Path(str(dest)+'.manifest.json').read_text());self.assertEqual(dest.read_bytes(),bytes.fromhex(detail['raw_hex']));self.assertEqual(dest.stat().st_size,manifest['bytes']);self.assertEqual(hashlib.sha256(dest.read_bytes()).hexdigest(),manifest['sha256']);self.assertEqual(manifest['selection']['source_id'],detail['id'])
+        d.locator('[data-save]').click();p.wait_for_function('()=>document.querySelector("#output-dialog [role=status]").textContent.includes("already exists")');d.locator('[data-cancel]').click();self.assertFalse(d.is_visible());self.assertFalse(list(folder.glob('*.tmp*')));self.assertEqual(self.page_errors,[])
+
     def show_scan_configuration(self):
         if self.page.locator('#source').is_hidden():self.classic_command('configuration')
 

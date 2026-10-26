@@ -544,3 +544,12 @@ mouse automation remains unverified because application authorization timed out.
 See [parity evidence and exact binaries](NXTSA_UI_UX_PARITY.md#dual-frontend-local-acceptance-2026-10-26).
 Publication continues on the authorized draft PR #30; hosted results must be
 read against the new commit, not the earlier branch head.
+
+
+### 2026-10-27 classic parity step 16
+
+Both UIs now expose source-identified Save/Copy for the active view, bounded
+original/derived exports with SHA-256 manifests, and validated OK/Cancel scan
+preferences. Existing advanced rename/SI snapshot export remains available.
+Six engine export checks, three browser chains and seven full-Qt offscreen
+checks passed. Native dialog/mouse/DPI/normal exit remain step 17; no CI used.

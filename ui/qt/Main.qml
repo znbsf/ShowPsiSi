@@ -5,6 +5,7 @@ import QtQuick.Dialogs
 import QtQml.Models
 import "qrc:/shared/workbench.js" as Shared
 import "../tauri/web/classic-model.js" as Classic
+import "../tauri/web/output-model.js" as Output
 
 ApplicationWindow {
     id: win
@@ -656,7 +657,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            media_audio_last_response:mediaAudioLastResponse,documents:documentWorkspace.snapshot(),document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            media_audio_last_response:mediaAudioLastResponse,documents:documentWorkspace.snapshot(),output:{visible:outputDialog.visible,options:outputDialog.options},configuration:{visible:classicConfigurationVisible,values:configurationValues()},document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -671,10 +672,15 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(action.name==='output_cancel'&&outputDialog.visible){outputDialog.close();return JSON.stringify({accepted:true});}
+        if(action.name==='configuration_cancel'&&classicConfigurationVisible){cancelConfiguration();return JSON.stringify({accepted:true});}
+        if(action.name==='configuration_ok'&&classicConfigurationVisible){var ok=commitConfiguration();if(ok)classicConfigurationVisible=false;return JSON.stringify({accepted:ok});}
+        if(action.name==='configuration_charset'&&classicConfigurationVisible&&typeof action.value==='string'&&action.value.length<=128){defaultCharset.text=action.value;return JSON.stringify({accepted:true});}
+
         if(['media_select','media_tab','media_decode','media_play','media_pause','media_stop','media_source','media_cursor'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.mediaAction(action)});
         if(['teletext_select','teletext_capture','teletext_reveal','teletext_query'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.teletextAction(action)});
         if(['carousel_open','carousel_tab','carousel_view','carousel_back'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.carouselAction(action)});
-        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate','services','carousel','teletext','media'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
+        if(action.name==='classic_command' && ['save','toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate','services','carousel','teletext','media'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
         if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
         if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
         if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
@@ -1211,10 +1217,11 @@ ApplicationWindow {
     Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.close()}
     Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(false)}
     Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(true)}
-    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
+    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{save:true,documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
     function classicCommand(name){
         var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
         if(name==='open')fileDialog.open();
+        else if(name==='save')outputDialog.prepare(analysisState,documentMode?documentWorkspace.outputContext():{kind:'si',payload:detail,view:{copyField:unifiedInspector.selectedField,raw_hex:unifiedInspector.rawHex}});
         else if(name==='start')scan();
         else if(name==='stop')cancelScan();
         else if(name==='pause')core.pauseAnalysis();
@@ -1232,7 +1239,7 @@ ApplicationWindow {
         else if(name==='close')documentWorkspace.close();
         else if(['cascade','tile','arrange'].indexOf(name)>=0)documentWorkspace.arrange(name);
         else if(name==='summary'){if(documentMode)openDocument('summary');transportSummaryVisible=true;advancedMode=false;}
-        else if(name==='configuration'){classicConfigurationVisible=!classicConfigurationVisible;if(classicConfigurationVisible)source.forceActiveFocus();}
+        else if(name==='configuration'){if(classicConfigurationVisible)cancelConfiguration();else{configurationDraft=configurationValues();classicConfigurationVisible=true;source.forceActiveFocus();}}
         else if(name==='advanced'){transportSummaryVisible=false;advancedMode=true;}
         else if(name==='dvbi')inputKind='dvbi';
         else if(name==='about')updateDialog.open();
@@ -1247,6 +1254,15 @@ ApplicationWindow {
         contentItem:Label {text:'Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to table fields and original bytes. Single-click selects; double-click text or click +/− to expand. F6 / Shift+F6 moves between panes. Alt+Left returns. Card Configuration opens source and scan options. Advanced workspace retains editing, topology, history and DVB-I. Disabled commands describe features not yet available.';wrapMode:Text.WordWrap;color:'#000';padding:14}
         background:Rectangle{color:'#efefef';border.color:'#808080'}
     }
+    property var configurationDraft:null
+    function configurationValues(){return {standards:standardChoice.currentValue,default_charset:defaultCharset.text,extra_pids:extraPidsValue,scan_mode:scanMode.currentValue,budget_unit:scanBudgetUnit.currentIndex===0?'percent':'packets',sample_percent:Number(scanBudget.text),max_packets:Number(scanBudget.text),start_packet:Number(scanStart.text),end_packet:Number(scanEnd.text),window_count:4};}
+    function restoreConfiguration(value){if(!value||!Object.keys(value).length||Output.scanSettings.validate(value))return;standardChoice.currentIndex=standardChoice.model.findIndex(function(x){return x.value===value.standards;});defaultCharset.text=value.default_charset;extraPids.text=value.extra_pids.join(', ');scanMode.currentIndex=scanMode.model.findIndex(function(x){return x.value===value.scan_mode;});scanBudgetUnit.currentIndex=value.budget_unit==='percent'?0:1;scanBudget.text=String(value.budget_unit==='percent'?value.sample_percent:value.max_packets);scanStart.text=String(value.start_packet);scanEnd.text=String(value.end_packet);}
+    function commitConfiguration(){var value=configurationValues(),error=Output.scanSettings.validate(value);if(error){showMessage(error,'error');return false;}if(!core.saveScanSettings(value))showMessage('Options kept for this session; preference storage unavailable','warning');configurationDraft=null;return true;}
+    function cancelConfiguration(){if(configurationDraft)restoreConfiguration(configurationDraft);configurationDraft=null;classicConfigurationVisible=false;}
+    Timer{interval:0;running:true;repeat:false;onTriggered:restoreConfiguration(core.loadScanSettings())}
+    property var assetSaveIntent:({})
+    OutputDialog {id:outputDialog;onCopyRequested:function(text){core.copyText(text);showMessage('Copied selected content','info');}onSaveRequested:function(output){assetSaveIntent=output;assetSaveDialog.currentFolder=lastExportFolder;assetSaveDialog.selectedFile=core.fileUrl(core.localPath(lastExportFolder)+'/selected-'+output.kind+'.'+output.extension);assetSaveDialog.open();}}
+    FileDialog {id:assetSaveDialog;title:'Save selected content - existing files are refused';fileMode:FileDialog.SaveFile;options:FileDialog.DontConfirmOverwrite;defaultSuffix:assetSaveIntent.extension||'bin';nameFilters:[(assetSaveIntent.label||'Selected content')+' (*.'+(assetSaveIntent.extension||'bin')+')'];onAccepted:{var path=core.localPath(selectedFile);if(path){var params=Object.assign({},assetSaveIntent.params,{path:path});core.send('export_asset',params);}}onRejected:showMessage('Save cancelled; no output written','info')}
     function openExportDialog() {
         if (!exportButton.enabled || saveDialog.visible) return;
         let format = exportFormat.currentValue;
@@ -1316,6 +1332,7 @@ ApplicationWindow {
         recentMenu.close();
         if(warningMessage.indexOf("Scan cancelled")===0){warningMessage="";warningRepeat=0;}
         notice = "Scanning source…";
+        if(!commitConfiguration())return;
         pendingCoverageKey=requestedCoverageKey;
         pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
         rememberSource(source.text.trim());
@@ -1974,6 +1991,7 @@ ApplicationWindow {
                 showMessage("Scan cancelled · source unchanged · analyze again when ready", "warning");
                 return;
             }
+            if(method==='export_asset'){if(result.message)showMessage(result.message,'error');else{lastExportFolder=core.parentFolder(result.path);showMessage('Saved '+result.kind+': '+num(result.bytes)+' bytes + manifest\n'+result.path,'info');}return;}
             if (result.message) {
                 if (method === "export") {
                     exporting = false;
@@ -4447,6 +4465,11 @@ ApplicationWindow {
                 color: removedColor
                 font.pixelSize: 11
             }
+        }
+        RowLayout{visible:!advancedMode&&classicConfigurationVisible;Layout.fillWidth:true
+            Label{Layout.fillWidth:true;text:'Next analysis only. Current results retain their original settings.';wrapMode:Text.WordWrap;color:'#000'}
+            ClassicButton{text:'OK';objectName:'configurationOK';onClicked:if(commitConfiguration())classicConfigurationVisible=false}
+            ClassicButton{text:'Cancel';objectName:'configurationCancel';onClicked:cancelConfiguration()}
         }
         ProgressBar {
             Layout.fillWidth: true

@@ -720,7 +720,7 @@ function disableBackendActions() {
 function disconnectBackend(reason) {
   if (backendFailure) return;
   const exportPending = [...pending.values()].some(
-    (job) => job.method === "export",
+    (job) => ["export","export_asset"].includes(job.method),
   );
   backendFailure =
     String(reason || "Native backend stopped. Restart the application.") +
@@ -953,6 +953,15 @@ async function cancelScan() {
     notice("Cancellation was not confirmed: " + String(error) + ". Analysis is still pending.", true);
   }
 }
+const configIds=['standards','default-charset','extra-pids','scan-mode','scan-budget-unit','scan-percent','scan-budget','scan-start','scan-end','scan-windows'];
+let configurationDraft=null;
+function captureConfiguration(){return Object.fromEntries(configIds.map(id=>[id,$('#'+id).value]));}
+function restoreConfiguration(value){for(const id of configIds)if(typeof value[id]==='string'){const e=$('#'+id);if(e.tagName!=='SELECT'||[...e.options].some(o=>o.value===value[id]))e.value=value[id];}updateScanOptions();}
+function commitConfiguration(){const error=scanSettings.validate(currentScanOptions());if(error){notice(error,'error');return false;}try{localStorage.setItem('showpsisi.scan.v1',JSON.stringify(captureConfiguration()));}catch(_){notice('Options kept for this session; preference storage unavailable','warning');}configurationDraft=null;return true;}
+function cancelConfiguration(){if(configurationDraft)restoreConfiguration(configurationDraft);configurationDraft=null;classicConfiguration=false;syncSiMode();}
+const configActions=document.createElement('div');configActions.className='configuration-actions';configActions.innerHTML='<span>Next analysis only. Current results retain their original settings.</span><button data-config-ok>OK</button><button data-config-cancel>Cancel</button>';
+$('.sourcebar').append(configActions);configActions.querySelector('[data-config-ok]').onclick=()=>{if(commitConfiguration()){classicConfiguration=false;syncSiMode();}};configActions.querySelector('[data-config-cancel]').onclick=cancelConfiguration;
+try{const raw=localStorage.getItem('showpsisi.scan.v1');if(raw){const original=captureConfiguration();restoreConfiguration(JSON.parse(raw));if(scanSettings.validate(currentScanOptions()))restoreConfiguration(original);}}catch(_){}
 async function scan() {
   if (busy || backendFailure) return;
   const path = $("#source").value.trim();
@@ -979,6 +988,7 @@ async function scan() {
       (options.scan_mode === "distributed" && (!integer(options.window_count,1) || options.window_count > 16))) {
     notice("Choose 1–100 percent or a positive integer packet budget, an increasing packet range, and 1–16 windows.", true); return;
   }
+  if(!commitConfiguration())return;
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
@@ -3104,12 +3114,13 @@ document.addEventListener('keydown',event=>{if(!documentMode||!classicMode||docu
 const framePanel=document.createElement('header');framePanel.id='classic-frame';framePanel.className='classic-frame';$('.titlebar').before(framePanel);
 const helpDialog=document.createElement('dialog');helpDialog.id='classic-help';helpDialog.innerHTML='<h2>ShowPsiSi Help</h2><p>Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to fields and original bytes. Click text to select; double-click text or click +/− to expand. F6 / Shift+F6 changes panes. Alt+Left returns. Card Configuration contains source and scan options. Advanced workspace retains topology, editing, history and DVB-I.</p><button class="btn">Close</button>';$('#app').append(helpDialog);helpDialog.querySelector('button').onclick=()=>helpDialog.close();
 const footer=$('#app > footer');for(const [id,text] of [['product','ShowPsiSi'],['version','development'],['num',''],['scroll','']]){const cell=document.createElement('span');cell.id='classic-'+id;cell.className='classic-status-part';cell.textContent=text;footer.append(cell);}
-function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:documentMode?(documentWorkspace?.snapshot().items.length||0):(data.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
+function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:documentMode?(documentWorkspace?.snapshot().items.length||0):(data.complete?1:0),features:{save:true,documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
 async function classicCommand(id){const state=classicState();if(!classic.enabled(id,state)){notice(classic.reason(id,state),'warning');return;}
  if(id==='open')await $('#browse').onclick();
  else if(id==='start')scan();else if(id==='stop')cancelScan();else if(id==='pause')pauseScan();
  else if(id==='toolbar')classicToolbar=!classicToolbar;else if(id==='status')classicStatus=!classicStatus;else if(id==='tree')classicTree=!classicTree;
- else if(id==='configuration'){classicConfiguration=!classicConfiguration;syncSiMode();if(classicConfiguration)$('#source').focus();}
+ else if(id==='save'){outputDialog.open(data,documentMode?documentWorkspace.outputContext():{kind:'si',payload:detail,view:siView?.snapshot()||{}});}
+ else if(id==='configuration'){if(classicConfiguration)cancelConfiguration();else{configurationDraft=captureConfiguration();classicConfiguration=true;syncSiMode();$('#source').focus();}}
  else if(id==='new'){documentMode=true;openDocument('si',true);}
  else if(id==='decoded'){documentMode=true;openDocument('decoded');}
  else if(id==='packets')openPacket(-1,0);
@@ -3126,6 +3137,7 @@ async function classicCommand(id){const state=classicState();if(!classic.enabled
  else if(id==='diagnostics')$('#save-diagnostics').click();else if(id==='exit'){try{await invoke('close_application');}catch(error){notice(String(error),true);}}
  syncSiMode();
 }
+const outputDialog=OutputDialog.create({native:()=>!!env.driver&&env.runtime!=='cloud-browser',call,notice,busy:value=>{exportPending=value;classicFrame?.update();},choose:o=>invoke('plugin:dialog|save',{options:{defaultPath:'selected-'+o.kind+'.'+o.extension,filters:[{name:o.label,extensions:[o.extension]}]}})});
 classicFrame=ClassicFrame.create(framePanel,{state:classicState,command:classicCommand,locks:value=>{$('#classic-num').textContent=value.num?'NUM':'';$('#classic-scroll').textContent=value.scroll?'SCRL':'';}});
 $('#source').addEventListener('input',()=>classicFrame.update());
 syncSiMode();

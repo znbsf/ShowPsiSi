@@ -14,7 +14,7 @@ fn request(message:Value,core:tauri::State<Core>)->Result<(),String>{
     if message["method"]=="analyze" { mark(&core,"analyze_requested"); }
     let mut input_guard=core.input.lock().map_err(|e|e.to_string())?;
     let input=input_guard.as_mut().ok_or("The native backend is shutting down")?;
-    if message["method"]=="export" {
+    if message["method"]=="export" || message["method"]=="export_asset" {
         let id=export_request_id(&message).ok_or("Export requests require a valid request ID")?;
         core.pending_exports.lock().map_err(|e|e.to_string())?.insert(id);
     }

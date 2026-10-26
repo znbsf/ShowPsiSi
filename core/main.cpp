@@ -1694,6 +1694,7 @@ public:
         pending={{"token",std::to_string(revision)+":"+id+":"+fingerprint(patchSections.front().second)},{"source_id",id},{"revision",revision},{"service_id",sid},{"before",before},{"after",name},{"old_version",r.version},{"new_version",sdt.version()},{"crc_recomputed",true},{"writes_source",false}};
         return pending;
     }
+#include "AssetExport.h"
     J exportData(const J& args) {
         if(std::any_of(records.begin(),records.end(),[](const Record& r){return r.j94;}))throw std::runtime_error("J.94 snapshot export is unsupported until map/version selection is defined; original sections remain inspectable");
         if(!complete||records.empty())throw std::runtime_error("Complete a successful analysis before exporting");
@@ -1774,6 +1775,7 @@ public:
         if(method=="inspect")return inspect(args);
         if(method=="preview_rename")return preview(args);
         if(method=="export")return exportData(args);
+        if(method=="export_asset")return exportAsset(args);
         if(method=="load_extension") {
             J candidate=readJson(pathFromUtf8(args.at("path").get<std::string>()));
             auto require=[](bool ok,const std::string& message){if(!ok)throw std::runtime_error("Invalid extension: "+message);};

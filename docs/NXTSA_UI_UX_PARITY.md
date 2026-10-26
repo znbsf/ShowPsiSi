@@ -605,7 +605,7 @@ application source and the verified local executable hashes remain unchanged.
 | 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 内容浏览已实现：DSI→模块→对象/绑定→只读内容、Class 与配置，两端实测；导出在 16 接入，原生验收在 17 |
 | 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 已实现真实 PES 页/子页/捕获、40×24 显示、颜色/马赛克/双高及来源跳包；部分 Latin Level 1 范围明确，两端真实字幕验证通过 |
 | 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 已实现有界 PES/ES 来源链、真实解码帧与预览播放、PCM 波形和 Windows 输出控制；原始 A/V 同步不推断，输出在 16 接入，桌面验收在 17 |
-| 16 | 保存、复制、输出与设置对齐 | 每种支持输出有范围/单位/来源；取消/覆盖/失败正确；配置 Cancel 不提交，分析设置标明生效时点；未支持打印/帮助入口明确 | APP-015～020、WIN-030～044 | 待实施 |
+| 16 | 保存、复制、输出与设置对齐 | 每种支持输出有范围/单位/来源；取消/覆盖/失败正确；配置 Cancel 不提交，分析设置标明生效时点；未支持打印/帮助入口明确 | APP-015～020、WIN-030～044 | 已实现：同一选中上下文的保存/复制，原始字节和派生 PNG/WAV 明确分开；配置确认持久化、取消恢复；本地两端检查通过 |
 | 17 | 全链路、DPI 与退出收尾 | 固定输入下两端逐项对照；100/150/200% 可达；保留高级功能；换源/取消/关闭验证真实进程和资源退出；记录尚未验证项 | E2E-01～16、APP-021～026、VIS | 待实施 |
 
 执行规则：
@@ -813,3 +813,30 @@ SHA-256 dc60e1a17c0cee0f5702e23ed171e70e5bc2d4543ee2bd179185e84eb9cedc64，
 si-media-audio-qt-runtime.log、si-media-reference-qt-runtime.log。
 当前仅实测 MPEG-2 video / MPEG audio；可选解码格式不等于全部 application-tested。
 真实桌面/DPI/最终退出与未支持平台边界仍由步骤 17 收口。
+
+
+### 2026-10-27 步骤 16：保存、复制和设置
+
+两端 File→Save / Ctrl+S 使用同一 output-model；冻结活动窗口和选中身份后再选择
+输出类型与路径。section、188 字节 TS 包/原封装、单个完整 PES/对应 ES、完整
+模块、BIOP 文件或对象，以及当前解码预览 PNG/mono 48000 Hz s16le WAV 均由
+引擎重新核对 revision/来源/范围/模块 epoch/preview_token。JSON 报告明确仅为
+分析摘要和 coverage，不伪称完整分页集合。高级 SDT 改名和 SI-only 重组 TS/BIN
+原功能保留，不能当作原始媒体 TS。Copy 保留字段列名、bits 单位、值和说明；
+hex 复制明确显示层与分页可能不完整。系统剪贴板失败时浏览器选中可复制原文。
+
+export_asset 限于有界资源；临时文件写入、关闭后使用同卷原子无覆盖发布，输出
+与 manifest 任一冲突均拒绝；不支持 hard-link 的文件系统显式失败。源变更和
+过期身份拒绝；残缺模块无输出。取消路径选择不发送写请求。两端 native close
+的 active-export 保护涵盖新方法。没有实现打印，禁用原因指向保存入口。
+配置 OK 验证并在各端独立保存偏好；Cancel 恢复打开前值；Start 提交有效选项。
+扫描选项只作用下一次分析，重启不恢复旧分析为当前结果。外部 decoder 仍按
+步骤 15 的固定 hash 和显式本地路径配置，不自动获取或分发。
+
+本地 6 项引擎输出检查通过：含 Unicode 路径、原字节/对象全文/空文件、PNG/WAV
+hash、缺块、旧 epoch/token/revision、源变更、已存在 output/manifest、不可用
+目录及临时文件清理。浏览器 3 条链通过（设置取消/提交、真实保存与冲突、既有
+视频/静音音频关闭）；完整 Qt 7 项检查通过（设置恢复/持久化、section/report、
+PES/ES、当前 PNG 选项与取消无输出、无 QML 错误）。Qt 此处为离屏；原生文件
+对话框、鼠标与最终退出属于 17。证据 si-output-engine.log、si-output-web2.log、
+si-output-qt-runtime.log；没有启动或查询 CI。

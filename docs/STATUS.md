@@ -568,3 +568,7 @@ PASS) and five full-Qt runtime chains passed. No hosted CI was triggered or poll
 Cross-monitor Windows DPI transitions and subjective pixel-perfect acceptance
 remain unverified; Tauri's ignored scale flag is explicitly not native 200% proof.
 See NXTSA_UI_UX_PARITY.md step 17 for the exact evidence and unsupported boundaries.
+
+Final parity follow-up: classic startup now selects valid PAT in both UIs;
+Open-file configuration captures old values before Cancel. The picker-boundary
+browser regression and default-selection assertion pass.

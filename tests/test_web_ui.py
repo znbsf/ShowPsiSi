@@ -929,6 +929,7 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(p.locator('#unified-si').is_visible())
         self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
         self.analyze();p.wait_for_function('()=>window.showpsisi.getUiState().settled && !!window.showpsisi.getDetail().id')
+        self.assertEqual(p.evaluate('window.showpsisi.getDetail().table_id'),0)
         root=p.locator('.si-field-row[aria-expanded]').first
         root.locator('.si-field-name').click();self.assertEqual(root.get_attribute('aria-expanded'),'true')
         root.locator('.si-field-name').dblclick();self.assertEqual(root.get_attribute('aria-expanded'),'false')
@@ -1307,6 +1308,11 @@ class BrowserTests(unittest.TestCase):
 
     def test_classic_output_config_cancel_commit_and_source_bytes(self):
         self.analyze();p=self.page
+        def picker(route):
+            if route.request.post_data_json.get('command')=='plugin:dialog|open':route.fulfill(status=200,content_type='application/json',body=json.dumps(str(self.sample)))
+            else:route.continue_()
+        p.route('**/__bridge/invoke',picker)
+        old_charset=p.locator('#default-charset').input_value();self.classic_command('open');self.open_scan_options();p.locator('#default-charset').fill('UTF-8');p.locator('[data-config-cancel]').click();self.assertEqual(p.locator('#default-charset').input_value(),old_charset)
         original=p.locator('#standards').input_value();self.show_scan_configuration();p.locator('#standards').select_option('dvb');p.locator('[data-config-cancel]').click();self.assertEqual(p.locator('#standards').input_value(),original)
         self.show_scan_configuration();self.open_scan_options();p.locator('#extra-pids').fill('99999');p.locator('[data-config-ok]').click();self.assertTrue(p.locator('[data-config-ok]').is_visible())
         p.locator('#extra-pids').fill('0x150');p.locator('[data-config-ok]').click();self.assertFalse(p.locator('[data-config-ok]').is_visible());stored=json.loads(p.evaluate("localStorage.getItem('showpsisi.scan.v1')"));self.assertEqual(stored['extra-pids'],'0x150')

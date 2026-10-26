@@ -1129,6 +1129,7 @@ async function inspect(id, sid = -1, key = "", evidence = null) {
   }
 }
 function defaultInspect() {
+  if(classicMode){const table=(data.tables||[]).find(r=>r.name==='PAT'&&r.valid)||(data.tables||[])[0];if(table)inspect(table.id);else{selectionReset();renderInspector();}return;}
   const first = data.services?.[0];
   if (first)
     inspect(
@@ -2578,7 +2579,7 @@ $("#browse").onclick = async () => {
     });
     if (typeof path === "string") {
       $("#source").value = path;
-      if(classicMode){classicConfiguration=true;syncSiMode();notice("Ready — choose Start to analyze the selected transport stream");}
+      if(classicMode){if(!classicConfiguration)configurationDraft=captureConfiguration();classicConfiguration=true;syncSiMode();notice("Ready — choose Start to analyze the selected transport stream");}
       else scan();
     }
   } catch (error) {

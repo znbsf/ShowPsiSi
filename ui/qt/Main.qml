@@ -4051,7 +4051,7 @@ ApplicationWindow {
         nameFilters: ["Transport streams (*.ts *.mts *.m2ts)", "All files (*)"]
         onAccepted: {
             source.text = core.localPath(selectedFile);
-            if(advancedMode)scan();else {classicConfigurationVisible=true;showMessage("Ready — choose Start to analyze the selected transport stream","info");}
+            if(advancedMode)scan();else {if(!classicConfigurationVisible)configurationDraft=configurationValues();classicConfigurationVisible=true;showMessage("Ready — choose Start to analyze the selected transport stream","info");}
         }
     }
     FileDialog {

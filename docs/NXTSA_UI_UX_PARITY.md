@@ -846,7 +846,9 @@ si-output-qt-runtime.log；没有启动或查询 CI。
 
 Qt 与 Tauri 均以本次工作树当前源码构建。Tauri 的 36 个输入文件逐一核对 SHA-256
 后复制到已接受的 Low 构建目录，cargo --locked --offline 成功；未运行托管 CI。
-最后修复两端原生窗口标题跟随活动文档、保存页的可读来源说明和经典样式。
+最后修复两端原生窗口标题跟随活动文档、保存页的可读来源说明和经典样式；
+经典模式成功分析后均默认选中有效 PAT，避免 Qt/PAT 与 Tauri/SDT 的起始差异；
+从 Open 文件入口进入配置也先保存旧值，Cancel 与菜单进入配置的恢复行为一致。
 原生 200% 检查发现 Qt 初始 1440×900 与固定 minimum 超出逻辑屏幕；已改为
 依据 Screen 限制初始/最小尺寸。1920×1080 主屏上 QT_SCALE_FACTOR=2 的实际
 窗口为 920×480 逻辑像素，屏幕为 960×540，菜单、状态和关闭按钮可达。
@@ -874,8 +876,8 @@ packets、video、audio 五条应用运行链全部通过。此前固定真实�
 宿主字体渲染和主观像素级 1:1 仍未实机验收。打印、压缩模块、Teletext 增强集及
 原始 A/V 同步等既有明确 unsupported/partial 范围保留，不以完成 UI 宣称全协议支持。
 
-证据位于主工作区 ignored artifacts/si-frame-20261026：si-final-qt-build3.log、
-si-final-tauri-build3.log、tauri-source-manifest.json、si-final-engine.log、
-si-final-classic-web.log、si-final-browser-scales.log、si-final-advanced-web.log、
+证据位于主工作区 ignored artifacts/si-frame-20261026：si-final-qt-build4.log、
+si-final-tauri-build5.log、tauri-source-manifest.json、si-final-engine.log、
+si-final-classic-web2.log、si-final-browser-scales.log、si-final-advanced-web.log、
 si-final-components.log、si-final-runtime.json 和 native-final.json。最终源码提交、
 产物 hash 与预览 PID 在 delivery-final.json 记录。原生最终预览使用独立设置。

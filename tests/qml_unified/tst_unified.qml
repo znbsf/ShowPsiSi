@@ -151,6 +151,13 @@ Item {
             compare(inspector.selectedField.name,field);compare(inspector.fieldColumnWidths[0],800);
             compare(list.contentX,before.fieldX);
         }
+        function test_unmapped_packet_header_clears_loop_range() {
+            inspector.selectRecord(inspector.findRecord('PMT'));
+            inspector.focusNode('section/stream/12');verify(inspector.activeRange!==null);
+            inspector.packetClick(0);compare(inspector.activeRange,null);compare(inspector.selectedFieldIndex,-1);
+            verify(findChild(inspector,'siRange').text.indexOf('no SI field mapping')>=0);
+            inspector.selectByte(19);compare(inspector.selectedField.name,'component_tag');verify(inspector.activeRange!==null);
+        }
         function test_si_tree_table_expand_and_focus() {
             inspector.selectRecord(inspector.findRecord('PMT'));
             var index=inspector.fieldRows.findIndex(function(f){return f.groupPath && f.groupPath.indexOf('section/stream/')===0;});

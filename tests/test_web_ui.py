@@ -980,6 +980,20 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(after['scroll']['fields'],before['scroll']['fields'])
         self.assertEqual(after['scroll']['fieldsX'],before['scroll']['fieldsX'])
 
+    def test_classic_unmapped_packet_byte_clears_old_field_highlight(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
+        self.assertIsNotNone(p.evaluate('showpsisi.getUiState().unified.range'))
+        self.assertGreater(p.locator('.si-hex [data-byte].si-selected').count(),0)
+        p.locator('.si-packet [data-byte="0"]').click()
+        self.assertIsNone(p.evaluate('showpsisi.getUiState().unified.range'))
+        self.assertEqual(p.locator('.si-hex [data-byte].si-selected').count(),0)
+        self.assertEqual(p.locator('.si-field-row.si-selected').count(),0)
+        self.assertIn('no SI field mapping',p.locator('.si-status').inner_text())
+        p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
+        self.assertIsNotNone(p.evaluate('showpsisi.getUiState().unified.range'))
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

@@ -39,6 +39,7 @@ SplitView {
         var path=pendingNode.path;pendingNode=null;focusNode(path);
     }
     function focusNode(path){
+        unmappedSelection=false;
         var node=Model.inspector.find(root,path);if(!node)return;
         var opened=Object.assign({},fieldClosed);
         Object.keys(opened).forEach(function(k){if(path===k || path.indexOf(k+'/')===0)delete opened[k];});fieldClosed=opened;
@@ -65,12 +66,14 @@ SplitView {
     property real hexFraction:0.40
     property int selectedFieldIndex: -1
     property int selectedByte: -1
+    property bool unmappedSelection:false
     property var selectedField: fieldRows[selectedFieldIndex] && !fieldRows[selectedFieldIndex].groupPath ? fieldRows[selectedFieldIndex] : null
-    property var activeRange: selectedField && selectedField.bit_offset!==undefined
+    property var activeRange: unmappedSelection?null:selectedField && selectedField.bit_offset!==undefined
         ? {offset:Math.floor(selectedField.bit_offset/8),length:Math.ceil((selectedField.bit_offset%8+selectedField.bit_length)/8)}
         : selectedField || selectedPath==='section' ? null : Model.inspector.wireRange(selectedNode)
     property string rawHex: (detail.raw_hex || '').replace(/\s/g,'')
     function selectField(index) {
+        unmappedSelection=false;
         var row=fieldRows[index];
         if(row && row.groupPath){
             var scroll=fieldList.contentY;
@@ -84,6 +87,7 @@ SplitView {
         if(activeRange){hexOpen=true;hexRows.positionViewAtIndex(Math.floor(activeRange.offset/10),ListView.Contain);}
     }
     function focusField(index) {
+        unmappedSelection=false;
         var row=fieldRows[index];if(!row)return;
         if(row.groupPath){selectedPath=row.groupPath;selectedFieldIndex=index;selectedByte=-1;fieldList.currentIndex=index;}
         else selectField(index);
@@ -106,12 +110,12 @@ SplitView {
             function reveal(n){if(!n)return;var cs=n.children || [];for(var i=0;i<cs.length;i++)if(path===cs[i].path || path.indexOf(cs[i].path+'/')===0){expanded[n.path]=Math.max(expanded[n.path] || 100,i+1);reveal(cs[i]);break;}}
             reveal(root);limits=expanded;var fieldOpen=Object.assign({},fieldClosed);Object.keys(fieldOpen).forEach(function(k){if(path===k || path.indexOf(k+'/')===0)delete fieldOpen[k];});fieldClosed=fieldOpen;selectedPath=path;var rowIndex=fieldRows.findIndex(function(f){return f.nodePath===path && f.name===best.field.name && f.bit_offset===best.field.bit_offset && f.bit_length===best.field.bit_length;});selectField(rowIndex);
             fieldList.positionViewAtIndex(selectedFieldIndex,ListView.Contain);
-        }else selectedFieldIndex=-1;
+        }else {selectedFieldIndex=-1;unmappedSelection=true;}
         selectedByte=offset;
     }
     function byteSelected(offset){return activeRange && offset>=activeRange.offset && offset<activeRange.offset+activeRange.length;}
     function byteText(offset){return rawHex.slice(offset*2,offset*2+2).toUpperCase();}
-    onFieldRowsChanged: {selectedFieldIndex=-1;selectedByte=-1;}
+    onFieldRowsChanged: {unmappedSelection=false;selectedFieldIndex=-1;selectedByte=-1;}
 
     property var records: (state.tables || []).filter(function(r){return (pidFilter<0 || Number(r.pid)===pidFilter) && (family==="All tables" || r.name===family) && (!query || Model.inspector.title(r).toLowerCase().indexOf(query.toLowerCase())>=0);}).slice().sort(function(a,b){return a.pid-b.pid || a.table_id-b.table_id || a.first_packet-b.first_packet;})
     property var nodes: Model.inspector.flatten(root,closed,0,limits)
@@ -175,7 +179,7 @@ SplitView {
     onSelectedPathChanged: {selectedFieldIndex=-1;selectedByte=-1;}
     function captureContext() {
         return {expandedRecords:expandedRecords,treeClosed:treeClosed,treeLimits:treeLimits,openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
-            fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,field:selectedField?{nodePath:selectedField.nodePath,name:selectedField.name,bit_offset:selectedField.bit_offset,bit_length:selectedField.bit_length}:null,fieldColumns:fieldColumnWidths.slice(),fieldScroll:fieldList.contentY,fieldX:fieldList.contentX,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexX:bytes.contentX,packetScroll:packetRows.contentY,packetX:packetBytes.contentX,hexOpen:hexOpen,scroll:nav.contentY,navX:nav.contentX,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
+            unmapped:unmappedSelection,byteCursor:selectedByte,fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,field:selectedField?{nodePath:selectedField.nodePath,name:selectedField.name,bit_offset:selectedField.bit_offset,bit_length:selectedField.bit_length}:null,fieldColumns:fieldColumnWidths.slice(),fieldScroll:fieldList.contentY,fieldX:fieldList.contentX,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexX:bytes.contentX,packetScroll:packetRows.contentY,packetX:packetBytes.contentX,hexOpen:hexOpen,scroll:nav.contentY,navX:nav.contentX,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
     }
     function filterPid(pid) {
         if(detail.id && !navigationOrigin.id)navigationOrigin=captureContext();
@@ -193,6 +197,7 @@ SplitView {
             fieldClosed=saved.fieldClosed || {};hexFraction=saved.hexFraction || 0.40;hexOpen=saved.hexOpen===undefined?true:saved.hexOpen;
             if(saved.fieldColumns)fieldColumnWidths=saved.fieldColumns.slice();
             selectedFieldIndex=saved.field ? fieldRows.findIndex(function(f){return !f.groupPath && f.nodePath===saved.field.nodePath && f.name===saved.field.name && f.bit_offset===saved.field.bit_offset && f.bit_length===saved.field.bit_length;}) : saved.fieldIndex===undefined?-1:saved.fieldIndex;
+            unmappedSelection=!!saved.unmapped;selectedByte=saved.byteCursor===undefined?-1:saved.byteCursor;
             fieldList.contentY=saved.fieldScroll || 0;fieldList.contentX=saved.fieldX || 0;hexRows.contentY=saved.hexScroll || 0;bytes.contentX=saved.hexX || 0;
             packetRows.contentY=saved.packetScroll || 0;packetBytes.contentX=saved.packetX || 0;nav.contentX=saved.navX || 0;
             var focused=navigation.findIndex(function(row){return row.key===saved.focusKey;});
@@ -207,7 +212,7 @@ SplitView {
         if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,ListView.Contain);}
     }
     property string sourceIdentity: (state.source || '')+':'+(state.analysis_revision || '')
-    onSourceIdentityChanged: {tableTrees={};treeOrder=[];expandedRecords={};treeClosed={};treeLimits={};pendingNode=null;history=[];navigationOrigin={};selectionFilter={};pendingRestore=null;pidFilter=-1;selectedPath='section';openFamilies={};closed={};fieldClosed={};limits={};page=0;}
+    onSourceIdentityChanged: {unmappedSelection=false;tableTrees={};treeOrder=[];expandedRecords={};treeClosed={};treeLimits={};pendingNode=null;history=[];navigationOrigin={};selectionFilter={};pendingRestore=null;pidFilter=-1;selectedPath='section';openFamilies={};closed={};fieldClosed={};limits={};page=0;}
     function selectRecord(r,rowKey,nodePath,expand) {
         if(!r || !host.backendReady || host.coreInspecting)return;
         if(detail.id && r.id!==detail.id && !restoring) {
@@ -288,7 +293,7 @@ SplitView {
     readonly property string packetRaw:sourcePacket.raw_hex || ''
     function fieldValue(value){return String(value || '').replace(/^0x0+([0-9A-F])/,'0x$1').replace(' [','[');}
     function packetSelected(offset){return sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes && byteSelected(offset-sourcePacket.section_offset);}
-    function packetClick(offset){if(sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes)selectByte(offset-sourcePacket.section_offset);else {selectedFieldIndex=-1;selectedByte=-1;}}
+    function packetClick(offset){if(sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes)selectByte(offset-sourcePacket.section_offset);else {selectedFieldIndex=-1;selectedByte=-1;unmappedSelection=true;}}
     component ClassicButton:Button {
         implicitHeight:23;implicitWidth:Math.max(44,contentItem.implicitWidth+14)
         contentItem:TextLabel {text:parent.text;font.family:'Tahoma';font.pixelSize:11;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter;color:parent.enabled?'black':'#808080'}
@@ -561,7 +566,7 @@ SplitView {
             }
             TextLabel {
                 objectName:'siRange';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:11;elide:Text.ElideRight
-                text:view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
+                text:view.unmappedSelection?"Selected byte has no SI field mapping":view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
             }
         }
     }

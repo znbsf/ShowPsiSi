@@ -133,3 +133,15 @@ partial evidence as above. Admission rejection and accepted cancellation use
 the same owner-side `finish` decision so an accepted cancellation cannot be
 published as a successful scan or admission rejection. No control-thread engine
 state access is added.
+
+## Separate bounded media decoder control
+
+`decode_media` is registered independently by `(analysis_revision, request_token)`.
+`cancel_media` bypasses the ordinary queue and may set only that request's flag;
+it never looks up Engine/TSDuck state and cannot target an analysis ID. The owner
+thread checks the flag while collecting ES and the owned decoder Job checks it
+while running. Publication uses the same mutex-protected finish boundary, then
+retires the media registry entry before emitting the terminal response. Accepted
+cancellation returns `media_cancelled`, without clearing analysis evidence.
+Queued/wrong-revision/repeated/late/cross-analysis cases and real decoder exit are
+locally tested. This does not turn media cancellation into analysis pause/resume.

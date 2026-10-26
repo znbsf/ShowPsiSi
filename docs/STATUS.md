@@ -1,5 +1,14 @@
 # ShowPsiSi status
 
+2026-10-27 step 15 implemented: stable PES/ES inventory, exact source-byte
+jumps (including existing packet-window relocation), bounded real frame/PCM
+preview and token-scoped Windows output. 29 media/analysis-cancellation checks
+plus two browser chains pass; full Qt video, waveform, silent pause/resume and
+close-release pass. The accepted single-I-frame remux also renders in Qt with
+exact source ES identity. External pinned FFmpeg is optional and not bundled;
+preview pacing/downmix is derived, original A/V synchronization is not inferred.
+Next: outputs/copy/settings (16), then native/DPI/exit acceptance (17). No CI.
+
 2026-10-26 step 14 implemented: actual PES Teletext page/subpage/capture
 navigation in both UIs, 40-column display, supported colours/mosaics/double
 height, conceal/flash controls and exact unit source packets. 29 related local

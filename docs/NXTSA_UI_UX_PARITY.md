@@ -604,7 +604,7 @@ application source and the verified local executable hashes remain unchanged.
 | 12 | 服务、EIT/EPG 与 AIT 追查 | 同 SID 不同 TS、共享 PID 不串源；服务→具体 PMT/ES/EIT/应用→证据可返回；缺失关联明确显示，不靠 ID 猜测 | VIEW-024～033 | 已实现：完整 ONID/TSID/SID 服务身份、ES/EPG/AIT 来源跳转及返回；同 SID、共享 PID 与歧义反例通过 |
 | 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 内容浏览已实现：DSI→模块→对象/绑定→只读内容、Class 与配置，两端实测；导出在 16 接入，原生验收在 17 |
 | 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 已实现真实 PES 页/子页/捕获、40×24 显示、颜色/马赛克/双高及来源跳包；部分 Latin Level 1 范围明确，两端真实字幕验证通过 |
-| 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 待实施 |
+| 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 已实现有界 PES/ES 来源链、真实解码帧与预览播放、PCM 波形和 Windows 输出控制；原始 A/V 同步不推断，输出在 16 接入，桌面验收在 17 |
 | 16 | 保存、复制、输出与设置对齐 | 每种支持输出有范围/单位/来源；取消/覆盖/失败正确；配置 Cancel 不提交，分析设置标明生效时点；未支持打印/帮助入口明确 | APP-015～020、WIN-030～044 | 待实施 |
 | 17 | 全链路、DPI 与退出收尾 | 固定输入下两端逐项对照；100/150/200% 可达；保留高级功能；换源/取消/关闭验证真实进程和资源退出；记录尚未验证项 | E2E-01～16、APP-021～026、VIS | 待实施 |
 
@@ -779,3 +779,37 @@ conceal 与捕获切换通过。实际 test-012 输入 SHA-256
 证据：si-teletext-final.log、si-teletext-subtitle-oracle.log、
 si-teletext-reference-web.log、si-teletext-reference-qt-runtime.log。
 真实桌面鼠标、DPI 与设备输出仍归步骤 17。
+
+## PES、ES 与真实媒体检查点（2026-10-27，步骤 15）
+
+两端独立 PES / ES / Media 窗口使用同一 query_pes / decode_media / audio_control。
+PES 列表稳定选择、分页、PTS/DTS、PES/ES 字节分页与确切 TS 字节跳转可用；
+复用已有 Packet Explorer 时会重新定位包和字节，不留在旧包。解码从用户明确
+选中的 PES index 开始，断流或加扰不拼成连续 ES，不从私有 stream_type 猜 codec。
+自动 codec 来自 context-aware PMT；显式输入格式与自动解释分别标明。
+
+视频为最多 16 个真实 PNG 解码帧，拟合 320×180，预览按派生 10 fps 播放，
+不宣称原始帧节奏或 A/V 同步。音频为最多 3 秒、mono / 48000 Hz / s16le 的
+实际解码 PCM 和 512 个峰值范围；原始采样率/声道与解码输出分别说明。
+Windows 输出仅操作本进程的缓冲句柄；播放、暂停、继续、停止、关闭和换源受
+同一 preview token 约束。设备 API 排队不作为物理可听验收。
+
+外部 FFmpeg 9.0.2 Windows x64 工具固定 SHA-256
+3256173f3f8bffd7df12227c68adf68025edb1832273a9530688a7bb1ed8edec。
+工具为可选外部依赖，不自动下载、不随程序分发；GPL build 的安装包分发审阅
+尚未纳入当前交付。配置由 SHOWPSISI_FFMPEG 或本项目 .deps/ffmpeg 路径指定。
+执行前核对哈希；无 shell/网络输入。独立 Job 限制单进程、384 MiB、8 秒和
+4 MiB 输出；输入上限 16 MiB、256 PES、64 个连续段。取消通过独立请求注册表
+仅设置匹配 revision/request_token 的标志，不访问 Engine/TSDuck 状态，旧取消
+不能命中分析或另一媒体请求；接受取消后不发布成功预览。
+
+本地：媒体/PES 与分析取消共 29 项通过；两个浏览器整链检查通过；完整 Qt 的
+视频、原包定位、播放结束、PCM、静音设备输出和关闭释放通过且无 QML 错误。
+实际完整 I 帧参考的派生 remux 输入也通过完整 Qt：恢复 ES 为 25,756 字节，
+SHA-256 dc60e1a17c0cee0f5702e23ed171e70e5bc2d4543ee2bd179185e84eb9cedc64，
+真实 PNG 已加载，解码子进程退出。该证据仅对应已接受的单 I 帧与派生 remux，
+不把原始 test-074 全文件当作干净视频或原始时序证据。
+证据：si-media-cancellation.log、si-media-web.log、si-media-qt-runtime.log、
+si-media-audio-qt-runtime.log、si-media-reference-qt-runtime.log。
+当前仅实测 MPEG-2 video / MPEG audio；可选解码格式不等于全部 application-tested。
+真实桌面/DPI/最终退出与未支持平台边界仍由步骤 17 收口。

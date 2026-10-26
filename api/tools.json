@@ -1026,6 +1026,224 @@
       "annotations": {
         "readOnlyHint": true
       }
+    },
+    {
+      "name": "query_pes",
+      "description": "Read bounded original PES inventory, exact paged PES/ES bytes and source TS fragments. Does not imply frame completeness, successful decoding or device output.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8190
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pes_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pes_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "pes_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "layer": {
+            "type": "string",
+            "enum": [
+              "pes",
+              "es"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "pid"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "decode_media",
+      "description": "Decode bounded collected ES using a hash-pinned external tool. Produces derived preview frames or PCM without device output; cancellation uses its exact revision/request_token.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8190
+          },
+          "start_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 262144
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "segment_index": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 63
+          },
+          "request_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "video",
+              "audio"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "mpegvideo",
+              "h264",
+              "hevc",
+              "mp3",
+              "aac",
+              "loas",
+              "ac3",
+              "eac3"
+            ]
+          },
+          "from_pes_index": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "pid",
+          "request_token",
+          "kind"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "cancel_media",
+      "description": "Cancel only the matching queued/running decode request flag. Does not inspect or mutate Engine evidence.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "request_token": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "request_token"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false
+      }
+    },
+    {
+      "name": "audio_control",
+      "description": "Control this exact decoded preview buffer on the local Windows output device. Stale tokens cannot stop another preview.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "preview_token": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "play",
+              "pause",
+              "resume",
+              "stop",
+              "status"
+            ]
+          },
+          "client_token": {
+            "type": "string",
+            "maxLength": 128
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "preview_token",
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false
+      }
     }
-  ]
+  ],
+  "media_decoder": {
+    "name": "FFmpeg",
+    "build": "9.0.2-essentials_build-www.gyan.dev",
+    "platform": "windows-x64",
+    "sha256": "3256173f3f8bffd7df12227c68adf68025edb1832273a9530688a7bb1ed8edec",
+    "license": "GPL-3.0 build; separate external process",
+    "distribution": "external_only; not included in application packages",
+    "origin": "Existing user-provided reference binary, locally version/hash checked 2026-10-26"
+  }
 }

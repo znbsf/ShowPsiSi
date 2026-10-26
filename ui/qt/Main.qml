@@ -656,7 +656,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            documents:documentWorkspace.snapshot(),document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            media_audio_last_response:mediaAudioLastResponse,documents:documentWorkspace.snapshot(),document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -671,9 +671,10 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(['media_select','media_tab','media_decode','media_play','media_pause','media_stop','media_source','media_cursor'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.mediaAction(action)});
         if(['teletext_select','teletext_capture','teletext_reveal','teletext_query'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.teletextAction(action)});
         if(['carousel_open','carousel_tab','carousel_view','carousel_back'].indexOf(action.name)>=0)return JSON.stringify({accepted:documentWorkspace.carouselAction(action)});
-        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate','services','carousel','teletext'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
+        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate','services','carousel','teletext','media'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
         if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
         if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
         if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
@@ -1190,13 +1191,15 @@ ApplicationWindow {
             params.at_packet = analysisState.selected_packet;
         core.mark("inspect_send_begin");core.send("inspect", params);core.mark("inspect_send_end");
     }
+    property var mediaAudioLastResponse:({})
     property var pendingServiceSource:null
     function openServiceSource(id,path,cutoff){pendingServiceSource={id:id,path:path,cutoff:cutoff};inspect(id,-1,cutoff);}
+    function openMedia(pid,tab){documentMode=true;advancedMode=false;documentWorkspace.open('media',String(pid)+'@'+analysisState.selected_packet,documentScope()+' - PES / ES / Media',{pid:pid,tab:tab||'PES',_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
     function openTeletext(pid){documentMode=true;advancedMode=false;documentWorkspace.open('teletext',String(pid)+'@'+analysisState.selected_packet,documentScope()+' - Teletext',{pid:pid,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
     function openCarousel(sourceId){documentMode=true;advancedMode=false;documentWorkspace.open('carousel','carousel@'+analysisState.selected_packet,documentScope()+' - DSM-CC / OC Files',{source_id:sourceId||detail.id,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
     function openServices(service){documentMode=true;advancedMode=false;var key=service?service.onid+':'+service.ts_id+':'+service.id:'all';documentWorkspace.open('service',key+'@'+analysisState.selected_packet,documentScope()+' - Services / EPG',{service:service,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
     function documentScope(cutoff){var at=cutoff===undefined?analysisState.selected_packet:cutoff;return String(analysisState.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(analysisState.analysis_revision||analysisState.revision||0)+', '+(at==null?'latest':'packet '+at)+']';}
-    function openPacket(pid,index){documentMode=true;advancedMode=false;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid,index:index||0},false);}
+    function openPacket(pid,index,byteOffset){var existing=documentWorkspace.state.items.some(function(d){return d.kind==='packet'&&d.key===String(pid);});documentMode=true;advancedMode=false;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid,index:index||0,byte_offset:byteOffset||0},false);if(existing)documentWorkspace.seekPacket(pid,index||0,byteOffset||0);}
     function openDocument(kind,duplicate){
         var payload=kind==='summary'?{}:JSON.parse(JSON.stringify(detail));if(kind!=='summary'){payload._view_state=JSON.parse(JSON.stringify(analysisState));payload._view_state.selected_packet=detail.native_table_at_packet;}
         var title=documentScope(kind==='summary'?undefined:detail.native_table_at_packet)+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
@@ -1208,7 +1211,7 @@ ApplicationWindow {
     Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.close()}
     Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(false)}
     Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(true)}
-    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true}};}
+    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
     function classicCommand(name){
         var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
         if(name==='open')fileDialog.open();
@@ -1221,6 +1224,7 @@ ApplicationWindow {
         else if(name==='new'){documentMode=true;openDocument('si',true);}
         else if(name==='decoded'){documentMode=true;openDocument('decoded');}
         else if(name==='packets')openPacket(-1,0);
+        else if(name==='media')openMedia(-1,'PES');
         else if(name==='teletext')openTeletext(-1);
         else if(name==='carousel')openCarousel();
         else if(name==='services')openServices(null);
@@ -1327,6 +1331,7 @@ ApplicationWindow {
             params[scanBudgetUnit.currentIndex===0 ? "sample_percent" : "max_packets"]=Number(scanBudget.text);
             if(scanMode.currentValue==="distributed")params.window_count=4;
         }
+        documentWorkspace.stopMedia();
         core.send("analyze",params);
     }
     function focusNextRegion(backwards) {
@@ -1918,6 +1923,7 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if(["query_pes","decode_media","audio_control","cancel_media"].indexOf(method)>=0){if(method==="audio_control")mediaAudioLastResponse=result;documentWorkspace.receiveMedia(method,result);return;}
             if(method=="query_teletext"){documentWorkspace.receiveTeletext(result);return;}
             if(method=="query_carousel"){documentWorkspace.receiveCarousel(result);return;}
             if(method=="query_service"){documentWorkspace.receiveService(result);return;}
@@ -4514,6 +4520,7 @@ ApplicationWindow {
         UnifiedInspector {
             id: unifiedInspector
             focusOrigin:sourceBar.visible?sourceBar:null
+            onMediaRequested:function(pid){win.openMedia(pid,'PES');}
             onTeletextRequested:function(pid){win.openTeletext(pid);}
             onCarouselRequested:function(sourceId){win.openCarousel(sourceId);}
             onServiceRequested:function(service){win.openServices(service);}
@@ -4555,6 +4562,16 @@ ApplicationWindow {
                     Component.onCompleted:if(!core.busy&&analysisState.complete)request(0)
                 }
             }
+            mediaComponent:Component {
+                MediaView {
+                    id:mediaDocument
+                    initialPid:parent.documentData.payload.pid
+                    initialTab:parent.documentData.payload.tab||'PES'
+                    host:QtObject{property var analysisState:mediaDocument.parent.documentData.payload._view_state;property bool backendReady:win.backendReady}
+                    onRequested:function(method,params){if(!core.busy||method==='cancel_media'||method==='audio_control')core.send(method,params);else receive(method,{request:params,message:'Wait for current analysis to finish'});}
+                    onPacketActivated:function(pid,index,offset){if(!core.busy&&mediaDocument.sourceRevision===(analysisState.analysis_revision||analysisState.revision)&&mediaDocument.sourcePath===analysisState.source)win.openPacket(pid,index,offset);}
+                }
+            }
             teletextComponent:Component {
                 TeletextView {
                     id:teletextDocument
@@ -4594,6 +4611,7 @@ ApplicationWindow {
                     id:packetDocument;host:win
                     initialPid:parent.documentData.payload.pid
                     initialIndex:parent.documentData.payload.index
+                    initialByte:parent.documentData.payload.byte_offset||0
                     onRequested:function(params){if(!core.busy)core.send('query_packet',params);else receive({request:params,code:'busy',message:'Wait for current analysis to finish'});}
                     onSectionActivated:function(id){win.inspect(id);}
                 }

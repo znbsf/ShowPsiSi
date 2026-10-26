@@ -134,6 +134,7 @@ struct AnalysisControl {
         }
     }
 };
+struct CancelledMedia : std::exception {const char* what()const noexcept override{return "Media decode cancelled";}};
 struct CancelledAnalysis : std::exception {
     const char* what() const noexcept override { return "Analysis cancelled"; }
 };
@@ -283,6 +284,8 @@ struct Record {
 #include "media/pes_engine.h"
 #include "media/teletext.h"
 #include "media/teletext_body.h"
+#include "media/DecoderProcess.h"
+#include "media/AudioPlayback.h"
 #include "SignalTopology.h"
 #include "ApplicationCarriage.h"
 #include "TransportStatistics.h"
@@ -291,6 +294,7 @@ class RejectedInput : public std::runtime_error { public: using std::runtime_err
 
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     dvbi::Store dvbiDocuments;
+    mediadecode::AudioPlayback audioPlayback;J decoderPin=J::object(),decodedPreview=J::object();fs::path decoderPath;Bytes decodedPcm;std::vector<Bytes> decodedFrames;std::string mediaToken;uint64_t mediaSequence=0;
     fs::file_time_type analysisSourceStamp{}; bool analysisSourceKnown=false;
     fs::path root,source; ts::DuckContext duck { &NULLREP }; J extension=J::object(),configuredExtension=J::object();
     std::vector<Record> records; std::unordered_map<std::string,size_t> ids; J history=J::array();
@@ -508,6 +512,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},{"section_offset",p},{"structure_path","section/stream/"+std::to_string(p)},
                     {"is_audio",audio},{"is_video",video},
                     {"classification_basis","TSDuck PMT classification; private stream types require namespace or descriptor evidence"}});
+                std::string format;switch(nativeStream.getCodec(duck)){case ts::CodecType::MPEG1_VIDEO:case ts::CodecType::MPEG2_VIDEO:if(video)format="mpegvideo";break;case ts::CodecType::AVC:if(video)format="h264";break;case ts::CodecType::HEVC:if(video)format="hevc";break;case ts::CodecType::MPEG1_AUDIO:case ts::CodecType::MPEG2_AUDIO:case ts::CodecType::MP3:if(audio)format="mp3";break;case ts::CodecType::AAC:case ts::CodecType::HEAAC:if(audio&&(b[p]==0x0f||b[p]==0x11))format=b[p]==0x11?"loas":"aac";break;case ts::CodecType::AC3:if(audio)format="ac3";break;case ts::CodecType::EAC3:if(audio)format="eac3";break;default:break;}r.fields["streams"].back()["codec"]=ts::CodecTypeEnum().name(int(nativeStream.getCodec(duck))).toUTF8();r.fields["streams"].back()["decoder_format"]=format.empty()?J():J(format);
                 J teletext=J::array();if(standardsContext=="dvb")for(size_t q=p+5;q+2<=p+5+len;){const size_t n=b[q+1];if(q+2+n>p+5+len)break;if(b[q]==0x56&&n%5==0)for(size_t t=q+2;t<q+2+n;t+=5){unsigned magazine=b[t+3]&7;if(!magazine)magazine=8;const std::string language(reinterpret_cast<const char*>(b.data()+t),3);bool ascii=std::all_of(language.begin(),language.end(),[](unsigned char c){return c>=32&&c<=126;});teletext.push_back({{"language",ascii?language:hex(b.data()+t,3)},{"type",b[t+3]>>3},{"page_hex",(magazine<<8)|b[t+4]},{"descriptor_offset",q}});}q+=2+n;}r.fields["streams"].back()["teletext_signalling"]=teletext;
                 p+=5+len;
             }
@@ -758,7 +763,13 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     }
 
 public:
-    explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension; }
+    explicit Engine(fs::path p):root(std::move(p)) { if(fs::exists(root/"extensions/demo.json"))extension=readJson(root/"extensions/demo.json"); configuredExtension=extension;decoderPin=readJson(root/"api/tools.json").value("media_decoder",J::object());
+#ifdef _WIN32
+        const auto configured=_wgetenv(L"SHOWPSISI_FFMPEG");decoderPath=configured?fs::path(configured):root/".deps/ffmpeg/ffmpeg.exe";
+#else
+        const auto configured=std::getenv("SHOWPSISI_FFMPEG");decoderPath=configured?pathFromUtf8(configured):root/".deps/ffmpeg/ffmpeg";
+#endif
+    }
     void handleSection(ts::SectionDemux& demux,const ts::Section& s) override {
         // Discover dependent signalling PIDs before later packets in this block.
         if(s.tableId()==0&&s.sourcePID()==0&&s.isLongSection()&&s.size()>=12) { const auto* b=s.content(); for(size_t p=8;p+4<=s.size()-4;p+=4)demux.addPID(((b[p+2]&31)<<8)|b[p+3]); }
@@ -822,7 +833,7 @@ public:
         out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();out["media_streams"]=mediaStreams(at);
         appendStandardsMetadata(out);return out;
     }
-    J readPes(const J& args,const mediawire::PesEngine::Observer& observer,const std::function<void()>& resetObserver={}) const {
+    J readPes(const J& args,const mediawire::PesEngine::Observer& observer,const std::function<void()>& resetObserver={},const std::shared_ptr<AnalysisControl>& mediaControl=nullptr) const {
         if(!complete||!analysisSourceKnown||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete media analysis_revision");
         auto unchanged=[&](){return fs::is_regular_file(source)&&fs::file_size(source)==totalBytes&&fs::last_write_time(source)==analysisSourceStamp;};if(!unchanged())throw std::runtime_error("Source changed since analysis");
         const unsigned pid=args.at("pid");if(pid>=8191)throw std::runtime_error("PES PID must be 0..8190");
@@ -830,7 +841,7 @@ public:
         J diagnostics=J::array();uint64_t selected=0,delivered=0,duplicates=0,incomplete=0,discontinuities=0,errors=0,scanned=0;bool resource=false;auto engine=std::make_unique<mediawire::PesEngine>(pid);auto observe=[&](const mediawire::PesPacket& p,uint64_t a,uint64_t b){++delivered;if(delivered>4096){resource=true;return false;}const bool accepted=observer(p,a,b);if(!accepted)resource=true;return accepted;};engine->set_observer(observe);engine->set_discontinuity_observer(resetObserver);
         auto reset=[&](){engine->abandon();if(resetObserver)resetObserver();const auto& stats=engine->stats();duplicates+=stats.duplicate_packets;incomplete+=stats.incomplete_pes;discontinuities+=stats.discontinuities;engine=std::make_unique<mediawire::PesEngine>(pid);engine->set_observer(observe);engine->set_discontinuity_observer(resetObserver);};
         std::ifstream input(source,std::ios::binary);if(!input)throw std::runtime_error("Cannot read media source");input.seekg(std::streamoff(start*stride));Bytes frame(stride);auto ranges=coverage.value("ranges",J::array());size_t ri=0;bool wasObserved=false;
-        for(uint64_t index=start;index<end;++index){input.read(reinterpret_cast<char*>(frame.data()),std::streamsize(stride));if(size_t(input.gcount())!=stride)throw std::runtime_error("Source became unreadable during media scan");++scanned;while(ri<ranges.size()&&index>=ranges[ri]["end_packet"].get<uint64_t>())++ri;bool observed=ri<ranges.size()&&index>=ranges[ri]["start_packet"].get<uint64_t>();if(!observed){if(wasObserved){++discontinuities;reset();}wasObserved=false;continue;}wasObserved=true;
+        for(uint64_t index=start;index<end;++index){if(mediaControl&&mediaControl->cancelled.load())throw CancelledMedia();input.read(reinterpret_cast<char*>(frame.data()),std::streamsize(stride));if(size_t(input.gcount())!=stride)throw std::runtime_error("Source became unreadable during media scan");++scanned;while(ri<ranges.size()&&index>=ranges[ri]["end_packet"].get<uint64_t>())++ri;bool observed=ri<ranges.size()&&index>=ranges[ri]["start_packet"].get<uint64_t>();if(!observed){if(wasObserved){++discontinuities;reset();}wasObserved=false;continue;}wasObserved=true;
             const auto* b=frame.data()+prefix;if(b[0]!=0x47){++errors;if(diagnostics.size()<64)diagnostics.push_back({{"packet_index",index},{"error","Invalid TS sync; PES context reset"}});reset();continue;}if((((b[1]&31)<<8)|b[2])!=pid)continue;++selected;
             if(!engine->feed_packet(b,188,index)){if(diagnostics.size()<64)diagnostics.push_back({{"packet_index",index},{"error",engine->error()}});++errors;if(resource)break;reset();}
         }
@@ -843,6 +854,44 @@ public:
     }
     J pesFragments(const mediawire::PesPacket& p,size_t offset,size_t length) const {
         J out=J::array();const size_t end=offset+length;for(const auto& f:p.fragments){const size_t begin=std::max(offset,f.pes_offset),stop=std::min(end,f.pes_offset+f.length);if(stop>begin)out.push_back({{"packet_index",f.packet_index},{"packet_offset",f.packet_offset+begin-f.pes_offset},{"pes_offset",begin},{"length",stop-begin},{"file_offset",f.packet_index*stride+prefix+f.packet_offset+begin-f.pes_offset},{"framing_stride",stride},{"framing_prefix",prefix}});}return out;
+    }
+    J decoderInfo(bool verify) const {
+#ifdef _WIN32
+        const bool supported=true;
+#else
+        const bool supported=false;
+#endif
+        J out=decoderPin;out["platform_supported"]=supported;out["available"]=supported&&fs::is_regular_file(decoderPath);out["verified"]=false;out["scope"]="Optional external pinned tool; not bundled or downloaded by the application";
+        if(!verify)return out;if(!supported||!fs::is_regular_file(decoderPath))throw std::runtime_error("Configure the pinned external FFmpeg tool before decoding media");if(fs::file_size(decoderPath)>256*1024*1024)throw std::runtime_error("Decoder executable exceeds the pinned-tool size bound");std::ifstream file(decoderPath,std::ios::binary);ts::SHA256 hash;if(!file||!hash.init())throw std::runtime_error("Cannot verify decoder executable");std::array<uint8_t,65536> buffer;while(file){file.read(reinterpret_cast<char*>(buffer.data()),buffer.size());const auto n=file.gcount();if(n>0&&!hash.add(buffer.data(),size_t(n)))throw std::runtime_error("Decoder hash provider failed");}uint8_t digest[ts::SHA256::HASH_SIZE];if(!file.eof()||!hash.getHash(digest,sizeof(digest)))throw std::runtime_error("Cannot complete decoder hash");auto sha=hex(digest,sizeof(digest));std::transform(sha.begin(),sha.end(),sha.begin(),[](char c){return char(std::tolower(c));});if(sha!=decoderPin.value("sha256",std::string()))throw std::runtime_error("External decoder SHA-256 does not match the reviewed pin; tool was not executed");out["verified"]=true;out["path"]=pathUtf8(fs::absolute(decoderPath));return out;
+    }
+    J pesMetadata(const mediawire::PesPacket& p,size_t index,uint64_t first,uint64_t last) const {return {{"index",index},{"pid",p.pid},{"stream_id",p.stream_id},{"stream_name",mediawire::pes_stream_id_name(p.stream_id)},{"start_packet",first},{"end_packet",last},{"bytes",p.raw.size()},{"declared_packet_length",p.packet_length},{"payload_offset",p.payload_offset},{"es_bytes",p.raw.size()-p.payload_offset},{"pts",p.has_pts?J(p.pts):J()},{"dts",p.has_dts?J(p.dts):J()},{"timestamp_unit","90 kHz clock ticks; no presentation clock inferred"},{"pes_scrambling_control",p.scrambling_control},{"source_fragment_count",p.fragments.size()},{"completion_basis",p.packet_length?"declared bounded PES length":"unbounded video PES delimited by next PUSI or original source EOF; no codec-frame completeness claim"}};}
+    J decodeMedia(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
+        if(control&&control->cancelled.load())throw CancelledMedia();if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete media analysis_revision");
+        auto tool=decoderInfo(true);const unsigned pid=args.at("pid");const size_t fromPes=args.value("from_pes_index",size_t(0));const std::string kind=args.at("kind"),requestedFormat=args.value("format",std::string("auto"));std::string format=requestedFormat;J carriage=J::array();std::set<std::string> formats;bool uncertain=false;
+        for(const auto& row:mediaStreams(args.value("at_packet",UINT64_MAX)))if(row["pid"]==pid){carriage.push_back(row);if(row["decoder_format"].is_null()||!row.value(kind=="video"?"is_video":"is_audio",false))uncertain=true;else formats.insert(row["decoder_format"].get<std::string>());}
+        if(format=="auto"){if(uncertain||formats.size()!=1)throw std::runtime_error("No unique supported codec declaration for this PID; choose an explicit input format");format=*formats.begin();}
+        const std::set<std::string> videoFormats={"mpegvideo","h264","hevc"},audioFormats={"mp3","aac","loas","ac3","eac3"};if(!(kind=="video"?videoFormats:audioFormats).count(format))throw std::runtime_error("Input format does not match chosen media kind");
+        struct Segment{Bytes bytes;J sources=J::array();};std::vector<Segment> segments(1);size_t pesIndex=0,collectedBytes=0;bool byteLimit=false,segmentLimit=false,pesLimit=false;auto cut=[&](){if(!segments.back().bytes.empty()){if(segments.size()<64)segments.emplace_back();else segmentLimit=true;}};
+        auto scan=readPes(args,[&](const mediawire::PesPacket& p,uint64_t first,uint64_t last){const size_t index=pesIndex++;if(index<fromPes)return true;if(segmentLimit)return false;if(index-fromPes>=256){pesLimit=true;return false;}const bool type=kind=="video"?(p.stream_id>=0xe0&&p.stream_id<=0xef):((p.stream_id>=0xc0&&p.stream_id<=0xdf)||p.stream_id==0xbd);if(!type||p.scrambling_control){cut();return true;}const size_t n=p.raw.size()-p.payload_offset;if(n>16*1024*1024-collectedBytes){byteLimit=true;return false;}if(!n)return true;auto& segment=segments.back();auto meta=pesMetadata(p,index,first,last);meta["segment_es_offset"]=segment.bytes.size();segment.sources.push_back(meta);segment.bytes.insert(segment.bytes.end(),p.raw.begin()+p.payload_offset,p.raw.end());collectedBytes+=n;return true;},cut,control);
+        if(segments.back().bytes.empty())segments.pop_back();if(segments.empty())throw std::runtime_error("No complete unscrambled PES payload for this media kind in the scan range");const size_t selected=args.value("segment_index",size_t(0));if(selected>=segments.size())throw std::runtime_error("Media segment_index outside collected contiguous segments");const auto& input=segments[selected].bytes;
+        std::vector<std::string> command={"-nostdin","-hide_banner","-loglevel","error","-xerror","-hwaccel","none","-threads","1","-protocol_whitelist","pipe","-f",format,"-i","pipe:0"};if(kind=="video")command.insert(command.end(),{"-map","0:v:0","-an","-vf","scale=320:180:force_original_aspect_ratio=decrease","-frames:v","16","-threads","1","-c:v","png","-f","image2pipe","pipe:1"});else command.insert(command.end(),{"-map","0:a:0","-vn","-t","3","-ar","48000","-ac","1","-c:a","pcm_s16le","-f","s16le","pipe:1"});
+        auto decoded=mediadecode::run(decoderPath,command,input,control?&control->cancelled:nullptr,[&](uint64_t pid){emit({{"event","media_progress"},{"request_id",rid},{"analysis_revision",revision},{"request_token",args.at("request_token")},{"phase","decoder_started"},{"decoder_pid",pid}});});if(decoded.cancelled||(control&&control->cancelled.load()))throw CancelledMedia();if(!decoded.error.empty())throw std::runtime_error(decoded.error);if(decoded.bytes.empty())throw std::runtime_error("Decoder produced no complete preview samples");if(!analysisSourceKnown||!fs::is_regular_file(source)||fs::file_size(source)!=this->totalBytes||fs::last_write_time(source)!=analysisSourceStamp)throw std::runtime_error("Source changed while decoding media");
+        J result={{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",pid},{"kind",kind},{"format",format},{"from_pes_index",fromPes},{"format_basis",requestedFormat=="auto"?"Unique context-aware observed PMT declaration":"Explicit user input format; not inferred protocol support"},{"carriage",carriage},{"scan",scan},{"segments",J::array()},{"segment_index",selected},{"input_bytes",input.size()},{"input_sha256",carouselcontent::sha(input)},{"byte_limit_reached",byteLimit},{"segment_limit_reached",segmentLimit},{"source_pes_limit_reached",pesLimit},{"source_pes",segments[selected].sources},{"decoder",tool},{"decoder_process",{{"pid",decoded.pid},{"exited",true},{"exit_code",decoded.exitCode}}},{"scope","Decoded bounded preview from complete captured PES in one contiguous ES segment; frame/sample byte boundaries and original A/V presentation synchronization are not inferred"}};
+        for(size_t i=0;i<segments.size();++i)result["segments"].push_back({{"index",i},{"bytes",segments[i].bytes.size()},{"pes_count",segments[i].sources.size()}});
+        std::vector<Bytes> frames;Bytes pcm;if(kind=="video"){frames=mediadecode::pngFrames(decoded.bytes);if(frames.empty())throw std::runtime_error("No decoded PNG frames");result["frames"]=J::array();for(size_t i=0;i<frames.size();++i){const auto& frame=frames[i];result["frames"].push_back({{"index",i},{"sha256",carouselcontent::sha(frame)},{"mime","image/png"},{"data_base64",mediadecode::base64(frame)}});}result["frame_count"]=frames.size();result["preview_fps"]=10;result["timing_basis"]="Derived 10 fps thumbnail sequence, maximum sixteen frames fitted within 320x180; not original frame pacing";}
+        else{pcm=std::move(decoded.bytes);if(pcm.size()%2)throw std::runtime_error("Decoder produced an incomplete PCM sample");if(pcm.size()>3*96000)throw std::runtime_error("Decoded PCM exceeded three seconds");const size_t samples=pcm.size()/2;J bins=J::array();for(size_t bin=0;bin<512&&bin<samples;++bin){size_t a=bin*samples/std::min<size_t>(512,samples),b=(bin+1)*samples/std::min<size_t>(512,samples);int low=32767,high=-32768;for(size_t n=a;n<b;++n){int value=int(pcm[n*2])|(int(pcm[n*2+1])<<8);if(value>=32768)value-=65536;low=std::min(low,value);high=std::max(high,value);}bins.push_back({{"sample_begin",a},{"sample_end",b},{"min",low},{"max",high}});}result["pcm"]={{"format","s16le"},{"sample_rate",48000},{"channels",1},{"samples",samples},{"bytes",pcm.size()},{"sha256",carouselcontent::sha(pcm)},{"waveform",bins},{"scope","Decoded mono downmix resampled to 48000 Hz, maximum three seconds; not original channel layout, native sample rate or device-clock proof"}};}
+        std::string token="media:"+std::to_string(revision)+":"+std::to_string(++mediaSequence)+":"+result["input_sha256"].get<std::string>();result["preview_token"]=token;result["request_token"]=args.at("request_token");auto publish=[&](){if(!audioPlayback.stop())throw std::runtime_error("Previous audio output could not stop");decodedPreview=result;decodedPcm=std::move(pcm);decodedFrames=std::move(frames);mediaToken=std::move(token);};if(control){if(control->finish(publish))throw CancelledMedia();}else publish();return result;
+    }
+    J audioControl(const J& args){const auto action=args.at("action").get<std::string>();auto reply=[&](J value){value["request"]=args;return value;};const bool matching=args.at("analysis_revision")==revision&&args.at("preview_token")==mediaToken&&!mediaToken.empty();if(!matching)return reply({{"matching_preview",false},{"playing",false},{"paused",false},{"status","stale_preview"},{"preview_token",args.at("preview_token")}});
+        if(action=="stop"){if(!audioPlayback.stop())throw std::runtime_error("Audio device buffer could not stop");}
+        else if(!analysisSourceKnown||!fs::is_regular_file(source)||fs::file_size(source)!=totalBytes||fs::last_write_time(source)!=analysisSourceStamp){audioPlayback.stop();if(action!="status")throw std::runtime_error("Source changed; audio preview will not play");return reply({{"matching_preview",true},{"playing",false},{"paused",false},{"status","source_changed"},{"preview_token",mediaToken}});}
+        else if(action=="play")audioPlayback.play(decodedPcm);else if(action=="pause"){if(!audioPlayback.pause(true))throw std::runtime_error("No active audio output to pause");}else if(action=="resume"){if(!audioPlayback.pause(false))throw std::runtime_error("No paused audio output to resume");}
+        const bool playing=audioPlayback.playing();return reply({{"matching_preview",true},{"playing",playing},{"paused",audioPlayback.isPaused()},{"status",playing?"device_buffer_queued":audioPlayback.isPaused()?"paused":"stopped_or_drained"},{"preview_token",mediaToken},{"scope","Windows output API state; does not establish physical audibility"}});
+    }
+    J queryPes(const J& args) const {
+        J rows=J::array(),selected=nullptr;size_t index=0;const size_t pageOffset=args.value("pes_offset",size_t(0)),pageLimit=args.value("pes_limit",size_t(100));
+        auto scan=readPes(args,[&](const mediawire::PesPacket& p,uint64_t first,uint64_t last){const auto meta=pesMetadata(p,index,first,last);if(index>=pageOffset&&rows.size()<pageLimit)rows.push_back(meta);if(args.contains("pes_index")&&args["pes_index"]==index){selected=meta;const bool es=args.value("layer",std::string("pes"))=="es";size_t base=es?p.payload_offset:0;Bytes bytes(p.raw.begin()+base,p.raw.end());auto page=carouselcontent::page(bytes,args.value("offset",size_t(0)),args.value("limit",size_t(4096)));page["layer"]=es?"collected_es_payload":"original_pes";page["pes_offset"]=base+page["offset"].get<size_t>();page.erase("class_info");selected["content"]=page;selected["source_fragments"]=pesFragments(p,base+page["offset"].get<size_t>(),page["length"].get<size_t>());}++index;return true;});
+        if(args.contains("pes_index")&&selected.is_null())throw std::runtime_error("PES index not observed in requested scan range");J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"pid",args.at("pid")},{"scan",scan},{"pes",rows},{"pes_offset",pageOffset},{"pes_total",index},{"pes_next_offset",pageOffset+rows.size()<index?J(pageOffset+rows.size()):J()},{"selected",selected},{"scope","Original complete MPEG-2 PES envelopes within the selected contiguous scan ranges; ES is the collected payload, not codec-frame or decoder success"},{"decoder",decoderInfo(false)}};return out;
     }
     J queryTeletext(const J& args) const {
         if(standardsContext!="dvb")throw std::runtime_error("Teletext requires explicit DVB interpretation");
@@ -1164,6 +1213,7 @@ public:
         }
         // A new scan owns a new revision even when opening or framing fails.
         // Never allow old evidence or preview tokens to acquire a new source label.
+        if(!audioPlayback.stop())throw RejectedInput("Audio output could not stop before changing source");decodedPreview=J::object();decodedPcm.clear();decodedFrames.clear();mediaToken.clear();
         clearEvidence();++revision;analysisStatus="analyzing";
         source.clear();analysisSourceKnown=false;packets=totalBytes=0;complete=false;coverage=J::object();scannedPackets=plannedPackets=demuxOffset=0;compactResponse=args.value("response_mode",std::string("legacy"))=="compact";
         firstMs=-1;totalMs=0;stride=188;prefix=0;onFirst=nullptr;began=Clock::now();requestId=rid;
@@ -1712,6 +1762,9 @@ public:
         if(method=="query_transport")return queryTransport(args);
         if(method=="query_packet")return queryPacket(args);
         if(method=="query_timing")return queryTiming(args);
+        if(method=="decode_media")return decodeMedia(args,rid,control);
+        if(method=="audio_control")return audioControl(args);
+        if(method=="query_pes")return queryPes(args);
         if(method=="query_teletext")return queryTeletext(args);
         if(method=="query_carousel")return queryCarousel(args);
         if(method=="query_service")return queryService(args);
@@ -1799,7 +1852,7 @@ static int runCore(int argc,char**argv) {
         constexpr size_t queueCapacity=64;
         std::mutex mutex;std::condition_variable ready;bool inputEnded=false;
         std::deque<QueuedRequest> queue;
-        std::map<std::string,std::shared_ptr<AnalysisControl>> analyses;
+        std::map<std::string,std::shared_ptr<AnalysisControl>> analyses,mediaRequests;
         std::thread reader([&](){
             std::string line;
             while(std::getline(std::cin,line)) {
@@ -1811,6 +1864,9 @@ static int runCore(int argc,char**argv) {
                     const std::string method=request.at("method").get<std::string>();
                     J args=request.value("params",J::object());
                     validateArguments(catalog,method,args);
+                    if(method=="cancel_media"){
+                        const auto key=J::array({args.at("analysis_revision"),args.at("request_token")}).dump();std::shared_ptr<AnalysisControl> control;{std::lock_guard<std::mutex> lock(mutex);auto found=mediaRequests.find(key);if(found!=mediaRequests.end())control=found->second;}const bool requested=control&&control->requestCancellation();emit({{"id",id},{"result",{{"request_token",args.at("request_token")},{"requested",requested},{"reason",requested?"cancellation_requested":"not_running"}}}});continue;
+                    }
                     if(method=="cancel_analysis"||method=="pause_analysis"||method=="resume_analysis"){
                         const J target=args.at("request_id");std::shared_ptr<AnalysisControl> control;
                         {std::lock_guard<std::mutex> lock(mutex);auto found=analyses.find(target.dump());if(found!=analyses.end())control=found->second;}
@@ -1819,7 +1875,7 @@ static int runCore(int argc,char**argv) {
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
                     }
-                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="query_carousel"||method=="query_teletext"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="query_carousel"||method=="query_teletext"||method=="query_pes"||method=="decode_media"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
                         bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
                         if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }
@@ -1838,6 +1894,9 @@ static int runCore(int argc,char**argv) {
                                     if(analyses.count(work.key))reject="duplicate_request_id";
                                     else analyses.emplace(work.key,work.control);
                                 }
+                            }
+                            if(method=="decode_media"){
+                                work.control=std::make_shared<AnalysisControl>();work.key=J::array({work.args.at("analysis_revision"),work.args.at("request_token")}).dump();if(mediaRequests.count(work.key))reject="duplicate_request_id";else mediaRequests.emplace(work.key,work.control);
                             }
                             if(reject.empty())queue.push_back(std::move(work));
                         }
@@ -1863,6 +1922,8 @@ static int runCore(int argc,char**argv) {
                 terminal={{"id",work.id},{"result",std::move(result)}};
             } catch(const RejectedInput& e){
                 terminal={{"id",work.id},{"error",{{"code","input_rejected"},{"message",e.what()},{"data",{{"state_preserved",true}}}}}};
+            } catch(const CancelledMedia& e){
+                terminal={{"id",work.id},{"error",{{"code","media_cancelled"},{"message",e.what()},{"data",{{"request_token",work.args.value("request_token",J())}}}}}};
             } catch(const CancelledAnalysis& e){
                 terminal={{"id",work.id},{"error",{{"code","analysis_cancelled"},{"message",e.what()},{"data",{{"state",engine.state()}}}}}};
             } catch(const std::exception& e){
@@ -1871,8 +1932,8 @@ static int runCore(int argc,char**argv) {
             if(work.control){
                 work.control->finish();
                 std::lock_guard<std::mutex> lock(mutex);
-                auto found=analyses.find(work.key);
-                if(found!=analyses.end()&&found->second==work.control)analyses.erase(found);
+                auto& registry=work.method=="decode_media"?mediaRequests:analyses;auto found=registry.find(work.key);
+                if(found!=registry.end()&&found->second==work.control)registry.erase(found);
             }
             // Retire the registry entry before publishing the response, so a
             // client can immediately reuse a completed ID without a false duplicate.

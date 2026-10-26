@@ -10,6 +10,8 @@ Pane {
  required property var host
  property int initialPid:-1
  property real initialIndex:0
+ property int initialByte:0
+ property int wantedByte:0
  property var packet:({})
  property var byteRows:Shared.packetModel.bytes(packet)
  property int cursor:0
@@ -24,7 +26,9 @@ Pane {
  padding:6
  background:Rectangle{color:'#efefef'}
  function total(){return Number((host.analysisState.coverage||{}).source_packets||Math.floor(host.analysisState.source_bytes/host.analysisState.packet_size)||0);}
- function send(index,direction){
+ function seek(pid,index,offset){pidInput.text=pid<0?'':Shared.packetModel.hex(pid,4);send(index,'forward',offset||0);}
+ function send(index,direction,offset){
+  wantedByte=offset===undefined?0:Math.max(0,Math.min(187,Number(offset)));
   if(!host.backendReady)return;
   try{var at=Shared.packetModel.index(index,total()),pid=Shared.packetModel.pid(pidInput.text);expectedToken=tokenPrefix+':'+(++serial);var params={analysis_revision:host.analysisState.analysis_revision||host.analysisState.revision,packet_index:at,direction:direction,scan_limit:4096,client_token:expectedToken};if(pid!==null)params.pid=pid;pending=params;loading=true;feedback='Searching original source packets…';requested(params);}
   catch(error){feedback=String(error);loading=false;}
@@ -33,13 +37,13 @@ Pane {
   if(!expectedToken||(result.request||{}).client_token!==expectedToken)return;
   if(result.code){loading=false;feedback=result.message;expectedToken='';return;}
   if(result.source!==host.analysisState.source||result.analysis_revision!==(host.analysisState.analysis_revision||host.analysisState.revision)){loading=false;feedback='Packet source identity changed';expectedToken='';return;}
-  if(result.found){packet=result;indexInput.text=String(result.packet_index);cursor=0;loading=false;feedback=(result.issues||[]).join('; ');expectedToken='';return;}
+  if(result.found){packet=result;indexInput.text=String(result.packet_index);cursor=wantedByte;loading=false;feedback=(result.issues||[]).join('; ');expectedToken='';return;}
   if(result.next_index===null||result.next_index===undefined){loading=false;feedback='No matching PID before the source boundary';expectedToken='';return;}
-  feedback='Searching packet '+result.next_index+'…';var token=expectedToken;Qt.callLater(function(){if(loading&&token===expectedToken)send(result.next_index,pending.direction);});
+  feedback='Searching packet '+result.next_index+'…';var token=expectedToken;Qt.callLater(function(){if(loading&&token===expectedToken)send(result.next_index,pending.direction,wantedByte);});
  }
  function cancel(){++serial;expectedToken='';loading=false;feedback='Search cancelled; previous packet retained';}
  function snapshot(){return {loading:loading,error:feedback,index:packet.packet_index,pid:(packet.header||{}).PID,raw_hex:packet.raw_hex,source:packet.source,revision:packet.analysis_revision,cursor:cursor};}
- Component.onCompleted:{pidInput.text=initialPid<0?'':Shared.packetModel.hex(initialPid,4);indexInput.text=String(initialIndex);send(initialIndex,'forward');}
+ Component.onCompleted:{pidInput.text=initialPid<0?'':Shared.packetModel.hex(initialPid,4);indexInput.text=String(initialIndex);send(initialIndex,'forward',initialByte);}
  ColumnLayout {
   anchors.fill:parent;spacing:5
   Flow {

@@ -990,6 +990,7 @@ async function scan() {
   let succeeded = false;
   try {
     recentFiles=normalizeRecentFiles([path,...recentFiles]);saveRecentFiles();closeRecentFiles();renderRecentFiles();
+    documentWorkspace?.stopMedia?.();
     const operation = call("analyze", {
       path,
       response_mode: "compact", scan_mode: options.scan_mode,
@@ -3059,7 +3060,7 @@ const summaryPanel=document.createElement('section');summaryPanel.id='transport-
 const summaryButton=document.createElement('button');summaryButton.id='summary-toggle';summaryButton.className='btn';summaryButton.textContent='Summary / PID';workspaceButton.before(summaryButton);
 summaryButton.onclick=()=>{classicMode=true;summaryVisible=!summaryVisible;syncSiMode();summaryView.update();};
 summaryView=TransportSi.create(summaryPanel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record,pid)=>{summaryVisible=false;classicMode=true;syncSiMode();siView.filterPid(pid);siView.selectRecord(record,record.id,null,true,false);}});
-siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),carousel:id=>openCarousel(id),teletext:pid=>openTeletext(pid),topology:()=>topology.stale?null:topology.snapshot,
+siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),carousel:id=>openCarousel(id),teletext:pid=>openTeletext(pid),media:pid=>openMedia(pid,'PES'),topology:()=>topology.stale?null:topology.snapshot,
   service:s=>openServices(s),packet:pid=>openPacket(pid,0),loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
 siPanel.append(summaryPanel);
 const documentsPanel=document.createElement('div');documentsPanel.id='document-workspace';documentsPanel.hidden=true;siPanel.append(documentsPanel);
@@ -3069,11 +3070,12 @@ documentWorkspace=DocumentWorkspace.create(documentsPanel,{
    const panel=document.createElement('section');panel.className='si-document';content.append(panel);let payload=d.payload;
    const ui=UnifiedSi.create(panel,{state:()=>payload._view_state||data,detail:()=>payload,pending:()=>false,busy:()=>busy,error:()=>'',inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,loadTopology:async()=>{}});
    v.update=next=>{payload=next.payload;ui.update();};v.snapshot=()=>ui.snapshot();v.focusNode=path=>ui.focusNode(path);v.nextRegion=(back,origin)=>ui.nextRegion(back,origin);v.dispose=()=>ui.dispose();ui.update();
+  }else if(d.kind==='media'){const state=d.payload._view_state||data;const ui=MediaView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,packet:(pid,index,offset)=>{if(!busy&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision))openPacket(pid,index,offset);}},{pid:d.payload.pid,tab:d.payload.tab});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();v.stop=preserve=>ui.stop(preserve);
   }else if(d.kind==='teletext'){const state=d.payload._view_state||data;const ui=TeletextView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,packet:(pid,index)=>openPacket(pid,index)},d.payload.pid);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
   }else if(d.kind==='carousel'){const state=d.payload._view_state||data;const ui=CarouselView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,section:async(id,path,cutoff)=>{await inspect(id,-1,'carousel:'+id,{kind:'service',atPacket:cutoff,revision:state.analysis_revision||state.revision});if(detail.id===id&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision)){openDocument('si');documentWorkspace.focusSection(id,path,cutoff);}}},d.payload.source_id);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
   }else if(d.kind==='service'){const state=d.payload._view_state||data;const ui=ServiceView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,section:async(id,path,cutoff)=>{await inspect(id,-1,'service:'+id,{kind:'service',atPacket:cutoff,label:'Service source at packet '+cutoff,revision:state.analysis_revision||state.revision});if(detail.id===id&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision)){openDocument('si');documentWorkspace.focusSection(id,path,cutoff);}}},d.payload.service);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
   }else if(d.kind==='statistics'){const ui=StatisticsView.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,packet:(pid,index)=>openPacket(pid,index)});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
-  }else if(d.kind==='packet'){const ui=PacketExplorer.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,section:id=>inspect(id)},{pid:d.payload.pid,index:d.payload.index});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='packet'){const ui=PacketExplorer.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,section:id=>inspect(id)},{pid:d.payload.pid,index:d.payload.index,byte_offset:d.payload.byte_offset});v.seekPacket=(pid,index,offset)=>ui.seek(pid,index,offset);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
   }else if(d.kind==='summary'){
    const panel=document.createElement('section');panel.className='transport-si';content.append(panel);
    const ui=TransportSi.create(panel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record)=>inspect(record.id)});v.update=()=>ui.update();v.dispose=()=>ui.dispose();ui.update();
@@ -3086,11 +3088,12 @@ function syncDocuments(){
  if(documentIdentity!==identity){documentIdentity=identity;documentWorkspace.reset(identity);documentLastDetail='';}
  if(documentMode&&detail.id&&!loadingDetail&&detail.id+'@'+data.selected_packet!==documentLastDetail){documentLastDetail=detail.id+'@'+data.selected_packet;openDocument('si');}
 }
+function openMedia(pid,tab='PES'){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('media',String(pid)+'@'+data.selected_packet,documentScope()+' - PES / ES / Media',{pid,tab,_view_state:structuredClone(data)});syncSiMode();}
 function openTeletext(pid){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('teletext',String(pid)+'@'+data.selected_packet,documentScope()+' - Teletext',{pid,_view_state:structuredClone(data)});syncSiMode();}
 function openCarousel(sourceId){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('carousel','carousel@'+data.selected_packet,documentScope()+' - DSM-CC / OC Files',{source_id:sourceId||detail.id,_view_state:structuredClone(data)});syncSiMode();}
 function openServices(service){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;const key=service?service.onid+':'+service.ts_id+':'+service.id:'all';documentWorkspace.open('service',key+'@'+data.selected_packet,documentScope()+' - Services / EPG',{service,_view_state:structuredClone(data)});syncSiMode();}
 function documentScope(cutoff){const at=cutoff===undefined?data.selected_packet:cutoff;return String(data.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(data.analysis_revision||data.revision||0)+', '+(at==null?'latest':'packet '+at)+']';}
-function openPacket(pid,index){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid<0?null:pid,index:index||0});syncSiMode();}
+function openPacket(pid,index,byteOffset){const existing=documentWorkspace.snapshot().items.some(d=>d.kind==='packet'&&d.key===String(pid));documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid<0?null:pid,index:index||0,byte_offset:byteOffset||0});if(existing)documentWorkspace.seekPacket(pid,index||0,byteOffset||0);syncSiMode();}
 function openDocument(kind,duplicate=false){
  if(!documentWorkspace)return;const payload=kind==='summary'?{}:structuredClone(detail),key=kind==='summary'?'summary':(detail.id||'empty')+'@'+detail.native_table_at_packet;if(kind!=='summary'){payload._view_state=structuredClone(data);payload._view_state.selected_packet=detail.native_table_at_packet;}
  const title=documentScope(kind==='summary'?undefined:detail.native_table_at_packet)+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
@@ -3101,7 +3104,7 @@ document.addEventListener('keydown',event=>{if(!documentMode||!classicMode||docu
 const framePanel=document.createElement('header');framePanel.id='classic-frame';framePanel.className='classic-frame';$('.titlebar').before(framePanel);
 const helpDialog=document.createElement('dialog');helpDialog.id='classic-help';helpDialog.innerHTML='<h2>ShowPsiSi Help</h2><p>Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to fields and original bytes. Click text to select; double-click text or click +/− to expand. F6 / Shift+F6 changes panes. Alt+Left returns. Card Configuration contains source and scan options. Advanced workspace retains topology, editing, history and DVB-I.</p><button class="btn">Close</button>';$('#app').append(helpDialog);helpDialog.querySelector('button').onclick=()=>helpDialog.close();
 const footer=$('#app > footer');for(const [id,text] of [['product','ShowPsiSi'],['version','development'],['num',''],['scroll','']]){const cell=document.createElement('span');cell.id='classic-'+id;cell.className='classic-status-part';cell.textContent=text;footer.append(cell);}
-function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:documentMode?(documentWorkspace?.snapshot().items.length||0):(data.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true}};}
+function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:documentMode?(documentWorkspace?.snapshot().items.length||0):(data.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
 async function classicCommand(id){const state=classicState();if(!classic.enabled(id,state)){notice(classic.reason(id,state),'warning');return;}
  if(id==='open')await $('#browse').onclick();
  else if(id==='start')scan();else if(id==='stop')cancelScan();else if(id==='pause')pauseScan();
@@ -3110,6 +3113,7 @@ async function classicCommand(id){const state=classicState();if(!classic.enabled
  else if(id==='new'){documentMode=true;openDocument('si',true);}
  else if(id==='decoded'){documentMode=true;openDocument('decoded');}
  else if(id==='packets')openPacket(-1,0);
+ else if(id==='media')openMedia(-1,'PES');
  else if(id==='teletext')openTeletext(-1);
  else if(id==='carousel')openCarousel();
  else if(id==='services')openServices(null);

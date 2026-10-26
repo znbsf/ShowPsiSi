@@ -35,11 +35,24 @@ with explicit PID 1068; its nine subtitle events match an independent SRT throug
 the core, browser display and Qt offscreen. This is not PSI discovery acceptance,
 live timing or full Teletext receiver conformance.
 
+PES/ES inspection now retains original TS fragments, header/timestamp metadata
+and exact paged bytes. A private numeric stream type does not establish codec.
+The optional external decoder is verified before execution and has independent
+process/memory/output/time bounds. Real MPEG-2 frames and MPEG-audio PCM are
+locally tested in both UIs; thumbnail pacing and mono resampling are explicitly
+derived. Other advertised input formats remain unverified application paths.
+Windows output control uses an exact preview token and an owned buffer; silence
+checks establish API queue/stop behavior, not physical audibility. The accepted
+single-I-frame remux is a positive pixel fixture; the whole original capture
+is not accepted as clean video or original timing. FFmpeg is not bundled.
+
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets and independently imported local
 DVB-I XML metadata. It does not tune, demodulate,
-decrypt conditional-access content, decode audio/video, or certify a receiver.
+decrypt conditional-access content or certify a receiver. An optional external,
+hash-pinned Windows decoder now provides bounded video-frame and PCM previews;
+this is distinct from parsing support, device output and original A/V timing.
 Three claims must remain separate:
 
 1. **Verified application path:** a fixture or captured stream passed through the

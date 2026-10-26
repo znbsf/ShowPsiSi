@@ -280,7 +280,7 @@ class Bridge:public QObject {
                 clearIntentions();emit stateChanged();
             }
             m_error=cancelled?QString():error["message"].toString();emit errorChanged();
-            auto reportedError=errorValue;if(method=="query_packet"||method=="query_service"||method=="query_carousel"||method=="query_teletext")reportedError["request"]=request.params;
+            auto reportedError=errorValue;if(method=="query_packet"||method=="query_service"||method=="query_carousel"||method=="query_teletext"||method=="query_pes"||method=="decode_media"||method=="audio_control")reportedError["request"]=request.params;
             emit response(method,reportedError);
         }else{
             if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
@@ -505,7 +505,7 @@ public:
         if(m_availability=="disconnected"||!transport){
             backendStopped("Backend is not running. Check SHOWPSISI_CORE.");return;
         }
-        if(m_busy&&method!="cancel_analysis"&&method!="pause_analysis"&&method!="resume_analysis"&&!(method=="query_result"&&m_loadingResults))return;
+        if(m_busy&&method!="cancel_media"&&method!="audio_control"&&method!="cancel_analysis"&&method!="pause_analysis"&&method!="resume_analysis"&&!(method=="query_result"&&m_loadingResults))return;
         if(method=="cancel_analysis"&&(!m_busy||!m_cancelling))return;
         if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
         int id=++sequence;

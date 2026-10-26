@@ -21,3 +21,12 @@ Original SHA-256:
 ShowPsiSi display integration additionally tracks C4-cleared absent rows as
 known display blanks with no received source, and resets decoder/page context
 at transport gaps while retaining previously validated capture snapshots.
+
+## Optional decoder and output
+
+DecoderProcess.h executes a separately configured, hash-pinned external FFmpeg
+without a shell. Windows Job ownership bounds memory, descendants, wall time
+and output; cancellation belongs to the matching request. The binary is not
+bundled and is not a new application-linked library. AudioPlayback.h owns only
+its Windows PCM buffer/handle, never a system-wide device reset. See API decoder
+pin and docs/NXTSA_UI_UX_PARITY.md for tested formats and derived preview timing.

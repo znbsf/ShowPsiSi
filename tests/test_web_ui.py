@@ -1256,6 +1256,41 @@ class BrowserTests(unittest.TestCase):
         p.locator('.mdi-active [data-action="next"]').click();p.wait_for_function('()=>'+prefix+'?.result.capture_index===1')
         self.assertEqual(p.locator('.mdi-active [data-cell="41"]').inner_text(),'N')
 
+    def test_classic_media_pes_es_cursor_packet_reuse_and_real_video(self):
+        from media_fixture import make_media
+        if not Path(os.environ.get('SHOWPSISI_FFMPEG','')).is_file():self.skipTest('External pinned decoder required')
+        path=make_media(self.output/'video.ts');self.show_scan_configuration();p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path);self.classic_command('media')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="media")?.view'
+        p.wait_for_function('()=>'+prefix+'?.result.pes_total>0')
+        p.locator('.mdi-active [data-pes]').first.click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===0')
+        p.locator('.mdi-active [data-tab="ES"]').click();p.wait_for_function('()=>'+prefix+'?.result.selected?.content.layer==="collected_es_payload"')
+        raw=p.locator('.mdi-active [aria-label="Original PES or ES bytes"]');raw.focus();raw.evaluate('(area)=>area.setSelectionRange(12,12)');raw.press('ArrowRight')
+        source=p.evaluate('mediaModel.sourceAt('+prefix+'.result,'+prefix+'.cursor)');self.assertIsNotNone(source)
+        p.locator('.mdi-active [data-action="source"]').click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).view?.index==='+str(source['packet_index'])+'&&showpsisi.getUiState().documents.items.at(-1).view?.cursor==='+str(source['packet_offset']))
+        self.classic_command('media');p.locator('.mdi-active [data-pes]').nth(1).click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===1')
+        source=p.evaluate('mediaModel.sourceAt('+prefix+'.result,0)');p.locator('.mdi-active [data-action="source"]').click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).view?.index==='+str(source['packet_index'])+'&&showpsisi.getUiState().documents.items.at(-1).view?.cursor==='+str(source['packet_offset']))
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.filter(d=>d.kind==="packet").length'),1)
+        p.keyboard.press('Control+F4');p.locator('.mdi-active [data-pes]').first.click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===0')
+        p.locator('.mdi-active [data-tab="Video"]').click();p.locator('.mdi-active [data-action="decode"]').click();p.wait_for_function('()=>'+prefix+'?.preview.frame_count===5')
+        p.wait_for_function('()=>document.querySelector(".mdi-active img").complete&&document.querySelector(".mdi-active img").naturalWidth>0')
+        self.assertEqual(p.evaluate(prefix+'.preview.from_pes_index'),0)
+        p.locator('.mdi-active [data-action="play"]').click();p.wait_for_function('()=>'+prefix+'?.playing===true');p.wait_for_function('()=>'+prefix+'?.playing===false&&'+prefix+'?.frame_index===4')
+
+    def test_classic_audio_waveform_silent_output_and_close_release(self):
+        from media_fixture import make_media
+        if not Path(os.environ.get('SHOWPSISI_FFMPEG','')).is_file():self.skipTest('External pinned decoder required')
+        path=make_media(self.output/'silence.ts',kind='audio',silence=True);self.show_scan_configuration();p=self.page;p.locator('#standards').select_option('dvb');self.analyze(path);self.classic_command('media')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="media")?.view'
+        p.wait_for_function('()=>'+prefix+'?.result.pes_total>0');p.locator('.mdi-active [data-pes]').first.click();p.wait_for_function('()=>'+prefix+'?.result.selected?.index===0');p.locator('.mdi-active [data-tab="Audio"]').click();p.locator('.mdi-active [data-action="decode"]').click();p.wait_for_function('()=>'+prefix+'?.preview.pcm?.samples>48000')
+        preview=p.evaluate(prefix+'.preview');self.assertEqual(preview['pcm']['sample_rate'],48000);self.assertTrue(all(abs(b['min'])+abs(b['max'])<=2 for b in preview['pcm']['waveform']))
+        p.evaluate("()=>{window.mediaTimers=new Set();const set=window.setInterval.bind(window),clear=window.clearInterval.bind(window);window.setInterval=(fn,ms,...args)=>{const id=set(fn,ms,...args);mediaTimers.add(id);return id;};window.clearInterval=id=>{mediaTimers.delete(id);clear(id);};}")
+        p.locator('.mdi-active [data-action="play"]').click();p.wait_for_function('()=>'+prefix+'?.playing===true');p.locator('.mdi-active [data-action="pause"]').click();p.wait_for_function('()=>'+prefix+'?.paused===true');p.locator('.mdi-active [data-action="play"]').click();p.wait_for_function('()=>'+prefix+'?.playing===true')
+        p.keyboard.press('Control+F4');self.assertEqual(p.evaluate('mediaTimers.size'),0)
+        status=p.evaluate('(args)=>call("audio_control",args)',{'analysis_revision':preview['analysis_revision'],'preview_token':preview['preview_token'],'action':'status'})
+        self.assertTrue(status['matching_preview']);self.assertFalse(status['playing']);self.assertFalse(status['paused'])
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

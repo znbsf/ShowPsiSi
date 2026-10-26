@@ -20,6 +20,7 @@ ApplicationWindow {
     property bool classicTreeVisible:true
     property bool classicConfigurationVisible:false
     property var classicLocks: ({})
+    property bool documentMode:false
     property bool transportSummaryVisible: false
     readonly property bool transportQueryReady: backendReady && !core.busy
     property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
@@ -655,7 +656,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            documents:documentWorkspace.snapshot(),document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -670,7 +671,7 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
-        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
+        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
         if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
         if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
         if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
@@ -1187,7 +1188,20 @@ ApplicationWindow {
             params.at_packet = analysisState.selected_packet;
         core.mark("inspect_send_begin");core.send("inspect", params);core.mark("inspect_send_end");
     }
-    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:analysisState.complete?1:0,features:{}};}
+    function documentScope(){return String(analysisState.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(analysisState.analysis_revision||analysisState.revision||0)+', '+(analysisState.selected_packet==null?'latest':'packet '+analysisState.selected_packet)+']';}
+    function openPacket(pid,index){documentMode=true;advancedMode=false;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid,index:index||0},false);}
+    function openDocument(kind,duplicate){
+        var payload=kind==='summary'?{}:JSON.parse(JSON.stringify(detail));if(kind!=='summary')payload._view_state=JSON.parse(JSON.stringify(analysisState));
+        var title=documentScope()+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
+        documentWorkspace.open(kind,kind==='summary'?'summary':(detail.id||'empty')+'@'+analysisState.selected_packet,title,payload,!!duplicate);
+    }
+    property string documentIdentity:(analysisState.source||'')+'|'+(analysisState.analysis_revision||analysisState.revision||'')
+    onDocumentIdentityChanged:if(documentWorkspace)documentWorkspace.reset(documentIdentity)
+    onDetailChanged:if(documentMode&&detail.id&&!advancedMode&&!metadataMode)Qt.callLater(function(){if(detail.id)openDocument('si');})
+    Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.close()}
+    Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(false)}
+    Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(true)}
+    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{documents:true,packets:true,bitrate:true}};}
     function classicCommand(name){
         var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
         if(name==='open')fileDialog.open();
@@ -1197,7 +1211,13 @@ ApplicationWindow {
         else if(name==='toolbar')classicToolbarVisible=!classicToolbarVisible;
         else if(name==='status')classicStatusVisible=!classicStatusVisible;
         else if(name==='tree')classicTreeVisible=!classicTreeVisible;
-        else if(name==='summary'){transportSummaryVisible=true;advancedMode=false;}
+        else if(name==='new'){documentMode=true;openDocument('si',true);}
+        else if(name==='decoded'){documentMode=true;openDocument('decoded');}
+        else if(name==='packets')openPacket(-1,0);
+        else if(name==='bitrate'){documentMode=true;advancedMode=false;documentWorkspace.open('statistics','statistics',documentScope()+' - Bitrate / Timing',{},false);}
+        else if(name==='close')documentWorkspace.close();
+        else if(['cascade','tile','arrange'].indexOf(name)>=0)documentWorkspace.arrange(name);
+        else if(name==='summary'){if(documentMode)openDocument('summary');transportSummaryVisible=true;advancedMode=false;}
         else if(name==='configuration'){classicConfigurationVisible=!classicConfigurationVisible;if(classicConfigurationVisible)source.forceActiveFocus();}
         else if(name==='advanced'){transportSummaryVisible=false;advancedMode=true;}
         else if(name==='dvbi')inputKind='dvbi';
@@ -1888,7 +1908,9 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
-            if(method==="query_transport"){transportSummary.receive(result);return;}
+            if(method=="query_timing"){documentWorkspace.receiveStatistics(method,result);return;}
+            if(method=="query_packet"){documentWorkspace.receivePacket(result);return;}
+            if(method=="query_transport"){transportSummary.receive(result);documentWorkspace.receiveTransport(result);documentWorkspace.receiveStatistics(method,result);return;}
             if(method==="capabilities" && analysisModesTestTimer.running){analysisModesTestTimer.barrier=true;return;}
             if(method === "analyze") {
                 if(result.complete && !advancedMode)classicConfigurationVisible=false;
@@ -4478,8 +4500,9 @@ ApplicationWindow {
         UnifiedInspector {
             id: unifiedInspector
             focusOrigin:sourceBar.visible?sourceBar:null
+            onPacketRequested:function(pid){win.openPacket(pid,0);}
             treeVisible:win.classicTreeVisible
-            externalVisible:win.transportSummaryVisible
+            externalVisible:win.transportSummaryVisible||win.documentMode
             host: win
             organization: !topologyStale && topologyData.analysis_revision===analysisState.analysis_revision ? topologyData : ({})
             organizationStatus: topologyLoading ? "Loading networks / TP..." : topologyError ? "Network organization unavailable" : (topologyData.page || {}).has_more ? "Loading more networks / TP..." : ""
@@ -4488,13 +4511,62 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
+        DocumentWorkspace {
+            id:documentWorkspace
+            parent:unifiedInspector.externalContainer;anchors.fill:parent
+            visible:documentMode&&!advancedMode&&!metadataMode
+            sectionComponent:Component {
+                UnifiedInspector {
+                    id:childInspector;treeVisible:false
+                    onPacketRequested:function(pid){win.openPacket(pid,0);}
+                    host:QtObject {
+                        property var analysisState:detail._view_state||win.analysisState
+                        property var detail:childInspector.parent.documentData.payload
+                        property bool coreInspecting:false
+                        property bool backendReady:win.backendReady
+                        function inspect(id){win.inspect(id);}
+                        property var tableFamilies:win.tableFamilies
+                    }
+                }
+            }
+            summaryComponent:Component {
+                TransportSummary {
+                    host:win
+                    onPageRequested:function(offset,sort,descending,errorsOnly){if(!core.busy)core.send('query_transport',{analysis_revision:analysisState.analysis_revision||analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});}
+                    onEntryActivated:function(entry){var record=(analysisState.tables||[]).find(function(row){return row.pid===entry.pid;});if(record)win.inspect(record.id);}
+                    Component.onCompleted:if(!core.busy&&analysisState.complete)request(0)
+                }
+            }
+            statisticsComponent:Component {
+                StatisticsView {
+                    host:win
+                    onRequested:function(method,params){if(!core.busy)core.send(method,params);else receive(method,{message:'Wait for current analysis to finish'});}
+                    onPacketActivated:function(pid,index){win.openPacket(pid,index);}
+                }
+            }
+            packetComponent:Component {
+                PacketExplorer {
+                    id:packetDocument;host:win
+                    initialPid:parent.documentData.payload.pid
+                    initialIndex:parent.documentData.payload.index
+                    onRequested:function(params){if(!core.busy)core.send('query_packet',params);else receive({request:params,code:'busy',message:'Wait for current analysis to finish'});}
+                    onSectionActivated:function(id){win.inspect(id);}
+                }
+            }
+            decodeComponent:Component {
+                ScrollView {
+                    id:decodedDocument
+                    TextArea {readOnly:true;selectByMouse:true;wrapMode:TextEdit.NoWrap;font.family:'Courier New';font.pixelSize:13;color:'#000';background:Rectangle{color:'#fff'}text:decodedDocument.parent.documentData.payload.section_native_text||decodedDocument.parent.documentData.payload.native_text||decodedDocument.parent.documentData.payload.raw_hex||'No selected table'}
+                }
+            }
+        }
         TransportSummary {
             id:transportSummary
             parent:unifiedInspector.externalContainer
             anchors.fill:parent
             focusOrigin:sourceBar.visible?sourceBar:null
             host:win
-            visible:!metadataMode && transportSummaryVisible
+            visible:!metadataMode && transportSummaryVisible && !documentMode
             onPageRequested:function(offset,sort,descending,errorsOnly){
                 if(core.busy){reject("Wait for the current operation, then Refresh.");return;}
                 core.send("query_transport",{analysis_revision:analysisState.analysis_revision || analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});

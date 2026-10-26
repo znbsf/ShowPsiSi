@@ -58,6 +58,27 @@ var inspector = {
     },
     // Prefer exact selected-section loop ownership where it exists. Every other
     // table uses the engine's recursive semantic tree, without a family allowlist.
+    transportNavigation:function(state,records,open,query){
+        var self=this,out=[],pids=state.transport_pids||[],dsmcc=records.filter(function(r){return /^DSMCC_/.test(r.name);});
+        out.push({kind:'family',key:'family:All Packets',name:'All Packets',label:'All Packets',depth:0,icon:'psi'});
+        if(open('All Packets')){
+            pids.filter(function(pid){return !query||('PID '+self.hex(pid)).toLowerCase().indexOf(query)>=0;}).forEach(function(pid){out.push({kind:'packet',key:'packet:'+pid,pid:pid,label:'PID '+self.hex(pid),depth:1,icon:'PES',hint:'PID observed in analyzed windows; use Packet Explorer to read original source packets'});});
+            if(!pids.length)out.push({kind:'info',key:'packets:empty',label:state.complete?'No observed packet PIDs':'Analyze a source to list packet PIDs',depth:1,icon:'field'});
+        }
+        out.push({kind:'family',key:'family:DSMCC',name:'DSMCC',label:'DSMCC',depth:0,icon:'UN'});
+        if(open('DSMCC')){
+            dsmcc.forEach(function(r){out.push({kind:'record',key:'dsmcc:'+r.id,record:r,label:self.navigationTitle(r,null),depth:1,icon:r.name});});
+            if(!dsmcc.length)out.push({kind:'info',key:'dsmcc:empty',label:'No observed DSM-CC sections',depth:1,icon:'field'});
+        }
+        return out;
+    },
+    contextTargets:function(row,state){
+        if(!row)return [];
+        var record=row.record||row.sourceRecord,pid=record?record.pid:row.pid;
+        if(record)return [{id:record.id,pid:record.pid,label:this.navigationTitle(record,null)}];
+        if(pid===undefined)return [];
+        var self=this;return (state.tables||[]).filter(function(r){return r.pid===pid;}).map(function(r){return {id:r.id,pid:r.pid,label:self.navigationTitle(r,null)};});
+    },
     navigationChildren: function(node) {
         if(!node)return [];
         if(node.semanticName)return node.children || [];

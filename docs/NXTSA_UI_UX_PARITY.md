@@ -596,11 +596,11 @@ application source and the verified local executable hashes remain unchanged.
 | 04 | Summary 六项和原版布局对齐 | 两端有 FileSize、Total Packets、BitRates、Errors、Duration、Packet Size；两排指标、Summary/Error tab；未知/部分范围和单位明确 | VIEW-007/008、VIS-005 | 已完成：六项指标、两排自适应布局和经典浅色一致 |
 | 05 | 键盘、焦点、选中行为同步 | 树方向键进入子项/返回父项、字段/hex 导航、F6/Shift+F6、Home/End 等价；文本单击、双击和 +/- 规则保持 | APP-009、VIEW-051、VIS-018 | 已完成：树/字段父子键、双 hex 光标及正反 F6，本地回归通过 |
 | 06 | 原版主框架、菜单、工具栏与状态栏 | 依据资源还原主菜单和 7 个命令按钮/2 分隔位；可见命令有实际行为或明确禁用原因；帮助、树显隐和分析状态一致 | WIN-001～005/008～018 | 已实现并本地验证；原版位图、菜单命令和显隐状态对齐，未支持的输出明确禁用 |
-| 07 | 多窗口与工作上下文 | 至少三类已支持视图可切换、关闭、恢复；窗口身份独立；平铺/层叠/最小化与焦点正确；重复打开实例规则明确 | WIN-006/007、APP-006/011、VIS-008/009 | 待实施 |
-| 08 | 完整树分支与右键导航 | Programs/PSI/All Packets/DSMCC 等有依据入口；右键命中当前指针对象，View Tables→具体 PID/版本；无数据与未支持有明确状态 | VIEW-017/018/023～026 | 待实施 |
-| 09 | Packet Explorer 原始 TS 包浏览 | 首/前/后/末及索引/PID 过滤可用；header/adaptation/pointer/payload 与真实包同步；边界、坏包和取消有反馈；返回原字段 | VIEW-022、MED-006/007、WIN-027/042 | 待实施 |
-| 10 | 跨包来源片段与精确定位 | 跨包 section 的每段真实 TS 来源可达；区分文件/包/section 坐标与 188/192/204 封装；位范围与未知状态准确；不造重组包 | APP-010、VIEW-021、MED-002/005/011 | 待实施 |
-| 11 | 统计、错误与 Timing/Bitrate | 先补用户可见统计和来源说明；独立 Bitrate 条形与 Timing 页面有可信时钟、范围、单位、wrap/跳变处理；无时钟显示 unknown；诊断区分检测范围 | VIEW-009～016、APP-013/014 | 待实施 |
+| 07 | 多窗口与工作上下文 | 至少三类已支持视图可切换、关闭、恢复；窗口身份独立；平铺/层叠/最小化与焦点正确；重复打开实例规则明确 | WIN-006/007、APP-006/011、VIS-008/009 | 已实现：New 开启独立窗口，SI/Summary/Native Decode/Packet/Timing 支持复用、关闭、切换和排列；原生鼠标/DPI 留给 17 |
+| 08 | 完整树分支与右键导航 | Programs/PSI/All Packets/DSMCC 等有依据入口；右键命中当前指针对象，View Tables→具体 PID/版本；无数据与未支持有明确状态 | VIEW-017/018/023～026 | 已实现：观测 PID 索引、DSMCC 分支及指针对象的精确表菜单；无数据明确说明 |
+| 09 | Packet Explorer 原始 TS 包浏览 | 首/前/后/末及索引/PID 过滤可用；header/adaptation/pointer/payload 与真实包同步；边界、坏包和取消有反馈；返回原字段 | VIEW-022、MED-006/007、WIN-027/042 | 已实现并本地验证：原包与封装、首前后末、索引/PID、分批搜索取消、header/区域及 section 链接 |
+| 10 | 跨包来源片段与精确定位 | 跨包 section 的每段真实 TS 来源可达；区分文件/包/section 坐标与 188/192/204 封装；位范围与未知状态准确；不造重组包 | APP-010、VIEW-021、MED-002/005/011 | 已实现：首个观测 occurrence 的全部可信来源片段，双 hex 可切换并使用全局 section 偏移；超过界限或不可靠明确不可映射 |
+| 11 | 统计、错误与 Timing/Bitrate | 先补用户可见统计和来源说明；独立 Bitrate 条形与 Timing 页面有可信时钟、范围、单位、wrap/跳变处理；无时钟显示 unknown；诊断区分检测范围 | VIEW-009～016、APP-013/014 | 已实现：捕获流 PCR 测量、可信区间时长、原始 Timing 分页、绿条码率及跳包；无时钟 Unknown，范围明确 |
 | 12 | 服务、EIT/EPG 与 AIT 追查 | 同 SID 不同 TS、共享 PID 不串源；服务→具体 PMT/ES/EIT/应用→证据可返回；缺失关联明确显示，不靠 ID 猜测 | VIEW-024～033 | 待实施 |
 | 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 待实施 |
 | 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 待实施 |
@@ -700,3 +700,19 @@ Qt 与 Tauri 最终 release 均本地编译成功。两个原生程序已各自�
 两端共用 classic-model.js 菜单顺序、命令启用规则和工具栏槽位；复用原版 128.bmp 的 7 格位图，包含 2 分隔位。经典源配置收进 Card Configuration，Open 选择后进入 Ready，Start 才分析；高级工作区仍可到达。工具栏、状态栏、TS Tree 开关可逆，Summary 保留左树。状态栏显示本产品及版本，不冒用原产品版权。帮助有本地内容；尚未实现的保存、打印及窗口排列明确禁用，后续项目负责解锁。
 
 修复集成期间 Summary 被 UnifiedSi 容器初始化覆盖、状态单元误挂到 DVB-I footer，以及网页菜单被工具栏覆盖的问题。当前 Qt 本地完整构建成功，实际引擎加载 Hotbird 后的 10 项完整应用离屏观察通过（含开关与 Summary）；Qt 源组件 47 项实际用例通过（QtTest 加生命周期为 53 PASS）。浏览器 9 个经典界面用例及静态资源检查共 10 项通过。证据：原工作区 artifacts/si-frame-components.log、si-frame-qt-runtime.log、si-ordered-web-step06-fixed.log。完整应用观察使用诊断接口与离屏渲染，不冒称原生鼠标或像素验收。未运行托管 CI。
+
+
+### 第 07–11 项本地实现（2026-10-26）
+
+New 开启同一输入会话内的独立窗口工作区；SI、Summary、Native Decode、Packet Explorer、Bitrate/Timing 使用真实数据组件。相同类型/身份激活已有窗口，New 可明确复制 SI 窗口。每窗保留实际控件和上下文；关闭回到前窗，Ctrl+F4、Ctrl+Tab/Shift+Ctrl+Tab、平铺、层叠、最小化/恢复可用。成功更换分析身份关闭旧窗；拒绝候选不关闭。历史 cutoff 构成文档 key，保留自己的只读分析/详情数据。标题标出文件、分析批次和 latest/cutoff。
+
+All Packets 列出引擎观测到的 PID，不把 PSI 表列表冒充全 PID；DSMCC 使用实际表记录，缺失显示空态。右键命中指针对象，View Tables 绑定 exact section ID。Packet Explorer 通过 query_packet 直接读源文件，保留 188/192/204 原始封装与各坐标、header/adaptation/pointer/PES header/payload 区域。PID 检索每批最多 4096 包，取消使后续批次停止并拒绝在途旧答复。源文件大小/mtime 改变或 revision 过期即拒绝。原始源可读到分析窗口以外，但明确标成 raw source only。
+
+inspect.source_fragments 对首个观测 occurrence 核验每段原字节、PID、连续性和结束位置；最多跨度 65536 包及 128 个片段，不能确认就不映射。两端可切换片段，包内 offset 加 section_begin 后才联动字段；仍保留完整 section，绝不伪造 188-byte 包。
+
+Timing 每 PID 追踪可信 PCR 对、回绕/跳变/声明间断；采样窗口和坏包重置链。超过 10 秒或不递增的 PCR 区间不参与率估计，明确测量的是捕获的标准化 188-byte 流。Duration 为可信 PCR 区间之和，不外推全文件长度。用户给定码率与测量值分开；原始 PCR 样本最多保留前 4096，计数继续覆盖全部观测。连续性诊断单独记录，旧 Header/CRC 错误口径不混合，也不宣称完整 TR 101 290 检查。
+
+本地证据：si-packets-engine.log / si-fragments-engine.log / si-timing-engine.log；19 项包/计数/PCR 实际引擎测试通过，跨包重组原字节核对通过。Qt 源组件 52 个实际用例通过（含生命周期为 60 PASS）；完整 Qt 实际引擎窗口检查记录在 si-documents-qt-runtime.log、si-packets-qt-runtime.log、si-timing-qt-runtime.log。新增浏览器窗口/右键/包/跨包/PCR 跳转用例分别通过。35 项合并检查曾出现 1 个页面启动等待超时和 1 个未配置 Qt 资源测试 skip；新增启动失败现场保留后，该启动用例单独复核通过，未把此批写成全绿。当前 Tauri 网页行为有真实引擎浏览器证据；上一次原生 Tauri 本地编译只覆盖早期窗口框架快照，尚需最终重新封装。无托管 CI。
+
+
+第 07–11 项追加合并回归：`si-ordered-steps07-11-combined.log` 中 40 项全部通过、无 skip，覆盖包读取、Timing、原有 transport 口径、桥接静态资源及 13 个经典 UI 用例。此批不含未配置的 Qt portable resource suite；Qt 源组件和完整应用仍使用前述独立证据。

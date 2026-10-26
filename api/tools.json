@@ -773,6 +773,83 @@
       "annotations": {
         "readOnlyHint": true
       }
+    },
+    {
+      "name": "query_packet",
+      "description": "Read actual source TS packet and framing bytes with bounded PID search. Packet indexes are zero based. No reconstructed packets; unmatched batch returns a continuation index. Source must remain unchanged.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "packet_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "exact",
+              "forward",
+              "backward"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 8191
+          },
+          "scan_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536
+          },
+          "client_token": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "packet_index"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
+    },
+    {
+      "name": "query_timing",
+      "description": "Read bounded raw PCR observations and measured normalized TS bitrate. Wrap-aware consecutive intervals only; excludes gaps, discontinuities and intervals over ten seconds. Not a complete timing/conformance checker.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4096
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "analysis_revision"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
     }
   ]
 }

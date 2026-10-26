@@ -57,13 +57,13 @@ Pane {
     palette.highlight:host.blue || host.muted
     palette.highlightedText:host.ink
     function number(value) {return value===null || value===undefined ? "Unknown" : Number(value).toLocaleString(Qt.locale("en_US"),"f",0);}
-    function duration(value) {
+    function duration(value,pcr) {
         if(value===null || value===undefined || !isFinite(Number(value)))return "Unknown";
         var milliseconds=Math.round(Number(value)*1000);
         return String(Math.floor(milliseconds/3600000)).padStart(2,"0")+":"+
             String(Math.floor(milliseconds/60000)%60).padStart(2,"0")+":"+
             String(Math.floor(milliseconds/1000)%60).padStart(2,"0")+"."+
-            String(milliseconds%1000).padStart(3,"0")+" (supplied rate)";
+            String(milliseconds%1000).padStart(3,"0")+(pcr?" (PCR intervals)":" (supplied rate)");
     }
     function hex(pid){return "0x"+Number(pid).toString(16).toUpperCase().padStart(4,"0");}
     function comment(row) {
@@ -100,9 +100,9 @@ Pane {
                 model:[
                     {id:"fileSize",label:"FileSize",value:view.number(view.state.source_bytes)+" bytes"},
                     {id:"totalPackets",label:"Total Packets",value:view.number(summary.observed_packets)},
-                    {id:"bitrate",label:"BitRates",value:summary.configured_bitrate_bps===null || summary.configured_bitrate_bps===undefined?"Unknown":view.number(summary.configured_bitrate_bps)+" bps (supplied)"},
+                    {id:"bitrate",label:"BitRates",value:(summary.effective_bitrate_bps??summary.configured_bitrate_bps)==null?"Unknown":view.number(summary.effective_bitrate_bps??summary.configured_bitrate_bps)+(summary.pcr_derived?" bps (PCR)":" bps (supplied)")},
                     {id:"errors",label:"Errors",value:view.number(summary.error_packets)+" transport / "+view.number(view.state.crc_errors)+" CRC"},
-                    {id:"duration",label:"Duration",value:view.duration(summary.observed_duration_seconds)},
+                    {id:"duration",label:"Duration",value:view.duration(summary.observed_duration_seconds,summary.pcr_derived)},
                     {id:"packetSize",label:"Packet Size",value:view.number(view.state.packet_size)+" bytes"}
                 ]
                 delegate:RowLayout {

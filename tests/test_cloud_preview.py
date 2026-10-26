@@ -104,7 +104,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(error.exception.code,400)
 
     def test_static_assets_and_environment(self):
-        for name in ('app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js','classic-model.js','classic-frame.js','assets/toolbar128.bmp'):
+        for name in ('app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js','classic-model.js','classic-frame.js','document-model.js','document-workspace.js','packet-model.js','packet-explorer.js','statistics-view.js','assets/toolbar128.bmp'):
             with self.request('/'+name) as response:self.assertEqual(response.read(),(ROOT/'ui/tauri/web'/name).read_bytes())
         with self.request('/') as response:
             index=response.read().decode();self.assertIn('window.__TAURI__',index)

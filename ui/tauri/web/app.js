@@ -165,6 +165,7 @@ function distributionPanel(row) {
   return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
+let documentMode=false, documentWorkspace=null;
 let siView = null, summaryView = null, summaryVisible = false, classicMode = true, candidatePending = false, classicFrame = null, classicConfiguration = false, classicToolbar = true, classicStatus = true, classicTree = true;
 let data = {},
   detail = {},
@@ -1259,7 +1260,7 @@ function renderExplorer() {
   if (restoreFocus) buttons.find(el => el.dataset.explorerKey === explorerFocusKey)?.focus();
 }
 function render() {
-  syncSiMode(); siView?.update(); summaryView?.update();
+  syncSiMode(); siView?.update(); summaryView?.update(); syncDocuments();
   renderScanProgress(); renderResultPages();
   dvbiWorkspace?.update();
   updateScanOptions();
@@ -2094,7 +2095,7 @@ function editBlockReason() {
   return "";
 }
 function renderInspector() {
-  syncSiMode(); siView?.update(); summaryView?.update();
+  syncSiMode(); siView?.update(); summaryView?.update(); syncDocuments();
   if(palette.mode)renderPalette();
   const panel = $("#inspector");
   if (!panel) return;
@@ -2910,7 +2911,7 @@ function uiState() {
     records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
     history:{all:allTableHistory,entries:workbench.history(data,detail,allTableHistory),page:historyPage},evidence_scope:evidenceScope,
     protocol_source:{resolution:protocolResolution,return_depth:protocolSourceHistory.length},topology:{profile:topology.snapshot?.interpretation_profile,cutoff:topology.snapshot?.at_packet,selected_node:topology.selected,focused_node:topology.focused,expanded_ids:Object.keys(topology.expanded).filter(id=>topology.expanded[id]),search:topology.search,family:topology.family,loaded_nodes:workbench.topologyNodes(topology.snapshot || {}).length,total_nodes:topology.snapshot?.counts?.nodes,loading:topology.loading,stale:topology.stale,error:topology.error,evidence_ref:topology.active,locator_resolution:topology.resolution,return_depth:topology.history.length},inspection_context:inspectionEvidence?.kind || (comparisonEvidence?"comparison":"workspace"),
-    classic_frame:classicState(),unified:siView?.snapshot(),classic_mode:classicMode,tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
+    documents:documentWorkspace?.snapshot(),document_mode:documentMode,classic_frame:classicState(),unified:siView?.snapshot(),classic_mode:classicMode,tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
     diagnostics:{pending:pending.size,error:backendFailure || detailError,recent_responses:recentResponses.slice(),frontend_errors:frontendErrors.slice()},
@@ -3041,8 +3042,9 @@ window.showpsisi = {
 function syncSiMode() {
   const active=classicMode && !dvbiWorkspace.getState().active;
   document.body.classList.toggle('si-mode',active);applyTheme();
-  const panel=$('#unified-si');if(panel){panel.hidden=!active;panel.classList.toggle('si-summary-mode',summaryVisible);panel.classList.toggle('si-tree-hidden',!classicTree);}
-  const summary=$("#transport-si");if(summary)summary.hidden=!active||!summaryVisible;
+  const panel=$('#unified-si');if(panel){panel.hidden=!active;panel.classList.toggle('si-summary-mode',summaryVisible&&!documentMode);panel.classList.toggle('si-document-mode',documentMode);panel.classList.toggle('si-tree-hidden',!classicTree);}
+  const documentsPanel=$('#document-workspace');if(documentsPanel)documentsPanel.hidden=!documentMode;
+  const summary=$("#transport-si");if(summary)summary.hidden=!active||!summaryVisible||documentMode;
   const summaryButton=$("#summary-toggle");if(summaryButton)summaryButton.textContent=summaryVisible?"Return to inspector":"Summary / PID";
   const button=$('#workspace-toggle');if(button)button.textContent=classicMode?'Advanced workspace':'SI Inspector';
   document.body.classList.toggle('classic-configuration',classicConfiguration);document.body.classList.toggle('classic-no-status',!classicStatus);
@@ -3056,19 +3058,55 @@ const summaryPanel=document.createElement('section');summaryPanel.id='transport-
 const summaryButton=document.createElement('button');summaryButton.id='summary-toggle';summaryButton.className='btn';summaryButton.textContent='Summary / PID';workspaceButton.before(summaryButton);
 summaryButton.onclick=()=>{classicMode=true;summaryVisible=!summaryVisible;syncSiMode();summaryView.update();};
 summaryView=TransportSi.create(summaryPanel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record,pid)=>{summaryVisible=false;classicMode=true;syncSiMode();siView.filterPid(pid);siView.selectRecord(record,record.id,null,true,false);}});
-siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,
-  loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
+siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),packet:pid=>openPacket(pid,0),topology:()=>topology.stale?null:topology.snapshot,
+  packet:pid=>openPacket(pid,0),loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
 siPanel.append(summaryPanel);
+const documentsPanel=document.createElement('div');documentsPanel.id='document-workspace';documentsPanel.hidden=true;siPanel.append(documentsPanel);
+documentWorkspace=DocumentWorkspace.create(documentsPanel,{
+ create:(content,d,v)=>{
+  if(d.kind==='si'){
+   const panel=document.createElement('section');panel.className='si-document';content.append(panel);let payload=d.payload;
+   const ui=UnifiedSi.create(panel,{state:()=>payload._view_state||data,detail:()=>payload,pending:()=>false,busy:()=>busy,error:()=>'',inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,loadTopology:async()=>{}});
+   v.update=next=>{payload=next.payload;ui.update();};v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();ui.update();
+  }else if(d.kind==='statistics'){const ui=StatisticsView.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,packet:(pid,index)=>openPacket(pid,index)});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='packet'){const ui=PacketExplorer.create(content,{state:()=>data,busy:()=>busy||!!backendFailure,call,section:id=>inspect(id)},{pid:d.payload.pid,index:d.payload.index});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
+  }else if(d.kind==='summary'){
+   const panel=document.createElement('section');panel.className='transport-si';content.append(panel);
+   const ui=TransportSi.create(panel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record)=>inspect(record.id)});v.update=()=>ui.update();v.dispose=()=>ui.dispose();ui.update();
+  }else{const text=document.createElement('textarea');text.readOnly=true;text.setAttribute('aria-label','Native decoded table');content.append(text);v.update=next=>{const value=next.payload.section_native_text||next.payload.native_text||next.payload.raw_hex||'No selected table';if(text.value!==value)text.value=value;};}
+ },changed:state=>{classicFrame?.update();if(documentMode&&classicMode){const active=state.items.find(d=>d.id===state.active);document.title='ShowPsiSi - '+(active?.title||documentScope());}}
+});
+let documentIdentity='',documentLastDetail='';
+function syncDocuments(){
+ if(!documentWorkspace)return;const identity=[data.source,data.analysis_revision||data.revision].join('|');
+ if(documentIdentity!==identity){documentIdentity=identity;documentWorkspace.reset(identity);documentLastDetail='';}
+ if(documentMode&&detail.id&&!loadingDetail&&detail.id+'@'+data.selected_packet!==documentLastDetail){documentLastDetail=detail.id+'@'+data.selected_packet;openDocument('si');}
+}
+function documentScope(){return String(data.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(data.analysis_revision||data.revision||0)+', '+(data.selected_packet==null?'latest':'packet '+data.selected_packet)+']';}
+function openPacket(pid,index){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid<0?null:pid,index:index||0});syncSiMode();}
+function openDocument(kind,duplicate=false){
+ if(!documentWorkspace)return;const payload=kind==='summary'?{}:structuredClone(detail),key=kind==='summary'?'summary':(detail.id||'empty')+'@'+data.selected_packet;if(kind!=='summary')payload._view_state=structuredClone(data);
+ const title=documentScope()+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
+ documentWorkspace.open(kind,key,title,payload,duplicate);documentLastDetail=detail.id+'@'+data.selected_packet;syncSiMode();
+}
+document.addEventListener('keydown',event=>{if(!documentMode||!classicMode||document.querySelector('dialog[open]'))return;if(event.ctrlKey&&event.key==='F4'){event.preventDefault();documentWorkspace.close();}else if(event.ctrlKey&&event.key==='Tab'){event.preventDefault();documentWorkspace.cycle(event.shiftKey);}});
+
 const framePanel=document.createElement('header');framePanel.id='classic-frame';framePanel.className='classic-frame';$('.titlebar').before(framePanel);
 const helpDialog=document.createElement('dialog');helpDialog.id='classic-help';helpDialog.innerHTML='<h2>ShowPsiSi Help</h2><p>Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to fields and original bytes. Click text to select; double-click text or click +/− to expand. F6 / Shift+F6 changes panes. Alt+Left returns. Card Configuration contains source and scan options. Advanced workspace retains topology, editing, history and DVB-I.</p><button class="btn">Close</button>';$('#app').append(helpDialog);helpDialog.querySelector('button').onclick=()=>helpDialog.close();
 const footer=$('#app > footer');for(const [id,text] of [['product','ShowPsiSi'],['version','development'],['num',''],['scroll','']]){const cell=document.createElement('span');cell.id='classic-'+id;cell.className='classic-status-part';cell.textContent=text;footer.append(cell);}
-function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:data.complete?1:0,features:{}};}
+function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:documentMode?(documentWorkspace?.snapshot().items.length||0):(data.complete?1:0),features:{documents:true,packets:true,bitrate:true}};}
 async function classicCommand(id){const state=classicState();if(!classic.enabled(id,state)){notice(classic.reason(id,state),'warning');return;}
  if(id==='open')await $('#browse').onclick();
  else if(id==='start')scan();else if(id==='stop')cancelScan();else if(id==='pause')pauseScan();
  else if(id==='toolbar')classicToolbar=!classicToolbar;else if(id==='status')classicStatus=!classicStatus;else if(id==='tree')classicTree=!classicTree;
  else if(id==='configuration'){classicConfiguration=!classicConfiguration;syncSiMode();if(classicConfiguration)$('#source').focus();}
- else if(id==='summary'){summaryVisible=true;classicMode=true;syncSiMode();summaryView.update();}
+ else if(id==='new'){documentMode=true;openDocument('si',true);}
+ else if(id==='decoded'){documentMode=true;openDocument('decoded');}
+ else if(id==='packets')openPacket(-1,0);
+ else if(id==='bitrate'){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('statistics','statistics',documentScope()+' - Bitrate / Timing',{});}
+ else if(id==='close')documentWorkspace.close();
+ else if(['cascade','tile','arrange'].includes(id))documentWorkspace.arrange(id);
+ else if(id==='summary'){if(documentMode)openDocument('summary');summaryVisible=true;classicMode=true;syncSiMode();summaryView.update();}
  else if(id==='advanced')$('#workspace-toggle').click();else if(id==='dvbi'){$('#input-kind').value='dvbi';$('#input-kind').dispatchEvent(new Event('change'));}
  else if(id==='about')$('#about').click();else if(id==='index')helpDialog.showModal();else if(id==='messages')$('#messages').click();
  else if(id==='diagnostics')$('#save-diagnostics').click();else if(id==='exit'){try{await invoke('close_application');}catch(error){notice(String(error),true);}}

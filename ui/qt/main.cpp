@@ -280,7 +280,8 @@ class Bridge:public QObject {
                 clearIntentions();emit stateChanged();
             }
             m_error=cancelled?QString():error["message"].toString();emit errorChanged();
-            emit response(method,errorValue);
+            auto reportedError=errorValue;if(method=="query_packet")reportedError["request"]=request.params;
+            emit response(method,reportedError);
         }else{
             if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
             QVariantMap result=resultValue;

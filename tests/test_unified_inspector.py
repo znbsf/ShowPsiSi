@@ -172,6 +172,7 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                     self.assertEqual(stale['raw_hex'],detail['raw_hex'])
                     self.assertEqual(stale['source_packet']['status'],'source_changed')
                     self.assertEqual(stale['source_packet']['raw_hex'],'')
+                    self.assertEqual(stale['source_fragments']['status'],'source_changed')
             finally:core.close()
 
     def test_source_packet_multiple_sections_and_continuation(self):
@@ -196,6 +197,15 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                         self.assertEqual(packet['section_offset'],5)
                         self.assertEqual(packet['section_bytes'],183)
                         self.assertGreater(detail['bytes'],183)
+                        fragments=detail['source_fragments'];self.assertEqual(fragments['status'],'complete');self.assertEqual(len(fragments['fragments']),2)
+                        reassembled=b''
+                        source=path.read_bytes()
+                        for part in fragments['fragments']:
+                            original=bytes.fromhex(part['raw_hex']);self.assertEqual(original,source[part['file_offset']:part['file_offset']+188])
+                            self.assertEqual(part['section_begin'],len(reassembled));reassembled+=original[part['section_offset']:part['section_offset']+part['section_bytes']]
+                        self.assertEqual(reassembled,bytes.fromhex(detail['raw_hex']))
+                        out=Path(os.environ.get('SHOWPSISI_UNIFIED_EVIDENCE_DIR',ROOT/'artifacts/unified-inspector'));out.mkdir(parents=True,exist_ok=True)
+                        (out/'cross-packet-evidence.json').write_text(json.dumps({'state':state,'detail':detail}),encoding='utf-8')
                     elif row['version']==2:self.assertEqual(packet['section_offset'],5+len(pat1))
                     else:self.assertEqual(packet['section_offset'],5)
             finally:core.close()

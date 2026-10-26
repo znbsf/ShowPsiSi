@@ -916,7 +916,13 @@ class BrowserTests(unittest.TestCase):
             self.page.add_init_script("""if(!localStorage.getItem('showpsisi.theme'))localStorage.setItem('showpsisi.theme','dark');
                 window.addEventListener('DOMContentLoaded',()=>document.querySelector('#workspace-toggle').click());""")
         self.page.goto(self.server.url)
-        self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+        try:
+            self.page.wait_for_function('() => window.showpsisi && document.querySelector("#source").value.length > 0')
+        except Exception:
+            self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'-startup.png')),full_page=True)
+            (self.artifacts/(self._testMethodName+'-startup.json')).write_text(json.dumps({'page_errors':self.page_errors,'visible_text':self.page.locator('body').inner_text(),'source':self.page.locator('#source').input_value() if self.page.locator('#source').count() else None,'backend_alive':self.bridge.proc.poll() is None}),encoding='utf-8')
+            self.page.close()
+            raise
 
     def test_classic_default_fields_mouse_grid_and_advanced_return(self):
         p=self.page
@@ -1059,6 +1065,100 @@ class BrowserTests(unittest.TestCase):
         self.classic_command('toolbar');self.assertTrue(p.locator('.classic-toolbar').is_hidden())
         self.classic_command('toolbar');self.assertTrue(p.locator('.classic-toolbar').is_visible())
         self.classic_command('index');self.assertTrue(p.locator('#classic-help').is_visible());p.locator('#classic-help button').click()
+
+    def test_classic_documents_keep_real_views_and_close_restores_previous(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        original=p.evaluate('showpsisi.getDetail().id')
+        self.classic_command('new')
+        active=p.locator('.mdi-active')
+        self.assertGreater(active.locator('.si-field-row').count(),0)
+        active.locator('.si-fields').evaluate('(n)=>{n.scrollTop=80;n.scrollLeft=35;}')
+        before=p.evaluate('showpsisi.getUiState().documents.items[0].view')
+        self.classic_command('decoded')
+        self.assertTrue(p.locator('.mdi-active textarea').input_value())
+        self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll(".mdi-active .si-summary-list tbody tr").length>0')
+        docs=p.evaluate('showpsisi.getUiState().documents')
+        self.assertEqual([d['kind'] for d in docs['items']],['si','decoded','summary'])
+        self.classic_command('tile')
+        self.assertTrue(all(d['mode']=='normal' for d in p.evaluate('showpsisi.getUiState().documents.items')))
+        self.classic_command('cascade')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items[1].x'),24)
+        p.keyboard.press('Control+F4')
+        self.assertTrue(p.locator('.mdi-active textarea').is_visible())
+        p.keyboard.press('Control+F4')
+        after=p.evaluate('showpsisi.getUiState().documents.items[0].view')
+        self.assertEqual(after['selected'],original)
+        self.assertEqual(after['scroll'],before['scroll'])
+        self.assertGreater(p.locator('.mdi-active .si-field-row').count(),0)
+
+    def test_classic_all_packet_tree_context_uses_pointer_owner_and_original_packet(self):
+        self.analyze();p=self.page;p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        nav=p.locator('#unified-si>.si-left .si-navigation')
+        all_packets=nav.locator('[data-key="family:All Packets"]')
+        all_packets.locator('.si-fold').click()
+        self.assertGreater(nav.locator('[data-key^="packet:"]').count(),0)
+        rows=p.evaluate('showpsisi.getState().tables')
+        target=next(r for r in rows if r['id']!=p.evaluate('showpsisi.getDetail().id'))
+        family=nav.locator('[data-key="family:'+target['name']+'"]')
+        if family.get_attribute('aria-expanded')!='true':family.locator('.si-fold').click()
+        row=nav.locator('[data-key="'+target['id']+'"]')
+        row.click(button='right')
+        menu=p.locator('#unified-si>.si-context-menu')
+        self.assertTrue(menu.is_visible());menu.get_by_role('menuitem').first.click()
+        p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getDetail().id===id',arg=target['id'])
+        self.classic_command('packets')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.some(d=>d.kind==="packet"&&d.view?.raw_hex)')
+        packet=p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view')
+        self.assertEqual(len(packet['raw_hex']),376);self.assertEqual(packet['index'],0)
+        self.assertEqual(packet['raw_hex'][:2],'47')
+        active=p.locator('.mdi-active')
+        active.get_by_role('button',name='Next packet',exact=True).click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view.index===1')
+        active.locator('.packet-index').fill('999999999999')
+        active.get_by_role('button',name='Search',exact=True).click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view.error.includes("Packet index must")')
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view.index'),1)
+        p.keyboard.press('Control+F4');self.assertTrue(nav.is_visible())
+
+    def test_classic_cross_packet_fragment_keeps_global_section_offsets(self):
+        from make_fixture import section,word
+        raw=section(0,2,1,b''.join(word(100+i)+word(0xe100+i) for i in range(60)))
+        first=bytes([0x47,0x40,0,0x10,0])+raw[:183]
+        tail=(bytes([0x47,0,0,0x11])+raw[183:]).ljust(188,b'\xff')
+        null=bytes([0x47,0x1f,0xff,0x10])+b'\xff'*184
+        path=self.output/'cross-packet.ts';path.write_bytes(first+tail+null*4)
+        self.analyze(path);p=self.page;p.wait_for_function('()=>showpsisi.getUiState().settled&&!!showpsisi.getDetail().id')
+        parts=p.evaluate('showpsisi.getDetail().source_fragments')
+        self.assertEqual(parts['status'],'complete');self.assertEqual(len(parts['fragments']),2)
+        p.get_by_label('Source packet fragment',exact=True).select_option('1')
+        p.locator('.si-packet [data-byte="8"]').click()
+        state=p.evaluate('showpsisi.getUiState().unified')
+        self.assertEqual(state['byteCursor'],187);self.assertEqual(state['packetFragment'],1)
+        self.assertLessEqual(state['range']['offset'],187)
+        self.assertGreater(state['range']['offset']+state['range']['length'],187)
+        self.assertTrue('si-selected' in p.locator('.si-packet [data-byte="8"]').get_attribute('class'))
+        p.locator('.si-packet [data-byte="0"]').click();self.assertIsNone(p.evaluate('showpsisi.getUiState().unified.range'))
+
+    def test_classic_bitrate_timing_measured_clock_and_exact_packet_jump(self):
+        from test_transport_timing import clock_fixture
+        path=self.output/'measured-clock.ts';path.write_bytes(clock_fixture([0,270000,540000]))
+        self.analyze(path);p=self.page
+        self.classic_command('summary')
+        self.assertIn('1,504,000 bps (PCR)',p.get_by_label('BitRates',exact=True).input_value())
+        self.classic_command('bitrate')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="statistics")?.view.rows.length>0')
+        self.assertTrue(p.locator('.mdi-active .bitrate-track').first.is_visible())
+        p.locator('.mdi-active [data-tab="timing"]').click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="statistics")?.view.timing&&showpsisi.getUiState().documents.items.find(d=>d.kind==="statistics")?.view.rows.length===3')
+        p.locator('.mdi-active tbody tr').nth(1).dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="packet")?.view.index===10')
+        packet=p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="packet").view')
+        self.assertEqual(packet['pid'],256)
+        p.keyboard.press('Control+F4')
+        self.assertTrue(p.locator('.mdi-active [data-tab="timing"]').is_visible())
+        self.assertEqual(p.locator('.mdi-active tbody tr').count(),3)
 
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)

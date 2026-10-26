@@ -4,8 +4,9 @@
 #include <numeric>
 #include <vector>
 #include "nlohmann/json.hpp"
+#include "TransportTiming.h"
 
-// Scan-owner-only counters. Never retain a per-packet allocation or infer clocks.
+// Scan-owner-only counters; PCR measurement is bounded and explicitly scoped.
 namespace transportstats {
 using J=nlohmann::json;
 struct Pid {
@@ -16,9 +17,14 @@ class Statistics {
     std::vector<Pid> pids=std::vector<Pid>(8192);
     uint64_t observed=0,badSync=0,errorPackets=0,tei=0,scrambled=0,malformed=0;
     size_t distinct=0;
+    transporttiming::Timing timing;
 public:
-    void clear(){std::fill(pids.begin(),pids.end(),Pid{});observed=badSync=errorPackets=tei=scrambled=malformed=0;distinct=0;}
+    void clear(){timing.clear();std::fill(pids.begin(),pids.end(),Pid{});observed=badSync=errorPackets=tei=scrambled=malformed=0;distinct=0;}
+    void boundary(){timing.boundary();}
+    J timingPage(size_t offset,size_t limit) const {return timing.page(offset,limit);}
+    double effectiveRate(double configured) const {if(configured>0)return configured;auto m=timing.summary();return m["measured_bitrate_bps"].is_number()?m["measured_bitrate_bps"].get<double>():0.0;}
     void observe(const uint8_t* b,uint64_t index){
+        timing.observe(b,index);
         ++observed;
         if(b[0]!=0x47){++badSync;++errorPackets;return;}
         const auto pid=unsigned((b[1]&0x1f)<<8)|b[2];
@@ -32,8 +38,9 @@ public:
         tei+=(b[1]&0x80)!=0;scrambled+=(b[3]&0xc0)!=0;malformed+=bad;
         errorPackets+=bad||(b[1]&0x80)!=0;
     }
+    J pidIndex() const {J out=J::array();for(unsigned i=0;i<pids.size();++i)if(pids[i].packets)out.push_back(i);return out;}
     J summary(double bitrate) const {
-        return {{"scope","all observed scan windows; not the selected historical cutoff"},
+        auto measured=timing.summary();J out={{"scope","all observed scan windows; not the selected historical cutoff"},
             {"observed_packets",observed},{"pid_count",distinct},{"bad_sync_packets",badSync},
             {"tei_packets",tei},{"scrambled_packets",scrambled},{"malformed_header_packets",malformed},
             {"error_packets",errorPackets},
@@ -44,8 +51,11 @@ public:
             {"observed_duration_seconds",bitrate>0?J(double(observed)*1504.0/bitrate):J()},
             {"duration_scope","Sum of observed packet windows from supplied bitrate; not elapsed time across gaps"},
             {"pcr_derived",false}};
+        out["timing"]=measured;out["measured_bitrate_bps"]=measured["measured_bitrate_bps"];out["effective_bitrate_bps"]=bitrate>0?J(bitrate):measured["measured_bitrate_bps"];
+        if(bitrate<=0&&!measured["measured_bitrate_bps"].is_null()){out["rate_basis"]="PCR-derived normalized captured 188-byte TS bitrate";out["observed_duration_seconds"]=measured["measured_duration_seconds"];out["duration_scope"]=measured["duration_scope"];out["pcr_derived"]=true;}return out;
     }
     J page(size_t offset,size_t limit,bool errorsOnly,const std::string& sort,bool descending,double bitrate) const {
+        const double rate=effectiveRate(bitrate);
         std::vector<unsigned> order;
         for(unsigned i=0;i<pids.size();++i)if(pids[i].packets&&(!errorsOnly||pids[i].tei||pids[i].malformed))order.push_back(i);
         std::sort(order.begin(),order.end(),[&](unsigned a,unsigned b){
@@ -60,8 +70,8 @@ public:
                 {"payload_packets",p.payload},{"adaptation_packets",p.adaptation},{"tei_packets",p.tei},
                 {"scrambled_packets",p.scrambled},{"malformed_header_packets",p.malformed},
                 {"first_packet",p.first},{"last_packet",p.last},
-                {"bitrate_bps",bitrate>0?J(fraction*bitrate):J()},
-                {"packets_per_second",bitrate>0?J(fraction*bitrate/1504.0):J()}});
+                {"bitrate_bps",rate>0?J(fraction*rate):J()},
+                {"packets_per_second",rate>0?J(fraction*rate/1504.0):J()}});
         }
         const auto next=offset+items.size();
         return {{"items",items},{"total",order.size()},{"offset",offset},{"next_offset",next<order.size()?J(next):J()},

@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Window
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQml.Models
 import "../tauri/web/inspector-model.js" as Model
 
 SplitView {
@@ -58,7 +59,7 @@ SplitView {
     property var navigationOrigin: ({})
     property var selectionFilter: ({})
     property var pendingRestore: null
-    onDetailChanged: if(detail.id && detail.id!==selectionFilter.id)selectionFilter={id:detail.id,page:page,family:family,query:query,pidFilter:pidFilter}
+    onDetailChanged: {packetFragment=0;if(detail.id && detail.id!==selectionFilter.id)selectionFilter={id:detail.id,page:page,family:family,query:query,pidFilter:pidFilter}}
     property int page: 0
     property string family: "All tables"
     property string query: ""
@@ -66,6 +67,7 @@ SplitView {
     property bool hexOpen: true
     property real hexFraction:0.40
     property int selectedFieldIndex: -1
+    signal packetRequested(int pid)
     property bool treeVisible:true
     property bool externalVisible:false
     property alias externalContainer:externalPane
@@ -147,7 +149,8 @@ SplitView {
                 out.push({kind:'record',key:r.id,label:Model.inspector.navigationTitle(r,tableTrees[r.id]),record:r,depth:2});
                 if(expandedRecords[r.id])out=out.concat(Model.inspector.tableNavigation(tableTrees[r.id],r,r.id,treeClosed,treeLimits,3));
             });
-        });return out;
+        });
+        Model.inspector.transportNavigation(state,records,view.familyOpen,query.toLowerCase()).forEach(function(row){out.push(row);if(row.kind==='record'&&expandedRecords[row.key])out=out.concat(Model.inspector.tableNavigation(tableTrees[row.record.id],row.record,row.key,treeClosed,treeLimits,row.depth+1));});return out;
     }
     onRecordsChanged: page=Math.min(page,Math.max(0,Math.ceil(records.length/100)-1))
     onFamilyChanged: page=0
@@ -184,7 +187,7 @@ SplitView {
     }
     onSelectedPathChanged: {selectedFieldIndex=-1;selectedByte=-1;}
     function captureContext() {
-        return {expandedRecords:expandedRecords,treeClosed:treeClosed,treeLimits:treeLimits,openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
+        return {packetFragment:packetFragment,expandedRecords:expandedRecords,treeClosed:treeClosed,treeLimits:treeLimits,openFamilies:openFamilies,id:detail.id,path:selectedPath,closed:closed,limits:limits,page:page,family:family,query:query,pidFilter:pidFilter,
             unmapped:unmappedSelection,byteCursor:selectedByte,packetCursor:selectedPacketByte,fieldClosed:fieldClosed,fieldIndex:selectedFieldIndex,field:selectedField?{nodePath:selectedField.nodePath,name:selectedField.name,bit_offset:selectedField.bit_offset,bit_length:selectedField.bit_length}:null,fieldColumns:fieldColumnWidths.slice(),fieldScroll:fieldList.contentY,fieldX:fieldList.contentX,hexFraction:hexFraction,hexScroll:hexRows.contentY,hexX:bytes.contentX,packetScroll:packetRows.contentY,packetX:packetBytes.contentX,hexOpen:hexOpen,scroll:nav.contentY,navX:nav.contentX,focusKey:navigation[nav.currentIndex] ? navigation[nav.currentIndex].key : ""};
     }
     function filterPid(pid) {
@@ -199,7 +202,7 @@ SplitView {
     function revealSelection() {
         if(pendingRestore) {
             if(detail.id!==pendingRestore.id)return;
-            var saved=pendingRestore;pendingRestore=null;
+            var saved=pendingRestore;pendingRestore=null;packetFragment=saved.packetFragment||0;
             fieldClosed=saved.fieldClosed || {};hexFraction=saved.hexFraction || 0.40;hexOpen=saved.hexOpen===undefined?true:saved.hexOpen;
             if(saved.fieldColumns)fieldColumnWidths=saved.fieldColumns.slice();
             selectedFieldIndex=saved.field ? fieldRows.findIndex(function(f){return !f.groupPath && f.nodePath===saved.field.nodePath && f.name===saved.field.name && f.bit_offset===saved.field.bit_offset && f.bit_length===saved.field.bit_length;}) : saved.fieldIndex===undefined?-1:saved.fieldIndex;
@@ -248,6 +251,7 @@ SplitView {
     function activate(row) {
         if(!row || row.kind==='info')return;
         if(row.kind==='family'){if(row.sourceRecord)selectRecord(row.sourceRecord,undefined,undefined,false);return;}
+        if(row.kind==='packet'){packetRequested(row.pid);return;}
         if(row.kind==='record'){selectRecord(row.record,row.key,undefined,false);return;}
         if(row.kind==='more'){var next=Object.assign({},treeLimits);next[row.limitKey]=(next[row.limitKey] || 100)+100;treeLimits=next;return;}
         if(row.record.id!==detail.id)selectRecord(row.record,row.ownerKey,row.node.path);
@@ -271,6 +275,21 @@ SplitView {
             return;
         }
         var next=Object.assign({},treeClosed);next[row.key]=!next[row.key];treeClosed=next;
+    }
+    property var contextRow:null
+    property var contextTargets:[]
+    function openContext(row,x,y){contextRow=row;contextTargets=Model.inspector.contextTargets(row,state);contextMenu.popup(x,y);}
+    Menu {
+        id:contextMenu;parent:view
+        MenuItem{text:'View Tables';enabled:false}
+        Instantiator {
+            model:view.contextTargets
+            delegate:MenuItem {required property var modelData;text:modelData.label;onTriggered:{var target=modelData;var record=(view.state.tables||[]).find(function(r){return r.id===target.id;});if(record)view.selectRecord(record);}}
+            onObjectAdded:function(index,object){contextMenu.insertItem(index+1,object);}
+            onObjectRemoved:function(index,object){contextMenu.removeItem(object);}
+        }
+        MenuItem{text:'No retained section for this object';visible:!view.contextTargets.length;enabled:false}
+        MenuItem {text:'Packet Explorer';visible:!!view.contextRow&&(view.contextRow.record!==undefined||view.contextRow.pid!==undefined);onTriggered:view.packetRequested(view.contextRow.record?view.contextRow.record.pid:view.contextRow.pid)}
     }
     function focusNavigation(){nav.forceActiveFocus();}
     function nextRegion(backwards){
@@ -299,11 +318,14 @@ SplitView {
     readonly property color classicValue:'#ff0000'
     readonly property string classicFont:'Courier New'
     readonly property string sourceName:String(view.state.source || 'Transport stream').split('\\').pop().split('/').pop()
-    readonly property var sourcePacket:view.detail.source_packet || {}
+    property int packetFragment:0
+    readonly property var packetFragments:(view.detail.source_fragments||{}).status==='complete'?view.detail.source_fragments.fragments:[]
+    readonly property var sourcePacket:packetFragments.length?(packetFragments[packetFragment]||{}):view.detail.source_packet||{}
+    onActiveRangeChanged: {if(activeRange&&packetFragments.length){var at=activeRange.offset;for(var i=0;i<packetFragments.length;i++){var f=packetFragments[i];if(at>=f.section_begin&&at<f.section_begin+f.section_bytes){packetFragment=i;break;}}}}
     readonly property string packetRaw:sourcePacket.raw_hex || ''
     function fieldValue(value){return String(value || '').replace(/^0x0+([0-9A-F])/,'0x$1').replace(' [','[');}
-    function packetSelected(offset){return sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes && byteSelected(offset-sourcePacket.section_offset);}
-    function packetClick(offset){if(sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes)selectByte(offset-sourcePacket.section_offset);else {selectedFieldIndex=-1;selectedByte=-1;unmappedSelection=true;}selectedPacketByte=offset;}
+    function packetSelected(offset){return sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes && byteSelected(offset-sourcePacket.section_offset+(sourcePacket.section_begin||0));}
+    function packetClick(offset){if(sourcePacket.section_offset!==null && sourcePacket.section_offset!==undefined && offset>=sourcePacket.section_offset && offset<sourcePacket.section_offset+sourcePacket.section_bytes)selectByte(offset-sourcePacket.section_offset+(sourcePacket.section_begin||0));else {selectedFieldIndex=-1;selectedByte=-1;unmappedSelection=true;}selectedPacketByte=offset;}
     component ClassicButton:Button {
         implicitHeight:23;implicitWidth:Math.max(44,contentItem.implicitWidth+14)
         contentItem:TextLabel {text:parent.text;font.family:'Tahoma';font.pixelSize:11;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter;color:parent.enabled?'black':'#808080'}
@@ -361,9 +383,10 @@ SplitView {
                 Keys.onSpacePressed:view.fold(view.navigation[currentIndex])
                 Keys.onRightPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && !view.rowOpen(r))view.fold(r);else if(navigation[currentIndex+1] && navigation[currentIndex+1].depth>r.depth)currentIndex++;}
                 Keys.onLeftPressed:{var r=view.navigation[currentIndex];if(view.expandable(r) && view.rowOpen(r))view.fold(r);else if(r){for(var i=currentIndex-1;i>=0;--i)if(view.navigation[i].depth<r.depth){currentIndex=i;break;}}}
-                Keys.onPressed:function(e){if(e.key===Qt.Key_Home){currentIndex=0;e.accepted=true;}else if(e.key===Qt.Key_End){currentIndex=count-1;e.accepted=true;}}
+                Keys.onPressed:function(e){if(e.key===Qt.Key_Menu||(e.key===Qt.Key_F10&&(e.modifiers&Qt.ShiftModifier))){view.openContext(view.navigation[currentIndex],nav.x+20,nav.y+Math.max(0,currentIndex*21-nav.contentY)+20);e.accepted=true;}else if(e.key===Qt.Key_Home){currentIndex=0;e.accepted=true;}else if(e.key===Qt.Key_End){currentIndex=count-1;e.accepted=true;}}
                 onCurrentIndexChanged:if(!view.syncingNavigation)positionViewAtIndex(currentIndex,ListView.Contain)
                 delegate:ItemDelegate {
+                    id:navigationDelegate
                     required property var rowData
                     required property int index
                     property var modelData:rowData
@@ -382,6 +405,7 @@ SplitView {
                             TextLabel {id:navText;anchors.fill:parent;anchors.leftMargin:2;verticalAlignment:Text.AlignVCenter;text:modelData.label;font.pixelSize:13;elide:Text.ElideRight}
                         }
                     }
+                    TapHandler{acceptedButtons:Qt.RightButton;onTapped:function(eventPoint){nav.currentIndex=index;nav.forceActiveFocus();var point=navigationDelegate.mapToItem(view,eventPoint.position.x,eventPoint.position.y);view.openContext(modelData,point.x,point.y);}}
                     onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.activate(modelData);}
                     onDoubleClicked:view.fold(modelData)
                     ToolTip {visible:parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
@@ -516,6 +540,11 @@ SplitView {
                     Layout.fillWidth:true;Layout.preferredWidth:1;Layout.fillHeight:true;spacing:1
                     Rectangle {Layout.fillWidth:true;implicitHeight:25;color:classicFace;border.color:'#ffffff'
                         TextLabel {anchors.fill:parent;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter;font.family:'Tahoma';font.pixelSize:12;text:'Section No '+(detail.section || 0)+' : Source Packet '+(view.sourcePacket.packet_index===undefined?'—':view.sourcePacket.packet_index)}
+                    }
+                    ComboBox {
+                        objectName:'sourcePacketFragment';Layout.fillWidth:true;implicitHeight:23;visible:view.packetFragments.length>1;font.pixelSize:11
+                        model:view.packetFragments.map(function(f,i){return 'Part '+(i+1)+'/'+view.packetFragments.length+' — packet '+f.packet_index+', file '+f.file_offset;})
+                        currentIndex:view.packetFragment;onActivated:view.packetFragment=currentIndex
                     }
                     Flickable {
                         id:packetBytes;objectName:'siPacketHex';Layout.fillWidth:true;Layout.fillHeight:true;contentWidth:Math.max(width,390);contentHeight:height;clip:true;flickableDirection:Flickable.HorizontalFlick

@@ -29,15 +29,19 @@ Item {
     TestCase {
         name:'UnifiedInspectorRealEngineEvidence'
         property var referenceTables:[]
+        property var baseState:({})
+        property var baseCaptures:[]
+        property var crossPacket:({})
         when:windowShown
         function initTestCase() {
             var xhr=new XMLHttpRequest();xhr.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/engine-evidence.json'),false);xhr.send();
             var evidence=JSON.parse(xhr.responseText);
             var refs=new XMLHttpRequest();refs.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/reference-trees.json'),false);refs.send();referenceTables=JSON.parse(refs.responseText);
-            host.captures=evidence.details;host.analysisState=evidence.state;inspector.organization=evidence.topology;
+            baseState=evidence.state;baseCaptures=evidence.details;var cross=new XMLHttpRequest();cross.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/cross-packet-evidence.json'),false);cross.send();crossPacket=JSON.parse(cross.responseText);host.captures=evidence.details;host.analysisState=evidence.state;inspector.organization=evidence.topology;
             host.inspect(evidence.details[0].id,-1);
         }
         function init() {
+            host.analysisState=baseState;host.captures=baseCaptures;
             inspector.pidFilter=-1;inspector.family='All tables';inspector.query='';
             inspector.navigationOrigin={};inspector.selectionFilter={};inspector.pendingRestore=null;inspector.pendingNode=null;inspector.history=[];
             inspector.expandedRecords={};inspector.treeClosed={};inspector.treeLimits={};
@@ -413,6 +417,24 @@ Item {
             }
             aligned();inspector.resizeFieldColumn(0,inspector.fieldColumnWidth(0)+120);fields.contentX=70;wait(30);aligned();
             fields.positionViewAtEnd();wait(30);aligned();fields.contentX=0;
+        }
+        function test_observed_packet_branches_and_exact_context_owner(){
+            verify((host.analysisState.transport_pids||[]).length>0);
+            var branch=inspector.navigation.find(function(r){return r.name==='All Packets';});verify(branch);inspector.fold(branch);
+            compare(inspector.navigation.filter(function(r){return r.kind==='packet';}).length,host.analysisState.transport_pids.length);
+            verify(inspector.navigation.some(function(r){return r.name==='DSMCC';}));
+            var target=inspector.records.find(function(r){return r.name==='PMT';});verify(target);
+            var row=inspector.navigation.find(function(r){return r.record&&r.record.id===target.id;});
+            if(!row){var families=Object.assign({},inspector.openFamilies);families.PMT=true;inspector.openFamilies=families;wait(20);row=inspector.navigation.find(function(r){return r.record&&r.record.id===target.id;});}
+            verify(row);inspector.openContext(row,100,100);wait(20);compare(inspector.contextTargets.length,1);compare(inspector.contextTargets[0].id,target.id);
+            keyClick(Qt.Key_Escape);
+        }
+        function test_cross_packet_mapping_uses_section_and_file_coordinates(){
+            host.analysisState=crossPacket.state;host.captures=[crossPacket.detail];host.detail=crossPacket.detail;wait(30);
+            compare(inspector.packetFragments.length,2);inspector.packetFragment=1;wait(10);
+            compare(inspector.sourcePacket.packet_index,2);compare(inspector.sourcePacket.section_begin,183);
+            inspector.packetClick(8);compare(inspector.selectedByte,187);verify(inspector.activeRange);verify(inspector.activeRange.offset<=187&&inspector.activeRange.offset+inspector.activeRange.length>187);verify(inspector.packetSelected(8));
+            inspector.packetClick(0);verify(inspector.unmappedSelection);compare(inspector.activeRange,null);
         }
         function test_capture_review_scenes() {
             inspector.family='All tables';inspector.query='';

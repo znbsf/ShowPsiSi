@@ -398,3 +398,21 @@ Offscreen Qt and Chromium checks do not establish Windows/macOS desktop dialogs,
 WebView2/GPU behavior, clean-machine installation or standard-wide conformance.
 Exact-revision Windows packaging/runtime checks and clean-host acceptance remain
 separate release gates; an earlier build's pass cannot certify a later candidate.
+
+
+## Original packet and timing inspection (local 2026-10-26 increment)
+
+Application-tested query_packet reads unchanged accepted source files and returns
+188-byte TS plus actual 192-byte prefix / 204-byte parity framing bytes. PID
+search is bounded and continuation-based. inspect.source_fragments verifies
+first-occurrence packet/section coordinate mapping, including continuation
+packets; unavailable mappings remain explicit. No media decoding is implied.
+query_timing exposes bounded PCR observations, wrap-aware captured-TS bitrate
+and trusted-interval duration; gaps, discontinuities, malformed/errored packets,
+non-increasing clocks and intervals over ten seconds break measurement chains.
+Continuity counters are an observed-window diagnostic, not full TR 101 290
+conformance. Raw PCR samples cap at 4096; total counters remain scan-global.
+Tests: test_packet_inspection.py, test_transport_timing.py and the original
+section/source mapping regressions in test_unified_inspector.py. Native Windows
+mouse/DPI acceptance remains distinct from real-engine component/browser and
+Qt offscreen integration checks.

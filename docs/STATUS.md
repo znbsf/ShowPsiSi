@@ -1,5 +1,14 @@
 # ShowPsiSi status
 
+2026-10-26 steps 07–11 implemented: independent document instances, observed-PID
+and DSMCC branches with exact pointer context, source packet navigation,
+verified cross-packet section fragments, and bounded PCR/continuity evidence
+with Bitrate/Timing views. Latest combined local suite: 40 passed, no skips.
+Qt components: 52 actual cases / 60 PASS including lifecycle; complete Qt
+offscreen checks cover real Hotbird windows, packet bytes and measured PCR.
+Final native Tauri restaging and mouse/DPI acceptance remain step 17.
+Next: step 12 service / EIT / AIT provenance navigation. No hosted CI.
+
 2026-10-26 step 06 implemented: original toolbar bitmap and shared menu rules,
 Ready/Start file flow, reversible tree/toolbar/status visibility, and Summary
 alongside the left tree. Qt local build + 10 full-app offscreen observations,

@@ -15,6 +15,16 @@ complete EPG schedule or on-air validity is inferred. The service/ES/EPG/AIT
 source navigation is tested through the production core and browser UI; real
 Qt service rendering is separately covered by full-application offscreen checks.
 
+DSM-CC content inspection now exposes verified uncompressed module bytes,
+bounded BIOP objects and exact-key bindings within one PID/download/announcement
+epoch. DSI ObjectLocation is a declaration, not receiver activation. Incomplete
+modules never yield fabricated bytes or a complete hash; damaged BIOP retains a
+validated prefix and does not resolve partial targets as complete. Unknown
+compression/profile/encoding stays explicit. Read-only Java class envelope and
+names are interpreted without class loading, execution or bytecode verification.
+The actual reconstructed M12/M13 content window chain is locally tested in the
+browser and Qt offscreen; native desktop and output delivery remain separate.
+
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets and independently imported local

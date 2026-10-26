@@ -602,7 +602,7 @@ application source and the verified local executable hashes remain unchanged.
 | 10 | 跨包来源片段与精确定位 | 跨包 section 的每段真实 TS 来源可达；区分文件/包/section 坐标与 188/192/204 封装；位范围与未知状态准确；不造重组包 | APP-010、VIEW-021、MED-002/005/011 | 已实现：首个观测 occurrence 的全部可信来源片段，双 hex 可切换并使用全局 section 偏移；超过界限或不可靠明确不可映射 |
 | 11 | 统计、错误与 Timing/Bitrate | 先补用户可见统计和来源说明；独立 Bitrate 条形与 Timing 页面有可信时钟、范围、单位、wrap/跳变处理；无时钟显示 unknown；诊断区分检测范围 | VIEW-009～016、APP-013/014 | 已实现：捕获流 PCR 测量、可信区间时长、原始 Timing 分页、绿条码率及跳包；无时钟 Unknown，范围明确 |
 | 12 | 服务、EIT/EPG 与 AIT 追查 | 同 SID 不同 TS、共享 PID 不串源；服务→具体 PMT/ES/EIT/应用→证据可返回；缺失关联明确显示，不靠 ID 猜测 | VIEW-024～033 | 已实现：完整 ONID/TSID/SID 服务身份、ES/EPG/AIT 来源跳转及返回；同 SID、共享 PID 与歧义反例通过 |
-| 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 待实施 |
+| 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 内容浏览已实现：DSI→模块→对象/绑定→只读内容、Class 与配置，两端实测；导出在 16 接入，原生验收在 17 |
 | 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 待实施 |
 | 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 待实施 |
 | 16 | 保存、复制、输出与设置对齐 | 每种支持输出有范围/单位/来源；取消/覆盖/失败正确；配置 Cancel 不提交，分析设置标明生效时点；未支持打印/帮助入口明确 | APP-015～020、WIN-030～044 | 待实施 |
@@ -731,3 +731,26 @@ Service、ES、EPG、Applications 使用同一 query_service 响应；双击/Ent
 PMT 组件及准确结构路径，4 项观察通过且无 QML 错误。
 证据位于原始仓库 ignored artifacts/si-service-final.log、si-service-qt-runtime.log。
 原生鼠标与 DPI 验收仍归步骤 17，不以离屏结果替代。
+
+## DSM-CC 对象内容检查点（2026-10-26，步骤 13 内容部分）
+
+两端独立 DSM-CC / OC Files 窗口提供 Modules、OC Files、OC Hierarchy、
+BIOP List；DSI 的 ObjectLocation 可以进入当前同 PID/download 的模块与对象。
+模块保留宣告代次、版本、尺寸、缺块、源 section 和 SHA-256；完整模块才提供内容。
+BIOP 损坏保留已验证前缀，引用目标为部分 BIOP 时不标已解析；重复键、版本不符、
+跨 carousel、缺块、未知 profile 均保留原因。目录循环仅针对当前导航路径拦截。
+库存按已验证模块对象提供，名称尚未解成路径时明确采用 object key。
+
+内容支持按 4096 字节分页的 hex、严格 UTF-8 文本、只读 Class Info；Class 不加载、
+不执行，属性正文/字节码验证不在当前解释范围。Class 字符串上限 1000 且保留总数，
+fields/methods 4096 超限明确报错；模块 16 MiB、快照工作 64 MiB、对象 4096 有界。
+未压缩模块可解释；压缩模块仍保留原字节与无法解析状态，不宣称展开支持。
+导出接入步骤 16，真实桌面与 DPI 验收归步骤 17。
+
+本地验证：45 项引擎/浏览器检查通过；完整 Qt 离屏从实际重建输入的 DSI 进入
+SRG、目录、M12 八个 Class，再进入 M13 configuration.txt。八个内部类名分别核对，
+配置为 49,528 字节、SHA-256 4050ad6c70ed0686b18f275421b21fdfbec2052aea8efd56f355f912110e03bb。
+浏览器相同窗口链通过，并逐页拼回配置全文件后核对同一 SHA-256。
+输入为参考工程的完整捕获重建输入，不把它当作原始短捕获的完整对象证据。
+ignored 证据：si-carousel-final.log、si-carousel-reference-web.log、
+si-carousel-reference-qt-runtime.log、si-frame-20261026/carousel-reference.json。

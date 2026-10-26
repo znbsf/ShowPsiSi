@@ -901,6 +901,73 @@
       "annotations": {
         "readOnlyHint": true
       }
+    },
+    {
+      "name": "query_carousel",
+      "description": "Read exact DSM-CC module epoch, verified BIOP objects and paged immutable content; read-only class interpretation. No execution or inferred cross-carousel association.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "module_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "module_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "announcement_epoch_order": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "object_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4096
+          },
+          "download_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "object_key_hex": {
+            "type": "string",
+            "maxLength": 510
+          },
+          "inventory": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "source_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
     }
   ]
 }

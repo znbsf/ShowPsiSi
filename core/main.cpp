@@ -279,6 +279,7 @@ struct Record {
 #include "SignalMetadata.h"
 #include "SatelliteMetadata.h"
 #include "ApplicationSignalling.h"
+#include "CarouselContent.h"
 #include "SignalTopology.h"
 #include "ApplicationCarriage.h"
 #include "TransportStatistics.h"
@@ -813,6 +814,65 @@ public:
         J out={{"response_mode","compact"},{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"analysis_revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"bitrate",bitrate},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"text_charset",duck.charsetIn()->name().toUTF8()},{"time_reference",duck.timeReferenceName().toUTF8()},{"selected_packet",at==UINT64_MAX?J():J(at)},{"coverage",cov},{"result_counts",counts},{"progress_fraction",plannedPackets?double(scannedPackets)/plannedPackets:0.0},{"demux",demuxStatus},{"timing",{{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false}}},{"metrics",{{"scan_ms_basis","Wall elapsed time including pauses and owner finalization; excludes client result hydration"},{"first_section_ms",firstMs},{"scan_ms",(analysisStatus=="analyzing"||analysisStatus=="paused"||analysisStatus=="finalizing")?ms(began):totalMs}}}};
         out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();
         appendStandardsMetadata(out);return out;
+    }
+    J queryCarousel(const J& args) {
+        if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete carousel analysis_revision");
+        if(standardsContext!="dvb")throw std::runtime_error("Carousel content requires explicit DVB interpretation");
+        const auto id=args.at("source_id").get<std::string>();const auto found=ids.find(id);if(found==ids.end())throw std::runtime_error("Unknown carousel source");const auto& record=records.at(found->second);
+        const uint64_t cutoff=args.value("at_packet",packets-1);if(cutoff>=packets||record.ends.empty()||record.ends.front()>cutoff||!record.current||!record.valid)throw std::runtime_error("Carousel source is not current valid evidence at cutoff");
+        auto message=dsmccsignalling::parse(duck,record);J gateway=J::object();
+        if(record.tid==0x3b&&record.raw.size()>=44&&u16(record.raw,10)==0x1006){
+            biopwire::DsiMessage dsi;std::string error;if(!biopwire::decode_dsi_message(record.raw.data()+8,record.raw.size()-12,dsi,error))throw std::runtime_error(error);
+            biopwire::BiopIor ior;J profiles=J::array();std::set<uint32_t> downloads;
+            if(!dsi.private_data.empty()&&!biopwire::decode_biop_ior(dsi.private_data.data(),dsi.private_data.size(),ior,error))throw std::runtime_error(error);
+            for(const auto& p:ior.profiles){profiles.push_back(carouselcontent::profile(p));if(p.location_parsed)downloads.insert(p.carousel_id);}
+            gateway={{"transaction_id",dsi.header.transaction_id},{"server_id_hex",hex(dsi.server_id)},{"profiles",profiles},{"download_candidates",downloads},{"scope","DSI ObjectLocation declarations only; association stays within this observed PID"}};
+            if(args.contains("download_id")){if(!downloads.count(args.at("download_id").get<uint32_t>()))throw std::runtime_error("Download is not declared by this DSI ObjectLocation");message.downloadId=args.at("download_id");}
+            else if(downloads.size()==1)message.downloadId=*downloads.begin();
+            else return {{"analysis_revision",revision},{"source",pathUtf8(source)},{"source_id",id},{"pid",record.pid},{"at_packet",cutoff},{"status","download_selection_required"},{"gateway",gateway},{"modules",J::array()},{"scope","Choose an explicitly declared download; absent/ambiguous DSI identity is not inferred"}};
+        }else{if(!message.valid)throw std::runtime_error("Unsupported or invalid DSM-CC message; inspect original section");if(args.contains("download_id")&&args.at("download_id")!=message.downloadId)throw std::runtime_error("Download disagrees with source message");}
+        const auto window=coverage.value("partial",false)?segmentRecords(cutoff):std::vector<Record>{};const auto snapshot=dsmccsignalling::reconstruct(duck,coverage.value("partial",false)?window:records,record.pid,message.downloadId,cutoff);
+        J out={{"analysis_revision",revision},{"source",pathUtf8(source)},{"source_id",id},{"pid",record.pid},{"download_id",message.downloadId},{"at_packet",cutoff},{"status",snapshot.status},{"diagnostics",snapshot.diagnostics},{"modules",J::array()},{"scope","Current announcement epoch in the captured contiguous window; DSI ObjectLocation declarations when present; no decompression, receiver installation or execution"}};
+        if(!gateway.empty())out["gateway"]=gateway;
+        for(const auto& [mid,m]:snapshot.modules){J blocks=J::array(),sources=J::array(),missing=J::array();for(size_t n=0;n<m.expectedBlocks&&missing.size()<4096;++n)if(!m.blocks.count(uint16_t(n)))missing.push_back(n);for(const auto& [number,r]:m.blocks)blocks.push_back({{"number",number},{"source_id",r->id},{"bytes",r->raw.size()-30},{"module_offset",size_t(number)*m.blockSize},{"section_offset",26}});for(const auto& [sid,source]:m.sources)sources.push_back({{"source_id",sid},{"completion_packet",source.packet},{"completion_order",source.order},{"role",source.record->tid==0x3c?"block":"announcement"}});
+            out["modules"].push_back({{"module_id",mid},{"module_version",m.version},{"announcement_epoch_order",m.epochOrder},{"announcement_epoch_packet",m.epochPacket},{"status",snapshot.status=="resource_limit"?"resource_limit":m.status},{"declared_bytes",m.size},{"block_size",m.blockSize},{"expected_blocks",m.expectedBlocks},{"received_blocks",m.blocks.size()},{"duplicate_observations",m.duplicateObservations},{"missing_blocks",missing},{"missing_total",m.expectedBlocks>=m.blocks.size()?m.expectedBlocks-m.blocks.size():0},{"sha256",m.status=="complete"?J(m.sha256):J()},{"module_info_hex",hex(m.info)},{"reasons",m.reasons},{"blocks",blocks},{"sources",sources}});
+        }
+        if(args.value("inventory",false)){
+            out["inventory"]=J::array();size_t work=0;bool limited=false;
+            for(const auto& [mid,m]:snapshot.modules){if(m.status!="complete"||snapshot.status=="resource_limit")continue;if(work+m.size>dsmccsignalling::MaxSnapshotBytes){limited=true;break;}work+=m.size;auto raw=carouselcontent::assemble(m);biopwire::BiopModule parsed;biopwire::decode_biop_module(raw.data(),raw.size(),parsed);for(size_t n=0;n<parsed.objects.size();++n){if(out["inventory"].size()>=4096){limited=true;break;}auto object=carouselcontent::object(parsed.objects[n],parsed.offsets[n]);object["module_id"]=mid;object["module_version"]=m.version;object["announcement_epoch_order"]=m.epochOrder;object["module_biop_complete"]=parsed.complete;out["inventory"].push_back(object);}if(limited)break;}
+            out["inventory_scope"]="Validated BIOP objects from complete captured modules in this PID/download; object keys retained where binding paths are not resolved";out["inventory_limited"]=limited;
+        }
+        if(!args.contains("module_id"))return out;
+        if(!args.contains("module_version")||!args.contains("announcement_epoch_order"))throw std::runtime_error("Module selection requires version and announcement epoch");
+        const unsigned mid=args.at("module_id");const auto mi=snapshot.modules.find(mid);if(mi==snapshot.modules.end()||mi->second.version!=args.at("module_version")||mi->second.epochOrder!=args.at("announcement_epoch_order"))throw std::runtime_error("Stale or unknown module identity");
+        const auto& module=mi->second;out["module_id"]=mid;out["module_version"]=module.version;out["announcement_epoch_order"]=module.epochOrder;
+        if(snapshot.status=="resource_limit"||module.status!="complete"){out["content_status"]="unavailable_incomplete_module";return out;}
+        auto bytes=carouselcontent::assemble(module);biopwire::BiopModule parsed;biopwire::decode_biop_module(bytes.data(),bytes.size(),parsed);
+        out["biop"]={{"complete",parsed.complete},{"consumed",parsed.consumed},{"error_offset",parsed.error_offset},{"error",parsed.error},{"duplicate_keys",parsed.duplicate_keys},{"objects",J::array()}};
+        for(size_t i=0;i<parsed.objects.size();++i)out["biop"]["objects"].push_back(carouselcontent::object(parsed.objects[i],parsed.offsets[i]));
+        out["content_status"]=parsed.complete?"biop_complete":"biop_validated_prefix_or_unsupported";
+        if(!args.contains("object_offset")&&!args.contains("object_key_hex")){out["module_page"]=carouselcontent::page(bytes,args.value("offset",size_t(0)),args.value("limit",size_t(4096)));return out;}
+        size_t objectOffset=args.value("object_offset",size_t(0));if(args.contains("object_key_hex")){auto key=args.at("object_key_hex").get<std::string>();std::transform(key.begin(),key.end(),key.begin(),[](char c){return char(std::toupper(c));});size_t matches=0;for(size_t n=0;n<parsed.objects.size();++n)if(hex(parsed.objects[n].object_key)==key){++matches;objectOffset=parsed.offsets[n];}if(matches!=1)throw std::runtime_error("Object key is missing or ambiguous in selected module");}const auto oi=std::find(parsed.offsets.begin(),parsed.offsets.end(),objectOffset);if(oi==parsed.offsets.end())throw std::runtime_error("Object offset is not a validated BIOP object");const auto& object=parsed.objects[size_t(oi-parsed.offsets.begin())];out["object"]=carouselcontent::object(object,objectOffset);
+        const auto& content=object.object_kind==0x66696c00?object.content:object.raw;out["content"]=carouselcontent::page(content,args.value("offset",size_t(0)),args.value("limit",size_t(4096)));out["content"]["layer"]=object.object_kind==0x66696c00?"file_content":"object_envelope";out["bindings"]=J::array();
+        // Cache each referenced module only for this bounded request. Never search another PID/download.
+        std::map<unsigned,biopwire::BiopModule> targets;targets.emplace(mid,parsed);size_t parsedBytes=bytes.size();
+        for(const auto& binding:object.bindings){J b={{"type",binding.binding_type},{"names",J::array()},{"profiles",J::array()},{"ior_type",binding.ior.type_id},{"object_info_hex",hex(binding.object_info)}};for(const auto& name:binding.names)b["names"].push_back({{"id_hex",hex(name.id)},{"kind_hex",hex(name.kind)},{"text",carouselcontent::text(name.id)}});
+            for(const auto& profile:binding.ior.profiles){auto p=carouselcontent::profile(profile);p["resolution"]="unsupported_profile";unsigned targetId=profile.location_parsed?profile.module_id:mid;const auto tm=snapshot.modules.find(targetId);
+                if((profile.body_parsed||profile.location_parsed)&&!profile.object_key.empty()){
+                    if(profile.location_parsed&&profile.carousel_id!=message.downloadId)p["resolution"]="different_carousel";
+                    else if(profile.location_parsed&&!profile.legacy_module_version&&(profile.biop_version_major!=1||profile.biop_version_minor!=0))p["resolution"]="unsupported_biop_version";
+                    else if(tm==snapshot.modules.end())p["resolution"]="missing_module";
+                    else if(profile.legacy_module_version&&profile.module_version!=tm->second.version)p["resolution"]="module_version_mismatch";
+                    else if(tm->second.status!="complete")p["resolution"]="incomplete_module";
+                    else{
+                        if(!targets.count(targetId)&&parsedBytes+tm->second.size<=dsmccsignalling::MaxSnapshotBytes){auto raw=carouselcontent::assemble(tm->second);parsedBytes+=raw.size();biopwire::BiopModule target;biopwire::decode_biop_module(raw.data(),raw.size(),target);targets.emplace(targetId,std::move(target));}
+                        if(!targets.count(targetId))p["resolution"]="resource_limit";
+                        else{const auto& target=targets.at(targetId);size_t matches=0,index=0;for(size_t n=0;n<target.objects.size();++n)if(target.objects[n].object_key==profile.object_key){++matches;index=n;}bool resolved=matches==1&&target.complete&&(!profile.body_parsed||!profile.object_kind||target.objects[index].object_kind==profile.object_kind);p["resolution"]=!target.complete?"target_biop_partial":matches==1?(resolved?"resolved":"object_kind_mismatch"):matches>1?"ambiguous_key":"missing_key";if(resolved){p["target"]={{"module_id",targetId},{"module_version",tm->second.version},{"announcement_epoch_order",tm->second.epochOrder},{"object_offset",target.offsets[index]}};p["scope"]=profile.location_parsed?(profile.legacy_module_version?"legacy module-version profile":"BIOP ObjectLocation within this PID/download"):"legacy local-module key profile";}}
+                    }
+                }b["profiles"].push_back(p);
+            }out["bindings"].push_back(b);
+        }
+        return out;
     }
     J queryService(const J& args) {
         if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete service analysis_revision");
@@ -1587,6 +1647,7 @@ public:
         if(method=="query_transport")return queryTransport(args);
         if(method=="query_packet")return queryPacket(args);
         if(method=="query_timing")return queryTiming(args);
+        if(method=="query_carousel")return queryCarousel(args);
         if(method=="query_service")return queryService(args);
         if(method=="query_cable_oob")return queryCableOob(args);
         if(method=="query_topology")return queryTopology(args);
@@ -1692,7 +1753,7 @@ static int runCore(int argc,char**argv) {
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
                     }
-                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="query_carousel"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
                         bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
                         if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }

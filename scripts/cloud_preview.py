@@ -95,7 +95,7 @@ class Bridge:
         if command != 'request': raise ValueError('Unsupported bridge command')
         message = args.get('message')
         if not isinstance(message, dict) or set(message) - {'id','method','params'}: raise ValueError('Invalid JSONL request')
-        if message.get('method') not in {'capabilities','lookup_identifier','lookup_satellite','analyze','cancel_analysis','pause_analysis','resume_analysis','query_result','query','query_service','query_timing','query_transport','query_packet','query_topology','query_dvbi','inspect_dvbi','import_dvbi','inspect','diff_snapshots','load_extension','preview_rename','export'}: raise ValueError('Unknown engine method')
+        if message.get('method') not in {'capabilities','lookup_identifier','lookup_satellite','analyze','cancel_analysis','pause_analysis','resume_analysis','query_result','query','query_service','query_carousel','query_timing','query_transport','query_packet','query_topology','query_dvbi','inspect_dvbi','import_dvbi','inspect','diff_snapshots','load_extension','preview_rename','export'}: raise ValueError('Unknown engine method')
         params = message.get('params', {})
         if not isinstance(params, dict): raise ValueError('Parameters must be an object')
         if message['method'] == 'export':
@@ -157,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
                 if bridge.closed and not messages: return self.respond(503,{'error':'Native engine exited'})
             return self.respond(200,{'messages':messages})
         name = 'index.html' if url.path == '/' else url.path.lstrip('/')
-        if name not in {'index.html','app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js','service-model.js','service-view.js','statistics-view.js','packet-model.js','packet-explorer.js','document-model.js','document-workspace.js','classic-model.js','classic-frame.js','assets/toolbar128.bmp'}: return self.respond(404,{'error':'Not found'})
+        if name not in {'index.html','app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js','carousel-model.js','carousel-view.js','service-model.js','service-view.js','statistics-view.js','packet-model.js','packet-explorer.js','document-model.js','document-workspace.js','classic-model.js','classic-frame.js','assets/toolbar128.bmp'}: return self.respond(404,{'error':'Not found'})
         payload = (WEB/name).read_bytes()
         if name == 'index.html':
             payload=payload.replace(b'<head>',b'<head>'+ADAPTER.replace('TOKEN',json.dumps(self.server.bridge.token)).encode(),1)

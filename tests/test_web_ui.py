@@ -1190,6 +1190,47 @@ class BrowserTests(unittest.TestCase):
         p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="service")?.view.result.identity?.service_id===102')
         self.assertEqual(p.locator('.mdi-active tbody tr').count(),1)
 
+    def test_classic_carousel_objects_binding_content_and_back(self):
+        from test_carousel_content import carousel,file,directory
+        from test_dsmcc_summaries import packetize
+        path=self.output/'objects.ts';path.write_bytes(packetize(carousel([(7,directory()+file(b'configuration=true\n'))])))
+        self.show_scan_configuration();self.open_scan_options();p=self.page;p.locator('#standards').select_option('dvb');p.locator('#extra-pids').fill('0x150');self.analyze(path)
+        self.classic_command('carousel')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.modules?.length===1')
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.biop?.objects.length===2')
+        p.locator('.mdi-active tbody tr').first.dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.object?.type==="dir"')
+        p.locator('.mdi-active [data-tab="OC Hierarchy"]').click()
+        self.assertIn('resolved',p.locator('.mdi-active tbody').inner_text())
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result.object?.type==="fil"')
+        p.locator('.mdi-active [data-view="Text"]').click()
+        self.assertEqual(p.locator('.mdi-active textarea').input_value(),'configuration=true\n')
+        p.locator('.mdi-active [data-action="back"]').click()
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel").view.result.object.type'),'dir')
+        self.assertIn('resolved',p.locator('.mdi-active tbody').inner_text())
+        p.locator('.mdi-active [data-source]').first.click()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"')
+        p.keyboard.press('Control+F4')
+        self.assertTrue(p.locator('.mdi-active [data-tab="OC Hierarchy"]').is_visible())
+
+    def test_classic_carousel_missing_blocks_and_inventory_do_not_show_old_content(self):
+        from test_carousel_content import carousel,file
+        from test_dsmcc_summaries import packetize
+        self.show_scan_configuration();self.open_scan_options();p=self.page;p.locator('#standards').select_option('dvb');p.locator('#extra-pids').fill('0x150')
+        path=self.output/'objects.ts';path.write_bytes(packetize(carousel([(7,file(b'known'))])))
+        self.analyze(path);self.classic_command('carousel')
+        prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result'
+        p.wait_for_function('()=>'+prefix+'?.modules.length===1')
+        p.locator('.mdi-active [data-tab="OC Files"]').click();p.wait_for_function('()=>'+prefix+'?.inventory?.length===1')
+        p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content?.text==="known"')
+        p.locator('.mdi-active [data-view="Text"]').click();self.assertEqual(p.locator('.mdi-active textarea').input_value(),'known')
+        path=self.output/'missing.ts';path.write_bytes(packetize(carousel([(7,file(b'x'*300))],missing=((7,1),))))
+        self.analyze(path);self.classic_command('carousel');p.wait_for_function('()=>'+prefix+'?.modules[0]?.status==="incomplete"')
+        p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content_status==="unavailable_incomplete_module"')
+        self.assertNotIn('known',p.locator('.mdi-active textarea').input_value());self.assertIn('unavailable_incomplete_module',p.locator('.mdi-active [role="status"]').inner_text())
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

@@ -1,5 +1,12 @@
 # ShowPsiSi status
 
+2026-10-26 step 13 content browsing implemented in both UIs: DSM-CC module
+identity/missing blocks, DSI ObjectLocation, BIOP inventory/bindings, paged
+immutable content, strict UTF-8 and read-only class interpretation. 45 local
+checks pass; real reconstructed M12 eight-class and M13 configuration window
+chains pass in browser and full Qt offscreen. Export remains step 16; native
+mouse/DPI remains step 17. Next: Teletext pages (14). No hosted CI.
+
 2026-10-26 step 12 implemented: scoped Service / ES / EPG / Applications
 windows in both UIs, exact section navigation and restored context. Ambiguous
 SDT/PAT identities withhold PMT association. 36 related local checks pass; full

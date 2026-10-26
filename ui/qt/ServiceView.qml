@@ -31,41 +31,24 @@ Pane {
   anchors.fill:parent;spacing:4
   RowLayout {Layout.fillWidth:true
    Label{text:'Service';color:'#000'}
-   ComboBox {Layout.fillWidth:true;currentIndex:view.serviceIndex;model:view.services.map(function(s){return (s.name||'Program')+' — ONID '+Shared.serviceModel.hex(s.onid)+' TSID '+Shared.serviceModel.hex(s.ts_id)+' SID '+Shared.serviceModel.hex(s.id);});onActivated:{view.serviceIndex=currentIndex;view.result={};view.request(0);}}
-   Button{text:'Refresh';enabled:!view.loading&&view.services.length>0;onClicked:view.request(view.expected.event_offset||0)}
+   ComboBox {implicitHeight:24;font.pixelSize:12;Layout.fillWidth:true;currentIndex:view.serviceIndex;model:view.services.map(function(s){return (s.name||'Program')+' — ONID '+Shared.serviceModel.hex(s.onid)+' TSID '+Shared.serviceModel.hex(s.ts_id)+' SID '+Shared.serviceModel.hex(s.id);});onActivated:{view.serviceIndex=currentIndex;view.result={};view.request(0);}}
+   ClassicButton{text:'Refresh';enabled:!view.loading&&view.services.length>0;onClicked:view.request(view.expected.event_offset||0)}
   }
-  TabBar {Layout.fillWidth:true
+  RowLayout {Layout.fillWidth:true
    Repeater {model:Shared.serviceModel.tabs
-    delegate:TabButton{required property string modelData;text:modelData;onClicked:view.tab=modelData}
+    delegate:ClassicButton{required property string modelData;text:modelData;checkable:true;checked:view.tab===modelData;onClicked:view.tab=modelData}
    }
   }
   Label{Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:11;text:(view.result.scope||(!view.services.length?'No complete actual SDT service identity observed':'Choose a service'))+(view.result.identity?' | ONID '+Shared.serviceModel.hex(view.result.identity.original_network_id)+' TSID '+Shared.serviceModel.hex(view.result.identity.transport_stream_id)+' SID '+Shared.serviceModel.hex(view.result.identity.service_id)+' | analysis '+view.result.analysis_revision+' | cutoff packet '+view.result.at_packet:'')}
-  RowLayout {Layout.fillWidth:true
-   Repeater{model:Shared.serviceModel.columns(view.tab)
-    delegate:Label{required property string modelData;text:modelData;color:'#000';font.pixelSize:11;Layout.fillWidth:true;Layout.preferredWidth:1}
-   }
-  }
-  ListView {
-   id:rows;Layout.fillWidth:true;Layout.fillHeight:true;clip:true;activeFocusOnTab:true;model:view.displayedRows;ScrollBar.vertical:ScrollBar{}
-   function activate(){var row=model[currentIndex];if(row&&row.source_id)view.sectionActivated(row.source_id,row.path||'section',view.result.at_packet);}
-   Keys.onReturnPressed:activate()
-   delegate:ItemDelegate {
-    required property var modelData;required property int index;width:rows.width;height:28;padding:3
-    background:Rectangle{color:rows.currentIndex===index?'#dceafd':'#fff';border.color:'#ddd'}
-    contentItem:RowLayout {spacing:6
-     Repeater{model:modelData.values
-      delegate:Label{required property var modelData;text:modelData;color:'#000';font.family:'Tahoma';font.pixelSize:12;elide:Text.ElideRight;Layout.fillWidth:true;Layout.preferredWidth:1;ToolTip.visible:hover.hovered;ToolTip.text:text;HoverHandler{id:hover}}
-     }
-    }
-    onClicked:{rows.currentIndex=index;rows.forceActiveFocus();}
-    onDoubleClicked:{rows.currentIndex=index;rows.activate();}
-   }
-   Label{visible:!rows.count&&!view.loading;anchors.centerIn:parent;width:parent.width-20;wrapMode:Text.WordWrap;color:'#000';text:view.tab==='Applications'?'No declared application carriage observed; execution is not evaluated.':'No matching observed '+view.tab+' rows at this cutoff.'}
+  ClassicGrid {
+   id:rows;Layout.fillWidth:true;Layout.fillHeight:true;model:view.displayedRows;columns:Shared.serviceModel.columns(view.tab)
+   onActivated:function(row){if(row.source_id)view.sectionActivated(row.source_id,row.path||'section',view.result.at_packet);}
+   emptyText:view.loading?'Loading…':view.tab==='Applications'?'No declared application carriage observed; execution is not evaluated.':'No matching observed '+view.tab+' rows at this cutoff.'
   }
   RowLayout{visible:view.tab==='EPG';Layout.fillWidth:true
-   Button{text:'Previous';enabled:!view.loading&&view.result.event_offset>0;onClicked:view.request(Math.max(0,view.result.event_offset-100))}
+   ClassicButton{text:'Previous';enabled:!view.loading&&view.result.event_offset>0;onClicked:view.request(Math.max(0,view.result.event_offset-100))}
    Label{color:'#000';text:(view.result.event_offset||0)+' / '+(view.result.event_total||0)+' events'}
-   Button{text:'Next';enabled:!view.loading&&view.result.event_next_offset!=null;onClicked:view.request(view.result.event_next_offset)}
+   ClassicButton{text:'Next';enabled:!view.loading&&view.result.event_next_offset!=null;onClicked:view.request(view.result.event_next_offset)}
   }
   Label{Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:11;text:view.error||(view.loading?'Loading scoped service…':(view.result.warnings||[]).join('; '))}
   Label{Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:11;text:'Double-click / Enter: exact source section. Close it to return here.'}

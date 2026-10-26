@@ -585,7 +585,7 @@ window.addEventListener("pagehide",()=>{stopFileDrop?.();stopFileDrop=null;nativ
 let theme = "light";
 try { theme = localStorage.getItem("showpsisi.theme") === "dark" ? "dark" : "light"; } catch (_) {}
 function applyTheme() {
-  const effective=classicMode&&!summaryVisible&&$("#input-kind")?.value==="ts"?"light":theme;
+  const effective=classicMode&&$("#input-kind")?.value==="ts"?"light":theme;
   document.documentElement.dataset.theme = effective;
   $("#theme-toggle").textContent = theme === "dark" ? "Light theme" : "Dark theme";
   $("#theme-toggle").setAttribute("aria-pressed", String(theme === "light"));

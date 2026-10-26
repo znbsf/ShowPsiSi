@@ -593,7 +593,7 @@ application source and the verified local executable hashes remain unchanged.
 | 01 | 失败候选输入保留旧会话 | A 已分析并选中字段；打开不可读/无效 B 后，A 的结果、来源、选择和可用操作保持；成功切 B 才发布新身份；旧预览令牌不得串源 | APP-002/003/007 | 已完成：入场拒绝保留旧会话；引擎、浏览器与完整 Qt 离屏通过 |
 | 02 | 两端返回恢复具体字段和位置 | 字段→另一表→返回，恢复字段身份、展开、过滤、字段/hex 横纵位置和面板状态；两端结果一致 | APP-011、VIEW-003/050 | 已完成：按字段身份恢复列宽和双轴位置，浏览器/Qt 组件通过 |
 | 03 | 无映射字节清理旧高亮 | 点击未解释字节或 TS header 时，不保留另一字段的旧映射；有可靠范围的字段仍准确双向定位 | APP-010、VIEW-020/021 | 已完成：无映射选择清除旧范围，两端本地回归通过 |
-| 04 | Summary 六项和原版布局对齐 | 两端有 FileSize、Total Packets、BitRates、Errors、Duration、Packet Size；两排指标、Summary/Error tab；未知/部分范围和单位明确 | VIEW-007/008、VIS-005 | 待实施 |
+| 04 | Summary 六项和原版布局对齐 | 两端有 FileSize、Total Packets、BitRates、Errors、Duration、Packet Size；两排指标、Summary/Error tab；未知/部分范围和单位明确 | VIEW-007/008、VIS-005 | 已完成：六项指标、两排自适应布局和经典浅色一致 |
 | 05 | 键盘、焦点、选中行为同步 | 树方向键进入子项/返回父项、字段/hex 导航、F6/Shift+F6、Home/End 等价；文本单击、双击和 +/- 规则保持 | APP-009、VIEW-051、VIS-018 | 待实施 |
 | 06 | 原版主框架、菜单、工具栏与状态栏 | 依据资源还原主菜单和 7 个命令按钮/2 分隔位；可见命令有实际行为或明确禁用原因；帮助、树显隐和分析状态一致 | WIN-001～005/008～018 | 待实施 |
 | 07 | 多窗口与工作上下文 | 至少三类已支持视图可切换、关闭、恢复；窗口身份独立；平铺/层叠/最小化与焦点正确；重复打开实例规则明确 | WIN-006/007、APP-006/011、VIS-008/009 | 待实施 |
@@ -654,3 +654,8 @@ application source and the verified local executable hashes remain unchanged.
 可靠字段；返回上下文也保留该状态。2 个浏览器回归与 40 个实际 Qt 组件用例
 通过（44 PASS 含生命周期），无失败/跳过。证据 `si-ordered-web-step03.log`
 及 `si-ordered-components-step03.log`。本地组件不等于原生鼠标验收。
+
+
+第 04 项：Tauri 补 FileSize 并采用与 Qt 相同的六项顺序和两排指标；窄视口降为
+两列/单列。经典 Summary 在两端均保持浅色。真实引擎浏览器用例验证 FileSize
+值、六项位置和切 Error tab 后指标不变，见 `si-ordered-web-step04.log`。

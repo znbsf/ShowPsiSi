@@ -53,7 +53,9 @@ body.si-mode #scan-coverage { margin:0;padding:2px 10px;font-size:11px; }
 
 #transport-si[hidden]{display:none}
 #transport-si{flex:1;min-height:0;display:flex;flex-direction:column;padding:12px;gap:8px;background:var(--surface);color:var(--text);font:12px 'Segoe UI',sans-serif}
-.si-summary-counters{display:flex;gap:16px;flex-wrap:wrap}.si-summary-counters label{display:flex;align-items:center;gap:8px}.si-summary-counters input{width:180px}
+.si-summary-counters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:14px;row-gap:6px}.si-summary-counters label{display:grid;grid-template-columns:88px minmax(90px,1fr);align-items:center;gap:6px;min-width:0}.si-summary-counters input{width:100%;min-width:0}
+@media(max-width:819px){.si-summary-counters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:519px){.si-summary-counters{grid-template-columns:minmax(0,1fr)}}
 .si-summary-list{flex:1;min-height:0;overflow:auto}.si-summary-list table{border-collapse:collapse;width:100%}.si-summary-list th{position:sticky;top:0;background:var(--surface);text-align:left}.si-summary-list td,.si-summary-list th{padding:6px 8px;border-bottom:1px solid var(--border)}
 .si-summary-list tr.si-selected{background:var(--selection,#d7e7f5)}.si-summary-pages{display:flex;gap:10px;align-items:center}.si-summary-tabs{display:flex;gap:4px}.si-summary-tabs button{flex:1}.si-summary-tabs [aria-pressed=true]{background:var(--selection,#d7e7f5);font-weight:bold}
 body.si-mode #app{height:100vh;min-height:0}body.si-mode{overflow:hidden}

@@ -994,6 +994,22 @@ class BrowserTests(unittest.TestCase):
         p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
         self.assertIsNotNone(p.evaluate('showpsisi.getUiState().unified.range'))
 
+    def test_classic_summary_has_six_counters_in_two_rows_and_stable_tabs(self):
+        self.analyze();p=self.page
+        p.locator('#summary-toggle').click()
+        p.wait_for_function('()=>document.querySelectorAll("#transport-si tbody tr").length>0')
+        labels=p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.getAttribute("aria-label"))')
+        self.assertEqual(labels,['FileSize','Total Packets','BitRates','Errors','Duration','Packet Size'])
+        source=p.evaluate('showpsisi.getState().source_bytes')
+        self.assertEqual(p.get_by_label('FileSize',exact=True).input_value(),f'{source:,} bytes')
+        tops=p.locator('.si-summary-counters label').evaluate_all('(nodes)=>nodes.map(n=>n.getBoundingClientRect().top)')
+        self.assertEqual(tops[:3],[tops[0]]*3);self.assertEqual(tops[3:],[tops[3]]*3);self.assertGreater(tops[3],tops[0])
+        before=p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.value)')
+        p.locator('#transport-si [data-action="error"]').click()
+        p.wait_for_function('()=>document.querySelector("#transport-si [data-action=error]").getAttribute("aria-pressed")==="true"')
+        self.assertEqual(p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.value)'),before)
+        self.assertEqual(p.locator('html').get_attribute('data-theme'),'light')
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

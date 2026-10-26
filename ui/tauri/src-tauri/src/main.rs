@@ -49,6 +49,11 @@ fn is_official_project_link(url: &str) -> bool {
 #[tauri::command]
 fn environment(core:tauri::State<Core>,agent:tauri::State<agent::Agent>)->Value{json!({"version":env!("CARGO_PKG_VERSION"),"agent_enabled":agent.enabled(),"backend_alive":core.child.lock().ok().and_then(|mut child| child.try_wait().ok()).map(|status| status.is_none()).unwrap_or(false),"root":core.root,"sample":std::env::var("SHOWPSISI_SAMPLE").unwrap_or_else(|_|format!("{}/samples/generated/lab.ts",core.root)),"auto":std::env::var("SHOWPSISI_AUTO").unwrap_or_default(),"delay":std::env::var("SHOWPSISI_AUTO_DELAY_MS").unwrap_or_default(),"driver":if cfg!(target_os = "windows") { "Tauri / WebView2" } else if cfg!(target_os = "macos") { "Tauri / WKWebView" } else { "Tauri / WebKitGTK" },"script":std::env::var("SHOWPSISI_SCRIPT").unwrap_or_default()})}
 #[tauri::command]
+fn set_window_title(window:tauri::WebviewWindow,title:String)->Result<(),String>{
+    if title.chars().count()>512 || title.chars().any(|c|c.is_control()){return Err("Invalid window title".into());}
+    window.set_title(&title).map_err(|error|error.to_string())
+}
+#[tauri::command]
 fn close_application(window:tauri::WebviewWindow,core:tauri::State<Core>)->Result<(),String>{
     if has_pending_exports(&core){return Err("An export is still running. Wait for it to finish before closing.".into());}
     window.close().map_err(|error|error.to_string())
@@ -152,7 +157,7 @@ fn main(){
         app.manage(Core{child:Mutex::new(child),input:Mutex::new(Some(input)),pending_exports:Arc::clone(&pending_exports),started,root,trace:std::env::var("SHOWPSISI_TRACE").ok()});
         let handle=app.handle().clone();std::thread::spawn(move||{for line in BufReader::new(output).lines(){match line{Ok(line)=>{if let Ok(value)=serde_json::from_str::<Value>(&line){settle_export(&pending_exports,&value);let _=handle.emit("core-message",value);}},Err(_)=>break}}let _=handle.emit("core-message",json!({"event":"backend_exit","error":"Native backend stopped. Restart the application."}));});
         mark(&app.state::<Core>(),"native_setup");Ok(())
-    }).invoke_handler(tauri::generate_handler![request,environment,milestone,close_application,open_reference,agent_next,agent_reply,save_diagnostics]).build(tauri::generate_context!()).expect("Tauri startup").run(|app,event|{
+    }).invoke_handler(tauri::generate_handler![request,environment,milestone,set_window_title,close_application,open_reference,agent_next,agent_reply,save_diagnostics]).build(tauri::generate_context!()).expect("Tauri startup").run(|app,event|{
         match event {
             tauri::RunEvent::WindowEvent { event: tauri::WindowEvent::CloseRequested { api, .. }, .. } => {
                 if has_pending_exports(&app.state::<Core>()) {

@@ -1314,6 +1314,16 @@ class BrowserTests(unittest.TestCase):
         folder=self.output/'artifacts';folder.mkdir(exist_ok=True);dest=folder/'selected-section.bin';d.locator('[aria-label="Output path"]').fill(str(dest));d.locator('[data-save]').click();p.wait_for_function('()=>document.querySelector("#output-dialog [role=status]").textContent.startsWith("Saved section")');detail=p.evaluate('window.showpsisi.getDetail()');manifest=json.loads(Path(str(dest)+'.manifest.json').read_text());self.assertEqual(dest.read_bytes(),bytes.fromhex(detail['raw_hex']));self.assertEqual(dest.stat().st_size,manifest['bytes']);self.assertEqual(hashlib.sha256(dest.read_bytes()).hexdigest(),manifest['sha256']);self.assertEqual(manifest['selection']['source_id'],detail['id'])
         d.locator('[data-save]').click();p.wait_for_function('()=>document.querySelector("#output-dialog [role=status]").textContent.includes("already exists")');d.locator('[data-cancel]').click();self.assertFalse(d.is_visible());self.assertFalse(list(folder.glob('*.tmp*')));self.assertEqual(self.page_errors,[])
 
+    def test_classic_scale_viewports_keep_controls_reachable(self):
+        self.analyze();p=self.page
+        for scale in (1,1.5,2):
+            p.set_viewport_size({'width':round(1440/scale),'height':round(900/scale)})
+            p.wait_for_function('()=>window.showpsisi.getUiState().settled')
+            boxes=p.evaluate("""()=>[document.querySelector('#classic-frame'),document.querySelector('#classic-version'),document.querySelector('.si-nav-tools'),document.querySelector('.si-field-header')].map(e=>{const r=e.getBoundingClientRect();return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,width:r.width};})""")
+            self.assertTrue(all(b['top']>=0 and b['bottom']<=round(900/scale)+1 and b['width']>0 for b in boxes),(scale,boxes))
+            self.classic_command('save');d=p.locator('#output-dialog');self.assertTrue(d.is_visible());self.assertNotIn('analysis_revision',d.locator('.output-scope').inner_text());self.assertEqual(d.evaluate('(e)=>getComputedStyle(e).backgroundColor'),'rgb(239, 239, 239)');d.locator('[data-cancel]').click()
+        self.assertEqual(self.page_errors,[])
+
     def show_scan_configuration(self):
         if self.page.locator('#source').is_hidden():self.classic_command('configuration')
 

@@ -3051,6 +3051,8 @@ window.showpsisi = {
   getUiState: uiState,
 };
 // The classic core SI view and advanced workbench share the same live engine.
+let nativeTitle='';
+function setShellTitle(title){document.title=title;if(env.driver&&env.runtime!=='cloud-browser'&&nativeTitle!==title){nativeTitle=title;invoke('set_window_title',{title}).catch(()=>{nativeTitle='';});}}
 function syncSiMode() {
   const active=classicMode && !dvbiWorkspace.getState().active;
   document.body.classList.toggle('si-mode',active);applyTheme();
@@ -3061,7 +3063,7 @@ function syncSiMode() {
   const button=$('#workspace-toggle');if(button)button.textContent=classicMode?'Advanced workspace':'SI Inspector';
   document.body.classList.toggle('classic-configuration',classicConfiguration);document.body.classList.toggle('classic-no-status',!classicStatus);
   const frame=$('#classic-frame');if(frame)frame.hidden=!active;classicFrame?.update();
-  document.title='ShowPsiSi'+(data.source?' - '+String(data.source).split(/[\\/]/).pop():'')+(active?(summaryVisible?' - Summary':detail.id?' - '+detail.name+' PID '+hex(detail.pid):''):'');
+  setShellTitle(documentMode&&documentWorkspace.activeTitle()?'ShowPsiSi - '+documentWorkspace.activeTitle():'ShowPsiSi'+(data.source?' - '+String(data.source).split(/[\\/]/).pop():'')+(active?(summaryVisible?' - Summary':detail.id?' - '+detail.name+' PID '+hex(detail.pid):''):''));
 }
 const siPanel=document.createElement('section');siPanel.id='unified-si';siPanel.setAttribute('aria-label','PSI / SI inspector');$('#panes').before(siPanel);
 const workspaceButton=document.createElement('button');workspaceButton.id='workspace-toggle';workspaceButton.className='btn';workspaceButton.textContent='Advanced workspace';$('.titlebar').append(workspaceButton);
@@ -3090,7 +3092,7 @@ documentWorkspace=DocumentWorkspace.create(documentsPanel,{
    const panel=document.createElement('section');panel.className='transport-si';content.append(panel);
    const ui=TransportSi.create(panel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record)=>inspect(record.id)});v.update=()=>ui.update();v.dispose=()=>ui.dispose();ui.update();
   }else{const text=document.createElement('textarea');text.readOnly=true;text.setAttribute('aria-label','Native decoded table');content.append(text);v.update=next=>{const value=next.payload.section_native_text||next.payload.native_text||next.payload.raw_hex||'No selected table';if(text.value!==value)text.value=value;};}
- },changed:state=>{classicFrame?.update();if(documentMode&&classicMode){const active=state.items.find(d=>d.id===state.active);document.title='ShowPsiSi - '+(active?.title||documentScope());}}
+ },changed:state=>{classicFrame?.update();if(documentMode&&classicMode){const active=state.items.find(d=>d.id===state.active);setShellTitle('ShowPsiSi - '+(active?.title||documentScope()));}}
 });
 let documentIdentity='',documentLastDetail='';
 function syncDocuments(){

@@ -3,7 +3,7 @@ var outputModel={
  options:function(state,context){
   var base={analysis_revision:state.analysis_revision||state.revision},out=[],v=context.view||{},p=context.payload||{};
   if(state.selected_packet!==null&&state.selected_packet!==undefined)base.at_packet=state.selected_packet;
-  function add(kind,label,ext,args){out.push({kind:kind,label:label,extension:ext,params:Object.assign({},base,args||{},{kind:kind})});}
+  function add(kind,label,ext,args){var q=Object.assign({},base,args||{},{kind:kind}),pid=q.pid!==undefined?q.pid:p.pid!==undefined?p.pid:v.pid,scope=label+'\nSource: '+String(state.source||'').split(/[\\/]/).pop();if(pid!==undefined&&pid!==null)scope+='; PID 0x'+Number(pid).toString(16).toUpperCase().padStart(4,'0');if(q.packet_index!==undefined)scope+='; packet '+q.packet_index;if(q.pes_index!==undefined)scope+='; PES '+q.pes_index;if(q.module_id!==undefined)scope+='; module '+q.module_id+' version '+q.module_version;if(q.object_offset!==undefined)scope+='; object offset '+q.object_offset+' bytes';if(q.frame_index!==undefined)scope+='; preview frame '+q.frame_index;if(q.at_packet!==undefined)scope+='; cutoff packet '+q.at_packet;out.push({kind:kind,label:label,extension:ext,scope:scope,params:q});}
   if(context.kind==='si'&&p.id)add('section','Original selected section (including CRC where present)','bin',{source_id:p.id,at_packet:p.native_table_at_packet});
   if(context.kind==='packet'&&v.index!==null&&v.index!==undefined){add('packet','Original 188-byte TS packet','bin',{packet_index:v.index});add('packet_frame','Original packet frame including prefix/parity','bin',{packet_index:v.index});}
   if(context.kind==='media'){

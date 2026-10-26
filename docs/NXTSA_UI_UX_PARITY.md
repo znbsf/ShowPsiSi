@@ -606,7 +606,7 @@ application source and the verified local executable hashes remain unchanged.
 | 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 已实现真实 PES 页/子页/捕获、40×24 显示、颜色/马赛克/双高及来源跳包；部分 Latin Level 1 范围明确，两端真实字幕验证通过 |
 | 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 已实现有界 PES/ES 来源链、真实解码帧与预览播放、PCM 波形和 Windows 输出控制；原始 A/V 同步不推断，输出在 16 接入，桌面验收在 17 |
 | 16 | 保存、复制、输出与设置对齐 | 每种支持输出有范围/单位/来源；取消/覆盖/失败正确；配置 Cancel 不提交，分析设置标明生效时点；未支持打印/帮助入口明确 | APP-015～020、WIN-030～044 | 已实现：同一选中上下文的保存/复制，原始字节和派生 PNG/WAV 明确分开；配置确认持久化、取消恢复；本地两端检查通过 |
-| 17 | 全链路、DPI 与退出收尾 | 固定输入下两端逐项对照；100/150/200% 可达；保留高级功能；换源/取消/关闭验证真实进程和资源退出；记录尚未验证项 | E2E-01～16、APP-021～026、VIS | 待实施 |
+| 17 | 全链路、DPI 与退出收尾 | 固定输入下两端逐项对照；100/150/200% 可达；保留高级功能；换源/取消/关闭验证真实进程和资源退出；记录尚未验证项 | E2E-01～16、APP-021～026、VIS | 本机收尾完成：整链、两端原生鼠标/保存取消/正常退出通过；Qt 原生 200% 越界已修复；缩放和系统 DPI 的验证边界见下文 |
 
 执行规则：
 
@@ -840,3 +840,42 @@ hash、缺块、旧 epoch/token/revision、源变更、已存在 output/manifest
 PES/ES、当前 PNG 选项与取消无输出、无 QML 错误）。Qt 此处为离屏；原生文件
 对话框、鼠标与最终退出属于 17。证据 si-output-engine.log、si-output-web2.log、
 si-output-qt-runtime.log；没有启动或查询 CI。
+
+
+### 2026-10-27 步骤 17：最终本地构建与原生收尾
+
+Qt 与 Tauri 均以本次工作树当前源码构建。Tauri 的 36 个输入文件逐一核对 SHA-256
+后复制到已接受的 Low 构建目录，cargo --locked --offline 成功；未运行托管 CI。
+最后修复两端原生窗口标题跟随活动文档、保存页的可读来源说明和经典样式。
+原生 200% 检查发现 Qt 初始 1440×900 与固定 minimum 超出逻辑屏幕；已改为
+依据 Screen 限制初始/最小尺寸。1920×1080 主屏上 QT_SCALE_FACTOR=2 的实际
+窗口为 920×480 逻辑像素，屏幕为 960×540，菜单、状态和关闭按钮可达。
+Web classic #app 的旧移动布局 min-height 也被限定覆盖，避免缩小逻辑视口时
+状态栏落出屏幕；配置栏可滚动。高级工作区原样保留其独立布局。
+
+Windows Computer Use 的实际操作分别验证两端：树文字单击不折叠、双击展开表
+列表、加号单击展开 PAT 内部 Program 树；字段列边缘实际拖动且竖线保持对齐；
+Windows 原生保存路径选择器打开、Escape 取消后保留原位置与内容且没有输出。
+Qt 与 Tauri 都通过正常关闭窗口退出，核对各自已记录的 UI、core、WebView 主
+进程 PID 已不存在；没有靠强杀来声称正常退出。媒体解码 Job / PCM 的停止、
+取消及窗口关闭释放证据见 15 与最终运行检查，不把设备排队等同于物理可听验收。
+
+最终本地检查：41 项 PES/媒体、Teletext、Carousel、导出引擎检查；20 条经典
+浏览器整链，另加 1 条三档缩小逻辑视口检查；4 条高级编辑导出/拓扑/历史/DVB-I
+链；52 个 Qt 实际组件用例（60 PASS 含生命周期）；完整 Qt 的 output、documents、
+packets、video、audio 五条应用运行链全部通过。此前固定真实字幕、BIOP Class/
+配置、单完整 MPEG-2 I 帧的字节与 hash 证据保留，不改写原样本完整性结论。
+
+缩放边界：Qt 100/150/200 进程缩放均有离屏功能检查，100 与 200 另外做了真实
+桌面检查；Tauri 当前 Windows 系统 DPI 的真实操作已通过，100/150/200 等效缩小
+逻辑视口在真实 Chromium 检查菜单、字段、导航、状态和保存控件可达。WebView2
+的 force-device-scale-factor 尝试没有观察到实际缩放变化，因此不把它计作 Tauri
+原生 200% 证据。没有更改用户 Windows 显示设置；多显示器系统 DPI 切换、不同
+宿主字体渲染和主观像素级 1:1 仍未实机验收。打印、压缩模块、Teletext 增强集及
+原始 A/V 同步等既有明确 unsupported/partial 范围保留，不以完成 UI 宣称全协议支持。
+
+证据位于主工作区 ignored artifacts/si-frame-20261026：si-final-qt-build3.log、
+si-final-tauri-build3.log、tauri-source-manifest.json、si-final-engine.log、
+si-final-classic-web.log、si-final-browser-scales.log、si-final-advanced-web.log、
+si-final-components.log、si-final-runtime.json 和 native-final.json。最终源码提交、
+产物 hash 与预览 PID 在 delivery-final.json 记录。原生最终预览使用独立设置。

@@ -9,12 +9,13 @@ import "../tauri/web/output-model.js" as Output
 
 ApplicationWindow {
     id: win
-    width: 1440
-    height: 900
-    minimumWidth: 1000
-    minimumHeight: 680
+    // Keep controls and the native close button reachable at large desktop scale.
+    width: Math.min(1440, Math.max(640, Screen.width-40))
+    height: Math.min(900, Math.max(400, Screen.height-60))
+    minimumWidth: Math.min(1000, Math.max(640, Screen.width-40))
+    minimumHeight: Math.min(680, Math.max(400, Screen.height-60))
     visible: true
-    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : advancedMode ? "ShowPsiSi · Transport stream inspector" : "ShowPsiSi"+(analysisState.source?" - "+String(analysisState.source).split(/[\\/]/).pop():"")+(transportSummaryVisible?" - Summary":detail.id?" - "+detail.name+" PID "+hex(detail.pid):"")
+    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : advancedMode ? "ShowPsiSi · Transport stream inspector" : documentMode&&documentWorkspace.state.active ? "ShowPsiSi - "+((documentWorkspace.state.items.find(function(d){return d.id===documentWorkspace.state.active;})||{}).title||documentScope()) : "ShowPsiSi"+(analysisState.source?" - "+String(analysisState.source).split(/[\\/]/).pop():"")+(transportSummaryVisible?" - Summary":detail.id?" - "+detail.name+" PID "+hex(detail.pid):"")
     property string inputKind: "ts"
     property bool classicToolbarVisible:true
     property bool classicStatusVisible:true
@@ -657,7 +658,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            media_audio_last_response:mediaAudioLastResponse,documents:documentWorkspace.snapshot(),output:{visible:outputDialog.visible,options:outputDialog.options},configuration:{visible:classicConfigurationVisible,values:configurationValues()},document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            window_geometry:{width:win.width,height:win.height,screen_width:Screen.width,screen_height:Screen.height},media_audio_last_response:mediaAudioLastResponse,documents:documentWorkspace.snapshot(),output:{visible:outputDialog.visible,options:outputDialog.options},configuration:{visible:classicConfigurationVisible,values:configurationValues()},document_mode:documentMode,classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},

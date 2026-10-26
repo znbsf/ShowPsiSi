@@ -553,3 +553,18 @@ original/derived exports with SHA-256 manifests, and validated OK/Cancel scan
 preferences. Existing advanced rename/SI snapshot export remains available.
 Six engine export checks, three browser chains and seven full-Qt offscreen
 checks passed. Native dialog/mouse/DPI/normal exit remain step 17; no CI used.
+
+
+### 2026-10-27 classic parity step 17 local delivery
+
+The ordered implementation has reached final local delivery. Both native UIs
+were rebuilt, exercised through real Windows mouse interaction and native save
+cancellation, and normally closed with recorded UI/core/WebView PIDs gone.
+Qt's real 200% oversized initial window was fixed; reduced classic web viewports
+keep controls reachable. Active MDI titles and readable Save scope now agree.
+41 focused engine checks, 21 classic browser chains (including three viewport
+scales), four advanced chains, 52 actual Qt component cases (60 lifecycle-inclusive
+PASS) and five full-Qt runtime chains passed. No hosted CI was triggered or polled.
+Cross-monitor Windows DPI transitions and subjective pixel-perfect acceptance
+remain unverified; Tauri's ignored scale flag is explicitly not native 200% proof.
+See NXTSA_UI_UX_PARITY.md step 17 for the exact evidence and unsupported boundaries.

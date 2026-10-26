@@ -16,7 +16,7 @@ Dialog {
   spacing:8
   Label{Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'black';text:'Selected source only. Existing output and manifest are refused. PNG/WAV are derived previews.'}
   ComboBox{id:choices;objectName:'outputKind';Layout.fillWidth:true;model:dialog.options;textRole:'label'}
-  Label{Layout.fillWidth:true;wrapMode:Text.WrapAnywhere;color:'black';text:JSON.stringify(dialog.selectedOutput?dialog.selectedOutput.params:{})}
+  Label{Layout.fillWidth:true;wrapMode:Text.WrapAnywhere;color:'black';text:dialog.selectedOutput?dialog.selectedOutput.scope:''}
   ScrollView{Layout.fillWidth:true;Layout.preferredHeight:120;TextArea{id:copyPreview;readOnly:true;selectByMouse:true;wrapMode:Text.WrapAnywhere;color:'black'}}
   RowLayout{Layout.fillWidth:true
    ClassicButton{text:'Copy selected field';enabled:!!(dialog.context.view||{}).copyField;onClicked:{copyPreview.text=Shared.outputModel.fieldText(dialog.context.view.copyField,(dialog.context.payload||{}).id||dialog.sourceState.source);dialog.copyRequested(copyPreview.text);}}

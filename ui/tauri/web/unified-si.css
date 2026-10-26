@@ -171,4 +171,9 @@ body.si-mode footer #notice{padding:2px 5px;border:1px solid #aaa;align-self:str
 .media-raw[hidden],.media-preview[hidden],.media-preview img[hidden],.media-preview canvas[hidden]{display:none!important;}
 .media-view p{margin:2px 0;overflow-wrap:anywhere;}
 
-.configuration-actions{display:none}.classic-configuration .configuration-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.configuration-actions button{min-height:24px}.classic-mode #output-dialog{background:#efefef;color:#000;font:13px Tahoma,sans-serif;max-width:min(660px,90vw)}#output-dialog textarea,#output-dialog select,#output-dialog input{box-sizing:border-box;width:100%;color:#000;background:#fff}#output-dialog .output-scope{overflow-wrap:anywhere}
+.configuration-actions{display:none}.classic-configuration .configuration-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.configuration-actions button{min-height:24px}.si-mode #output-dialog{background:#efefef;color:#000;font:13px Tahoma,sans-serif;max-width:min(660px,90vw)}#output-dialog textarea,#output-dialog select,#output-dialog input{box-sizing:border-box;width:100%;color:#000;background:#fff}#output-dialog .output-scope{overflow-wrap:anywhere}
+
+.si-mode #output-dialog button{font:12px Tahoma,sans-serif;min-height:24px;padding:2px 8px;border:1px solid #808080;border-radius:0;background:#efefef;color:#000}.si-mode #output-dialog button:disabled{color:#808080}.si-mode #output-dialog h2{font:bold 13px Tahoma,sans-serif}
+
+/* Keep classic controls reachable when the desktop reduces logical viewport size. */
+body.si-mode #app{min-height:0}body.si-mode.classic-configuration .sourcebar{max-height:35vh;overflow:auto;flex-shrink:0}

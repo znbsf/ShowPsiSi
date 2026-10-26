@@ -157,7 +157,7 @@ class Handler(BaseHTTPRequestHandler):
                 if bridge.closed and not messages: return self.respond(503,{'error':'Native engine exited'})
             return self.respond(200,{'messages':messages})
         name = 'index.html' if url.path == '/' else url.path.lstrip('/')
-        if name not in {'index.html','app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js'}: return self.respond(404,{'error':'Not found'})
+        if name not in {'index.html','app.js','dvbi.js','workbench.js','style.css','inspector-model.js','unified-si.js','unified-si.css','transport-si.js','classic-model.js','classic-frame.js','assets/toolbar128.bmp'}: return self.respond(404,{'error':'Not found'})
         payload = (WEB/name).read_bytes()
         if name == 'index.html':
             payload=payload.replace(b'<head>',b'<head>'+ADAPTER.replace('TOKEN',json.dumps(self.server.bridge.token)).encode(),1)

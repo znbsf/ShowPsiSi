@@ -98,8 +98,8 @@ def run(binary,artifacts,qt_sdk=None):
         result['binaries']['engine']=fingerprint(engine)
         sidecar=Path(engine).resolve().parent/'showpsisi-build.json'
         if sidecar.is_file():result['declared_build_record']=fingerprint(sidecar)
-        for relative in ('core/SiWireFields.h','core/main.cpp','ui/qt/Main.qml','ui/qt/UnifiedInspector.qml','ui/qt/TransportSummary.qml','ui/tauri/web/inspector-model.js',
-                         'tests/qml_unified/tst_unified.qml','tests/qml_transport/tst_transport.qml',
+        for relative in ('core/SiWireFields.h','core/main.cpp','ui/qt/Main.qml','ui/qt/UnifiedInspector.qml','ui/qt/TransportSummary.qml','ui/qt/ClassicFrame.qml','ui/tauri/web/classic-model.js','ui/tauri/web/classic-frame.js','ui/tauri/web/assets/toolbar128.bmp','ui/tauri/web/inspector-model.js',
+                         'tests/qml_unified/tst_unified.qml','tests/qml_transport/tst_transport.qml','tests/qml_classic/tst_classic.qml',
                          'tests/test_unified_inspector.py','tests/si_reference_fixture.py','tests/test_transport_statistics.py'):
             result['source_files'].append({'file':relative,**fingerprint(ROOT/relative)})
         env=os.environ.copy()
@@ -126,11 +126,11 @@ def run(binary,artifacts,qt_sdk=None):
                 raise RuntimeError('Missing/failed real-engine evidence producer: '+pattern)
         result['stage']='prepare-qml'
         qml=directory/'qml';qml.mkdir()
-        for source,fixture in (('qml_unified',unified),('qml_transport',transport)):
-            text=(ROOT/'tests'/source/('tst_'+('unified' if source=='qml_unified' else 'transport')+'.qml')).read_text(encoding='utf-8')
+        for source,fixture in (('qml_unified',unified),('qml_transport',transport),('qml_classic',None)):
+            text=(ROOT/'tests'/source/('tst_'+source.removeprefix('qml_')+'.qml')).read_text(encoding='utf-8')
             text=text.replace('import "../../ui/qt"','import '+json.dumps((ROOT/'ui/qt').as_uri()))
             original='../../artifacts/'+('unified-inspector' if source=='qml_unified' else 'transport-summary')
-            text=text.replace(original,fixture.as_uri())
+            if fixture:text=text.replace(original,fixture.as_uri())
             (qml/('tst_'+source+'.qml')).write_text(text,encoding='utf-8')
         result['stage']='components'
         log=execute([str(binary),'-input',str(qml),'-o','-,txt'],directory,'qt-components',env)
@@ -138,7 +138,7 @@ def run(binary,artifacts,qt_sdk=None):
         if not totals or any(int(v) for row in totals for v in row[1:]):
             raise RuntimeError('QtTest totals absent or include failure/skip/blacklist\n'+log[-14000:])
         counts={}
-        for name,source in (('UnifiedInspectorRealEngineEvidence','qml_unified/tst_unified.qml'),('TransportSummaryRealEngineEvidence','qml_transport/tst_transport.qml')):
+        for name,source in (('UnifiedInspectorRealEngineEvidence','qml_unified/tst_unified.qml'),('TransportSummaryRealEngineEvidence','qml_transport/tst_transport.qml'),('ClassicFrameCommands','qml_classic/tst_classic.qml')):
             expected=len(re.findall(r'function test_[A-Za-z0-9_]+\(', (ROOT/'tests'/source).read_text(encoding='utf-8')))
             if not expected:raise RuntimeError('Component suite has no test functions')
             count=len(re.findall(r'PASS\s+:[^\n]*::'+name+r'::test_[^\n]*\(\)',log))

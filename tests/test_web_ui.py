@@ -929,7 +929,7 @@ class BrowserTests(unittest.TestCase):
         root.locator('.si-fold').click();self.assertEqual(root.get_attribute('aria-expanded'),'true')
         self.assertTrue(p.evaluate("""()=>{const h=[...document.querySelectorAll('.si-field-header>div')],c=[...document.querySelector('.si-field-row').children];return h.every((n,i)=>Math.abs(n.getBoundingClientRect().right-c[i].getBoundingClientRect().right)<1&&getComputedStyle(c[i]).borderRightWidth==='1px');}"""))
         selected=p.evaluate('showpsisi.getUiState().unified.selected')
-        p.locator('#workspace-toggle').click();self.assertTrue(p.locator('#panes').is_visible())
+        self.classic_command('advanced');self.assertTrue(p.locator('#panes').is_visible())
         p.locator('#workspace-toggle').click();self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selected'),selected)
 
     def test_classic_uncached_raw_record_double_click_keeps_target(self):
@@ -948,6 +948,7 @@ class BrowserTests(unittest.TestCase):
         p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
         p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
         before=p.evaluate('({unified:showpsisi.getUiState().unified,state:showpsisi.getState(),detail:showpsisi.getDetail()})')
+        self.show_scan_configuration()
         for path in [self.output/'missing-candidate.ts',self.output/'invalid-candidate.ts']:
             if path.name.startswith('invalid'):path.write_bytes(b'x'*940)
             p.locator('#source').fill(str(path));p.locator('#scan').click()
@@ -996,7 +997,7 @@ class BrowserTests(unittest.TestCase):
 
     def test_classic_summary_has_six_counters_in_two_rows_and_stable_tabs(self):
         self.analyze();p=self.page
-        p.locator('#summary-toggle').click()
+        self.classic_command('summary')
         p.wait_for_function('()=>document.querySelectorAll("#transport-si tbody tr").length>0')
         labels=p.locator('.si-summary-counters input').evaluate_all('(nodes)=>nodes.map(n=>n.getAttribute("aria-label"))')
         self.assertEqual(labels,['FileSize','Total Packets','BitRates','Errors','Duration','Packet Size'])
@@ -1013,6 +1014,7 @@ class BrowserTests(unittest.TestCase):
     def test_classic_keyboard_tree_parents_and_f6_reverse_cycle(self):
         self.analyze();p=self.page
         p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        self.show_scan_configuration()
         nav=p.locator('.si-navigation');nav.press('Home')
         parent=p.locator('.si-nav-row[aria-selected="true"]').get_attribute('data-key')
         nav.press('ArrowRight')
@@ -1037,6 +1039,27 @@ class BrowserTests(unittest.TestCase):
         section.press('Home');section.press('ArrowRight')
         self.assertEqual(p.evaluate('showpsisi.getUiState().unified.byteCursor'),1)
 
+    def test_classic_frame_original_toolbar_menu_states_and_tree_retention(self):
+        p=self.page
+        self.assertTrue(p.locator('#classic-frame').is_visible())
+        self.assertTrue(p.locator('.titlebar').is_hidden())
+        self.assertEqual(p.locator('.classic-menubar>[class=classic-menu]>[data-menu]').all_text_contents(),['File','View','Analyzer','Help'])
+        self.assertEqual(p.locator('.classic-toolbar>button').count(),7)
+        self.assertEqual(p.locator('.classic-toolbar>.classic-tool-separator').count(),2)
+        self.assertTrue(p.locator('.classic-toolbar [data-command="save"]').is_disabled())
+        self.analyze();p.wait_for_function('()=>showpsisi.getUiState().settled')
+        before=p.evaluate('showpsisi.getUiState().unified')
+        self.classic_command('tree');self.assertTrue(p.locator('.si-navigation').is_hidden())
+        self.classic_command('tree');self.assertTrue(p.locator('.si-navigation').is_visible())
+        self.assertEqual(p.evaluate('showpsisi.getUiState().unified.navigation'),before['navigation'])
+        self.classic_command('summary')
+        self.assertTrue(p.locator('#transport-si').is_visible());self.assertTrue(p.locator('.si-navigation').is_visible())
+        self.classic_command('status');self.assertTrue(p.locator('#app > footer').is_hidden())
+        self.classic_command('status');self.assertTrue(p.locator('#app > footer').is_visible())
+        self.classic_command('toolbar');self.assertTrue(p.locator('.classic-toolbar').is_hidden())
+        self.classic_command('toolbar');self.assertTrue(p.locator('.classic-toolbar').is_visible())
+        self.classic_command('index');self.assertTrue(p.locator('#classic-help').is_visible());p.locator('#classic-help button').click()
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()
@@ -1046,7 +1069,16 @@ class BrowserTests(unittest.TestCase):
         if self.page.locator('#scan-options').is_hidden():
             self.page.locator('#scan-options-toggle').click()
 
+    def classic_command(self,command):
+        menu=self.page.locator('#classic-frame .classic-menu').filter(has=self.page.locator('[data-command="'+command+'"]')).first
+        menu.locator('[data-menu]').click()
+        menu.locator('[data-command="'+command+'"]').click()
+
+    def show_scan_configuration(self):
+        if self.page.locator('#source').is_hidden():self.classic_command('configuration')
+
     def analyze(self,path=None):
+        self.show_scan_configuration()
         self.page.locator('#source').fill(str(path or self.sample))
         self.page.locator('#source').press('Enter')
         self.page.wait_for_function('() => window.showpsisi.getState().complete === true')

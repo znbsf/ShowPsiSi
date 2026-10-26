@@ -165,7 +165,7 @@ function distributionPanel(row) {
   return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
-let siView = null, summaryView = null, summaryVisible = false, classicMode = true, candidatePending = false;
+let siView = null, summaryView = null, summaryVisible = false, classicMode = true, candidatePending = false, classicFrame = null, classicConfiguration = false, classicToolbar = true, classicStatus = true, classicTree = true;
 let data = {},
   detail = {},
   env = {},
@@ -1038,7 +1038,7 @@ async function scan() {
       cancelling = false;
       activeAnalyze = null;
       render();
-      if (succeeded) {if(tab==='Topology')loadTopology();else defaultInspect();}
+      if (succeeded) {if(classicMode){classicConfiguration=false;syncSiMode();}if(tab==='Topology')loadTopology();else defaultInspect();}
       if (returnFocus && !backendFailure) $("#scan").focus();
     }
   }
@@ -2565,7 +2565,8 @@ $("#browse").onclick = async () => {
     });
     if (typeof path === "string") {
       $("#source").value = path;
-      scan();
+      if(classicMode){classicConfiguration=true;syncSiMode();notice("Ready — choose Start to analyze the selected transport stream");}
+      else scan();
     }
   } catch (error) {
     notice(String(error), true);
@@ -2701,7 +2702,7 @@ document.addEventListener("keydown", (e) => {
   if($("#shortcuts-dialog").open)return;
   const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
   if(workbenchKeys && classicMode) {
-    if(e.key==='F6') {e.preventDefault();if(summaryVisible)summaryView.nextRegion(e.shiftKey,$('.sourcebar'));else siView.nextRegion(e.shiftKey,$('.sourcebar'));return;}
+    if(e.key==='F6') {e.preventDefault();const origin=classicConfiguration?$('.sourcebar[role=region]'):null;if(summaryVisible)summaryView.nextRegion(e.shiftKey,origin);else siView.nextRegion(e.shiftKey,origin);return;}
     if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(summaryVisible){summaryVisible=false;syncSiMode();}else siView.back();return;}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const search=$('#unified-si .si-search');search.hidden=false;search.focus();return;}
   }
@@ -2909,7 +2910,7 @@ function uiState() {
     records:(()=>{const m=workbench.tables(data,pidFilter,filter,showBadCrc,search);return {groups:m.groups.map(g=>g.id),sections:m.sections.map(r=>r.id),hidden:m.hidden,count_text:m.count_text,grouped:groupedTables,page};})(),
     history:{all:allTableHistory,entries:workbench.history(data,detail,allTableHistory),page:historyPage},evidence_scope:evidenceScope,
     protocol_source:{resolution:protocolResolution,return_depth:protocolSourceHistory.length},topology:{profile:topology.snapshot?.interpretation_profile,cutoff:topology.snapshot?.at_packet,selected_node:topology.selected,focused_node:topology.focused,expanded_ids:Object.keys(topology.expanded).filter(id=>topology.expanded[id]),search:topology.search,family:topology.family,loaded_nodes:workbench.topologyNodes(topology.snapshot || {}).length,total_nodes:topology.snapshot?.counts?.nodes,loading:topology.loading,stale:topology.stale,error:topology.error,evidence_ref:topology.active,locator_resolution:topology.resolution,return_depth:topology.history.length},inspection_context:inspectionEvidence?.kind || (comparisonEvidence?"comparison":"workspace"),
-    unified:siView?.snapshot(),classic_mode:classicMode,tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
+    classic_frame:classicState(),unified:siView?.snapshot(),classic_mode:classicMode,tab,inspector:view,tree_search:treeSearch,focused_tree_path:document.activeElement?.dataset.nodePath || "",tree,tree_limit:2500,
     controls:[...document.querySelectorAll("[id]")].slice(0,1000).map(el=>({id:el.id,visible:visible(el),enabled:!el.disabled,focused:el===document.activeElement,
       text:(el.getAttribute("aria-label") || el.value || el.textContent || "").slice(0,512),bounds:bounds(el)})),controls_limit:1000,
     diagnostics:{pending:pending.size,error:backendFailure || detailError,recent_responses:recentResponses.slice(),frontend_errors:frontendErrors.slice()},
@@ -3012,6 +3013,8 @@ async function boot() {
     disconnectBackend("Native backend stopped. Restart the application.");
   if (backendFailure) return;
   $("#source").value = env.sample || "";
+  classicFrame?.update();
+  if($("#classic-version"))$("#classic-version").textContent=env.version||"development";
   $("#runtime").textContent =
     env.runtime === "cloud-browser"
       ? "● CLOUD PREVIEW · REAL ENGINE"
@@ -3038,20 +3041,41 @@ window.showpsisi = {
 function syncSiMode() {
   const active=classicMode && !dvbiWorkspace.getState().active;
   document.body.classList.toggle('si-mode',active);applyTheme();
-  const panel=$('#unified-si');if(panel)panel.hidden=!active||summaryVisible;
+  const panel=$('#unified-si');if(panel){panel.hidden=!active;panel.classList.toggle('si-summary-mode',summaryVisible);panel.classList.toggle('si-tree-hidden',!classicTree);}
   const summary=$("#transport-si");if(summary)summary.hidden=!active||!summaryVisible;
   const summaryButton=$("#summary-toggle");if(summaryButton)summaryButton.textContent=summaryVisible?"Return to inspector":"Summary / PID";
   const button=$('#workspace-toggle');if(button)button.textContent=classicMode?'Advanced workspace':'SI Inspector';
+  document.body.classList.toggle('classic-configuration',classicConfiguration);document.body.classList.toggle('classic-no-status',!classicStatus);
+  const frame=$('#classic-frame');if(frame)frame.hidden=!active;classicFrame?.update();
+  document.title='ShowPsiSi'+(data.source?' - '+String(data.source).split(/[\\/]/).pop():'')+(active?(summaryVisible?' - Summary':detail.id?' - '+detail.name+' PID '+hex(detail.pid):''):'');
 }
 const siPanel=document.createElement('section');siPanel.id='unified-si';siPanel.setAttribute('aria-label','PSI / SI inspector');$('#panes').before(siPanel);
 const workspaceButton=document.createElement('button');workspaceButton.id='workspace-toggle';workspaceButton.className='btn';workspaceButton.textContent='Advanced workspace';$('.titlebar').append(workspaceButton);
 workspaceButton.onclick=()=>{summaryVisible=false;classicMode=!classicMode;syncSiMode();siView.update();};
-const summaryPanel=document.createElement('section');summaryPanel.id='transport-si';summaryPanel.hidden=true;siPanel.after(summaryPanel);
+const summaryPanel=document.createElement('section');summaryPanel.id='transport-si';summaryPanel.hidden=true;
 const summaryButton=document.createElement('button');summaryButton.id='summary-toggle';summaryButton.className='btn';summaryButton.textContent='Summary / PID';workspaceButton.before(summaryButton);
 summaryButton.onclick=()=>{classicMode=true;summaryVisible=!summaryVisible;syncSiMode();summaryView.update();};
 summaryView=TransportSi.create(summaryPanel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record,pid)=>{summaryVisible=false;classicMode=true;syncSiMode();siView.filterPid(pid);siView.selectRecord(record,record.id,null,true,false);}});
 siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,
   loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
+siPanel.append(summaryPanel);
+const framePanel=document.createElement('header');framePanel.id='classic-frame';framePanel.className='classic-frame';$('.titlebar').before(framePanel);
+const helpDialog=document.createElement('dialog');helpDialog.id='classic-help';helpDialog.innerHTML='<h2>ShowPsiSi Help</h2><p>Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to fields and original bytes. Click text to select; double-click text or click +/− to expand. F6 / Shift+F6 changes panes. Alt+Left returns. Card Configuration contains source and scan options. Advanced workspace retains topology, editing, history and DVB-I.</p><button class="btn">Close</button>';$('#app').append(helpDialog);helpDialog.querySelector('button').onclick=()=>helpDialog.close();
+const footer=$('#app > footer');for(const [id,text] of [['product','ShowPsiSi'],['version','development'],['num',''],['scroll','']]){const cell=document.createElement('span');cell.id='classic-'+id;cell.className='classic-status-part';cell.textContent=text;footer.append(cell);}
+function classicState(){return {available:!backendFailure,busy,cancelling,canPause:activeAnalyze!==null&&!resultLoading,paused:data.analysis_status==='paused',hasInput:!!$('#source').value.trim(),complete:!!data.complete,native:!!env.driver&&env.runtime!=='cloud-browser',exporting:exportPending,toolbar:classicToolbar,status:classicStatus,tree:classicTree,documentCount:data.complete?1:0,features:{}};}
+async function classicCommand(id){const state=classicState();if(!classic.enabled(id,state)){notice(classic.reason(id,state),'warning');return;}
+ if(id==='open')await $('#browse').onclick();
+ else if(id==='start')scan();else if(id==='stop')cancelScan();else if(id==='pause')pauseScan();
+ else if(id==='toolbar')classicToolbar=!classicToolbar;else if(id==='status')classicStatus=!classicStatus;else if(id==='tree')classicTree=!classicTree;
+ else if(id==='configuration'){classicConfiguration=!classicConfiguration;syncSiMode();if(classicConfiguration)$('#source').focus();}
+ else if(id==='summary'){summaryVisible=true;classicMode=true;syncSiMode();summaryView.update();}
+ else if(id==='advanced')$('#workspace-toggle').click();else if(id==='dvbi'){$('#input-kind').value='dvbi';$('#input-kind').dispatchEvent(new Event('change'));}
+ else if(id==='about')$('#about').click();else if(id==='index')helpDialog.showModal();else if(id==='messages')$('#messages').click();
+ else if(id==='diagnostics')$('#save-diagnostics').click();else if(id==='exit'){try{await invoke('close_application');}catch(error){notice(String(error),true);}}
+ syncSiMode();
+}
+classicFrame=ClassicFrame.create(framePanel,{state:classicState,command:classicCommand,locks:value=>{$('#classic-num').textContent=value.num?'NUM':'';$('#classic-scroll').textContent=value.scroll?'SCRL':'';}});
+$('#source').addEventListener('input',()=>classicFrame.update());
 syncSiMode();
 boot().catch((error) => {
   disconnectBackend("Backend connection failed: " + String(error));

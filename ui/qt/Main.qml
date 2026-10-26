@@ -4,6 +4,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtQml.Models
 import "qrc:/shared/workbench.js" as Shared
+import "../tauri/web/classic-model.js" as Classic
 
 ApplicationWindow {
     id: win
@@ -12,8 +13,13 @@ ApplicationWindow {
     minimumWidth: 1000
     minimumHeight: 680
     visible: true
-    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : "ShowPsiSi · Transport stream inspector"
+    title: metadataMode ? "ShowPsiSi · DVB-I metadata inspector" : advancedMode ? "ShowPsiSi · Transport stream inspector" : "ShowPsiSi"+(analysisState.source?" - "+String(analysisState.source).split(/[\\/]/).pop():"")+(transportSummaryVisible?" - Summary":detail.id?" - "+detail.name+" PID "+hex(detail.pid):"")
     property string inputKind: "ts"
+    property bool classicToolbarVisible:true
+    property bool classicStatusVisible:true
+    property bool classicTreeVisible:true
+    property bool classicConfigurationVisible:false
+    property var classicLocks: ({})
     property bool transportSummaryVisible: false
     readonly property bool transportQueryReady: backendReady && !core.busy
     property bool advancedMode: core.env("SHOWPSISI_ADVANCED") === "1" || (!!core.env("SHOWPSISI_SCRIPT") && core.env("SHOWPSISI_SCRIPT") !== "unified-inspector")
@@ -649,7 +655,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            classic_frame:classicState(),unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -664,6 +670,7 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
+        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
         if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
         if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
         if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
@@ -1179,6 +1186,32 @@ ApplicationWindow {
         else if (analysisState.selected_packet !== undefined && analysisState.selected_packet !== null)
             params.at_packet = analysisState.selected_packet;
         core.mark("inspect_send_begin");core.send("inspect", params);core.mark("inspect_send_end");
+    }
+    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:analysisState.complete?1:0,features:{}};}
+    function classicCommand(name){
+        var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
+        if(name==='open')fileDialog.open();
+        else if(name==='start')scan();
+        else if(name==='stop')cancelScan();
+        else if(name==='pause')core.pauseAnalysis();
+        else if(name==='toolbar')classicToolbarVisible=!classicToolbarVisible;
+        else if(name==='status')classicStatusVisible=!classicStatusVisible;
+        else if(name==='tree')classicTreeVisible=!classicTreeVisible;
+        else if(name==='summary'){transportSummaryVisible=true;advancedMode=false;}
+        else if(name==='configuration'){classicConfigurationVisible=!classicConfigurationVisible;if(classicConfigurationVisible)source.forceActiveFocus();}
+        else if(name==='advanced'){transportSummaryVisible=false;advancedMode=true;}
+        else if(name==='dvbi')inputKind='dvbi';
+        else if(name==='about')updateDialog.open();
+        else if(name==='index')classicHelpDialog.open();
+        else if(name==='messages')messagesDialog.open();
+        else if(name==='diagnostics'){var result=uiAgent.saveBundle();showMessage(result,result.indexOf('Diagnostics failed:')===0?'error':'info');}
+        else if(name==='exit')win.close();
+    }
+    Timer {interval:500;running:!metadataMode&&!advancedMode&&classicStatusVisible;repeat:true;onTriggered:classicLocks=core.lockState()}
+    Dialog {
+        id:classicHelpDialog;title:'ShowPsiSi Help';modal:true;width:Math.min(600,win.width-40);anchors.centerIn:parent;standardButtons:Dialog.Close
+        contentItem:Label {text:'Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to table fields and original bytes. Single-click selects; double-click text or click +/− to expand. F6 / Shift+F6 moves between panes. Alt+Left returns. Card Configuration opens source and scan options. Advanced workspace retains editing, topology, history and DVB-I. Disabled commands describe features not yet available.';wrapMode:Text.WordWrap;color:'#000';padding:14}
+        background:Rectangle{color:'#efefef';border.color:'#808080'}
     }
     function openExportDialog() {
         if (!exportButton.enabled || saveDialog.visible) return;
@@ -1858,6 +1891,7 @@ ApplicationWindow {
             if(method==="query_transport"){transportSummary.receive(result);return;}
             if(method==="capabilities" && analysisModesTestTimer.running){analysisModesTestTimer.barrier=true;return;}
             if(method === "analyze") {
+                if(result.complete && !advancedMode)classicConfigurationVisible=false;
                 if(result.complete && pendingScanOptions !== null){completedScanOptions=pendingScanOptions;completedCoverageKey=pendingCoverageKey;}
                 pendingScanOptions=null;
             }
@@ -3956,7 +3990,7 @@ ApplicationWindow {
         nameFilters: ["Transport streams (*.ts *.mts *.m2ts)", "All files (*)"]
         onAccepted: {
             source.text = core.localPath(selectedFile);
-            scan();
+            if(advancedMode)scan();else {classicConfigurationVisible=true;showMessage("Ready — choose Start to analyze the selected transport stream","info");}
         }
     }
     FileDialog {
@@ -4001,8 +4035,14 @@ ApplicationWindow {
             }
         }
     }
-    header: Rectangle {
-        height: 42
+    header: Column {
+        width:parent.width
+        spacing:0
+        ClassicFrame {host:win;visible:!metadataMode&&!advancedMode;width:parent.width;onCommand:function(name){win.classicCommand(name);}}
+        Rectangle {
+        width:parent.width
+        visible:metadataMode || advancedMode
+        height: visible?42:0
         color: surface
         border.color: dividerColor
         RowLayout {
@@ -4095,6 +4135,7 @@ ApplicationWindow {
             }
         }
     }
+    }
     ColumnLayout {
         anchors.fill: parent
         spacing: 0
@@ -4131,7 +4172,7 @@ ApplicationWindow {
         }
         ColumnLayout {
             id: sourceBar
-            visible: !metadataMode
+            visible: !metadataMode && (advancedMode || classicConfigurationVisible)
             Layout.fillWidth: true
             Layout.margins: 10
             spacing: 6
@@ -4436,20 +4477,24 @@ ApplicationWindow {
         }
         UnifiedInspector {
             id: unifiedInspector
+            focusOrigin:sourceBar.visible?sourceBar:null
+            treeVisible:win.classicTreeVisible
+            externalVisible:win.transportSummaryVisible
             host: win
             organization: !topologyStale && topologyData.analysis_revision===analysisState.analysis_revision ? topologyData : ({})
             organizationStatus: topologyLoading ? "Loading networks / TP..." : topologyError ? "Network organization unavailable" : (topologyData.page || {}).has_more ? "Loading more networks / TP..." : ""
             onVisibleChanged: if(visible)siOrganizationTimer.restart()
-            visible: !metadataMode && !advancedMode && !transportSummaryVisible
+            visible: !metadataMode && !advancedMode
             Layout.fillWidth: true
             Layout.fillHeight: true
         }
         TransportSummary {
             id:transportSummary
-            focusOrigin:sourceBar
+            parent:unifiedInspector.externalContainer
+            anchors.fill:parent
+            focusOrigin:sourceBar.visible?sourceBar:null
             host:win
             visible:!metadataMode && transportSummaryVisible
-            Layout.fillWidth:true;Layout.fillHeight:true
             onPageRequested:function(offset,sort,descending,errorsOnly){
                 if(core.busy){reject("Wait for the current operation, then Refresh.");return;}
                 core.send("query_transport",{analysis_revision:analysisState.analysis_revision || analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});
@@ -6310,6 +6355,7 @@ ApplicationWindow {
         }
         Rectangle {
             id: statusFooter
+            visible:metadataMode || advancedMode || classicStatusVisible
             readonly property bool errorStatus: metadataMode ? !!dvbiWorkspace.error : messageLevel === "error"
             Layout.fillWidth: true
             height: 28
@@ -6322,8 +6368,8 @@ ApplicationWindow {
                     objectName: "statusMessage"
                     text: metadataMode ? (dvbiWorkspace.error || (dvbiWorkspace.busy ? "Loading local document…" : dvbiWorkspace.hasDocument ? "Local document imported · original file unchanged" : "Choose a local XML document")) : notice || (core.availability === "starting" ? "Starting backend…" : "Ready · all processing stays on this machine")
                     color: statusFooter.errorStatus ? errorInk : !metadataMode && messageLevel === "warning" ? warningColor : muted
-                    opacity: !metadataMode && messageLevel === "info" && messageExpired ? 0 : 1
-                    Accessible.ignored: !metadataMode && messageLevel === "info" && messageExpired
+                    opacity: !metadataMode && advancedMode && messageLevel === "info" && messageExpired ? 0 : 1
+                    Accessible.ignored: !metadataMode && advancedMode && messageLevel === "info" && messageExpired
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     elide: Text.ElideMiddle
@@ -6358,14 +6404,23 @@ ApplicationWindow {
                     }
                 }
                 PlainLabel {
+                    visible:metadataMode || advancedMode
                     text: metadataMode ? "Independent document · C++ / Expat" : num(analysisState.packets) + " packets · C++ / TSDuck"
                     color: statusFooter.errorStatus ? errorInk : muted
                     font.pixelSize: 11
                 }
+                Repeater {
+                    model:!metadataMode&&!advancedMode?["ShowPsiSi",Qt.application.version,classicLocks.num?"NUM":"",classicLocks.scroll?"SCRL":""]:[]
+                    delegate:Rectangle {
+                        required property var modelData
+                        implicitWidth:Math.max(38,classicStatusText.implicitWidth+14);implicitHeight:22;color:'#efefef';border.color:'#a0a0a0'
+                        Text {id:classicStatusText;anchors.centerIn:parent;text:String(modelData);font.family:'Tahoma';font.pixelSize:11;color:'#000'}
+                    }
+                }
                 Action {
                     id: messagesButton
                     objectName: "messagesButton"
-                    visible: !metadataMode
+                    visible: !metadataMode && advancedMode
                     text: "Messages"
                     implicitHeight: 22
                     Accessible.name: "Messages · " + messagesModel.count + " recent messages"

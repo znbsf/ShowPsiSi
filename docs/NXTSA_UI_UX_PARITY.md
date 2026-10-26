@@ -595,7 +595,7 @@ application source and the verified local executable hashes remain unchanged.
 | 03 | 无映射字节清理旧高亮 | 点击未解释字节或 TS header 时，不保留另一字段的旧映射；有可靠范围的字段仍准确双向定位 | APP-010、VIEW-020/021 | 已完成：无映射选择清除旧范围，两端本地回归通过 |
 | 04 | Summary 六项和原版布局对齐 | 两端有 FileSize、Total Packets、BitRates、Errors、Duration、Packet Size；两排指标、Summary/Error tab；未知/部分范围和单位明确 | VIEW-007/008、VIS-005 | 已完成：六项指标、两排自适应布局和经典浅色一致 |
 | 05 | 键盘、焦点、选中行为同步 | 树方向键进入子项/返回父项、字段/hex 导航、F6/Shift+F6、Home/End 等价；文本单击、双击和 +/- 规则保持 | APP-009、VIEW-051、VIS-018 | 已完成：树/字段父子键、双 hex 光标及正反 F6，本地回归通过 |
-| 06 | 原版主框架、菜单、工具栏与状态栏 | 依据资源还原主菜单和 7 个命令按钮/2 分隔位；可见命令有实际行为或明确禁用原因；帮助、树显隐和分析状态一致 | WIN-001～005/008～018 | 待实施 |
+| 06 | 原版主框架、菜单、工具栏与状态栏 | 依据资源还原主菜单和 7 个命令按钮/2 分隔位；可见命令有实际行为或明确禁用原因；帮助、树显隐和分析状态一致 | WIN-001～005/008～018 | 已实现并本地验证；原版位图、菜单命令和显隐状态对齐，未支持的输出明确禁用 |
 | 07 | 多窗口与工作上下文 | 至少三类已支持视图可切换、关闭、恢复；窗口身份独立；平铺/层叠/最小化与焦点正确；重复打开实例规则明确 | WIN-006/007、APP-006/011、VIS-008/009 | 待实施 |
 | 08 | 完整树分支与右键导航 | Programs/PSI/All Packets/DSMCC 等有依据入口；右键命中当前指针对象，View Tables→具体 PID/版本；无数据与未支持有明确状态 | VIEW-017/018/023～026 | 待实施 |
 | 09 | Packet Explorer 原始 TS 包浏览 | 首/前/后/末及索引/PID 过滤可用；header/adaptation/pointer/payload 与真实包同步；边界、坏包和取消有反馈；返回原字段 | VIEW-022、MED-006/007、WIN-027/042 | 待实施 |
@@ -693,3 +693,10 @@ Qt 与 Tauri 最终 release 均本地编译成功。两个原生程序已各自�
 `si-ordered-web-full.log`、`si-ordered-web-cancel-preview-final.log`、
 `native-previews.json` 和 `tauri-source-manifest.json`。原生捕获只证明该次渲染与
 字段值，不证明鼠标/设备/跨 DPI 完整通过。
+
+
+### 第 06 项主框架（2026-10-26）
+
+两端共用 classic-model.js 菜单顺序、命令启用规则和工具栏槽位；复用原版 128.bmp 的 7 格位图，包含 2 分隔位。经典源配置收进 Card Configuration，Open 选择后进入 Ready，Start 才分析；高级工作区仍可到达。工具栏、状态栏、TS Tree 开关可逆，Summary 保留左树。状态栏显示本产品及版本，不冒用原产品版权。帮助有本地内容；尚未实现的保存、打印及窗口排列明确禁用，后续项目负责解锁。
+
+修复集成期间 Summary 被 UnifiedSi 容器初始化覆盖、状态单元误挂到 DVB-I footer，以及网页菜单被工具栏覆盖的问题。当前 Qt 本地完整构建成功，实际引擎加载 Hotbird 后的 10 项完整应用离屏观察通过（含开关与 Summary）；Qt 源组件 47 项实际用例通过（QtTest 加生命周期为 53 PASS）。浏览器 9 个经典界面用例及静态资源检查共 10 项通过。证据：原工作区 artifacts/si-frame-components.log、si-frame-qt-runtime.log、si-ordered-web-step06-fixed.log。完整应用观察使用诊断接口与离屏渲染，不冒称原生鼠标或像素验收。未运行托管 CI。

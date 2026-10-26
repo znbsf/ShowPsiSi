@@ -529,6 +529,13 @@ public:
         QByteArray wire=QJsonDocument(request).toJson(QJsonDocument::Compact)+'\n';
         QMetaObject::invokeMethod(transport,"write",Qt::QueuedConnection,Q_ARG(QByteArray,wire));
     }
+    Q_INVOKABLE QVariantMap lockState() const {
+#ifdef Q_OS_WIN
+        return {{"num",bool(GetKeyState(VK_NUMLOCK)&1)},{"scroll",bool(GetKeyState(VK_SCROLL)&1)}};
+#else
+        return {};
+#endif
+    }
     Q_INVOKABLE void mark(QString event){
         if(!traceWriter)return;
         QJsonObject value{{"event",event},{"ms",clock.nsecsElapsed()/1e6},{"wall_ms",double(QDateTime::currentMSecsSinceEpoch())},{"process_cpu_ms",1000.0*std::clock()/CLOCKS_PER_SEC},{"backend_pid",double(backendPid)}};

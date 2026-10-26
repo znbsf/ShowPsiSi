@@ -66,6 +66,9 @@ SplitView {
     property bool hexOpen: true
     property real hexFraction:0.40
     property int selectedFieldIndex: -1
+    property bool treeVisible:true
+    property bool externalVisible:false
+    property alias externalContainer:externalPane
     property Item focusOrigin:null
     property int selectedPacketByte:-1
     property int selectedByte: -1
@@ -338,6 +341,7 @@ SplitView {
         }
     }
     Rectangle {
+        visible:view.treeVisible
         color:classicPaper;border.color:'#808080'
         SplitView.preferredWidth:view.width*0.265;SplitView.minimumWidth:220;SplitView.maximumWidth:view.width*0.6
         ColumnLayout {
@@ -373,7 +377,7 @@ SplitView {
                         Branch {depth:modelData.depth+1;width:(modelData.depth+1)*16;height:21;expandable:view.expandable(modelData);expanded:view.rowOpen(modelData)
                             MouseArea {anchors.right:parent.right;width:14;height:parent.height;enabled:parent.expandable;onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.fold(modelData);}}
                         }
-                        Icon {anchors.verticalCenter:parent.verticalCenter;kind:modelData.icon || (modelData.kind==='family'?(modelData.name==='Programs'?'programs':modelData.name==='PSI Packets'?'psi':modelData.name):modelData.program?'program':modelData.kind==='record'?modelData.record.name:modelData.node.label.toLowerCase().indexOf('descriptor')>=0?'descriptor':'field')}
+                        Icon {anchors.verticalCenter:parent.verticalCenter;kind:Model.inspector.navigationIcon(modelData)}
                         Rectangle {width:Math.min(nav.contentWidth-(modelData.depth+1)*16-26,navText.implicitWidth+4);height:19;anchors.verticalCenter:parent.verticalCenter;color:'white';border.width:parent.parent.highlighted?1:0;border.color:'#c00000'
                             TextLabel {id:navText;anchors.fill:parent;anchors.leftMargin:2;verticalAlignment:Text.AlignVCenter;text:modelData.label;font.pixelSize:13;elide:Text.ElideRight}
                         }
@@ -400,6 +404,7 @@ SplitView {
         }
     }
     Rectangle {
+        visible:!view.externalVisible
         color:classicFace;border.color:'#808080'
         SplitView.fillWidth:true;SplitView.minimumWidth:550
         ColumnLayout {
@@ -593,4 +598,6 @@ SplitView {
             }
         }
     }
+    Item {id:externalPane;visible:view.externalVisible;SplitView.fillWidth:true;SplitView.minimumWidth:360}
+
 }

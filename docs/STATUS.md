@@ -1,5 +1,12 @@
 # ShowPsiSi status
 
+2026-10-26 step 06 implemented: original toolbar bitmap and shared menu rules,
+Ready/Start file flow, reversible tree/toolbar/status visibility, and Summary
+alongside the left tree. Qt local build + 10 full-app offscreen observations,
+47 component cases and 10 browser/resource checks pass. Native desktop
+interaction and pixel matching remain separate acceptance. Next: step 07
+independent document windows. No hosted CI.
+
 2026-10-26 ordered plan steps 01–05 implemented and pushed (application source
 `ec2b993`): rejected candidates preserve the old session; Back restores exact
 field and pane positions; unmapped bytes clear stale ranges; Summary has six

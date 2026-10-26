@@ -1,5 +1,17 @@
 # ShowPsiSi status
 
+2026-10-26 ordered plan steps 01–05 implemented and pushed (application source
+`ec2b993`): rejected candidates preserve the old session; Back restores exact
+field and pane positions; unmapped bytes clear stale ranges; Summary has six
+matching metrics; tree/hex/focus keyboard navigation is aligned. Both native
+release candidates build locally and display the same real Hotbird PMT.
+Local evidence and the corrected asynchronous preview test are recorded in
+[NXTSA parity checkpoint](NXTSA_UI_UX_PARITY.md#前五项交付检查点2026-10-26源码-ec2b993).
+No hosted CI was started or polled. Plan 06–17 remains pending; the next item is
+the original application frame. The proposed delayed-start card never became
+a saved automation; work resumed directly after the user follow-up.
+
+
 2026-10-25 generic SI hierarchy and interaction correction: available native
 structures are now projected for every table family, preserving exact wire
 loops and explicit assembled-table scope. The 52 pinned reference inputs pass

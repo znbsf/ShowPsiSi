@@ -667,3 +667,29 @@ Qt 组件 43 个实际用例通过（47 PASS 含生命周期），无失败/跳�
 旧焦点测试已纳入新增原包窗格；Summary TabBar 切换明确聚焦实际 TabButton。
 证据 `si-ordered-web-step05.log`（TS 来源栏定位修正见 `si-ordered-web-keyboard-final.log`）
 及 `si-ordered-components-step05-final.log`。下一项为 06 原版主框架。
+
+
+### 前五项交付检查点（2026-10-26，源码 ec2b993）
+
+01–05 已实现并逐项提交推送：`f2fa708`、`a04af1b`、`4932996`、`6fa33bf`、
+`ec2b993`。这些提交都带 `[skip ci]`，没有启动或轮询 hosted CI。
+06–17 仍为待实施；下一项是原版主框架。本记录不表示整份计划完成，也没有
+声称存在仍会自动唤醒的已生效定时任务。
+
+最终本地检查：引擎/确定性取消 51 项（50 通过、1 个可选实流样本缺失跳过）；
+响应式分析/MCP 31 项通过；Qt 组件 43 个实际用例通过；最终完整 Qt 应用
+Hotbird→换源→AIT/UNT/DSM-CC 共 22 项通过。完整浏览器 85 项中 82 通过、
+2 个 POSIX 专属场景在 Windows 跳过，1 项因新增异步入场时序仍使用即时断言
+失败；将它改为等待实际 GUI 入场后，该完整旧预览令牌取消用例复测通过。
+这次修正只改测试等待，不改应用程序，也不把分次结果伪装成一次全绿运行。
+
+Qt 与 Tauri 最终 release 均本地编译成功。两个原生程序已各自用隔离设置/配置
+加载同一 Hotbird PMT（PID 0x0108，334 字段），保存原生渲染读回。原生鼠标、
+原生媒体播放、主框架/节目图标/DPI 的完全对齐仍未验收，属于后续 06–17。
+
+证据在原工作区 ignored `artifacts/si-ordered-20261026/` 及同级日志：
+`si-ordered-engine-and-cancel-final.log`、`si-ordered-responsive.log`、
+`si-ordered-components-step05-final.log`、`si-ordered-qt-full.log`、
+`si-ordered-web-full.log`、`si-ordered-web-cancel-preview-final.log`、
+`native-previews.json` 和 `tauri-source-manifest.json`。原生捕获只证明该次渲染与
+字段值，不证明鼠标/设备/跨 DPI 完整通过。

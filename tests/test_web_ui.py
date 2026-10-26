@@ -1472,6 +1472,9 @@ class BrowserTests(unittest.TestCase):
         # must close the dialog and invalidate its target, including its finally.
         self.page.evaluate('() => {window.showpsisi.scan()}')
         self.wait_checkpoint()
+        # Admission is asynchronous: the native gate may precede delivery of
+        # its progress event to the GUI. Wait for the admitted UI transition.
+        self.page.wait_for_function('()=>!document.querySelector("#edit-dialog").open')
         self.assertFalse(self.page.locator('#edit-dialog').is_visible())
         self.page.locator('#cancel-scan').click()
         self.page.wait_for_function('() => window.showpsisi.getState().analysis_status === "cancelled" && !document.querySelector("#scan").disabled')

@@ -649,7 +649,7 @@ ApplicationWindow {
         return JSON.stringify({input_kind:inputKind,dvbi:dvbiWorkspace.state(),settled: !presentationPending && !protocolRestoring && !dvbiWorkspace.busy && !core.busy && !core.inspecting && !core.comparing && !topologyLoading && !topologyRevealTimer.running && diagnostics.pending === 0,
             source: analysisState.source || "", analysis_status: analysisState.analysis_status || "idle",
             scan: {progress:scanProgress,paused:core.paused,pause_pending:core.pausePending,busy:core.busy,presentation: presentationPending,coverage:analysisState.coverage},
-            unified: {navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
+            unified: {context:unifiedInspector.captureContext(),navigation:unifiedInspector.navigation.map(function(r){return {key:r.key,kind:r.kind,label:r.label,depth:r.depth,record_id:r.record?r.record.id:'',path:r.node?r.node.path:'',expanded:unifiedInspector.expandable(r)&&unifiedInspector.rowOpen(r)};}),services:serviceRows,visible:unifiedInspector.visible,path:unifiedInspector.selectedPath,history:unifiedInspector.history.length,fields:unifiedInspector.fieldRows,records:unifiedInspector.records,nodes:unifiedInspector.nodes.map(function(n){return {path:n.path,label:n.label};}),hex:unifiedInspector.hexOpen},
             selected: selected, selected_service: selectedService, packet: currentPacket(),
             theme: lightTheme ? "light" : "dark", explorer: explorerRows.map(function(row) {return Object.assign({},row,{selected:explorerSelected(row)});}),
             table_filter: {pid:pidFilter,name:filter,count_unit:"logical_tables"},
@@ -1248,11 +1248,6 @@ ApplicationWindow {
             return;
         recentMenu.close();
         if(warningMessage.indexOf("Scan cancelled")===0){warningMessage="";warningRepeat=0;}
-        clearWorkspaceIntentions();
-        filter = ""; pidFilter = -1; expandedTables = {};
-        recordSearch.clear();
-        treeSearch.clear();
-        tab = "Services";
         notice = "Scanning source…";
         pendingCoverageKey=requestedCoverageKey;
         pendingScanOptions = {standards:standardChoice.currentValue,default_charset:defaultCharset.text.trim(),extra_pids:extraPidsValue.slice()};
@@ -1846,7 +1841,10 @@ ApplicationWindow {
             else {tableViewState=state;explorerViewState=state;historyViewState=state;recordViewState=state;}
         }
         function onErrorChanged() { if(core.error)showMessage(core.error, "error"); }
-        function onWorkspaceInvalidated() { clearWorkspaceIntentions(); }
+        function onWorkspaceInvalidated() {
+            clearWorkspaceIntentions();
+            if(core.busy){filter="";pidFilter=-1;expandedTables={};recordSearch.clear();treeSearch.clear();tab="Services";}
+        }
         function onAvailabilityChanged() {
             if (core.availability === "disconnected") {
                 pendingScanOptions=null;
@@ -1892,6 +1890,11 @@ ApplicationWindow {
                 return;
             }
             if (method === "fixture_late_frames") { lifecycleTestTimer.lateFramesAcknowledged = true; return; }
+            if (method === "analyze" && result.data && result.data.state_preserved) {
+                if(analysisState.source)source.text=analysisState.source;
+                showMessage(result.message + " — previous input and view retained", "error");
+                return;
+            }
             if (method === "analyze" && result.code === "analysis_cancelled") {
                 showMessage("Scan cancelled · source unchanged · analyze again when ready", "warning");
                 return;

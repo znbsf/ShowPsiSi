@@ -217,11 +217,13 @@ class CancellationTests(unittest.TestCase):
         self.assertEqual(idle['analysis_status'], 'idle')
         self.assertEqual(idle['metrics']['scan_ms'], 0)
         self.analyze(wire, 2, Path(self.tmp.name) / 'missing.ts')
-        self.assertEqual(wire.response(2)['error']['code'], 'request_failed')
-        failed = wire.call(3, 'query')['result']
-        self.assert_cleared(failed, 'failed')
+        error = wire.response(2)['error']
+        self.assertEqual(error['code'], 'input_rejected')
+        self.assertTrue(error['data']['state_preserved'])
+        retained = wire.call(3, 'query')['result']
+        self.assertEqual(retained, idle)
         time.sleep(.01)
-        self.assertEqual(wire.call(4, 'query')['result']['metrics'], failed['metrics'])
+        self.assertEqual(wire.call(4, 'query')['result']['metrics'], retained['metrics'])
 
     def cancellation_at(self, stage):
         wire = self.wire(stage=stage)

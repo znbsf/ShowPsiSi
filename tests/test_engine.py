@@ -74,7 +74,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(len(self.core.call('query',{'at_packet':2})['services']),0)
         with self.assertRaisesRegex(RuntimeError,'Incomplete'):self.core.call('export',{'path':self.output('incomplete.bin'),'at_packet':2,'format':'bin'})
         self.assertEqual([x['name'] for x in self.core.call('query',{'at_packet':3})['services']],['New A','New B'])
-    def test_failed_analysis_discards_evidence_and_preview(self):
+    def test_rejected_input_preserves_analysis_identity_and_preview(self):
         for name,raw in [('missing.ts',None),('tiny.ts',b'x'),('invalid.ts',b'x'*940)]:
             with self.subTest(name=name):
                 state=self.core.call('analyze',{'path':str(ROOT/'samples/generated/lab.ts')})
@@ -82,14 +82,18 @@ class EngineTests(unittest.TestCase):
                 edit=self.core.call('preview_rename',{'id':service['source_id'],'service_id':service['id'],'name':'Old edit'})
                 path=self.output(name)
                 if raw is not None:Path(path).write_bytes(raw)
-                with self.assertRaises(RuntimeError):self.core.call('analyze',{'path':path})
-                failed=self.core.call('query')
-                self.assertFalse(failed['complete']);self.assertEqual(failed['tables'],[]);self.assertEqual(failed['services'],[])
-                self.assertGreater(failed['revision'],state['revision'])
-                with self.assertRaisesRegex(RuntimeError,'Unknown section'):self.core.call('inspect',{'id':service['source_id']})
-                with self.assertRaisesRegex(RuntimeError,'successful analysis'):self.core.call('export',{'path':self.output(name+'.bin'),'format':'bin','preview_token':edit['token']})
-                with self.assertRaisesRegex(RuntimeError,'successful analysis'):self.core.call('preview_rename',{'id':service['source_id'],'service_id':service['id'],'name':'Bad'})
-                self.assertFalse(Path(self.output(name+'.bin')).exists())
+                with self.assertRaises(RuntimeError) as rejected:self.core.call('analyze',{'path':path})
+                self.assertEqual(rejected.exception.code,'input_rejected')
+                self.assertTrue(rejected.exception.data['state_preserved'])
+                retained=self.core.call('query')
+                self.assertTrue(retained['complete'])
+                self.assertEqual(retained['source'],state['source'])
+                self.assertEqual(retained['revision'],state['revision'])
+                self.assertEqual([r['id'] for r in retained['tables']],[r['id'] for r in state['tables']])
+                self.assertEqual(self.core.call('inspect',{'id':service['source_id']})['id'],service['source_id'])
+                result=self.core.call('export',{'path':self.output(name+'.bin'),'format':'bin','preview_token':edit['token']})
+                self.assertEqual(result['source'],state['source'])
+                self.assertTrue(Path(result['path']).is_file())
 
     def test_pmt_binding_follows_pat_pid_and_transport_stream(self):
         from make_fixture import section,descriptor,word
@@ -387,7 +391,7 @@ class EngineTests(unittest.TestCase):
         import os
         with self.assertRaisesRegex(RuntimeError,'regular local file'):
             self.core.call('analyze',{'path':self.tmp.name})
-        state=self.core.call('query');self.assertFalse(state['complete']);self.assertEqual(state['tables'],[])
+        state=self.core.call('query');self.assertTrue(state['complete']);self.assertEqual(state['source'],self.state['source']);self.assertEqual(state['revision'],self.state['revision'])
         if os.name!='nt' and hasattr(os,'mkfifo'):
             fifo=self.output('input.pipe');os.mkfifo(fifo)
             requests=[{'id':1,'method':'analyze','params':{'path':fifo}}, {'id':2,'method':'query','params':{}}]
@@ -559,7 +563,7 @@ class EngineTests(unittest.TestCase):
         with Core() as fresh:
             with self.assertRaisesRegex(RuntimeError,'successful analysis'):fresh.call('diff_snapshots',{'from_packet':0,'to_packet':0})
         with self.assertRaises(RuntimeError):self.core.call('analyze',{'path':self.output('missing.ts')})
-        with self.assertRaisesRegex(RuntimeError,'successful analysis'):self.core.call('diff_snapshots',valid)
+        self.assertIn('summary',self.core.call('diff_snapshots',valid))
 
     def test_machine_argument_validation(self):
         with self.assertRaisesRegex(RuntimeError,'Below minimum'):self.core.call('query',{'at_packet':-1})

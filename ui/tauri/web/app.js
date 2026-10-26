@@ -165,7 +165,7 @@ function distributionPanel(row) {
   return `<div class="arrival" id="arrival-details" data-inspector-content="arrival" ${inspectorDetails.arrival ? "" : "hidden"}><p class="meta">Arrival · first #${num(d.first_packet)} → last #${num(d.last_packet)} · ${num(d.observation_count)}×</p><p class="meta">Packet positions, not PCR time. ${d.first_seconds != null ? `Estimated ${Number(d.first_seconds).toFixed(3)}–${Number(d.last_seconds).toFixed(3)} s · ${esc(d.basis)}` : 'Time unavailable without a bitrate estimate.'}</p><p class="meta">Gaps (packets): min ${d.min_gap_packets == null ? '—' : num(d.min_gap_packets)} · mean ${d.mean_gap_packets == null ? '—' : Number(d.mean_gap_packets).toFixed(1)} · max ${d.max_gap_packets == null ? '—' : num(d.max_gap_packets)}</p><div class="section-density" aria-label="Selected section occurrence density">${bins.map(b => `<span class="${b.bad ? 'invalid' : ''}" style="--height:${b.count ? Math.max(2, 100*b.count/max) : 0}%" title="Packets ${num(b.from_packet)}–${num(b.to_packet)}: ${num(b.count)} observations, ${num(b.bad)} invalid"></span>`).join('')}</div>${arrivalAxis(bins[0]?.from_packet || 0, bins.at(-1)?.to_packet || 0)}</div>`;
 }
 const tip = (key) => `title="${esc((tableLabels[key] ? key + " · " : "") + (glossary[key] || key))}"`;
-let siView = null, summaryView = null, summaryVisible = false, classicMode = true;
+let siView = null, summaryView = null, summaryVisible = false, classicMode = true, candidatePending = false;
 let data = {},
   detail = {},
   env = {},
@@ -823,6 +823,7 @@ function queueProgress(state) {
     progressFrame = null;
     const update = queuedProgress; queuedProgress = null;
     if (!update || update.epoch !== scanEpoch || update.requestId !== activeAnalyze || !busy || cancelling || backendFailure) return;
+    if(candidatePending){candidatePending=false;resetAnalysisViews();filter="";pidFilter=null;page=0;historyPage=0;}
     data = update.state;
     if ((pausePending === "pause" && data.analysis_status === "paused") ||
         (pausePending === "resume" && ["analyzing","finalizing"].includes(data.analysis_status))) pausePending = "";
@@ -980,13 +981,7 @@ async function scan() {
   const epoch = ++scanEpoch;
   busy = true;
   cancelling = false;
-  resetAnalysisViews();
-  data = {};
-  preview = {};
-  filter = "";
-  pidFilter = null;
-  page = 0;
-  historyPage = 0;
+  candidatePending = true;
   firstPaint = false;
   completePaint = false;
   render();
@@ -1007,6 +1002,7 @@ async function scan() {
     render();
     const result = await operation;
     if (epoch !== scanEpoch) return;
+    if(candidatePending){candidatePending=false;resetAnalysisViews();filter="";pidFilter=null;page=0;historyPage=0;}
     clearProgress(); activeAnalyze = null; pausePending = "";
     data = {...result,complete:false,analysis_status:"loading_results"};
     await hydrateResult(result, () => epoch === scanEpoch);
@@ -1022,7 +1018,10 @@ async function scan() {
     );
   } catch (error) {
     if (epoch !== scanEpoch) return;
-    if (error.code === "analysis_cancelled") {
+    if (error.data?.state_preserved && candidatePending && data.source) {
+      if(data.source)$("#source").value=data.source;
+      notice(String(error) + " — previous input and view retained", true);
+    } else if (error.code === "analysis_cancelled") {
       resetAnalysisViews();
       data = error.data?.state || { analysis_status: "cancelled", complete: false };
       notice("Analysis cancelled · source unchanged · ready to analyze again", "warning");
@@ -1034,7 +1033,7 @@ async function scan() {
   } finally {
     if (epoch === scanEpoch) {
       const returnFocus = cancelling && (document.activeElement === $("#cancel-scan") || document.activeElement === document.body);
-      clearProgress(); pausePending = "";
+      clearProgress(); pausePending = ""; candidatePending = false;
       busy = false;
       cancelling = false;
       activeAnalyze = null;

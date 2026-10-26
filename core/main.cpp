@@ -282,6 +282,8 @@ struct Record {
 #include "ApplicationCarriage.h"
 #include "TransportStatistics.h"
 
+class RejectedInput : public std::runtime_error { public: using std::runtime_error::runtime_error; };
+
 class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHandlerInterface {
     dvbi::Store dvbiDocuments;
     fs::file_time_type analysisSourceStamp{}; bool analysisSourceKnown=false;
@@ -967,7 +969,42 @@ public:
         records.clear();ids.clear();history=J::array();previous.clear();tableHistory=J::array();historySlots.clear();pending=J::object();patchSections.clear();
         observations=crcErrors=0;transportStatistics.clear();demuxStatus=J::object();resultCache=J::object();cacheCutoff=UINT64_MAX;densityCounts.fill(0);densityBad.fill(0);
     }
+    // Bounded admission check, before replacing the existing analysis identity.
+    // The actual scan reopens and revalidates the source to detect later changes.
+    void validateCandidate(const J& args) const {
+        const auto candidate=fs::absolute(pathFromUtf8(args.at("path").get<std::string>()));
+        std::error_code error;
+        if(!fs::is_regular_file(candidate,error))throw std::runtime_error("Source must be a regular local file");
+        std::ifstream input(candidate,std::ios::binary);
+        if(!input)throw std::runtime_error("Cannot read source file");
+        const auto bytes=fs::file_size(candidate);
+        if(bytes<188)throw std::runtime_error("Source is too small for a TS packet");
+        std::array<uint8_t,5*204> probe{};input.read(reinterpret_cast<char*>(probe.data()),probe.size());
+        const size_t got=size_t(input.gcount());size_t width=0;
+        if(input.bad())throw std::runtime_error("Cannot read source framing");
+        for(size_t candidateWidth:{size_t(188),size_t(192),size_t(204)}) {
+            const size_t offset=candidateWidth==192?4:0;bool valid=got>offset;
+            for(size_t i=0;i<5&&offset+i*candidateWidth<got;i++)valid&=probe[offset+i*candidateWidth]==0x47;
+            if(valid){width=candidateWidth;break;}
+        }
+        if(!width)throw std::runtime_error("No aligned 188/192/204-byte TS framing at file start");
+        const auto charset=args.value("default_charset",std::string());
+        if(!charset.empty()&&!ts::Charset::GetCharset(ts::UString::FromUTF8(charset)))throw std::runtime_error("Unsupported default_charset: "+charset);
+        const auto mode=args.value("scan_mode",std::string("full"));
+        if(args.contains("sample_percent")&&args.contains("max_packets"))throw std::runtime_error("Specify sample_percent or max_packets, not both");
+        if(args.contains("sample_percent")&&mode!="prefix"&&mode!="distributed")throw std::runtime_error("sample_percent is supported only for prefix or distributed scans");
+        if(mode=="range") {
+            const auto start=args.value("start_packet",uint64_t(0)),end=args.value("end_packet",bytes/width);
+            if(start>=end||end>bytes/width)throw std::runtime_error("Range must satisfy 0 <= start_packet < end_packet <= source packets");
+        }
+    }
     J analyze(const J& args,const J& rid,const std::shared_ptr<AnalysisControl>& control) {
+        if(!control||!control->cancelled.load()) {
+            try { validateCandidate(args); }
+            catch(const std::exception& error) {
+                if(!control||!control->finish())throw RejectedInput(error.what());
+            }
+        }
         // A new scan owns a new revision even when opening or framing fails.
         // Never allow old evidence or preview tokens to acquire a new source label.
         clearEvidence();++revision;analysisStatus="analyzing";
@@ -1601,6 +1638,8 @@ static int runCore(int argc,char**argv) {
             try {
                 J result=engine.dispatch(work.method,work.args,work.id,work.control);
                 terminal={{"id",work.id},{"result",std::move(result)}};
+            } catch(const RejectedInput& e){
+                terminal={{"id",work.id},{"error",{{"code","input_rejected"},{"message",e.what()},{"data",{{"state_preserved",true}}}}}};
             } catch(const CancelledAnalysis& e){
                 terminal={{"id",work.id},{"error",{{"code","analysis_cancelled"},{"message",e.what()},{"data",{{"state",engine.state()}}}}}};
             } catch(const std::exception& e){

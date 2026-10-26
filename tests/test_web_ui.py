@@ -943,6 +943,22 @@ class BrowserTests(unittest.TestCase):
         # This fixture deliberately has an empty PMT; its decoded root must still appear.
         self.assertTrue(p.evaluate('(key)=>showpsisi.getUiState().unified.navigation.some(r=>r.kind==="node"&&r.record_id===key&&r.path==="section/decoded")',key))
 
+    def test_classic_rejected_input_preserves_selected_field_and_scroll(self):
+        self.analyze();p=self.page
+        p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        p.locator('.si-field-row').nth(1).locator('.si-field-name').click()
+        before=p.evaluate('({unified:showpsisi.getUiState().unified,state:showpsisi.getState(),detail:showpsisi.getDetail()})')
+        for path in [self.output/'missing-candidate.ts',self.output/'invalid-candidate.ts']:
+            if path.name.startswith('invalid'):path.write_bytes(b'x'*940)
+            p.locator('#source').fill(str(path));p.locator('#scan').click()
+            p.wait_for_function('()=>!document.querySelector("#scan").disabled && document.querySelector("#notice").textContent.includes("retained")')
+            after=p.evaluate('({unified:showpsisi.getUiState().unified,state:showpsisi.getState(),detail:showpsisi.getDetail()})')
+            self.assertEqual(after['state'],before['state'])
+            self.assertEqual(after['detail'],before['detail'])
+            for name in ['selected','path','range','columnWidths','scroll']:
+                self.assertEqual(after['unified'][name],before['unified'][name],name)
+            self.assertEqual(p.locator('#source').input_value(),before['state']['source'])
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

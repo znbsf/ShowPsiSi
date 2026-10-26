@@ -187,6 +187,7 @@ class Bridge:public QObject {
             // must never replace the active workspace.
             if(msg["event"]!="progress"||!m_busy||m_cancelling||
                msg["request_id"]!=QJsonValue(activeAnalysis)||!msg["state"].isObject())return;
+            if(m_progress.isEmpty())clearIntentions();
             m_progress=stateValue;emit progressChanged();
             const bool paused=stateValue.value("analysis_status")=="paused";
             if(paused!=m_paused || (m_pausePending && paused==m_pauseTarget)){m_paused=paused;m_pausePending=false;emit pauseChanged();}
@@ -274,7 +275,7 @@ class Bridge:public QObject {
         if(msg.contains("error")){
             const auto error=msg["error"].toObject();
             const bool cancelled=method=="analyze"&&error["code"]=="analysis_cancelled";
-            if(method=="analyze"){
+            if(method=="analyze"&&!errorValue.value("data").toMap().value("state_preserved").toBool()){
                 m_state=errorValue.value("data").toMap().value("state").toMap();
                 clearIntentions();emit stateChanged();
             }
@@ -284,6 +285,7 @@ class Bridge:public QObject {
             if(!m_error.isEmpty()){m_error.clear();emit errorChanged();}
             QVariantMap result=resultValue;
             if(cancelRequested)result["cancel_requested"]=true;
+            if(method=="analyze"&&m_progress.isEmpty())clearIntentions();
             if((method=="analyze"||method=="query")&&result.contains("result_counts")){beginHydration(method,result);return;}
             if(method=="analyze"||method=="query"){m_state=result;emit stateChanged();}
             if(method=="inspect"){result["occurrence_offset"]=request.params.value("occurrence_offset",0);m_detail=result;m_detailJson=resultJson;
@@ -508,7 +510,7 @@ public:
         int id=++sequence;
         if(method=="analyze"){
             ++generation;clearTsRequests();activeAnalysis=id;
-            m_busy=true;m_cancelling=false;m_progress.clear();emit progressChanged();m_paused=false;m_pausePending=false;emit pauseChanged();clearIntentions();
+            m_busy=true;m_cancelling=false;m_progress.clear();emit progressChanged();m_paused=false;m_pausePending=false;emit pauseChanged();
             dataFrame=completeFrame=false;emit busyChanged();emit cancellingChanged();mark("analyze_requested");
         }
         if(method=="inspect"){if(!params.contains("occurrence_offset"))params["occurrence_offset"]=0;params["occurrence_limit"]=50;latestInspect=id;const bool hadDetail=!m_detail.isEmpty(),wasInspecting=m_inspecting;m_detail.clear();m_detailJson="{}";m_inspecting=true;if(hadDetail)emit detailChanged();if(!wasInspecting)emit inspectingChanged();}

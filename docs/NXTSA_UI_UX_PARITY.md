@@ -601,7 +601,7 @@ application source and the verified local executable hashes remain unchanged.
 | 09 | Packet Explorer 原始 TS 包浏览 | 首/前/后/末及索引/PID 过滤可用；header/adaptation/pointer/payload 与真实包同步；边界、坏包和取消有反馈；返回原字段 | VIEW-022、MED-006/007、WIN-027/042 | 已实现并本地验证：原包与封装、首前后末、索引/PID、分批搜索取消、header/区域及 section 链接 |
 | 10 | 跨包来源片段与精确定位 | 跨包 section 的每段真实 TS 来源可达；区分文件/包/section 坐标与 188/192/204 封装；位范围与未知状态准确；不造重组包 | APP-010、VIEW-021、MED-002/005/011 | 已实现：首个观测 occurrence 的全部可信来源片段，双 hex 可切换并使用全局 section 偏移；超过界限或不可靠明确不可映射 |
 | 11 | 统计、错误与 Timing/Bitrate | 先补用户可见统计和来源说明；独立 Bitrate 条形与 Timing 页面有可信时钟、范围、单位、wrap/跳变处理；无时钟显示 unknown；诊断区分检测范围 | VIEW-009～016、APP-013/014 | 已实现：捕获流 PCR 测量、可信区间时长、原始 Timing 分页、绿条码率及跳包；无时钟 Unknown，范围明确 |
-| 12 | 服务、EIT/EPG 与 AIT 追查 | 同 SID 不同 TS、共享 PID 不串源；服务→具体 PMT/ES/EIT/应用→证据可返回；缺失关联明确显示，不靠 ID 猜测 | VIEW-024～033 | 待实施 |
+| 12 | 服务、EIT/EPG 与 AIT 追查 | 同 SID 不同 TS、共享 PID 不串源；服务→具体 PMT/ES/EIT/应用→证据可返回；缺失关联明确显示，不靠 ID 猜测 | VIEW-024～033 | 已实现：完整 ONID/TSID/SID 服务身份、ES/EPG/AIT 来源跳转及返回；同 SID、共享 PID 与歧义反例通过 |
 | 13 | DSM-CC/OC/BIOP/Class/配置内容 | 信令→模块/缺块→对象→内容，三类视图可达；完整与缺块样本分别验证；Class 只读不执行；导出与原字节/身份一致 | VIEW-034～043 | 待实施 |
 | 14 | Teletext 实际页面 | 真实页/子页/捕获身份、40 列字符与已支持属性可见；导航与内容更新正确；缺行、未知字符集和不支持项明确 | VIEW-044～049、VIS-013 | 待实施 |
 | 15 | PES/ES 与真实音视频视图 | 先完成 TS→PES→ES 来源链，再接真实视频缩略图/帧、PCM 波形和播放；分析、解码、设备输出、停止/换源释放分项记录 | MED-001～040 | 待实施 |
@@ -716,3 +716,18 @@ Timing 每 PID 追踪可信 PCR 对、回绕/跳变/声明间断；采样窗口�
 
 
 第 07–11 项追加合并回归：`si-ordered-steps07-11-combined.log` 中 40 项全部通过、无 skip，覆盖包读取、Timing、原有 transport 口径、桥接静态资源及 13 个经典 UI 用例。此批不含未配置的 Qt portable resource suite；Qt 源组件和完整应用仍使用前述独立证据。
+
+## 服务、EPG 与应用追查检查点（2026-10-26，步骤 12）
+
+两端新增独立 Services / EPG 窗口，按实际 SDT 的 ONID/TSID/SID 选择服务。
+Service、ES、EPG、Applications 使用同一 query_service 响应；双击/Enter 打开
+确切 section，ES 定位到真实字节偏移对应的 stream，关闭后恢复服务页。
+多个实际 SDT 网络身份或 PAT 映射冲突时不关联 PMT；共享 AIT PID 保留非独占来源。
+自动标准模式不隐含 DVB 应用解释，明确提示需要 DVB 上下文。
+事件为截止点内已观测 EIT，不能当作完整节目单或实时播出保证。
+
+本地验证：36 项引擎/浏览器检查通过（服务身份、错误上下文、原有 AIT carriage
+回归、EPG→ES→AIT→返回与共享 PID）；完整 Qt 离屏显示真实 Hotbird 服务、
+PMT 组件及准确结构路径，4 项观察通过且无 QML 错误。
+证据位于原始仓库 ignored artifacts/si-service-final.log、si-service-qt-runtime.log。
+原生鼠标与 DPI 验收仍归步骤 17，不以离屏结果替代。

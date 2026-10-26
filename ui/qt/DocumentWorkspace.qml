@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 import "../tauri/web/document-model.js" as Model
 Item {
  id:workspace
@@ -7,6 +8,8 @@ Item {
  property var frames:({})
  property Component sectionComponent
  property Component summaryComponent
+ property Item navigationOrigin:null
+ property Component serviceComponent
  property Component statisticsComponent
  property Component packetComponent
  property Component decodeComponent
@@ -23,6 +26,9 @@ Item {
  function close(id){apply(Model.documents.close(state,id||state.active));if(state.active)activate(state.active);}
  function cycle(back){apply(Model.documents.cycle(state,back));if(state.active)activate(state.active);}
  function arrange(command){apply(Model.documents.arrange(state,command,width,height));}
+ function nextRegion(back){var frame=frames[state.active],item=frame?frame.contentItem:null;if(!item){if(navigationOrigin)navigationOrigin.forceActiveFocus();return;}if(item.nextRegion){item.focusOrigin=navigationOrigin;item.nextRegion(back);return;}var active=workspace.Window.window?workspace.Window.window.activeFocusItem:null,inside=false;for(var p=active;p;p=p.parent)if(p===frame)inside=true;if(inside&&navigationOrigin)navigationOrigin.forceActiveFocus();else item.forceActiveFocus();}
+ function receiveService(result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='service'&&frame.contentItem)frame.contentItem.receive(result);});}
+ function focusSection(id,path,cutoff){var found=state.items.find(function(d){return d.kind==='si'&&d.payload.id===id&&d.payload.native_table_at_packet===cutoff;});if(found){activate(found.id);if(frames[found.id].contentItem)frames[found.id].contentItem.focusNode(path||'section');}}
  function receiveStatistics(method,result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='statistics'&&frame.contentItem)frame.contentItem.receive(method,result);});}
  function receivePacket(result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='packet'&&frame.contentItem)frame.contentItem.receive(result);});}
  function receiveTransport(result){Object.keys(frames).forEach(function(id){var frame=frames[id];if(frame.documentData.kind==='summary'&&frame.contentItem)frame.contentItem.receive(result);});}
@@ -61,7 +67,7 @@ Item {
    Loader {
     id:content;x:3;y:28;width:parent.width-6;height:Math.max(0,parent.height-31);visible:frame.documentData.mode!=='minimized'
     property var documentData:frame.documentData
-    sourceComponent:documentData.kind==='summary'?workspace.summaryComponent:documentData.kind==='decoded'?workspace.decodeComponent:documentData.kind==='packet'?workspace.packetComponent:documentData.kind==='statistics'?workspace.statisticsComponent:workspace.sectionComponent
+    sourceComponent:documentData.kind==='summary'?workspace.summaryComponent:documentData.kind==='decoded'?workspace.decodeComponent:documentData.kind==='packet'?workspace.packetComponent:documentData.kind==='statistics'?workspace.statisticsComponent:documentData.kind==='service'?workspace.serviceComponent:workspace.sectionComponent
    }
    MouseArea {width:12;height:12;anchors.right:parent.right;anchors.bottom:parent.bottom;visible:frame.documentData.mode==='normal';cursorShape:Qt.SizeFDiagCursor
     property point start

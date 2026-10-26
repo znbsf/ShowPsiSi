@@ -4,6 +4,8 @@ import QtQuick.Layouts
 import "../tauri/web/packet-model.js" as Shared
 Pane {
  id:view
+ property Item focusOrigin:null
+ function nextRegion(back){if(rows.activeFocus&&focusOrigin)focusOrigin.forceActiveFocus();else rows.forceActiveFocus();}
  required property var host
  property bool timing:false
  property var page:({})

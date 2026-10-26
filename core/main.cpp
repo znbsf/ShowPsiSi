@@ -501,7 +501,7 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                         audio=ts::CodecTypeIsAudio(codec);video=ts::CodecTypeIsVideo(codec);
                     }
                 }
-                r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},
+                r.fields["streams"].push_back({{"pid",u16(b,p+1)&0x1fff},{"type",b[p]},{"section_offset",p},{"structure_path","section/stream/"+std::to_string(p)},
                     {"is_audio",audio},{"is_video",video},
                     {"classification_basis","TSDuck PMT classification; private stream types require namespace or descriptor evidence"}});
                 p+=5+len;
@@ -697,13 +697,13 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
     }
     J derivedSnapshot(const std::map<std::string,const Record*>& selected) const {
         J out={{"services",J::array()},{"events",J::array()}};
-        std::map<std::string,J> services; std::map<std::pair<unsigned,unsigned>,unsigned> pmts; std::map<std::pair<unsigned,unsigned>,J> components;
+        std::map<std::string,J> services; std::map<unsigned,std::set<unsigned>> actualNetworks;std::map<std::pair<unsigned,unsigned>,std::set<unsigned>> pmts; std::map<std::pair<unsigned,unsigned>,J> components;
         for(const auto& [key,item]:selected) {
             const Record& r=*item;
             if((r.tid==0||r.tid==2||r.tid==0x42)&&!completeGroup(r,selected))continue;
-            if(r.tid==0&&r.pid==0)for(const auto& p:r.fields.value("programs",J::array()))if(p["service_id"]!=0)pmts[{r.ext,p["service_id"].get<unsigned>()}]=p["pmt_pid"].get<unsigned>();
+            if(r.tid==0&&r.pid==0)for(const auto& p:r.fields.value("programs",J::array()))if(p["service_id"]!=0)pmts[{r.ext,p["service_id"].get<unsigned>()}].insert(p["pmt_pid"].get<unsigned>());
             if(r.tid==2)components[{r.pid,r.ext}]=r.fields;
-            if(r.tid==0x42&&r.pid==0x11)for(const auto& s:r.services)services[std::to_string(s["onid"].get<unsigned>())+":"+std::to_string(s["ts_id"].get<unsigned>())+":"+std::to_string(s["id"].get<unsigned>())]=s;
+            if(r.tid==0x42&&r.pid==0x11)for(const auto& s:r.services){actualNetworks[r.ext].insert(s["onid"].get<unsigned>());services[std::to_string(s["onid"].get<unsigned>())+":"+std::to_string(s["ts_id"].get<unsigned>())+":"+std::to_string(s["id"].get<unsigned>())]=s;}
             for(const auto& e:r.events)out["events"].push_back(e);
         }
         std::string groupBy=extension.value("organization",J::object()).value("group_by",std::string("group"));
@@ -713,9 +713,10 @@ class Engine : public ts::SectionHandlerInterface, public ts::InvalidSectionHand
                 const auto name=ts::ServiceTypeName(s["service_type"].get<uint8_t>()).toUTF8();
                 if(name.find("unknown")==std::string::npos&&name.find("Unknown")==std::string::npos)s["service_type_name"]=name;
             }
-            auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});s["pmt_pid"]=pat!=pmts.end()?J(pat->second):J();
+            auto pat=pmts.find({s["ts_id"].get<unsigned>(),sid});const bool uniqueTransport=actualNetworks[s["ts_id"].get<unsigned>()].size()==1,uniqueMapping=pat!=pmts.end()&&pat->second.size()==1;const unsigned pmtPid=uniqueMapping?*pat->second.begin():8191;s["pmt_pid"]=uniqueTransport&&uniqueMapping?J(pmtPid):J();
             s["audio_pids"]=J::array();s["video_pids"]=J::array();s["media_status"]="PMT unavailable";
-            if(pat!=pmts.end()){auto pmt=components.find({pat->second,sid});if(pmt!=components.end()){
+            if(!uniqueTransport)s["media_status"]="Ambiguous actual SDT transport identity; PMT association withheld";else if(pat!=pmts.end()&&!uniqueMapping)s["media_status"]="Conflicting PAT mappings; PMT association withheld";
+            if(uniqueTransport&&uniqueMapping){auto pmt=components.find({pmtPid,sid});if(pmt!=components.end()){
                 s["components"]=pmt->second;s["media_status"]="decoded PMT";
                 for(const auto& stream:pmt->second.value("streams",J::array())){
                     if(stream.value("is_audio",false))s["audio_pids"].push_back(stream["pid"]);
@@ -812,6 +813,32 @@ public:
         J out={{"response_mode","compact"},{"source",pathUtf8(source)},{"file_name",pathUtf8(source.filename())},{"source_bytes",totalBytes},{"packets",packets},{"packet_size",stride},{"observations",observations},{"crc_errors",crcErrors},{"complete",complete},{"analysis_status",analysisStatus},{"revision",revision},{"analysis_revision",revision},{"extension_id",extension.value("id",std::string("none"))},{"bitrate",bitrate},{"time_basis",bitrate>0?"user supplied bitrate":"packet index"},{"text_charset",duck.charsetIn()->name().toUTF8()},{"time_reference",duck.timeReferenceName().toUTF8()},{"selected_packet",at==UINT64_MAX?J():J(at)},{"coverage",cov},{"result_counts",counts},{"progress_fraction",plannedPackets?double(scannedPackets)/plannedPackets:0.0},{"demux",demuxStatus},{"timing",{{"seconds_per_packet",bitrate>0?J(188.0*8/bitrate):J()},{"basis",bitrate>0?"user supplied bitrate":"packet index"},{"pcr_derived",false}}},{"metrics",{{"scan_ms_basis","Wall elapsed time including pauses and owner finalization; excludes client result hydration"},{"first_section_ms",firstMs},{"scan_ms",(analysisStatus=="analyzing"||analysisStatus=="paused"||analysisStatus=="finalizing")?ms(began):totalMs}}}};
         out["transport_summary"]=transportStatistics.summary(bitrate);out["transport_pids"]=transportStatistics.pidIndex();
         appendStandardsMetadata(out);return out;
+    }
+    J queryService(const J& args) {
+        if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete service analysis_revision");
+        const uint64_t at=args.value("at_packet",packets-1);if(at>=packets)throw std::runtime_error("Service cutoff outside analysis");
+        const unsigned onid=args.at("original_network_id"),tsid=args.at("transport_stream_id"),sid=args.at("service_id");const auto selected=latest(at);const auto derived=derivedSnapshot(selected);
+        J service;for(const auto& s:derived["services"])if(s["onid"]==onid&&s["ts_id"]==tsid&&s["id"]==sid){if(!service.is_null())throw std::runtime_error("Ambiguous service identity");service=s;}
+        if(service.is_null())throw std::runtime_error("Service identity not observed in complete actual SDT at this cutoff");
+        J events=J::array(),components=J::array(),applications=J::array(),warnings=J::array();
+        for(const auto& event:derived["events"])if(event["onid"]==onid&&event["ts_id"]==tsid&&event["service_id"]==sid)events.push_back(event);
+        std::sort(events.begin(),events.end(),[](const J& a,const J& b){return std::tuple(a.value("start",std::string()),a["id"].get<unsigned>(),a["source_id"].get<std::string>())<std::tuple(b.value("start",std::string()),b["id"].get<unsigned>(),b["source_id"].get<std::string>());});
+        const Record* pmt=nullptr;if(!service["pmt_pid"].is_null())for(const auto& [key,r]:selected)if(r->tid==2&&r->pid==service["pmt_pid"].get<unsigned>()&&r->ext==sid&&completeGroup(*r,selected)){if(!pmt||r->number==0)pmt=r;}
+        if(pmt){for(const auto& stream:pmt->fields.value("streams",J::array())){auto row=stream;row["source_id"]=pmt->id;row["structure_path"]=stream.value("structure_path",std::string("section"));components.push_back(row);}}
+        else warnings.push_back(service.value("media_status",std::string("PMT unavailable")));
+        if(standardsContext!="dvb")warnings.push_back("AIT carriage requires explicit DVB interpretation; automatic or other standards contexts do not establish application association");
+        size_t aitCount=0;
+        if(pmt)for(const auto& [key,r]:selected)if(r->tid==0x74&&r->current&&r->valid&&r->number==0){
+            if(++aitCount>32){warnings.push_back("AIT association inspection limited to first 32 selected AIT groups");break;}
+            const auto inspected=inspect({{"id",r->id},{"analysis_revision",revision},{"at_packet",at}});const auto app=inspected.value("application_signalling",J::object());bool carriage=false;std::string resolution="unresolved";
+            for(const auto& object:app.value("objects",J::array()))if(object.value("object_type",std::string())=="application_carriage"){
+                const auto& i=object["identity"];if(i.value("transport_stream_id",0u)==tsid&&i.value("program_number",0u)==sid&&i.value("pmt_pid",8192u)==pmt->pid){carriage=true;resolution=object.value("resolution_status",std::string("unresolved"));}}
+            if(carriage)for(const auto& object:app.value("objects",J::array()))if(object.value("object_type",std::string())=="application"){
+                if(applications.size()>=256){warnings.push_back("Application rows limited to first 256");break;}applications.push_back({{"source_id",r->id},{"pid",r->pid},{"carriage_status",resolution},{"object",object},{"scope","Nonexclusive observed PAT/PMT/AIT carriage; no execution or exclusive ownership claim"}});
+            }
+        }
+        const size_t offset=args.value("event_offset",size_t(0)),limit=args.value("event_limit",size_t(100));J page=J::array();for(size_t i=offset;i<events.size()&&page.size()<limit;++i)page.push_back(events[i]);const auto next=offset+page.size();
+        return {{"analysis_revision",revision},{"source",pathUtf8(source)},{"at_packet",at},{"identity",{{"original_network_id",onid},{"transport_stream_id",tsid},{"service_id",sid}}},{"service",service},{"pmt_source_id",pmt?J(pmt->id):J()},{"components",components},{"events",page},{"event_offset",offset},{"event_total",events.size()},{"event_next_offset",next<events.size()?J(next):J()},{"applications",applications},{"warnings",warnings},{"coverage",coverage},{"scope","Selected current signalling at the cutoff; observed EIT only, not complete schedule or on-air validity"}};
     }
     J queryTiming(const J& args) const {
         if(!complete||args.at("analysis_revision")!=revision)throw std::runtime_error("Stale or incomplete timing analysis_revision");
@@ -1560,6 +1587,7 @@ public:
         if(method=="query_transport")return queryTransport(args);
         if(method=="query_packet")return queryPacket(args);
         if(method=="query_timing")return queryTiming(args);
+        if(method=="query_service")return queryService(args);
         if(method=="query_cable_oob")return queryCableOob(args);
         if(method=="query_topology")return queryTopology(args);
         if(method=="diff_snapshots")return diffSnapshots(args);
@@ -1664,7 +1692,7 @@ static int runCore(int argc,char**argv) {
                         if(!requested)result["reason"]="not_running";
                         emit({{"id",id},{"result",result}});continue;
                     }
-                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
+                    if(method=="query"||method=="query_result"||method=="query_transport"||method=="query_packet"||method=="query_timing"||method=="query_service"||method=="inspect"||method=="query_topology"||method=="query_cable_oob"||method=="diff_snapshots"){
                         bool paused=false;{std::lock_guard<std::mutex> lock(mutex);for(const auto& [key,control]:analyses)paused|=control->paused.load();}
                         if(paused){emit({{"id",id},{"error",{{"code","analysis_paused"},{"message","Analysis is paused; resume or cancel it before detailed inspection. Progress remains available."}}}});continue;}
                     }

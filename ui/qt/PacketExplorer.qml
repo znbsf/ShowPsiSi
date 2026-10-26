@@ -1,9 +1,12 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 import QtQuick.Layouts
 import "../tauri/web/packet-model.js" as Shared
 Pane {
  id:view
+ property Item focusOrigin:null
+ function nextRegion(back){var regions=(focusOrigin?[focusOrigin]:[]).concat([indexInput,pidInput,bytes]);var active=view.Window.window?view.Window.window.activeFocusItem:null,index=regions.findIndex(function(n){for(var p=active;p;p=p.parent)if(p===n)return true;return false;});regions[index<0?(back?regions.length-1:0):(index+(back?regions.length-1:1))%regions.length].forceActiveFocus();}
  required property var host
  property int initialPid:-1
  property real initialIndex:0

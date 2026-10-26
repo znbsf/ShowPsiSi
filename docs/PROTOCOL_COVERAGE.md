@@ -7,6 +7,14 @@ It does not establish spacecraft identity, transponder correctness, RF reception
 capture-date assignments or S2X identity support. See
 [satellite association](SATELLITE_ASSOCIATION.md) for tests and source boundaries.
 
+Service inspection now scopes EIT and component evidence by complete actual-SDT
+ONID/TSID/SID identity and the selected capture cutoff. Conflicting actual
+networks or PAT mappings withhold PMT association. AIT carriage is nonexclusive
+and requires explicit DVB interpretation; no runtime application execution,
+complete EPG schedule or on-air validity is inferred. The service/ES/EPG/AIT
+source navigation is tested through the production core and browser UI; real
+Qt service rendering is separately covered by full-application offscreen checks.
+
 ## What “supported” means
 
 ShowPsiSi consumes MPEG transport-stream packets and independently imported local

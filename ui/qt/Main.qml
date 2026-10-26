@@ -671,7 +671,7 @@ ApplicationWindow {
             source_map: {tree: "ui/qt/Main.qml:makeTree", transport: "ui/qt/main.cpp:Bridge"}});
     }
     function agentAction(action) {
-        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
+        if(action.name==='classic_command' && ['toolbar','status','tree','summary','configuration','index','about','messages','new','decoded','close','cascade','tile','arrange','packets','bitrate','services'].indexOf(action.value)>=0){classicCommand(action.value);return JSON.stringify({accepted:true});}
         if(action.name==="scan_control" && ["pauseAnalysis","cancelAnalysis","unifiedNext","unifiedPrevious","openSource"].indexOf(action.value)>=0)return JSON.stringify({accepted:core.click(action.value)});
         if(action.name==="scan_mode" && backendReady && ["full","prefix","range","distributed"].indexOf(action.value)>=0){scanMode.currentIndex=scanMode.indexOfValue(action.value);scanBudgetUnit.currentIndex=0;scanBudget.text="10";scanStart.text="0";scanEnd.text="6";return JSON.stringify({accepted:true});}
         if(action.name==="unified_select" && !advancedMode) {let row=unifiedInspector.records.find(function(r){return r.id===action.id;});if(!row)return JSON.stringify({error:"Unknown section"});unifiedInspector.selectRecord(row);return JSON.stringify({accepted:true});}
@@ -1188,20 +1188,23 @@ ApplicationWindow {
             params.at_packet = analysisState.selected_packet;
         core.mark("inspect_send_begin");core.send("inspect", params);core.mark("inspect_send_end");
     }
-    function documentScope(){return String(analysisState.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(analysisState.analysis_revision||analysisState.revision||0)+', '+(analysisState.selected_packet==null?'latest':'packet '+analysisState.selected_packet)+']';}
+    property var pendingServiceSource:null
+    function openServiceSource(id,path,cutoff){pendingServiceSource={id:id,path:path,cutoff:cutoff};inspect(id,-1,cutoff);}
+    function openServices(service){documentMode=true;advancedMode=false;var key=service?service.onid+':'+service.ts_id+':'+service.id:'all';documentWorkspace.open('service',key+'@'+analysisState.selected_packet,documentScope()+' - Services / EPG',{service:service,_view_state:JSON.parse(JSON.stringify(analysisState))},false);}
+    function documentScope(cutoff){var at=cutoff===undefined?analysisState.selected_packet:cutoff;return String(analysisState.source||'Transport stream').split(/[\\/]/).pop()+' [analysis '+(analysisState.analysis_revision||analysisState.revision||0)+', '+(at==null?'latest':'packet '+at)+']';}
     function openPacket(pid,index){documentMode=true;advancedMode=false;documentWorkspace.open('packet',String(pid),documentScope()+' - Packet Explorer'+(pid<0?'':' PID '+hex(pid)),{pid:pid,index:index||0},false);}
     function openDocument(kind,duplicate){
-        var payload=kind==='summary'?{}:JSON.parse(JSON.stringify(detail));if(kind!=='summary')payload._view_state=JSON.parse(JSON.stringify(analysisState));
-        var title=documentScope()+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
-        documentWorkspace.open(kind,kind==='summary'?'summary':(detail.id||'empty')+'@'+analysisState.selected_packet,title,payload,!!duplicate);
+        var payload=kind==='summary'?{}:JSON.parse(JSON.stringify(detail));if(kind!=='summary'){payload._view_state=JSON.parse(JSON.stringify(analysisState));payload._view_state.selected_packet=detail.native_table_at_packet;}
+        var title=documentScope(kind==='summary'?undefined:detail.native_table_at_packet)+' - '+(kind==='summary'?'Summary':kind==='decoded'?'Native Decode':detail.id?detail.name+' PID '+hex(detail.pid):'SI Inspector');
+        documentWorkspace.open(kind,kind==='summary'?'summary':(detail.id||'empty')+'@'+detail.native_table_at_packet,title,payload,!!duplicate);
     }
     property string documentIdentity:(analysisState.source||'')+'|'+(analysisState.analysis_revision||analysisState.revision||'')
-    onDocumentIdentityChanged:if(documentWorkspace)documentWorkspace.reset(documentIdentity)
-    onDetailChanged:if(documentMode&&detail.id&&!advancedMode&&!metadataMode)Qt.callLater(function(){if(detail.id)openDocument('si');})
+    onDocumentIdentityChanged:{pendingServiceSource=null;if(documentWorkspace)documentWorkspace.reset(documentIdentity)}
+    onDetailChanged:if(documentMode&&detail.id&&!advancedMode&&!metadataMode)Qt.callLater(function(){if(detail.id){openDocument('si');if(pendingServiceSource&&pendingServiceSource.id===detail.id){var source=pendingServiceSource;pendingServiceSource=null;documentWorkspace.focusSection(source.id,source.path,source.cutoff);}}})
     Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.close()}
     Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(false)}
     Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(true)}
-    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{documents:true,packets:true,bitrate:true}};}
+    function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{documents:true,packets:true,bitrate:true,services:true}};}
     function classicCommand(name){
         var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
         if(name==='open')fileDialog.open();
@@ -1214,6 +1217,7 @@ ApplicationWindow {
         else if(name==='new'){documentMode=true;openDocument('si',true);}
         else if(name==='decoded'){documentMode=true;openDocument('decoded');}
         else if(name==='packets')openPacket(-1,0);
+        else if(name==='services')openServices(null);
         else if(name==='bitrate'){documentMode=true;advancedMode=false;documentWorkspace.open('statistics','statistics',documentScope()+' - Bitrate / Timing',{},false);}
         else if(name==='close')documentWorkspace.close();
         else if(['cascade','tile','arrange'].indexOf(name)>=0)documentWorkspace.arrange(name);
@@ -1908,6 +1912,7 @@ ApplicationWindow {
             }
         }
         function onResponse(method, result) {
+            if(method=="query_service"){documentWorkspace.receiveService(result);return;}
             if(method=="query_timing"){documentWorkspace.receiveStatistics(method,result);return;}
             if(method=="query_packet"){documentWorkspace.receivePacket(result);return;}
             if(method=="query_transport"){transportSummary.receive(result);documentWorkspace.receiveTransport(result);documentWorkspace.receiveStatistics(method,result);return;}
@@ -3973,12 +3978,13 @@ ApplicationWindow {
         enabled: !shortcutDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
+            if(documentMode&&!advancedMode){documentWorkspace.nextRegion(false);return;}
             if(transportSummaryVisible){transportSummary.nextRegion(false);return;}
             if(!advancedMode){unifiedInspector.nextRegion(false);return;}
             focusNextRegion(false);
         }
     }
-    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:transportSummaryVisible?transportSummary.nextRegion(true):advancedMode?focusNextRegion(true):unifiedInspector.nextRegion(true) }
+    Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:documentMode&&!advancedMode?documentWorkspace.nextRegion(true):transportSummaryVisible?transportSummary.nextRegion(true):advancedMode?focusNextRegion(true):unifiedInspector.nextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
         enabled: !shortcutDialog.visible
@@ -4500,6 +4506,7 @@ ApplicationWindow {
         UnifiedInspector {
             id: unifiedInspector
             focusOrigin:sourceBar.visible?sourceBar:null
+            onServiceRequested:function(service){win.openServices(service);}
             onPacketRequested:function(pid){win.openPacket(pid,0);}
             treeVisible:win.classicTreeVisible
             externalVisible:win.transportSummaryVisible||win.documentMode
@@ -4513,6 +4520,7 @@ ApplicationWindow {
         }
         DocumentWorkspace {
             id:documentWorkspace
+            navigationOrigin:unifiedInspector.navigationItem
             parent:unifiedInspector.externalContainer;anchors.fill:parent
             visible:documentMode&&!advancedMode&&!metadataMode
             sectionComponent:Component {
@@ -4535,6 +4543,15 @@ ApplicationWindow {
                     onPageRequested:function(offset,sort,descending,errorsOnly){if(!core.busy)core.send('query_transport',{analysis_revision:analysisState.analysis_revision||analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});}
                     onEntryActivated:function(entry){var record=(analysisState.tables||[]).find(function(row){return row.pid===entry.pid;});if(record)win.inspect(record.id);}
                     Component.onCompleted:if(!core.busy&&analysisState.complete)request(0)
+                }
+            }
+            serviceComponent:Component {
+                ServiceView {
+                    id:serviceDocument
+                    initialService:parent.documentData.payload.service
+                    host:QtObject{property var analysisState:serviceDocument.parent.documentData.payload._view_state;property bool backendReady:win.backendReady}
+                    onRequested:function(params){if(!core.busy)core.send('query_service',params);else receive({request:params,message:'Wait for current analysis to finish'});}
+                    onSectionActivated:function(id,path,cutoff){win.openServiceSource(id,path,cutoff);}
                 }
             }
             statisticsComponent:Component {

@@ -67,6 +67,8 @@ SplitView {
     property bool hexOpen: true
     property real hexFraction:0.40
     property int selectedFieldIndex: -1
+    signal serviceRequested(var service)
+    property alias navigationItem:nav
     signal packetRequested(int pid)
     property bool treeVisible:true
     property bool externalVisible:false
@@ -289,13 +291,14 @@ SplitView {
             onObjectRemoved:function(index,object){contextMenu.removeItem(object);}
         }
         MenuItem{text:'No retained section for this object';visible:!view.contextTargets.length;enabled:false}
+        MenuItem {text:'Service / EPG';visible:!!view.contextRow&&!!view.contextRow.service;onTriggered:view.serviceRequested(view.contextRow.service)}
         MenuItem {text:'Packet Explorer';visible:!!view.contextRow&&(view.contextRow.record!==undefined||view.contextRow.pid!==undefined);onTriggered:view.packetRequested(view.contextRow.record?view.contextRow.record.pid:view.contextRow.pid)}
     }
     function focusNavigation(){nav.forceActiveFocus();}
     function nextRegion(backwards){
-        var regions=focusOrigin?[focusOrigin,nav,fieldList]:[nav,fieldList];if(hexOpen)regions=regions.concat([packetRows,hexRows]);
+        var regions=(focusOrigin?[focusOrigin]:[]).concat(treeVisible?[nav,fieldList]:[fieldList]);if(hexOpen)regions=regions.concat([packetRows,hexRows]);
         var active=view.Window.window?view.Window.window.activeFocusItem:null,index=regions.findIndex(function(region){for(var item=active;item;item=item.parent)if(item===region)return true;return false;});
-        regions[(index+(backwards?regions.length-1:1)+regions.length)%regions.length].forceActiveFocus();
+        regions[index<0?(backwards?regions.length-1:0):(index+(backwards?regions.length-1:1)+regions.length)%regions.length].forceActiveFocus();
     }
     function focusSearch(){searchVisible=true;search.forceActiveFocus();search.selectAll();}
     function findRecord(name){return records.find(function(r){return r.name===name;});}

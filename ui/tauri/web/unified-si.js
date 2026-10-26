@@ -44,6 +44,7 @@ const UnifiedSi = (() => {
    const targets=M.contextTargets(row,state);
    if(!targets.length){const text=document.createElement('div');text.textContent='No retained section for this object';context.append(text);}
    targets.forEach(target=>{const button=document.createElement('button');button.textContent=target.label;button.setAttribute('role','menuitem');button.onclick=()=>{closeContext();const record=(state.tables||[]).find(r=>r.id===target.id);selectRecord(record,row.key);};context.append(button);});
+   if(row.service&&host.service){const button=document.createElement('button');button.textContent='Service / EPG';button.setAttribute('role','menuitem');button.onclick=()=>{closeContext();host.service(row.service);};context.append(button);}
    const pid=row.record?.pid??row.pid;if(pid!==undefined&&host.packet){const button=document.createElement('button');button.textContent='Packet Explorer — PID '+M.hex(pid);button.setAttribute('role','menuitem');button.onclick=()=>{closeContext();host.packet(pid);};context.append(button);}
    context.hidden=false;const bounds=container.getBoundingClientRect();context.style.left=Math.max(0,Math.min(x-bounds.left,bounds.width-context.offsetWidth))+'px';context.style.top=Math.max(0,Math.min(y-bounds.top,bounds.height-context.offsetHeight))+'px';context.querySelector('button')?.focus();
   }
@@ -107,7 +108,7 @@ const UnifiedSi = (() => {
    else return;
    focusField(i);body.children[i]?.scrollIntoView({block:'nearest'});e.preventDefault();e.stopPropagation();
   };
-  function nextRegion(backwards,origin){const regions=[origin,nav,view,...(container.classList.contains('si-no-hex')?[]:[el('.si-packet'),el('.si-section')])].filter(Boolean),i=regions.findIndex(r=>r===document.activeElement||r.contains(document.activeElement));regions[(i+(backwards?regions.length-1:1)+regions.length)%regions.length].focus({preventScroll:true});}
+  function nextRegion(backwards,origin){const regions=[origin,...(container.classList.contains('si-document')?[]:[nav]),view,...(container.classList.contains('si-no-hex')?[]:[el('.si-packet'),el('.si-section')])].filter(Boolean),i=regions.findIndex(r=>r===document.activeElement||r.contains(document.activeElement));regions[i<0?(backwards?regions.length-1:0):(i+(backwards?regions.length-1:1)+regions.length)%regions.length].focus({preventScroll:true});}
   container.addEventListener('keydown',e=>{if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();back();}});
 
   async function back(){

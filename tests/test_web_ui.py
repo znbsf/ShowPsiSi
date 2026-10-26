@@ -1160,6 +1160,36 @@ class BrowserTests(unittest.TestCase):
         self.assertTrue(p.locator('.mdi-active [data-tab="timing"]').is_visible())
         self.assertEqual(p.locator('.mdi-active tbody tr').count(),3)
 
+    def test_classic_service_epg_ait_source_jumps_preserve_service_context(self):
+        from test_service_inspection import ts,sdt,eit
+        from test_application_carriage import pat,pmt
+        from test_application_summaries import ait
+        path=self.output/'service-chain.ts';path.write_bytes(ts([(0,pat(((101,0x100),(102,0x101)))),(0x100,pmt()),(0x101,pmt(program=102)),(0x11,sdt(services=(101,102))),(0x12,eit()),(0x12,eit(tsid=2,event=8)),(0x150,ait())]))
+        self.show_scan_configuration();self.page.locator('#standards').select_option('dvb')
+        self.analyze(path);p=self.page
+        self.classic_command('services')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="service")?.view.result.identity?.service_id===101')
+        active=p.locator('.mdi-active')
+        active.locator('[data-tab="EPG"]').click()
+        self.assertEqual(active.locator('tbody tr').count(),1)
+        active.locator('tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"&&showpsisi.getDetail().name==="EIT"')
+        p.keyboard.press('Control+F4')
+        self.assertEqual(p.locator('.mdi-active [data-tab="EPG"]').get_attribute('aria-pressed'),'true')
+        p.locator('.mdi-active [data-tab="ES"]').click()
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"&&showpsisi.getUiState().documents.items.at(-1).view.path==="section/stream/12"')
+        self.assertEqual(p.evaluate('showpsisi.getDetail().pid'),256)
+        p.keyboard.press('Control+F4')
+        p.locator('.mdi-active [data-tab="Applications"]').click()
+        self.assertEqual(p.locator('.mdi-active tbody tr').count(),1)
+        p.locator('.mdi-active tbody tr').dblclick()
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.at(-1).kind==="si"&&showpsisi.getDetail().name==="AIT"')
+        p.keyboard.press('Control+F4')
+        p.locator('.mdi-active select[aria-label="Service identity"]').select_option('1')
+        p.wait_for_function('()=>showpsisi.getUiState().documents.items.find(d=>d.kind==="service")?.view.result.identity?.service_id===102')
+        self.assertEqual(p.locator('.mdi-active tbody tr').count(),1)
+
     def tearDown(self):
         self.page.screenshot(path=str(self.artifacts/(self._testMethodName+'.png')),full_page=True)
         self.page.close()

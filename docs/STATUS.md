@@ -1,5 +1,11 @@
 # ShowPsiSi status
 
+2026-10-26 step 12 implemented: scoped Service / ES / EPG / Applications
+windows in both UIs, exact section navigation and restored context. Ambiguous
+SDT/PAT identities withhold PMT association. 36 related local checks pass; full
+Qt offscreen service inspection passes. Next: DSM-CC/BIOP contents (13).
+No hosted CI. Native mouse/DPI acceptance remains step 17.
+
 2026-10-26 steps 07–11 implemented: independent document instances, observed-PID
 and DSMCC branches with exact pointer context, source packet navigation,
 verified cross-packet section fragments, and bounded PCR/continuity evidence

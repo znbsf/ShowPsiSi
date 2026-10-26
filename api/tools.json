@@ -850,6 +850,57 @@
       "annotations": {
         "readOnlyHint": true
       }
+    },
+    {
+      "name": "query_service",
+      "description": "Read full ONID/TSID/SID scoped service, exact PMT component sources, observed EIT and bounded nonexclusive AIT carriage. Ambiguous PAT/actual SDT identity withholds media associations. No runtime or schedule completeness claim.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "original_network_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "transport_stream_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "service_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "analysis_revision": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "at_packet": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "event_offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "event_limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        },
+        "required": [
+          "analysis_revision",
+          "original_network_id",
+          "transport_stream_id",
+          "service_id"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true
+      }
     }
   ]
 }

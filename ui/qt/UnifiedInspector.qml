@@ -417,8 +417,9 @@ SplitView {
                     TapHandler{acceptedButtons:Qt.RightButton;onTapped:function(eventPoint){nav.currentIndex=index;nav.forceActiveFocus();var point=navigationDelegate.mapToItem(view,eventPoint.position.x,eventPoint.position.y);view.openContext(modelData,point.x,point.y);}}
                     onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.activate(modelData);}
                     onDoubleClicked:view.fold(modelData)
-                    ToolTip {visible:parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
+                    ToolTip {visible:parent && parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
                     Accessible.name:modelData.label
+                    Accessible.description:modelData.hint || ''
                 }
             }
             TextLabel {visible:!!view.organizationStatus;text:view.organizationStatus;Layout.fillWidth:true;font.pixelSize:11;elide:Text.ElideRight}
@@ -430,9 +431,9 @@ SplitView {
             TextField {id:search;objectName:'unifiedSearch';visible:view.searchVisible;Layout.fillWidth:true;implicitHeight:24;color:'black';placeholderTextColor:'#606060';placeholderText:'Find program / LCN / TP / PID';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
             ClassicButton {text:'PID '+Model.inspector.hex(view.pidFilter)+' ×';visible:view.pidFilter>=0;implicitHeight:23;onClicked:view.filterPid(-1);Accessible.name:'Clear numeric PID filter'}
             RowLayout {visible:view.records.length>100;Layout.fillWidth:true;spacing:2
-                ClassicButton {objectName:'unifiedPrevious';text:'Previous';implicitHeight:23;enabled:page>0;onClicked:page--}
-                TextLabel {text:(page+1)+' / '+Math.max(1,Math.ceil(records.length/100));Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;font.pixelSize:12}
-                ClassicButton {objectName:'unifiedNext';text:'Next';implicitHeight:23;enabled:(page+1)*100<records.length;onClicked:page++}
+                ClassicButton {objectName:'unifiedPrevious';text:'Previous';implicitHeight:23;enabled:page>0;onClicked:page--;Accessible.name:'Previous page of table records. '+Model.inspector.tablePageHint(page,records.length);ToolTip.visible:hovered;ToolTip.text:Accessible.name}
+                TextLabel {objectName:'unifiedPageCount';text:(page+1)+' / '+Math.max(1,Math.ceil(records.length/100));Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;font.pixelSize:12;Accessible.name:Model.inspector.tablePageHint(page,records.length);ToolTip.visible:pageHover.hovered;ToolTip.text:Accessible.name;HoverHandler{id:pageHover}}
+                ClassicButton {objectName:'unifiedNext';text:'Next';implicitHeight:23;enabled:(page+1)*100<records.length;onClicked:page++;Accessible.name:'Next page of table records. '+Model.inspector.tablePageHint(page,records.length);ToolTip.visible:hovered;ToolTip.text:Accessible.name}
             }
         }
     }
@@ -448,7 +449,7 @@ SplitView {
                 RowLayout {anchors.fill:parent;anchors.margins:3;spacing:5
                     Icon {kind:view.detail.name || 'psi'}
                     TextLabel {objectName:'unifiedTitle';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:13;elide:Text.ElideRight
-                        text:detail.id?view.sourceName+' - '+detail.name+' : '+(detail.name==='PMT'?'Program ':'')+Model.inspector.hex(detail.extension || 0)+' PID['+Model.inspector.hex(detail.pid)+']'+(Model.inspector.shortSyntax(detail)?'':' Version '+detail.version)+(detail.name==='PMT'?' PCR_PID['+Model.inspector.hex((detail.fields || {}).pcr_pid || 0)+']':''):'Open a transport stream'
+                        text:detail.id?view.sourceName+' - '+Model.inspector.classicTitle(detail,view.root):'Open a transport stream'
                     }
                     ClassicButton {objectName:'unifiedHex';text:hexOpen?'Hex −':'Hex +';implicitHeight:21;checkable:true;checked:hexOpen;onClicked:hexOpen=checked;font.pixelSize:10}
                 }
@@ -583,7 +584,7 @@ SplitView {
                                 }
                             }
                         }
-                        TextLabel {visible:!view.packetRaw;anchors.fill:parent;anchors.margins:8;wrapMode:Text.Wrap;text:view.sourcePacket.status==='source_changed'?'Source file changed. Analyze again to view its original packet.':'Original packet unavailable for this section.'}
+                        TextLabel {objectName:'unifiedPacketUnavailable';visible:!!view.detail.id && !view.packetRaw;anchors.fill:parent;anchors.margins:8;wrapMode:Text.Wrap;text:view.sourcePacket.status==='source_changed'?'Source file changed. Analyze again to view its original packet.':'Original packet unavailable for this section.'}
                     }
                 }
                 ColumnLayout {

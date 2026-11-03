@@ -1,5 +1,6 @@
 /* Same classic SI palette, bitmap icons and row metrics as Qt UnifiedInspector. */
 body.si-mode #app { background:#efefef; color:#000; }
+body.si-mode #notice.info-expired { visibility:visible; }
 body.si-mode #panes,body.si-mode #stats,body.si-mode #timeline { display:none; }
 :is(#unified-si,.si-document)[hidden] { display:none; }
 :is(#unified-si,.si-document) { --si-left:27%; --si-hex-height:40%; display:grid; grid-template-columns:var(--si-left) 6px minmax(0,1fr); flex:1; min-height:180px; overflow:hidden; background:#efefef;color:#000;font:14px 'Courier New',monospace; }
@@ -58,6 +59,7 @@ body.si-mode #scan-coverage { margin:0;padding:2px 10px;font-size:11px; }
 @media(max-width:519px){.si-summary-counters{grid-template-columns:minmax(0,1fr)}}
 .si-summary-list{flex:1;min-height:0;overflow:auto}.si-summary-list table{border-collapse:collapse;width:100%}.si-summary-list th{position:sticky;top:0;background:var(--surface);text-align:left}.si-summary-list td,.si-summary-list th{padding:6px 8px;border-bottom:1px solid var(--border)}
 .si-summary-list tr.si-selected{background:var(--selection,#d7e7f5)}.si-summary-pages{display:flex;gap:10px;align-items:center}.si-summary-tabs{display:flex;gap:4px}.si-summary-tabs button{flex:1}.si-summary-tabs [aria-pressed=true]{background:var(--selection,#d7e7f5);font-weight:bold}
+body.si-mode :is(#transport-si,.transport-si) .si-summary-tabs button[aria-pressed=true]{background:#efefef;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px #808080;font-weight:bold}
 body.si-mode #app{height:100vh;min-height:0}body.si-mode{overflow:hidden}
 
 .classic-frame[hidden],.classic-frame [hidden]{display:none!important}

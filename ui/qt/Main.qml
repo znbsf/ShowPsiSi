@@ -201,7 +201,7 @@ ApplicationWindow {
     readonly property string activeCollection: tab === "Services" ? "services" : tab === "EPG" ? "events" : tab === "Issues" ? "diagnostics" : tab === "Tables" ? "tables" : ""
     readonly property double densitySourcePackets: Number(analysisState.coverage?.source_packets || analysisState.packets || 0)
     readonly property bool partialResults: !!analysisState.coverage?.partial
-    readonly property string coverageText: analysisState.coverage ? (partialResults ? "PARTIAL · read-only · " : "Full coverage · ") + num(analysisState.coverage.scanned_packets) + " / " + num(analysisState.coverage.source_packets) + " packets · " + (analysisState.coverage.ranges || []).map(function(r){return "["+num(r.start_packet)+", "+num(r.end_packet)+")";}).join(", ") : ""
+    readonly property string coverageText: !advancedMode ? Classic.classic.coverage(analysisState) : analysisState.coverage ? (partialResults ? "PARTIAL · read-only · " : "Full coverage · ") + num(analysisState.coverage.scanned_packets) + " / " + num(analysisState.coverage.source_packets) + " packets · " + (analysisState.coverage.ranges || []).map(function(r){return "["+num(r.start_packet)+", "+num(r.end_packet)+")";}).join(", ") : ""
     readonly property bool quickOptionsValid: scanMode.currentValue === "full" || (scanMode.currentValue === "range" ? /^\d+$/.test(scanStart.text) && /^\d+$/.test(scanEnd.text) && Number.isSafeInteger(Number(scanStart.text)) && Number.isSafeInteger(Number(scanEnd.text)) && Number(scanEnd.text)>Number(scanStart.text) : /^\d+$/.test(scanBudget.text) && Number.isSafeInteger(Number(scanBudget.text)) && Number(scanBudget.text)>0 && (scanBudgetUnit.currentIndex===1 || Number(scanBudget.text)<=100))
     property bool backendReady: core.available && !presentationPending && !core.busy && !dvbiWorkspace.busy && !protocolRestoring
     property var detail: JSON.parse(core.detailJson)
@@ -2012,7 +2012,7 @@ ApplicationWindow {
                 core.mark("default_inspect_begin");defaultInspect();core.mark("default_inspect_end");
                 inspected = true;
                 let truncated=(result.demux || {}).truncated_sections || 0;
-                showMessage((partialResults ? "Quick preview complete · partial, read-only · source unchanged" : "Scan complete · source unchanged") + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
+                showMessage((!advancedMode ? Classic.classic.completion(analysisState) : partialResults ? "Quick preview complete · partial, read-only · source unchanged" : "Scan complete · source unchanged") + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
             }
             if (method === "query") {
                 if (snapshotTarget)
@@ -3736,6 +3736,38 @@ ApplicationWindow {
             });
         }
     }
+    Timer {
+        id:classicC1TestTimer;interval:100;repeat:true
+        property int phase:0
+        property double deadline:Date.now()+25000
+        property string completion:''
+        property string serviceTarget:''
+        property var checks:({})
+        onTriggered:{
+            if(Date.now()>deadline){stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting || presentationPending || topologyLoading || !detail.id)return;
+            if(phase===0){
+                advancedMode=false;phase=1;return;
+            }
+            if(phase===1){
+                if(!messageExpired)return;
+                var row=unifiedInspector.navigation.find(function(r){return r.service && r.record;});if(!row)return;
+                completion=notice;
+                checks.completion=notice.indexOf('Scan complete')===0;
+                checks.coverage=coverageText===Classic.classic.coverage(analysisState) && coverageText.indexOf('Full coverage')===0;
+                serviceTarget=row.record.id;
+                checks.service_click=core.click('unifiedRow:'+unifiedInspector.navigation.indexOf(row));phase=2;return;
+            }
+            if(phase===2){
+                function findStatus(item){if(item.objectName==='statusMessage')return item;for(var i=0;i<item.children.length;i++){var found=findStatus(item.children[i]);if(found)return found;}return null;}
+                var status=findStatus(win.contentItem);
+                checks.service_selected=detail.id===serviceTarget;
+                checks.service_status=notice===completion && core.isExposed('statusMessage') && status && status.opacity===1 && !status.Accessible.ignored;
+                checks.coverage_partial=Classic.classic.coverage({complete:false,coverage:{partial:true,mode:'range',scanned_packets:10,source_packets:100,ranges:[{start_packet:20,end_packet:30}]}})==='PARTIAL PREVIEW · READ-ONLY · range · 10 / 100 packets · planned ranges [start, end): [20, 30) · Unread gaps are unknown, not absent. Full scan required to edit/export.';
+                stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks}));
+            }
+        }
+    }
     // Deterministic native integration harness. Positive evidence comes from the
     // separately built real engine; the Python driver releases its file gate.
     Timer {
@@ -3878,6 +3910,7 @@ ApplicationWindow {
         }
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "classic-c1") {advancedMode=false;classicC1TestTimer.start();}
         if (core.env("SHOWPSISI_SCRIPT") === "refinement") refinementTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "signal-metadata") metadataTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "protocol-cards") protocolCardsTestTimer.start();

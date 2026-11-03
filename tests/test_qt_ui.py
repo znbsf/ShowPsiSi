@@ -47,6 +47,13 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_classic_c1_completion_survives_service_selection(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c1-') as directory:
+            report=self.run_script('classic-c1',directory,timeout=35,overrides={'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'],2,report)
+            for check in ('completion','coverage','coverage_partial','service_click','service_selected','service_status'):
+                self.assertTrue(report['checks'][check],report)
+
     def test_command_palette_commands_and_pid_jump(self):
         for theme in ('dark','light'):
             with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-palette-') as directory:

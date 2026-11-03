@@ -27,6 +27,7 @@ Item {
         }
         onEntryActivated:function(entry){selectedEntry=entry;selectedPid=entry.pid;}
     }
+    StatisticsView {id:statistics;host:host;visible:false}
     property var evidence: ({})
     property var requests:[]
     property int selectedPid:-1
@@ -47,6 +48,19 @@ Item {
             summary.sort="pid";summary.descending=false;summary.loading=false;summary.page={};
             summary.request(0);summary.receive(evidence.summary);requests=[];
             tryCompare(findChild(summary,"transportSummary:totalPackets"),"text","32");
+        }
+        function test_c1_rate_label_and_checked_page() {
+            verify(findChild(summary,'transportSummaryScope').text.indexOf('BitRates: '+evidence.state.transport_summary.rate_basis)>=0);
+            verify(findChild(statistics,'statisticsRateBasis').text.indexOf('BitRates: '+evidence.state.transport_summary.rate_basis)===0);
+            var tabs=findChild(summary,'transportSummaryTabs');
+            for(var i=0;i<3;i++){
+                tabs.currentIndex=i%2;
+                var current=tabs.itemAt(i%2),other=tabs.itemAt(1-i%2);
+                compare(current.checked,true);compare(other.checked,false);
+                compare(current.Accessible.checked,true);compare(other.Accessible.checked,false);
+                verify(current.background.color!==other.background.color);
+                compare(current.contentItem.font.bold,true);
+            }
         }
         function activeCell(index,prefix) {
             var row=findChild(summary,"transportPidList").itemAtIndex(index);

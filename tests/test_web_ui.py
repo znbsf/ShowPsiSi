@@ -27,6 +27,36 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 from cloud_preview import Bridge, Server
 
+class ClassicPresentationTests(unittest.TestCase):
+    def model(self,expression):
+        node=shutil.which('node')
+        if not node:self.skipTest('Node is required for shared presentation tests')
+        script="const classic=require('./ui/tauri/web/classic-model.js'),inspector=require('./ui/tauri/web/inspector-model.js');console.log(JSON.stringify("+expression+"));"
+        return json.loads(subprocess.check_output([node,'-e',script],cwd=ROOT,text=True,encoding='utf-8'))
+
+    def test_classic_model_lcn_conditions(self):
+        self.assertEqual(self.model("inspector.serviceLcnHint({lcn_status:'known',logical_channel_number:0})"),'')
+        unknown='No resolved logical channel number: the status is not known or the number is missing.'
+        for service in ({},{'lcn_status':'unknown','logical_channel_number':7},{'lcn_status':'known','logical_channel_number':None}):
+            self.assertEqual(self.model('inspector.serviceLcnHint('+json.dumps(service)+')'),unknown)
+        self.assertEqual(self.model("inspector.serviceLcnHint({lcn_status:'conflict',logical_channel_number:7})"),'Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.')
+
+    def test_classic_model_coverage_and_page_boundaries(self):
+        self.assertEqual(self.model('classic.coverage({})'),'')
+        state={'complete':True,'coverage':{'mode':'full','partial':False,'scanned_packets':178000,'source_packets':178000,'ranges':[{'start_packet':0,'end_packet':178000}]}}
+        self.assertEqual(self.model('classic.coverage('+json.dumps(state)+')'),'Full coverage · 178,000 / 178,000 packets · observed ranges [start, end): [0, 178,000)')
+        state['complete']=False;state['coverage'].update(mode='range',partial=True)
+        text=self.model('classic.coverage('+json.dumps(state)+')')
+        self.assertTrue(text.startswith('PARTIAL PREVIEW · READ-ONLY · range'))
+        self.assertIn('planned ranges',text);self.assertTrue(text.endswith('Full scan required to edit/export.'))
+        for page,count,expected in ((0,0,1),(0,100,1),(1,101,2),(1,201,3)):
+            self.assertEqual(self.model(f'inspector.tablePageHint({page},{count})'),f'Table records page {page+1} of {expected} (100 records per page)')
+
+    def test_classic_model_completion(self):
+        self.assertEqual(self.model('classic.completion({packets:178000})'),'Scan complete · 178,000 packets · source unchanged')
+        self.assertEqual(self.model('classic.completion({packets:10,coverage:{partial:true}})'),'Quick preview complete · partial, read-only · 10 packets · source unchanged')
+
+
 class BrowserTests(unittest.TestCase):
     def dvbi_import(self,raw=None,name='dvbi.xml'):
         from dvbi_fixture import fixture
@@ -923,6 +953,108 @@ class BrowserTests(unittest.TestCase):
             (self.artifacts/(self._testMethodName+'-startup.json')).write_text(json.dumps({'page_errors':self.page_errors,'visible_text':self.page.locator('body').inner_text(),'source':self.page.locator('#source').input_value() if self.page.locator('#source').count() else None,'backend_alive':self.bridge.proc.poll() is None}),encoding='utf-8')
             self.page.close()
             raise
+
+    def test_classic_c1_empty_title_coverage_and_service_status(self):
+        p=self.page
+        self.assertEqual(p.locator('.si-packet').inner_text(),'')
+        self.assertEqual(p.locator('.si-section').inner_text(),'')
+        self.analyze();p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        state=p.evaluate('showpsisi.getState()')
+        self.assertEqual(p.locator('#scan-coverage').text_content(),p.evaluate('classic.coverage(showpsisi.getState())'))
+        self.assertIn('Full coverage',p.locator('#scan-coverage').text_content())
+        expected=f"Scan complete · {state['packets']:,} packets · source unchanged"
+        self.assertTrue(p.locator('#notice').text_content().startswith(expected))
+        p.wait_for_function('()=>document.querySelector("#notice").classList.contains("info-expired")')
+        # lab.ts only has resolved LCNs, so its service rows carry no hint; the shared
+        # hint function covers the unresolved and conflicting cases with engine statuses.
+        row=p.locator('.si-nav-row').filter(has=p.locator('.si-row-label',has_text='LCN 10')).first
+        self.assertNotIn('logical channel number',row.get_attribute('title'))
+        self.assertIsNone(row.get_attribute('aria-description'))
+        hints=p.evaluate('''()=>[inspector.serviceLcnHint({lcn_status:'known',logical_channel_number:10}),inspector.serviceLcnHint({lcn_status:'unknown'}),inspector.serviceLcnHint({lcn_status:'conflict'})]''')
+        self.assertEqual(hints[0],'')
+        self.assertEqual(hints[1],'No resolved logical channel number: the status is not known or the number is missing.')
+        self.assertIn('conflicting LCN candidates',hints[2])
+        row.locator('.si-row-label').click();p.wait_for_function('()=>showpsisi.getUiState().settled')
+        self.assertTrue(p.locator('#notice').is_visible())
+        self.assertTrue(p.locator('#notice').text_content().startswith(expected))
+        for selector in ('.si-pages span','[data-command=previous]','[data-command=next]'):
+            control=p.locator('#unified-si '+selector)
+            self.assertIn('Table records page 1 of 1 (100 records per page)',control.get_attribute('title'))
+            self.assertEqual(control.get_attribute('aria-label'),control.get_attribute('title'))
+        # Inspect actual engine records; the classic caption must never use the advanced title.
+        for record in state['tables']:
+            p.evaluate('(id)=>showpsisi.inspect(id)',record['id'])
+            p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getDetail().id===id',arg=record['id'])
+            title=p.locator('.si-caption span').text_content()
+            self.assertIn(record['name']+' : ',title)
+            self.assertIn(f"PID[0x{record['pid']:04X}]",title)
+            self.assertNotRegex(title,'[§×]')
+            self.assertIn('Version '+str(record['version']),title)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_other_table_titles_and_unavailable_packet(self):
+        from test_unified_inspector import fixture
+        from si_reference_fixture import cases,ProtocolCoverageTests
+        p=self.page
+        path=self.output/'classic-c1-tables.ts'
+        raw=fixture()
+        for name,standard,pid,section in cases():
+            if name in ('CAT','DVB_EIT','DSMCC_DDB','DSMCC_DII'):
+                raw+=b''.join(ProtocolCoverageTests.packetize(pid,section))
+        path.write_bytes(raw)
+        self.show_scan_configuration();p.locator('#standards').select_option('dvb');self.open_scan_options();p.locator('#extra-pids').fill('0x170,0x171')
+        self.analyze(path);p.wait_for_function('()=>showpsisi.getUiState().settled')
+        state=p.evaluate('showpsisi.getState()');names=set()
+        for record in state['tables']:
+            p.evaluate('(id)=>showpsisi.inspect(id)',record['id'])
+            p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getDetail().id===id',arg=record['id'])
+            names.add(record['name']);title=p.locator('.si-caption span').text_content()
+            self.assertIn(record['name']+' : ',title);self.assertNotRegex(title,'[§×]')
+            self.assertIn(f"PID[0x{record['pid']:04X}]",title)
+            if record.get('versioning_supported') is False:self.assertNotIn('Version',title)
+            else:self.assertIn('Version '+str(record['version']),title)
+        self.assertTrue({'PAT','PMT','SDT','EIT','CAT','NIT','BAT','TDT','TOT','DSMCC_download_data_message','DSMCC_user_to_network_message'} <= names,names)
+        with path.open('ab') as output:output.write(b'changed')
+        p.evaluate('(id)=>showpsisi.inspect(id)',state['tables'][0]['id'])
+        p.wait_for_function('()=>showpsisi.getUiState().settled && showpsisi.getDetail().source_packet.status==="source_changed"')
+        self.assertIn('Original packet unavailable for this section.',p.locator('.si-packet').inner_text())
+        self.assertNotEqual(p.locator('.si-section').inner_text(),'')
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_partial_coverage_read_only_warning(self):
+        p=self.page;self.show_scan_configuration();self.open_scan_options();p.locator('#scan-mode').select_option('range')
+        p.locator('#scan-start').fill('1000');p.locator('#scan-end').fill('13000')
+        self.analyze();p.wait_for_function('()=>showpsisi.getUiState().settled')
+        self.assertEqual(p.locator('#scan-coverage').text_content(),p.evaluate('classic.coverage(showpsisi.getState())'))
+        self.assertIn('PARTIAL PREVIEW · READ-ONLY · range',p.locator('#scan-coverage').text_content())
+        self.assertIn('Unread gaps are unknown, not absent. Full scan required to edit/export.',p.locator('#scan-coverage').text_content())
+        self.assertIn('Quick preview complete · partial, read-only',p.locator('#notice').text_content())
+
+    def test_classic_c1_summary_rate_and_pressed_page(self):
+        self.analyze();p=self.page;self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll("#transport-si tbody tr").length>0')
+        basis=p.evaluate('showpsisi.getState().transport_summary.rate_basis')
+        self.assertIn('BitRates: '+basis,p.locator('#transport-si').inner_text())
+        for action in ('summary','error','summary'):
+            button=p.locator('#transport-si [data-action='+action+']');button.click()
+            # The view re-renders when its page arrives; check the live button, not a replaced one.
+            p.wait_for_function('(action)=>{const n=document.querySelector("#transport-si [data-action="+action+"]");return !document.querySelector("#transport-si").innerText.includes("Loading")&&n.getAttribute("aria-pressed")==="true"&&getComputedStyle(n).boxShadow==="rgb(128, 128, 128) 1px 1px 0px 0px inset";}',arg=action)
+            other=p.locator('#transport-si [data-action='+('error' if action=='summary' else 'summary')+']')
+            self.assertEqual(other.get_attribute('aria-pressed'),'false')
+        self.classic_command('bitrate')
+        self.assertIn('BitRates: '+basis,p.locator('.mdi-active .statistics-view').inner_text())
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_shared_lcn_and_partial_coverage_conditions(self):
+        p=self.page
+        hint='Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.'
+        self.assertEqual(p.evaluate('inspector.serviceLcnHint({lcn_status:"conflict",logical_channel_number:null})'),hint)
+        self.assertEqual(p.evaluate('inspector.serviceLcnHint({lcn_status:"known",logical_channel_number:0})'),'')
+        self.assertIn('number is missing',p.evaluate('inspector.serviceLcnHint({lcn_status:"known",logical_channel_number:null})'))
+        self.assertEqual(p.evaluate('inspector.tablePageHint(1,201)'),'Table records page 2 of 3 (100 records per page)')
+        self.assertEqual(p.evaluate('classic.coverage({})'),'')
+        text=p.evaluate('classic.coverage({complete:false,coverage:{partial:true,mode:"range",scanned_packets:10,source_packets:100,ranges:[{start_packet:20,end_packet:30}]}})')
+        self.assertEqual(text,'PARTIAL PREVIEW · READ-ONLY · range · 10 / 100 packets · planned ranges [start, end): [20, 30) · Unread gaps are unknown, not absent. Full scan required to edit/export.')
 
     def test_classic_default_fields_mouse_grid_and_advanced_return(self):
         p=self.page

@@ -173,6 +173,9 @@ class UnifiedInspectorEngineTests(unittest.TestCase):
                     self.assertEqual(stale['source_packet']['status'],'source_changed')
                     self.assertEqual(stale['source_packet']['raw_hex'],'')
                     self.assertEqual(stale['source_fragments']['status'],'source_changed')
+                    if stride==188:
+                        out=Path(os.environ.get('SHOWPSISI_UNIFIED_EVIDENCE_DIR',ROOT/'artifacts/unified-inspector'));out.mkdir(parents=True,exist_ok=True)
+                        (out/'unavailable-evidence.json').write_text(json.dumps(stale),encoding='utf-8')
             finally:core.close()
 
     def test_source_packet_multiple_sections_and_continuation(self):

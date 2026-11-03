@@ -30,7 +30,7 @@ var inspector = {
                 var peers=(state.services || []).filter(function(x){return x.id===s.id && x.pmt_pid===s.pmt_pid;});
                 var r=peers.length===1 && pmts.length===1?pmts[0]:records.find(function(r){return r.id===s.source_id;});
                 if(r && r.name==='PMT')used[r.id]=true;
-                return {kind:r?'record':'info',key:'service:'+t.node_id+':'+s.id,label:serviceLabel(s)+(s.announced?'  [announced]':!pmts.length?'  [PMT unavailable]':peers.length>1?'  [PMT ambiguous]':''),record:r,program:true,service:s,depth:3};
+                return {kind:r?'record':'info',key:'service:'+t.node_id+':'+s.id,label:serviceLabel(s)+(s.announced?'  [announced]':!pmts.length?'  [PMT unavailable]':peers.length>1?'  [PMT ambiguous]':''),record:r,program:true,service:s,hint:self.serviceLcnHint(s),depth:3};
             });
         }
         Object.keys(networks).sort().forEach(function(nid){var n=networks[nid],group=[];
@@ -121,6 +121,17 @@ var inspector = {
         var program=this.wireValue(node,'program_number');
         if(program)return 'Program '+program+' PID['+this.wireValue(node,'program_map_PID')+']';
         return node.label;
+    },
+    serviceLcnHint: function(s) {
+        if(s.lcn_status==='known' && s.logical_channel_number!==null && s.logical_channel_number!==undefined)return '';
+        return s.lcn_status==='conflict'?'Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.':'No resolved logical channel number: the status is not known or the number is missing.';
+    },
+    tablePageHint: function(page,count) {return 'Table records page '+(page+1)+' of '+Math.max(1,Math.ceil(count/100))+' (100 records per page)';},
+    classicTitle: function(record,tree) {
+        var body;
+        if(['PMT','NIT','BAT'].indexOf(record.name)>=0)body=this.navigationTitle(record,tree);
+        else body=(record.extension===null || record.extension===undefined?'—':this.hex(record.extension))+' PID['+this.hex(record.pid)+']'+(this.shortSyntax(record)?'':' Version '+record.version)+(record.last_section>0?' Section '+record.section+'/'+record.last_section:'');
+        return record.name+' : '+body;
     },
     navigationTitle: function(record,tree) {
         var version=' Version '+record.version, pid=' PID['+this.hex(record.pid)+']',suffix=record.last_section>0?' Section '+record.section+'/'+record.last_section:'';

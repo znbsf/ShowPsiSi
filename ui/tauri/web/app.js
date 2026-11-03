@@ -851,7 +851,7 @@ function renderScanProgress() {
   $("#scan-status").textContent = status + (busy ? " · " + num(data.coverage?.scanned_packets ?? data.packets) + " packets" + (Number.isFinite(fraction) ? " · " + (100*fraction).toFixed(1) + "%" : "") : "");
   const coverage = data.coverage;
   $("#scan-coverage").hidden = !coverage;
-  if (coverage) $("#scan-coverage").textContent = (coverage.partial ? "PARTIAL PREVIEW · READ-ONLY · " : "Coverage · ") + coverage.mode + " · " + num(coverage.scanned_packets) + " / " + num(coverage.source_packets) + " packets · " + (data.complete ? "observed" : "planned") + " ranges [start, end): " + (coverage.ranges || []).map(r => "[" + num(r.start_packet) + ", " + num(r.end_packet) + ")").join("; ") + (coverage.partial ? " · Unread gaps are unknown, not absent. Full scan required to edit/export." : "");
+  if (coverage) $("#scan-coverage").textContent = classicMode ? classic.coverage(data) : (coverage.partial ? "PARTIAL PREVIEW · READ-ONLY · " : "Coverage · ") + coverage.mode + " · " + num(coverage.scanned_packets) + " / " + num(coverage.source_packets) + " packets · " + (data.complete ? "observed" : "planned") + " ranges [start, end): " + (coverage.ranges || []).map(r => "[" + num(r.start_packet) + ", " + num(r.end_packet) + ")").join("; ") + (coverage.partial ? " · Unread gaps are unknown, not absent. Full scan required to edit/export." : "");
 }
 async function pauseScan() {
   if (!busy || cancelling || pausePending || activeAnalyze === null || backendFailure) return;
@@ -1023,9 +1023,9 @@ async function scan() {
     if (result.complete) completedScanOptions = options;
     succeeded = true;
     notice(
-      (cancelling ? "Analysis completed before cancellation took effect · " : "Analysis complete · ") +
+      (classicMode && !cancelling ? classic.completion(data) : (cancelling ? "Analysis completed before cancellation took effect · " : "Analysis complete · ") +
         num(data.packets) +
-        " packets · source unchanged" + (data.demux?.truncated_sections ? " · " + num(data.demux.truncated_sections) + " truncated section(s)" : ""),
+        " packets · source unchanged") + (data.demux?.truncated_sections ? " · " + num(data.demux.truncated_sections) + " truncated section(s)" : ""),
       data.demux?.truncated_sections ? "warning" : "info",
     );
   } catch (error) {
@@ -3055,6 +3055,7 @@ window.showpsisi = {
 let nativeTitle='';
 function setShellTitle(title){document.title=title;if(env.driver&&env.runtime!=='cloud-browser'&&nativeTitle!==title){nativeTitle=title;invoke('set_window_title',{title}).catch(()=>{nativeTitle='';});}}
 function syncSiMode() {
+  renderScanProgress();
   const active=classicMode && !dvbiWorkspace.getState().active;
   document.body.classList.toggle('si-mode',active);applyTheme();
   const panel=$('#unified-si');if(panel){panel.hidden=!active;panel.classList.toggle('si-summary-mode',summaryVisible&&!documentMode);panel.classList.toggle('si-document-mode',documentMode);panel.classList.toggle('si-tree-hidden',!classicTree);}

@@ -124,7 +124,7 @@ Pane {
         Label {
             objectName:"transportSummaryScope"
             text:"Scan-global · "+view.number(summary.pid_count)+" PIDs · "+(view.state.coverage?.partial?"PARTIAL observed windows":"full scan")+" · historical selection does not change these counters.\n"+
-                 (summary.rate_basis || "Transport counters require a matching updated engine.")+
+                 "BitRates: "+(summary.rate_basis || "Transport counters require a matching updated engine.")+
                  ". PacketRate is the share of observed packets; Errors excludes continuity, PES and decoder checks."
             color:host.muted;wrapMode:Text.Wrap;Layout.fillWidth:true;font.pixelSize:11
         }
@@ -178,12 +178,12 @@ Pane {
             id:tabs;objectName:"transportSummaryTabs";Layout.fillWidth:true
             onCurrentIndexChanged:{view.page={};view.returnContext=null;view.loading=false;view.request(0);}
             TabButton {
-                id:summaryTab;implicitHeight:28;text:"Summary";Accessible.name:"Transport PID summary"
+                id:summaryTab;implicitHeight:28;text:"Summary";Accessible.name:"Transport PID summary";Accessible.checked:summaryTab.checked
                 background:Rectangle {color:summaryTab.checked?host.selectionSurface:host.raised;border.width:summaryTab.activeFocus?2:0;border.color:host.blue}
                 contentItem:Label {text:summaryTab.text;color:host.ink;font.bold:summaryTab.checked;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
             }
             TabButton {
-                id:errorsTab;implicitHeight:28;text:"Error";Accessible.name:"Transport errors and section diagnostics"
+                id:errorsTab;implicitHeight:28;text:"Error";Accessible.name:"Transport errors and section diagnostics";Accessible.checked:errorsTab.checked
                 background:Rectangle {color:errorsTab.checked?host.selectionSurface:host.raised;border.width:errorsTab.activeFocus?2:0;border.color:host.blue}
                 contentItem:Label {text:errorsTab.text;color:host.ink;font.bold:errorsTab.checked;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
             }

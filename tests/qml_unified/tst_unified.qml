@@ -48,6 +48,51 @@ Item {
             host.deferInspection=false;inspector.fieldColumnWidths=[-1,-1,-1,-1];inspector.hexFraction=0.40;inspector.openFamilies={};inspector.closed={};inspector.fieldClosed={};inspector.limits={};host.coreInspecting=false;
             inspector.selectRecord(inspector.findRecord('PAT'));inspector.history=[];
         }
+        function test_c1_empty_hex_and_classic_titles() {
+            host.detail={};wait(20);
+            compare(findChild(inspector,'unifiedPacketUnavailable').visible,false);
+            compare(inspector.packetRaw,'');
+            var xhr=new XMLHttpRequest();xhr.open('GET',Qt.resolvedUrl('../../artifacts/unified-inspector/unavailable-evidence.json'),false);xhr.send();
+            host.detail=JSON.parse(xhr.responseText);wait(20);
+            compare(findChild(inspector,'unifiedPacketUnavailable').visible,true);
+            verify(findChild(inspector,'unifiedPacketUnavailable').text.indexOf('Source file changed.')===0);
+            var details=baseCaptures.concat(referenceTables.map(function(s){return s.detail;}));
+            for(var i=0;i<details.length;i++){
+                var d=details[i];host.detail=d;wait(1);
+                var title=findChild(inspector,'unifiedTitle').text;
+                verify(title.indexOf(d.name+' : ')>=0,title);
+                verify(!/[§×]/.test(title),title);
+                verify(title.indexOf('PID[0x'+Number(d.pid).toString(16).toUpperCase().padStart(4,'0')+']')>=0,title);
+                if(d.versioning_supported!==false && d.table_id!==0x70 && d.table_id!==0x73)verify(title.indexOf('Version '+d.version)>=0,title);
+                else verify(title.indexOf('Version')<0,title);
+            }
+        }
+        function test_c1_pager_and_service_accessibility() {
+            var hint='Table records page 1 of 1 (100 records per page)';
+            compare(findChild(inspector,'unifiedPageCount').Accessible.name,hint);
+            compare(findChild(inspector,'unifiedPrevious').Accessible.name,'Previous page of table records. '+hint);
+            compare(findChild(inspector,'unifiedNext').ToolTip.text,'Next page of table records. '+hint);
+            // Only the label condition is synthetic; protocol/title checks above use engine evidence.
+            var original=host.analysisState;
+            try {
+                var service=Object.assign({},original.services[0],{lcn_status:'conflict',logical_channel_number:null});
+                host.analysisState=Object.assign({},original,{services:[service]});
+                var row=inspector.navigation.find(function(r){return r.service && r.service.id===service.id;});
+                verify(!!row);verify(row.label.indexOf('LCN conflict')>=0);
+                wait(20);
+                var delegate=findChild(inspector,'unifiedRow:'+inspector.navigation.indexOf(row));
+                verify(!!delegate);compare(delegate.Accessible.description,row.hint);
+                compare(row.hint,'Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.');
+                service=Object.assign({},service,{lcn_status:'known',logical_channel_number:null});
+                host.analysisState=Object.assign({},original,{services:[service]});
+                row=inspector.navigation.find(function(r){return r.service && r.service.id===service.id;});
+                verify(row.label.indexOf('LCN ?')>=0);verify(row.hint.indexOf('number is missing')>=0);
+                service=Object.assign({},service,{logical_channel_number:0});
+                host.analysisState=Object.assign({},original,{services:[service]});
+                row=inspector.navigation.find(function(r){return r.service && r.service.id===service.id;});
+                compare(row.hint,'');verify(row.label.indexOf('LCN 0')===0);
+            } finally {host.analysisState=original;}
+        }
         function test_numeric_pid_excludes_extension_collision() {
             inspector.query='0x0100';verify(inspector.records.length>=2);
             inspector.filterPid(0x100);compare(inspector.records.length,1);

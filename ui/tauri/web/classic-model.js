@@ -1,5 +1,12 @@
 // Original menu order and toolbar command mapping. Presentation only.
 var classic = {
+ number:function(n){return String(Number(n || 0)).replace(/\B(?=(\d{3})+(?!\d))/g,',');},
+ coverage:function(state){
+  var c=state.coverage;if(!c)return '';
+  var num=this.number;
+  return (c.partial?'PARTIAL PREVIEW · READ-ONLY · '+c.mode:'Full coverage')+' · '+num(c.scanned_packets)+' / '+num(c.source_packets)+' packets · '+(state.complete?'observed':'planned')+' ranges [start, end): '+(c.ranges || []).map(function(r){return '['+num(r.start_packet)+', '+num(r.end_packet)+')';}).join('; ')+(c.partial?' · Unread gaps are unknown, not absent. Full scan required to edit/export.':'');
+ },
+ completion:function(state){return (state.coverage && state.coverage.partial?'Quick preview complete · partial, read-only':'Scan complete')+' · '+this.number(state.packets)+' packets · source unchanged';},
  toolbar:[{id:'open',slot:0},{id:'save',slot:1},{separator:true},{id:'start',slot:2},{id:'stop',slot:3},{id:'pause',slot:4},{separator:true},{id:'tree',slot:5},{id:'print',slot:6}],
  labels:{media:'PES / ES / Media',teletext:'Teletext',carousel:'DSM-CC / OC Files',services:'Services / EPG',decoded:'Native Decode',new:'New',open:'Open…',close:'Close',save:'Save…',print:'Print…',printSetup:'Print Setup…',exit:'Exit',toolbar:'Toolbar',status:'Status Bar',tree:'View TS Tree',summary:'View Summary',bitrate:'View Bitrate',configuration:'Card Configuration',packets:'Packet Explorer',diagnostics:'Bug Report',start:'Start',stop:'Stop',pause:'Pause',cascade:'Cascade',tile:'Tile',arrange:'Arrange Icons',index:'Index',about:'About ShowPsiSi',advanced:'Advanced workspace',dvbi:'DVB-I XML document',messages:'Message history'},
  shortcuts:{new:'Ctrl+N',open:'Ctrl+O',close:'Ctrl+F4',save:'Ctrl+S',print:'Ctrl+P'},

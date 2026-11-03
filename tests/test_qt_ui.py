@@ -34,7 +34,9 @@ def native_environment():
                  ROOT / '.deps/tsduck/usr/lib',
                  ROOT / '.deps/tsduck/usr/lib/x86_64-linux-gnu']
     env['LD_LIBRARY_PATH'] = os.pathsep.join(str(p) for p in libraries if p.exists()) + os.pathsep + env.get('LD_LIBRARY_PATH', '')
-    env.update(QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', PYTHONIOENCODING='utf-8',
+    # Declare a typical 1920x1080 desktop: the window sizes itself from Screen, and the
+    # plugin's default 800x600 screen would clamp every layout scenario.
+    env.update(QT_QPA_PLATFORM='offscreen:configfile=tests/qt_offscreen_screen.json', QT_QUICK_BACKEND='software', PYTHONIOENCODING='utf-8',
                SHOWPSISI_ROOT=str(ROOT), SHOWPSISI_AUTO='1',
                SHOWPSISI_CORE=env.get('SHOWPSISI_CORE', str(ROOT / ('build/bin/showpsisi-core' + EXE))),
                SHOWPSISI_SAMPLE=str(ROOT / 'samples/generated/lab.ts'))

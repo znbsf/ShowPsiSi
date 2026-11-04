@@ -23,6 +23,8 @@ Item {
   state=next;var ids={};next.items.forEach(function(d,i){ids[d.id]=true;var f=frames[d.id];if(!f){f=windowComponent.createObject(workspace,{documentData:d});frames[d.id]=f;}f.documentData=d;f.z=i+1;f.active=d.id===next.active;});
   Object.keys(frames).forEach(function(id){if(!ids[id]){frames[id].destroy();delete frames[id];}});changed();
  }
+ function activeSection(){var frame=frames[state.active];return frame&&frame.documentData.kind==='si'?frame.contentItem:null;}
+ function replaceSection(id,payload,title){apply(Model.documents.replaceSection(state,id,payload,title));}
  function open(kind,key,title,payload,duplicate){apply(Model.documents.open(state,kind,key,title,payload,!!duplicate));activate(state.active);}
  function reset(identity){if(state.identity!==identity)apply(Model.documents.create(identity));}
  function activate(id){apply(Model.documents.activate(state,id));if(frames[id])frames[id].forceActiveFocus();}

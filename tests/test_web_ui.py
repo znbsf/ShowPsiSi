@@ -27,6 +27,41 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 from cloud_preview import Bridge, Server
 
+class ClassicPresentationTests(unittest.TestCase):
+    def model(self,expression):
+        node=shutil.which('node')
+        if not node:self.skipTest('Node is required for shared presentation tests')
+        script="const classic=require('./ui/tauri/web/classic-model.js'),inspector=require('./ui/tauri/web/inspector-model.js');console.log(JSON.stringify("+expression+"));"
+        return json.loads(subprocess.check_output([node,'-e',script],cwd=ROOT,text=True,encoding='utf-8'))
+
+    def test_classic_model_lcn_conditions(self):
+        self.assertEqual(self.model("inspector.serviceLcnHint({lcn_status:'known',logical_channel_number:0})"),'')
+        unknown='No resolved logical channel number: the status is not known or the number is missing.'
+        for service in ({},{'lcn_status':'unknown','logical_channel_number':7},{'lcn_status':'known','logical_channel_number':None}):
+            self.assertEqual(self.model('inspector.serviceLcnHint('+json.dumps(service)+')'),unknown)
+        self.assertEqual(self.model("inspector.serviceLcnHint({lcn_status:'conflict',logical_channel_number:7})"),'Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.')
+
+    def test_classic_model_coverage_and_page_boundaries(self):
+        self.assertEqual(self.model('classic.coverage({})'),'')
+        state={'complete':True,'coverage':{'mode':'full','partial':False,'scanned_packets':178000,'source_packets':178000,'ranges':[{'start_packet':0,'end_packet':178000}]}}
+        self.assertEqual(self.model('classic.coverage('+json.dumps(state)+')'),'Full coverage · 178,000 / 178,000 packets · observed ranges [start, end): [0, 178,000)')
+        state['complete']=False;state['coverage'].update(mode='range',partial=True)
+        text=self.model('classic.coverage('+json.dumps(state)+')')
+        self.assertTrue(text.startswith('PARTIAL PREVIEW · READ-ONLY · range'))
+        self.assertIn('planned ranges',text);self.assertTrue(text.endswith('Full scan required to edit/export.'))
+        for page,count,expected in ((0,0,1),(0,100,1),(1,101,2),(1,201,3)):
+            self.assertEqual(self.model(f'inspector.tablePageHint({page},{count})'),f'Table records page {page+1} of {expected} (100 records per page)')
+
+    def test_classic_model_comment_status(self):
+        self.assertEqual(self.model('inspector.fieldComment(null)'), '')
+        self.assertEqual(self.model('inspector.commentStatus("Ready", {})'), 'Ready')
+        self.assertEqual(self.model('inspector.commentStatus("PID 0x0000", {help:"Full <comment> & text"})'), 'PID 0x0000 | Full <comment> & text')
+
+    def test_classic_model_completion(self):
+        self.assertEqual(self.model('classic.completion({packets:178000})'),'Scan complete · 178,000 packets · source unchanged')
+        self.assertEqual(self.model('classic.completion({packets:10,coverage:{partial:true}})'),'Quick preview complete · partial, read-only · 10 packets · source unchanged')
+
+
 class BrowserTests(unittest.TestCase):
     def dvbi_import(self,raw=None,name='dvbi.xml'):
         from dvbi_fixture import fixture
@@ -924,6 +959,276 @@ class BrowserTests(unittest.TestCase):
             self.page.close()
             raise
 
+    def test_classic_c3_full_comment_tooltip_status_and_back(self):
+        self.analyze();p=self.page
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'")
+        fields=p.evaluate('showpsisi.getUiState().unified.fields')
+        index=next(i for i,r in enumerate(fields) if r['name']=='program_number')
+        comment=fields[index]['help'];self.assertTrue(comment)
+        row=p.locator('#unified-si .si-field-row').nth(index);cell=row.locator('.si-comment')
+        status=p.locator('#unified-si .si-status');original=status.text_content()
+        self.assertTrue(cell.evaluate('(e)=>e.scrollWidth>e.clientWidth'))
+        self.assertIn(' ',cell.locator('xpath=..').get_attribute('title'));cell.hover();self.assertEqual(cell.get_attribute('title'),comment)
+        self.assertEqual(row.get_attribute('aria-description'),comment)
+        row.focus();row.press('Enter')
+        self.assertEqual(status.text_content(),original+' | '+comment)
+        self.assertEqual(row.evaluate('(e)=>e.getBoundingClientRect().height'),20)
+        self.assertEqual(cell.evaluate('(e)=>getComputedStyle(e).textOverflow'),'ellipsis')
+        # Native accessibility tree must expose the full description of the row.
+        cdp=p.context.new_cdp_session(p)
+        ax=cdp.send('Accessibility.getFullAXTree')['nodes']
+        self.assertTrue(any(n.get('role',{}).get('value')=='row' and n.get('description',{}).get('value')==comment for n in ax))
+        cdp.detach()
+        # Fit the comment, then shrink it; hover must reflect the current geometry.
+        grip=p.locator('.si-column-grip[data-column="3"]');grip.dblclick()
+        p.mouse.move(0,0);cell.hover()
+        self.assertFalse(cell.evaluate('(e)=>e.scrollWidth>e.clientWidth'))
+        self.assertIsNone(cell.get_attribute('title'))
+        grip.focus()
+        for _ in range(22):grip.press('ArrowLeft')
+        p.mouse.move(0,0);cell.hover();self.assertEqual(cell.get_attribute('title'),comment)
+        row.click();p.keyboard.press('Control+g');p.locator('#classic-jump-input').fill('pid 0x0100');p.locator('#classic-jump-input').press('Enter')
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PMT'")
+        self.assertNotIn(comment,status.text_content())
+        p.locator('#unified-si [data-command="back"]').click()
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getUiState().unified.selectedField?.name==='program_number'")
+        self.assertEqual(status.text_content(),original+' | '+comment)
+        row=p.locator('#unified-si .si-field-row').nth(index);cell=row.locator('.si-comment')
+        cell.hover();self.assertEqual(cell.get_attribute('title'),comment)
+        self.assertEqual(row.get_attribute('aria-description'),comment)
+        p.locator('#unified-si .si-field-row').first.click()
+        self.assertEqual(status.text_content(),original)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c3_summary_dialog_style_and_navigation(self):
+        self.analyze();p=self.page;self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll("#transport-si .si-summary-list tbody tr").length>0')
+        summary=p.locator('#transport-si')
+        self.assertEqual(summary.evaluate('(e)=>getComputedStyle(e).backgroundColor'),'rgb(239, 239, 239)')
+        self.assertTrue(summary.evaluate('(e)=>getComputedStyle(e).fontFamily').startswith('Tahoma'))
+        self.assertEqual(summary.evaluate('(e)=>getComputedStyle(e).fontSize'),'13px')
+        self.assertEqual(summary.locator('input[readonly]').count(),6)
+        for field in summary.locator('input').all():
+            style=field.evaluate('(e)=>{const s=getComputedStyle(e);return [s.fontFamily,s.fontSize,s.backgroundColor,s.borderTopStyle,s.borderRadius];}')
+            self.assertTrue(style[0].startswith('Tahoma'));self.assertEqual(style[1:],['13px','rgb(255, 255, 255)','inset','0px'])
+        for button in summary.locator('button').all():
+            box=button.bounding_box();self.assertGreater(box['width'],0);self.assertGreater(box['height'],0)
+        for page in ('error','summary'):
+            summary.locator('[data-action="'+page+'"]').click()
+            p.wait_for_function('(page)=>document.querySelector("#transport-si [data-action="+page+"]").getAttribute("aria-pressed")==="true"',arg=page)
+            p.wait_for_function('()=>!document.querySelector("#transport-si .si-summary-pages").textContent.includes("Loading")')
+        summary.locator('[data-sort="packets"]').click()
+        p.wait_for_function('()=>document.querySelector("#transport-si tbody tr td")?.textContent==="0x1FFF"')
+        summary.locator('tbody tr').filter(has=p.locator('td',has_text='0x0000')).first.press('Enter')
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().pid===0&&!document.querySelector('#transport-si').offsetWidth")
+        self.classic_command('bitrate')
+        p.wait_for_function('()=>document.querySelectorAll(".mdi-active .statistics-list tbody tr").length>0')
+        statistics=p.locator('.mdi-active .statistics-view')
+        self.assertEqual(statistics.evaluate('(e)=>getComputedStyle(e).fontSize'),'13px')
+        self.assertTrue(statistics.evaluate('(e)=>getComputedStyle(e).fontFamily').startswith('Tahoma'))
+        self.assertEqual(statistics.locator('th').first.evaluate('(e)=>getComputedStyle(e).borderTopStyle'),'outset')
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_identifier_dialog_and_exact_back(self):
+        p=self.page
+        p.locator('[data-menu="2"]').click()
+        p.wait_for_function("()=>{const b=document.querySelector('[data-command=goTo]');return b.disabled&&b.title==='Analyze a source first'&&b.textContent.includes('Go to PID/SID…')&&b.textContent.includes('Ctrl+G');}")
+        p.keyboard.press('Escape');self.analyze()
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'&&!document.querySelector('[data-command=goTo]').disabled")
+        field=p.evaluate("showpsisi.getUiState().unified.fields.findIndex(r=>r.name==='program_map_PID')")
+        self.assertGreater(field,0)
+        p.locator('.si-field-row').nth(field).click()
+        p.locator('.si-column-grip[data-column="0"]').press('ArrowRight')
+        p.locator('.si-fields').evaluate('(e)=>{e.scrollTop=60;e.scrollLeft=10;e.focus();}')
+        origin=p.evaluate('showpsisi.getUiState().unified')
+        for query,label,pid,tid in [('0x0000','PID 0x0000 (0)',0,0),('sid 0x0067','SID 0x0067 (103)',0x102,2),('table 0x42','Table 0x42 (66)',0x11,0x42)]:
+            p.keyboard.press('Control+g');edit=p.locator('#classic-jump-input');edit.fill(query)
+            p.wait_for_function('(label)=>document.querySelector("#classic-jump-status").textContent===label',arg=label)
+            edit.press('Enter')
+            p.wait_for_function('([pid,tid])=>!document.querySelector("#classic-jump-dialog").open&&showpsisi.getUiState().settled&&showpsisi.getDetail().pid===pid&&showpsisi.getDetail().table_id===tid',arg=[pid,tid])
+            if tid==2:
+                self.assertEqual(p.evaluate('showpsisi.getDetail().extension'),0x67)
+                p.wait_for_function("()=>document.querySelector('.si-nav-row[aria-selected=true]')?.dataset.key.includes('service:')")
+            p.locator('[data-command="back"]').click()
+            p.wait_for_function('(origin)=>{const v=showpsisi.getUiState().unified;return showpsisi.getUiState().settled&&v.selected===origin.selected&&JSON.stringify(v.selectedField)===JSON.stringify(origin.selectedField);}',arg=origin)
+            restored=p.evaluate('showpsisi.getUiState().unified')
+            for name in ('selected','path','selectedField','range','columnWidths','scroll'):
+                self.assertEqual(restored[name],origin[name],(query,name))
+            self.assertEqual([(r['key'],r['expanded']) for r in restored['navigation']],[(r['key'],r['expanded']) for r in origin['navigation']])
+        p.locator('.si-fields').focus();p.keyboard.press('Control+g')
+        for query,message in [('8190','No PID 0x1FFE in this stream'),('pid 8192','PID must be between 0 and 8191'),('0x100garbage','Enter a PID, SID or table ID in decimal or 0x hexadecimal')]:
+            p.locator('#classic-jump-input').fill(query);p.locator('#classic-jump-input').press('Enter')
+            p.wait_for_function('(message)=>document.querySelector("#classic-jump-dialog").open&&document.querySelector("#classic-jump-status").textContent===message',arg=message)
+            self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selected'),origin['selected'])
+            self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selectedField'),origin['selectedField'])
+        p.keyboard.press('Escape')
+        p.wait_for_function("()=>!document.querySelector('#classic-jump-dialog').open&&document.activeElement===document.querySelector('.si-fields')")
+        self.classic_command('goTo');p.locator('#classic-jump-dialog [data-cancel]').click()
+        self.assertFalse(p.locator('#classic-jump-dialog').is_visible())
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_jumps_in_existing_si_document_keep_its_back_stack(self):
+        self.analyze();p=self.page
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'")
+        self.classic_command('new')
+        p.wait_for_function("()=>showpsisi.getUiState().documents.items.some(d=>d.kind==='si'&&d.view?.fields.length)")
+        active='showpsisi.getUiState().documents.items.find(d=>d.id===showpsisi.getUiState().documents.active)'
+        initial=p.evaluate(active);count=p.evaluate('showpsisi.getUiState().documents.items.length')
+        index=next(i for i,r in enumerate(initial['view']['fields']) if r['name']=='program_map_PID' and r['value'].startswith('0x0100'))
+        p.locator('.mdi-active .si-field-row').nth(index).click()
+        origin=p.evaluate(active)['view']
+        p.keyboard.press('Control+g');p.locator('#classic-jump-input').fill('sid 0x0067');p.locator('#classic-jump-input').press('Enter')
+        p.wait_for_function('()=>'+active+'.view.selected===showpsisi.getState().tables.find(r=>r.name==="PMT"&&r.pid===258).id')
+        self.assertEqual(p.evaluate(active)['id'],initial['id'])
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.length'),count)
+        p.locator('#unified-si > .si-left [data-command="back"]').click()
+        p.wait_for_function('(origin)=>{const v='+active+'.view;return v.selected===origin.selected&&JSON.stringify(v.selectedField)===JSON.stringify(origin.selectedField);}',arg=origin)
+        p.locator('.mdi-active .si-fields').focus();p.keyboard.press('Control+Enter')
+        p.wait_for_function('()=>'+active+'.view.selected===showpsisi.getState().tables.find(r=>r.name==="PMT"&&r.pid===256).id')
+        p.keyboard.press('Alt+ArrowLeft')
+        p.wait_for_function('(origin)=>{const v='+active+'.view;return v.selected===origin.selected&&JSON.stringify(v.selectedField)===JSON.stringify(origin.selectedField);}',arg=origin)
+        self.assertEqual(p.evaluate(active)['id'],initial['id'])
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.length'),count)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_field_references_context_keys_and_back(self):
+        self.analyze();p=self.page
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'")
+        index=p.evaluate("showpsisi.getUiState().unified.fields.findIndex(r=>r.name==='program_map_PID'&&r.value.startsWith('0x0100'))")
+        self.assertGreater(index,0)
+        field=p.locator('.si-field-row').nth(index)
+        for trigger in ('mouse','Shift+F10','ContextMenu','Control+Enter'):
+            field.click();p.locator('.si-fields').focus()
+            if trigger=='mouse':field.click(button='right')
+            else:p.keyboard.press(trigger)
+            if trigger!='Control+Enter':
+                p.wait_for_function("()=>{const m=document.querySelector('.si-context-menu');return !m.hidden&&m.textContent==='Go to PMT · PID 0x0100 (256)';}")
+                before=p.evaluate('showpsisi.getUiState().unified')
+                p.get_by_role('menuitem',name='Go to PMT · PID 0x0100 (256)',exact=True).click()
+            p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PMT'&&showpsisi.getDetail().pid===256")
+            # The fixture's null PCR PID must not become a reference.
+            null_index=p.evaluate("showpsisi.getUiState().unified.fields.findIndex(r=>r.name==='PCR_PID')")
+            self.assertGreater(null_index,0)
+            p.locator('.si-field-row').nth(null_index).click(button='right')
+            p.wait_for_function("()=>{const m=document.querySelector('.si-context-menu');return !m.hidden&&m.textContent==='No reference for this field'&&m.querySelector('button').disabled;}")
+            p.keyboard.press('Escape');p.keyboard.press('Alt+ArrowLeft')
+            p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'&&showpsisi.getUiState().unified.selectedField?.name==='program_map_PID'")
+            if trigger!='Control+Enter':
+                after=p.evaluate('showpsisi.getUiState().unified')
+                for name in ('selected','path','selectedField','range','scroll'):
+                    self.assertEqual(after[name],before[name],(trigger,name))
+                self.assertEqual([(r['key'],r['expanded']) for r in after['navigation']],[(r['key'],r['expanded']) for r in before['navigation']])
+        p.locator('.si-field-row').nth(1).click(button='right')
+        p.wait_for_function("()=>{const m=document.querySelector('.si-context-menu');return !m.hidden&&m.textContent==='No reference for this field'&&![...m.querySelectorAll('button')].some(b=>b.textContent.startsWith('Go to'));}")
+        self.assertEqual(p.locator('.si-field-row .reference-jump').count(),0)
+        p.keyboard.press('Escape')
+        self.show_scan_configuration();revision=p.evaluate('showpsisi.getState().analysis_revision')
+        p.locator('#scan').focus();p.keyboard.press('Control+Enter')
+        p.wait_for_function('(revision)=>showpsisi.getState().complete&&showpsisi.getUiState().settled&&showpsisi.getState().analysis_revision!==revision',arg=revision)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_empty_title_coverage_and_service_status(self):
+        p=self.page
+        self.assertEqual(p.locator('.si-packet').inner_text(),'')
+        self.assertEqual(p.locator('.si-section').inner_text(),'')
+        self.analyze();p.wait_for_function('()=>showpsisi.getUiState().settled && !!showpsisi.getDetail().id')
+        state=p.evaluate('showpsisi.getState()')
+        self.assertEqual(p.locator('#scan-coverage').text_content(),p.evaluate('classic.coverage(showpsisi.getState())'))
+        self.assertIn('Full coverage',p.locator('#scan-coverage').text_content())
+        expected=f"Scan complete · {state['packets']:,} packets · source unchanged"
+        self.assertTrue(p.locator('#notice').text_content().startswith(expected))
+        p.wait_for_function('()=>document.querySelector("#notice").classList.contains("info-expired")')
+        # lab.ts only has resolved LCNs, so its service rows carry no hint; the shared
+        # hint function covers the unresolved and conflicting cases with engine statuses.
+        row=p.locator('.si-nav-row').filter(has=p.locator('.si-row-label',has_text='LCN 10')).first
+        self.assertNotIn('logical channel number',row.get_attribute('title'))
+        self.assertIsNone(row.get_attribute('aria-description'))
+        hints=p.evaluate('''()=>[inspector.serviceLcnHint({lcn_status:'known',logical_channel_number:10}),inspector.serviceLcnHint({lcn_status:'unknown'}),inspector.serviceLcnHint({lcn_status:'conflict'})]''')
+        self.assertEqual(hints[0],'')
+        self.assertEqual(hints[1],'No resolved logical channel number: the status is not known or the number is missing.')
+        self.assertIn('conflicting LCN candidates',hints[2])
+        row.locator('.si-row-label').click();p.wait_for_function('()=>showpsisi.getUiState().settled')
+        self.assertTrue(p.locator('#notice').is_visible())
+        self.assertTrue(p.locator('#notice').text_content().startswith(expected))
+        for selector in ('.si-pages span','[data-command=previous]','[data-command=next]'):
+            control=p.locator('#unified-si '+selector)
+            self.assertIn('Table records page 1 of 1 (100 records per page)',control.get_attribute('title'))
+            self.assertEqual(control.get_attribute('aria-label'),control.get_attribute('title'))
+        # Inspect actual engine records; the classic caption must never use the advanced title.
+        for record in state['tables']:
+            p.evaluate('(id)=>showpsisi.inspect(id)',record['id'])
+            p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getDetail().id===id',arg=record['id'])
+            title=p.locator('.si-caption span').text_content()
+            self.assertIn(record['name']+' : ',title)
+            self.assertIn(f"PID[0x{record['pid']:04X}]",title)
+            self.assertNotRegex(title,'[§×]')
+            self.assertIn('Version '+str(record['version']),title)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_other_table_titles_and_unavailable_packet(self):
+        from test_unified_inspector import fixture
+        from si_reference_fixture import cases,ProtocolCoverageTests
+        p=self.page
+        path=self.output/'classic-c1-tables.ts'
+        raw=fixture()
+        for name,standard,pid,section in cases():
+            if name in ('CAT','DVB_EIT','DSMCC_DDB','DSMCC_DII'):
+                raw+=b''.join(ProtocolCoverageTests.packetize(pid,section))
+        path.write_bytes(raw)
+        self.show_scan_configuration();p.locator('#standards').select_option('dvb');self.open_scan_options();p.locator('#extra-pids').fill('0x170,0x171')
+        self.analyze(path);p.wait_for_function('()=>showpsisi.getUiState().settled')
+        state=p.evaluate('showpsisi.getState()');names=set()
+        for record in state['tables']:
+            p.evaluate('(id)=>showpsisi.inspect(id)',record['id'])
+            p.wait_for_function('(id)=>showpsisi.getUiState().settled && showpsisi.getDetail().id===id',arg=record['id'])
+            names.add(record['name']);title=p.locator('.si-caption span').text_content()
+            self.assertIn(record['name']+' : ',title);self.assertNotRegex(title,'[§×]')
+            self.assertIn(f"PID[0x{record['pid']:04X}]",title)
+            if record.get('versioning_supported') is False:self.assertNotIn('Version',title)
+            else:self.assertIn('Version '+str(record['version']),title)
+        self.assertTrue({'PAT','PMT','SDT','EIT','CAT','NIT','BAT','TDT','TOT','DSMCC_download_data_message','DSMCC_user_to_network_message'} <= names,names)
+        with path.open('ab') as output:output.write(b'changed')
+        p.evaluate('(id)=>showpsisi.inspect(id)',state['tables'][0]['id'])
+        p.wait_for_function('()=>showpsisi.getUiState().settled && showpsisi.getDetail().source_packet.status==="source_changed"')
+        self.assertIn('Original packet unavailable for this section.',p.locator('.si-packet').inner_text())
+        self.assertNotEqual(p.locator('.si-section').inner_text(),'')
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_partial_coverage_read_only_warning(self):
+        p=self.page;self.show_scan_configuration();self.open_scan_options();p.locator('#scan-mode').select_option('range')
+        p.locator('#scan-start').fill('1000');p.locator('#scan-end').fill('13000')
+        self.analyze();p.wait_for_function('()=>showpsisi.getUiState().settled')
+        self.assertEqual(p.locator('#scan-coverage').text_content(),p.evaluate('classic.coverage(showpsisi.getState())'))
+        self.assertIn('PARTIAL PREVIEW · READ-ONLY · range',p.locator('#scan-coverage').text_content())
+        self.assertIn('Unread gaps are unknown, not absent. Full scan required to edit/export.',p.locator('#scan-coverage').text_content())
+        self.assertIn('Quick preview complete · partial, read-only',p.locator('#notice').text_content())
+
+    def test_classic_c1_summary_rate_and_pressed_page(self):
+        self.analyze();p=self.page;self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll("#transport-si tbody tr").length>0')
+        basis=p.evaluate('showpsisi.getState().transport_summary.rate_basis')
+        self.assertIn('BitRates: '+basis,p.locator('#transport-si').inner_text())
+        for action in ('summary','error','summary'):
+            button=p.locator('#transport-si [data-action='+action+']');button.click()
+            # The view re-renders when its page arrives; check the live button, not a replaced one.
+            p.wait_for_function('(action)=>{const n=document.querySelector("#transport-si [data-action="+action+"]");return !document.querySelector("#transport-si").innerText.includes("Loading")&&n.getAttribute("aria-pressed")==="true"&&getComputedStyle(n).boxShadow==="rgb(128, 128, 128) 1px 1px 0px 0px inset";}',arg=action)
+            other=p.locator('#transport-si [data-action='+('error' if action=='summary' else 'summary')+']')
+            self.assertEqual(other.get_attribute('aria-pressed'),'false')
+        self.classic_command('bitrate')
+        self.assertIn('BitRates: '+basis,p.locator('.mdi-active .statistics-view').inner_text())
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c1_shared_lcn_and_partial_coverage_conditions(self):
+        p=self.page
+        hint='Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.'
+        self.assertEqual(p.evaluate('inspector.serviceLcnHint({lcn_status:"conflict",logical_channel_number:null})'),hint)
+        self.assertEqual(p.evaluate('inspector.serviceLcnHint({lcn_status:"known",logical_channel_number:0})'),'')
+        self.assertIn('number is missing',p.evaluate('inspector.serviceLcnHint({lcn_status:"known",logical_channel_number:null})'))
+        self.assertEqual(p.evaluate('inspector.tablePageHint(1,201)'),'Table records page 2 of 3 (100 records per page)')
+        self.assertEqual(p.evaluate('classic.coverage({})'),'')
+        text=p.evaluate('classic.coverage({complete:false,coverage:{partial:true,mode:"range",scanned_packets:10,source_packets:100,ranges:[{start_packet:20,end_packet:30}]}})')
+        self.assertEqual(text,'PARTIAL PREVIEW · READ-ONLY · range · 10 / 100 packets · planned ranges [start, end): [20, 30) · Unread gaps are unknown, not absent. Full scan required to edit/export.')
+
     def test_classic_default_fields_mouse_grid_and_advanced_return(self):
         p=self.page
         self.assertTrue(p.locator('#unified-si').is_visible())
@@ -1223,12 +1528,12 @@ class BrowserTests(unittest.TestCase):
         path=self.output/'objects.ts';path.write_bytes(packetize(carousel([(7,file(b'known'))])))
         self.analyze(path);self.classic_command('carousel')
         prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result'
-        p.wait_for_function('()=>'+prefix+'?.modules.length===1')
+        p.wait_for_function('()=>'+prefix+'?.modules?.length===1')
         p.locator('.mdi-active [data-tab="OC Files"]').click();p.wait_for_function('()=>'+prefix+'?.inventory?.length===1')
         p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content?.text==="known"')
         p.locator('.mdi-active [data-view="Text"]').click();self.assertEqual(p.locator('.mdi-active textarea').input_value(),'known')
         path=self.output/'missing.ts';path.write_bytes(packetize(carousel([(7,file(b'x'*300))],missing=((7,1),))))
-        self.analyze(path);self.classic_command('carousel');p.wait_for_function('()=>'+prefix+'?.modules[0]?.status==="incomplete"')
+        self.analyze(path);self.classic_command('carousel');p.wait_for_function('()=>'+prefix+'?.modules?.[0]?.status==="incomplete"')
         p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content_status==="unavailable_incomplete_module"')
         self.assertNotIn('known',p.locator('.mdi-active textarea').input_value());self.assertIn('unavailable_incomplete_module',p.locator('.mdi-active [role="status"]').inner_text())
 

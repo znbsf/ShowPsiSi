@@ -192,8 +192,11 @@ class TopologyTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):self.graph(analysis_revision=s['revision']+1)
         self.scan();
         with self.assertRaises(RuntimeError):self.graph(analysis_revision=s['revision'])
-        with self.assertRaises(RuntimeError):self.core.call('analyze',{'path':str(Path(self.tmp.name)/'missing.ts')})
-        with self.assertRaises(RuntimeError):self.graph()
+        retained=self.graph()
+        with self.assertRaises(RuntimeError) as rejected:self.core.call('analyze',{'path':str(Path(self.tmp.name)/'missing.ts')})
+        self.assertEqual(rejected.exception.code,'input_rejected')
+        self.assertTrue(rejected.exception.data['state_preserved'])
+        self.assertEqual(self.graph(),retained)
     def test_same_packet_receive_order_and_version_rollover(self):
         a=sdt(version=31,number=0,last=1);b=sdt(version=31,number=1,last=1,services=((101,'Other'),))
         zero=sdt(version=0,number=0,last=1)

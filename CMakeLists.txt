@@ -106,7 +106,6 @@ if(BUILD_QT_UI)
     ui/qt/ReleaseMetadata.cpp ui/qt/ReleaseMetadata.h
     ui/qt/ReleaseUpdater.cpp ui/qt/ReleaseUpdater.h)
   target_compile_definitions(showpsisi-qt PRIVATE SHOWPSISI_VERSION="${PROJECT_VERSION}")
-  qt_add_resources(showpsisi-qt "workbench_contract" PREFIX "/shared" BASE "ui/tauri/web" FILES ui/tauri/web/workbench.js)
   # PNG resources avoid introducing a runtime QtSvg/plugin dependency.
   qt_add_resources(showpsisi-qt "application_icons"
     PREFIX "/icons" BASE "assets/icons"
@@ -136,7 +135,7 @@ if(BUILD_QT_UI)
         RENAME org.showpsisi.ShowPsiSi.png)
     endforeach()
   endif()
-  qt_add_qml_module(showpsisi-qt URI ShowPsiSi VERSION 1.0 QML_FILES ui/qt/Main.qml ui/qt/UpdateDialog.qml ui/qt/DvbiWorkspace.qml ui/qt/UnifiedInspector.qml ui/qt/TransportSummary.qml ui/qt/ClassicFrame.qml ui/qt/DocumentWorkspace.qml ui/qt/PacketExplorer.qml ui/qt/StatisticsView.qml ui/qt/ServiceView.qml ui/qt/CarouselView.qml ui/qt/TeletextView.qml ui/qt/MediaView.qml ui/qt/OutputDialog.qml ui/qt/TeletextPage.qml ui/qt/ClassicButton.qml ui/qt/ClassicGrid.qml ui/tauri/web/inspector-model.js ui/tauri/web/classic-model.js ui/tauri/web/document-model.js ui/tauri/web/packet-model.js ui/tauri/web/service-model.js ui/tauri/web/carousel-model.js ui/tauri/web/teletext-model.js ui/tauri/web/media-model.js ui/tauri/web/output-model.js RESOURCES ui/tauri/web/assets/toolbar128.bmp)
+  qt_add_qml_module(showpsisi-qt URI ShowPsiSi VERSION 1.0 QML_FILES ui/qt/Main.qml ui/qt/UpdateDialog.qml ui/qt/DvbiWorkspace.qml ui/qt/UnifiedInspector.qml ui/qt/TransportSummary.qml ui/qt/ClassicFrame.qml ui/qt/DocumentWorkspace.qml ui/qt/PacketExplorer.qml ui/qt/StatisticsView.qml ui/qt/ServiceView.qml ui/qt/CarouselView.qml ui/qt/TeletextView.qml ui/qt/MediaView.qml ui/qt/OutputDialog.qml ui/qt/TeletextPage.qml ui/qt/ClassicButton.qml ui/qt/ClassicGrid.qml ui/tauri/web/workbench.js ui/tauri/web/inspector-model.js ui/tauri/web/classic-model.js ui/tauri/web/document-model.js ui/tauri/web/packet-model.js ui/tauri/web/service-model.js ui/tauri/web/carousel-model.js ui/tauri/web/teletext-model.js ui/tauri/web/media-model.js ui/tauri/web/output-model.js RESOURCES ui/tauri/web/assets/toolbar128.bmp)
   target_link_libraries(showpsisi-qt PRIVATE Qt6::Quick Qt6::QuickControls2 Qt6::Network)
   set_target_properties(showpsisi-qt PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()

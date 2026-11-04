@@ -568,7 +568,7 @@ SplitView {
                         TextLabel {id:fieldComment;objectName:'siFieldComment:'+index;width:view.fieldColumnWidth(3);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:Model.inspector.fieldComment(modelData);elide:Text.ElideRight;HoverHandler{id:commentHover}}
                     }
                     ToolTip {id:fieldCommentTip;objectName:'siFieldCommentTip:'+index;visible:commentHover.hovered && fieldComment.truncated && !!Model.inspector.fieldComment(modelData);text:Model.inspector.fieldComment(modelData)}
-                    ToolTip {id:fieldRowTip;visible:parent.hovered && !fieldCommentTip.visible;text:modelData.name+'  '+modelData.value}
+                    ToolTip {id:fieldRowTip;visible:!!parent && parent.hovered && !fieldCommentTip.visible;text:modelData.name+'  '+modelData.value}
                 }
                 Rectangle {z:-1;anchors.fill:parent;color:'white'}
                 Item {

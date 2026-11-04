@@ -41,13 +41,39 @@ Item {
             host.analysisState=evidence.state;
         }
         function init() {
-            host.lightTheme=false;summary.parent.width=1280;host.analysisState=evidence.state;summary.returnContext=null;
+            summary.classicStyle=false;statistics.classicStyle=false;host.lightTheme=false;summary.parent.width=1280;host.analysisState=evidence.state;summary.returnContext=null;
             tryCompare(summary,"sourceIdentity",(evidence.state.source || "")+":"+evidence.state.analysis_revision+":true");
             host.transportQueryReady=true;summary.visible=true;
             findChild(summary,"transportSummaryTabs").currentIndex=0;
             summary.sort="pid";summary.descending=false;summary.loading=false;summary.page={};
             summary.request(0);summary.receive(evidence.summary);requests=[];
             tryCompare(findChild(summary,"transportSummary:totalPackets"),"text","32");
+        }
+        function test_c3_classic_dialog_face_and_controls() {
+            summary.classicStyle=true;statistics.classicStyle=true;
+            verify(waitForPolish(summary));verify(waitForRendering(summary));
+            compare(summary.font.family,'Tahoma');compare(summary.font.pixelSize,13);
+            verify(Qt.colorEqual(summary.background.color,'#efefef'));
+            ['fileSize','totalPackets','bitrate','errors','duration','packetSize'].forEach(function(id){
+                var field=findChild(summary,'transportSummary:'+id);
+                verify(field.readOnly);compare(field.font.family,'Tahoma');compare(field.font.pixelSize,13);
+                compare(field.background.radius,0);verify(Qt.colorEqual(field.background.color,'#fff'));
+                verify(field.width>0&&field.height>0);
+            });
+            var list=findChild(summary,'transportPidList');verify(list.count>0);
+            var tabs=findChild(summary,'transportSummaryTabs');
+            for(var i=0;i<tabs.count;i++){verify(tabs.itemAt(i).width>0);verify(tabs.itemAt(i).height>0);}
+            ['#of packets','PID ↑','Previous','Next','Refresh'].forEach(function(text){
+                var button=findChild(summary,'transportDialogButton:'+text);
+                verify(button!==null);verify(button.implicitWidth>0&&button.implicitHeight>0);
+                verify(button.width>0&&button.height>0);
+            });
+            ['Previous','Next','Refresh'].forEach(function(text){
+                var button=findChild(statistics,'statisticsDialogButton:'+text);
+                verify(button!==null);verify(button.implicitWidth>0&&button.implicitHeight>0);
+            });
+            compare(statistics.font.family,'Tahoma');compare(statistics.font.pixelSize,13);
+            compare(findChild(statistics,'statisticsRateBasis').font.pixelSize,13);
         }
         function test_c1_rate_label_and_checked_page() {
             verify(findChild(summary,'transportSummaryScope').text.indexOf('BitRates: '+evidence.state.transport_summary.rate_basis)>=0);

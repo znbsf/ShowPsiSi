@@ -47,6 +47,13 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_classic_c3_full_comment_and_summary_face(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c3-') as directory:
+            report=self.run_script('classic-c3',directory,auto=False,timeout=40,overrides={'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'],8,report)
+            for check in ('pat_field','truncated','accessible','status','hover','tooltip','fits','new_section','back','back_accessible','back_status','back_tooltip','cleared','summary_face','six_fields'):
+                self.assertTrue(report['checks'][check],(check,report))
+
     def test_classic_c2_identifier_and_reference_jumps(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c2-') as directory:
             report=self.run_script('classic-c2',directory,auto=False,timeout=40,overrides={'SHOWPSISI_STANDARDS':'dvb'})

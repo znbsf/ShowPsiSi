@@ -3772,6 +3772,70 @@ ApplicationWindow {
         }
     }
     Timer {
+        id:classicC3TestTimer;interval:100;repeat:true
+        property int phase:0
+        property double deadline:Date.now()+30000
+        property var checks:({})
+        property string comment:''
+        property int fieldIndex:-1
+        property string sectionId:''
+        function item(name){return classicC2TestTimer.item(name);}
+        function finish(){stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks,error:core.error}));}
+        onTriggered:{
+            if(Date.now()>deadline){checks.deadline=false;finish();return;}
+            if(!backendReady)return;
+            if(phase===0){scan();phase=1;return;}
+            if(!analysisState.complete||core.busy||core.inspecting||presentationPending||topologyLoading||!detail.id||unifiedInspector.pendingRestore)return;
+            var fields=item('unifiedFields'),status=item('siRange');
+            if(phase===1){
+                fieldIndex=unifiedInspector.fieldRows.findIndex(function(r){return r.name==='program_number';});
+                checks.pat_field=detail.name==='PAT'&&fieldIndex>=0;if(!checks.pat_field){finish();return;}
+                comment=unifiedInspector.fieldRows[fieldIndex].help;sectionId=detail.id;
+                unifiedInspector.focusField(fieldIndex);fields.positionViewAtIndex(fieldIndex,ListView.Center);fields.forceActiveFocus();phase=2;return;
+            }
+            if(phase===2){
+                var row=item('siField:'+fieldIndex),cell=item('siFieldComment:'+fieldIndex);
+                if(!row||!cell)return;
+                checks.truncated=cell.truncated&&row.height===20;
+                checks.accessible=row.Accessible.description===comment;
+                checks.status=status.text===status.baseStatus+' | '+comment&&status.wrapMode===Text.Wrap;
+                checks.hover=core.hover('siFieldComment:'+fieldIndex);phase=3;return;
+            }
+            if(phase===3){
+                var tip=item('siField:'+fieldIndex).commentToolTip;if(!tip||!tip.visible)return;
+                checks.tooltip=tip.text===comment;
+                unifiedInspector.resizeFieldColumn(3,1000);phase=4;return;
+            }
+            if(phase===4){
+                checks.fits=!item('siFieldComment:'+fieldIndex).truncated&&!item('siField:'+fieldIndex).commentToolTip.visible;var rowTip=item('siField:'+fieldIndex).rowToolTip;checks.row_tooltip=!!rowTip&&rowTip.text===unifiedInspector.fieldRows[fieldIndex].name+'  '+unifiedInspector.fieldRows[fieldIndex].value;
+                unifiedInspector.resizeFieldColumn(3,180);
+                unifiedInspector.selectRecord(analysisState.tables.find(function(r){return r.name==='PMT';}));phase=5;return;
+            }
+            if(phase===5){
+                checks.new_section=detail.id!==sectionId&&status.text.indexOf(comment)<0;
+                unifiedInspector.back();phase=6;return;
+            }
+            if(phase===6){
+                checks.back=detail.id===sectionId&&unifiedInspector.selectedField&&unifiedInspector.selectedField.help===comment&&fields.currentIndex===unifiedInspector.selectedFieldIndex;
+                checks.back_accessible=item('siField:'+unifiedInspector.selectedFieldIndex).Accessible.description===comment;
+                checks.back_status=status.text===status.baseStatus+' | '+comment;
+                core.hover('siFieldComment:'+unifiedInspector.selectedFieldIndex);phase=7;return;
+            }
+            if(phase===7){
+                var tip=item('siField:'+unifiedInspector.selectedFieldIndex).commentToolTip;if(!tip||!tip.visible)return;
+                checks.back_tooltip=tip.text===comment;
+                unifiedInspector.focusField(0);checks.cleared=status.text===status.baseStatus&&status.text.indexOf(comment)<0;
+                classicCommand('summary');phase=8;return;
+            }
+            if(phase===8){
+                if(transportSummary.loading||!transportSummary.page.items)return;
+                checks.summary_face=transportSummary.classicStyle&&transportSummary.font.family==='Tahoma'&&transportSummary.font.pixelSize===13&&Qt.colorEqual(transportSummary.background.color,'#efefef');
+                checks.six_fields=['fileSize','totalPackets','bitrate','errors','duration','packetSize'].every(function(id){var field=item('transportSummary:'+id);return field&&field.readOnly&&field.font.family==='Tahoma'&&field.font.pixelSize===13&&field.background.radius===0&&field.width>0&&field.height>0;});
+                finish();
+            }
+        }
+    }
+    Timer {
         id:classicC2TestTimer;interval:100;repeat:true
         property int phase:0
         property double deadline:Date.now()+30000
@@ -4014,6 +4078,7 @@ ApplicationWindow {
         }
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "classic-c3") {advancedMode=false;classicC3TestTimer.start();}
         if (core.env("SHOWPSISI_SCRIPT") === "classic-c2") {advancedMode=false;classicC2TestTimer.start();}
         if (core.env("SHOWPSISI_SCRIPT") === "classic-c1") {advancedMode=false;classicC1TestTimer.start();}
         if (core.env("SHOWPSISI_SCRIPT") === "refinement") refinementTestTimer.start();
@@ -4719,6 +4784,7 @@ ApplicationWindow {
             }
             summaryComponent:Component {
                 TransportSummary {
+                    classicStyle:!win.advancedMode
                     host:win
                     onPageRequested:function(offset,sort,descending,errorsOnly){if(!core.busy)core.send('query_transport',{analysis_revision:analysisState.analysis_revision||analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});}
                     onEntryActivated:function(entry){var record=(analysisState.tables||[]).find(function(row){return row.pid===entry.pid;});if(record)win.inspect(record.id);}
@@ -4764,6 +4830,7 @@ ApplicationWindow {
             }
             statisticsComponent:Component {
                 StatisticsView {
+                    classicStyle:!win.advancedMode
                     host:win
                     onRequested:function(method,params){if(!core.busy)core.send(method,params);else receive(method,{message:'Wait for current analysis to finish'});}
                     onPacketActivated:function(pid,index){win.openPacket(pid,index);}
@@ -4787,6 +4854,7 @@ ApplicationWindow {
             }
         }
         TransportSummary {
+            classicStyle:!win.advancedMode
             id:transportSummary
             parent:unifiedInspector.externalContainer
             anchors.fill:parent

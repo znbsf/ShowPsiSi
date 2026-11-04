@@ -5,6 +5,25 @@ import QtQuick.Layouts
 
 Pane {
     id: view
+    property bool classicStyle:false
+    readonly property color dialogInk:classicStyle?'#000':host.ink
+    readonly property color dialogMuted:classicStyle?'#000':host.muted
+    readonly property color dialogFace:classicStyle?'#efefef':host.panel
+    readonly property color dialogPaper:classicStyle?'#fff':(host.surface || host.panel)
+    // Overlay the native background, preserving its implicit sizing and focus border.
+    component DialogButton:Button {
+        id:button;objectName:"transportDialogButton:"+text
+        Rectangle {parent:button.background;anchors.fill:parent;anchors.margins:button.activeFocus?2:0;visible:view.classicStyle;color:'#efefef';border.color:button.down?'#808080':'#fff'
+            Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:button.down?'#fff':'#808080'}
+            Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:button.down?'#fff':'#808080'}
+        }
+    }
+    component HeaderLabel:Label {
+        Rectangle {anchors.fill:parent;anchors.margins:-3;z:-1;visible:view.classicStyle;color:'#efefef';border.color:'#fff'
+            Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:'#808080'}
+            Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:'#808080'}
+        }
+    }
     property Item focusOrigin:null
     required property var host
     property var state: host.analysisState
@@ -42,20 +61,20 @@ Pane {
         rows.contentY=Math.max(rows.originY,Math.min(returnContext.scroll,rows.originY+Math.max(0,rows.contentHeight-rows.height)));
     }
     padding:0
-    font.family:"Segoe UI";font.pixelSize:12
-    background:Rectangle {color:host.panel}
-    palette.window:host.panel
-    palette.windowText:host.ink
-    palette.base:host.surface || host.panel
-    palette.text:host.ink
-    palette.button:host.raised || host.panel
-    palette.buttonText:host.ink
+    font.family:classicStyle?"Tahoma":"Segoe UI";font.pixelSize:classicStyle?13:12
+    background:Rectangle {color:view.dialogFace}
+    palette.window:view.dialogFace
+    palette.windowText:view.dialogInk
+    palette.base:view.dialogPaper
+    palette.text:view.dialogInk
+    palette.button:classicStyle?'#efefef':(host.raised || host.panel)
+    palette.buttonText:view.dialogInk
     palette.light:host.selectionSurface || host.panel
     palette.midlight:host.hoverSurface || host.panel
     palette.dark:host.panel
-    palette.brightText:host.ink
+    palette.brightText:view.dialogInk
     palette.highlight:host.blue || host.muted
-    palette.highlightedText:host.ink
+    palette.highlightedText:view.dialogInk
     function number(value) {return value===null || value===undefined ? "Unknown" : Number(value).toLocaleString(Qt.locale("en_US"),"f",0);}
     function duration(value,pcr) {
         if(value===null || value===undefined || !isFinite(Number(value)))return "Unknown";
@@ -92,7 +111,7 @@ Pane {
     onVisibleChanged:if(visible && state.complete && !loading){if(!page.items)request(0);else Qt.callLater(restoreContext);}
     ColumnLayout {
         anchors.fill:parent;anchors.margins:10;spacing:8
-        Label {text:view.state.file_name || "Transport stream summary";color:host.ink;font.bold:true;font.pixelSize:14;Layout.fillWidth:true;elide:Text.ElideMiddle}
+        Label {text:view.state.file_name || "Transport stream summary";color:view.dialogInk;font.bold:true;font.pixelSize:view.classicStyle?13:14;Layout.fillWidth:true;elide:Text.ElideMiddle}
         GridLayout {
             columns:view.width>=820?3:view.width>=520?2:1
             Layout.fillWidth:true;columnSpacing:14;rowSpacing:6
@@ -108,11 +127,16 @@ Pane {
                 delegate:RowLayout {
                     required property var modelData
                     Layout.fillWidth:true;spacing:6
-                    Label {text:modelData.label;color:host.muted;Layout.preferredWidth:88}
+                    Label {text:modelData.label;color:view.dialogMuted;Layout.preferredWidth:88}
                     TextField {
                         id:counterValue
-                        color:host.ink
-                        background:Rectangle {color:host.surface || host.panel;border.color:counterValue.activeFocus?(host.blue || host.muted):(host.controlBorder || host.muted);border.width:counterValue.activeFocus?2:1;radius:2}
+                        color:view.dialogInk
+                        background:Rectangle {color:view.dialogPaper;border.color:counterValue.activeFocus?(host.blue || host.muted):(host.controlBorder || host.muted);border.width:counterValue.activeFocus?2:1;radius:view.classicStyle?0:2
+                            Rectangle {anchors.fill:parent;anchors.margins:counterValue.activeFocus?2:0;visible:view.classicStyle;color:'#fff';border.color:'#808080'
+                                Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:'#fff'}
+                                Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:'#fff'}
+                            }
+                        }
                         objectName:"transportSummary:"+modelData.id
                         text:modelData.value;readOnly:true;selectByMouse:true
                         Layout.fillWidth:true;Layout.minimumWidth:90
@@ -126,66 +150,79 @@ Pane {
             text:"Scan-global · "+view.number(summary.pid_count)+" PIDs · "+(view.state.coverage?.partial?"PARTIAL observed windows":"full scan")+" · historical selection does not change these counters.\n"+
                  "BitRates: "+(summary.rate_basis || "Transport counters require a matching updated engine.")+
                  ". PacketRate is the share of observed packets; Errors excludes continuity, PES and decoder checks."
-            color:host.muted;wrapMode:Text.Wrap;Layout.fillWidth:true;font.pixelSize:11
+            color:view.dialogMuted;wrapMode:Text.Wrap;Layout.fillWidth:true;font.pixelSize:view.classicStyle?13:11
         }
         RowLayout {
             Layout.fillWidth:true
-            Label {text:view.errorPage?"PID / Error Msg":"PID";color:host.muted;Layout.preferredWidth:90}
-            Button {implicitHeight:28;opacity:enabled?1:0.45;text:"#of packets"+(view.sort==="packets"?(view.descending?" ↓":" ↑"):"");visible:!view.errorPage;enabled:!view.loading;Layout.preferredWidth:130;onClicked:{view.descending=view.sort==="packets"?!view.descending:true;view.sort="packets";view.request(0);}}
-            Label {text:"PacketRate (%)";visible:!view.errorPage;color:host.muted;Layout.preferredWidth:100;Layout.minimumWidth:100}
-            Label {text:"Bitrate (bps)";visible:!view.errorPage;color:host.muted;Layout.preferredWidth:120;Layout.minimumWidth:120}
-            Label {text:view.errorPage?"Transport errors and retained section diagnostics":"Comment";color:host.muted;Layout.fillWidth:true}
-            Button {implicitHeight:28;opacity:enabled?1:0.45;text:"PID "+(view.sort==="pid"?(view.descending?"↓":"↑"):"");enabled:!view.loading;onClicked:{view.descending=view.sort==="pid"?!view.descending:false;view.sort="pid";view.request(0);}}
+            HeaderLabel {text:view.errorPage?"PID / Error Msg":"PID";color:view.dialogMuted;Layout.preferredWidth:90}
+            DialogButton {implicitHeight:28;opacity:enabled?1:0.45;text:"#of packets"+(view.sort==="packets"?(view.descending?" ↓":" ↑"):"");visible:!view.errorPage;enabled:!view.loading;Layout.preferredWidth:130;onClicked:{view.descending=view.sort==="packets"?!view.descending:true;view.sort="packets";view.request(0);}}
+            HeaderLabel {text:"PacketRate (%)";visible:!view.errorPage;color:view.dialogMuted;Layout.preferredWidth:100;Layout.minimumWidth:100}
+            HeaderLabel {text:"Bitrate (bps)";visible:!view.errorPage;color:view.dialogMuted;Layout.preferredWidth:120;Layout.minimumWidth:120}
+            HeaderLabel {text:view.errorPage?"Transport errors and retained section diagnostics":"Comment";color:view.dialogMuted;Layout.fillWidth:true}
+            DialogButton {implicitHeight:28;opacity:enabled?1:0.45;text:"PID "+(view.sort==="pid"?(view.descending?"↓":"↑"):"");enabled:!view.loading;onClicked:{view.descending=view.sort==="pid"?!view.descending:false;view.sort="pid";view.request(0);}}
         }
         ListView {
             id:rows;objectName:"transportPidList"
             Layout.fillWidth:true;Layout.fillHeight:true;clip:true;reuseItems:true
             model:view.visibleRows;activeFocusOnTab:true
+            Rectangle {anchors.fill:parent;z:-1;visible:view.classicStyle;color:'#fff';border.color:'#808080'}
             ScrollBar.vertical:ScrollBar{}
             Rectangle {parent:rows;anchors.fill:parent;z:2;color:"transparent";border.width:rows.activeFocus?2:0;border.color:host.blue || host.muted;enabled:false}
             Keys.onReturnPressed:if(currentIndex>=0 && currentIndex<count)view.activate(model[currentIndex])
             Keys.onPressed:function(event){if(event.key===Qt.Key_Home){currentIndex=0;event.accepted=true;}else if(event.key===Qt.Key_End){currentIndex=count-1;event.accepted=true;}}
             delegate:ItemDelegate {
+                id:pidDelegate
                 required property var modelData
                 required property int index
                 objectName:"transportPid:"+modelData.pid
                 width:ListView.view?ListView.view.width:0;height:view.errorPage?Math.max(32,errorText.implicitHeight+10):32
                 highlighted:rows.currentIndex===index
+                Rectangle {parent:pidDelegate.background;anchors.fill:parent;visible:view.classicStyle;color:rows.currentIndex===index?'#ff0':'#fff'}
                 Accessible.name:view.rowLabel(modelData)+", "+(view.errorPage?modelData.message:view.number(modelData.packets)+" packets, "+view.comment(modelData))
                 onClicked:rows.currentIndex=index
                 onDoubleClicked:view.activate(modelData)
                 contentItem:RowLayout {
                     spacing:8
-                    Label {text:view.rowLabel(modelData);color:host.ink;Layout.preferredWidth:90;Layout.minimumWidth:90;font.family:"Consolas"}
-                    Label {objectName:"transportPackets:"+index;text:view.number(modelData.packets);visible:!view.errorPage;color:host.ink;Layout.preferredWidth:130;Layout.minimumWidth:130}
-                    Label {objectName:"transportRate:"+index;text:Number(modelData.packet_fraction*100).toFixed(3);visible:!view.errorPage;color:host.ink;Layout.preferredWidth:100;Layout.minimumWidth:100}
-                    Label {text:modelData.bitrate_bps===null || modelData.bitrate_bps===undefined?"—":view.number(modelData.bitrate_bps);visible:!view.errorPage;color:host.ink;Layout.preferredWidth:120;Layout.minimumWidth:120}
-                    Label {id:errorText;text:view.errorPage?modelData.message:view.comment(modelData);color:host.ink;Layout.fillWidth:true;wrapMode:view.errorPage?Text.Wrap:Text.NoWrap;elide:Text.ElideRight}
+                    Label {text:view.rowLabel(modelData);color:view.dialogInk;Layout.preferredWidth:90;Layout.minimumWidth:90;font.family:view.classicStyle?"Tahoma":"Consolas"}
+                    Label {objectName:"transportPackets:"+index;text:view.number(modelData.packets);visible:!view.errorPage;color:view.dialogInk;Layout.preferredWidth:130;Layout.minimumWidth:130}
+                    Label {objectName:"transportRate:"+index;text:Number(modelData.packet_fraction*100).toFixed(3);visible:!view.errorPage;color:view.dialogInk;Layout.preferredWidth:100;Layout.minimumWidth:100}
+                    Label {text:modelData.bitrate_bps===null || modelData.bitrate_bps===undefined?"—":view.number(modelData.bitrate_bps);visible:!view.errorPage;color:view.dialogInk;Layout.preferredWidth:120;Layout.minimumWidth:120}
+                    Label {id:errorText;text:view.errorPage?modelData.message:view.comment(modelData);color:view.dialogInk;Layout.fillWidth:true;wrapMode:view.errorPage?Text.Wrap:Text.NoWrap;elide:Text.ElideRight}
                 }
             }
-            Label {anchors.centerIn:parent;visible:rows.count===0;text:view.loading?"Loading…":!view.state.complete?"Analyze a file to view PID counters.":view.errorPage?"No captured transport errors or retained section diagnostics.":"No PID rows in this page.";color:host.muted;wrapMode:Text.Wrap;width:Math.min(500,parent.width-20);horizontalAlignment:Text.AlignHCenter}
+            Label {anchors.centerIn:parent;visible:rows.count===0;text:view.loading?"Loading…":!view.state.complete?"Analyze a file to view PID counters.":view.errorPage?"No captured transport errors or retained section diagnostics.":"No PID rows in this page.";color:view.dialogMuted;wrapMode:Text.Wrap;width:Math.min(500,parent.width-20);horizontalAlignment:Text.AlignHCenter}
         }
         Label {visible:!!view.error;text:view.error;color:host.removedColor;wrapMode:Text.Wrap;Layout.fillWidth:true}
         RowLayout {
             Layout.fillWidth:true
-            Button {implicitHeight:28;opacity:enabled?1:0.45;text:"Previous";enabled:!view.loading && Number(view.page.offset)>0;onClicked:view.request(Math.max(0,view.page.offset-100))}
-            Label {text:view.loading?"Loading…":view.page.total!==undefined?view.number(view.page.total?view.page.offset+1:0)+"–"+view.number(view.page.offset+(view.page.items || []).length)+" / "+view.number(view.page.total)+" PID rows":"";color:host.muted}
-            Button {implicitHeight:28;opacity:enabled?1:0.45;text:"Next";enabled:!view.loading && view.page.next_offset!==null && view.page.next_offset!==undefined;onClicked:view.request(view.page.next_offset)}
-            Button {implicitHeight:28;opacity:enabled?1:0.45;text:"Refresh";enabled:!view.loading && !!view.state.complete;onClicked:view.request(Number(view.page.offset || 0))}
-            Label {text:"Double-click / Enter: retained sections for this PID";color:host.muted;Layout.fillWidth:true;elide:Text.ElideRight}
+            DialogButton {implicitHeight:28;opacity:enabled?1:0.45;text:"Previous";enabled:!view.loading && Number(view.page.offset)>0;onClicked:view.request(Math.max(0,view.page.offset-100))}
+            Label {text:view.loading?"Loading…":view.page.total!==undefined?view.number(view.page.total?view.page.offset+1:0)+"–"+view.number(view.page.offset+(view.page.items || []).length)+" / "+view.number(view.page.total)+" PID rows":"";color:view.dialogMuted}
+            DialogButton {implicitHeight:28;opacity:enabled?1:0.45;text:"Next";enabled:!view.loading && view.page.next_offset!==null && view.page.next_offset!==undefined;onClicked:view.request(view.page.next_offset)}
+            DialogButton {implicitHeight:28;opacity:enabled?1:0.45;text:"Refresh";enabled:!view.loading && !!view.state.complete;onClicked:view.request(Number(view.page.offset || 0))}
+            Label {text:"Double-click / Enter: retained sections for this PID";color:view.dialogMuted;Layout.fillWidth:true;elide:Text.ElideRight}
         }
         TabBar {
             id:tabs;objectName:"transportSummaryTabs";Layout.fillWidth:true
             onCurrentIndexChanged:{view.page={};view.returnContext=null;view.loading=false;view.request(0);}
             TabButton {
                 id:summaryTab;implicitHeight:28;text:"Summary";Accessible.name:"Transport PID summary";Accessible.checked:summaryTab.checked
-                background:Rectangle {color:summaryTab.checked?host.selectionSurface:host.raised;border.width:summaryTab.activeFocus?2:0;border.color:host.blue}
-                contentItem:Label {text:summaryTab.text;color:host.ink;font.bold:summaryTab.checked;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
+                background:Rectangle {color:summaryTab.checked?host.selectionSurface:host.raised;border.width:summaryTab.activeFocus?2:0;border.color:host.blue
+                    Rectangle {anchors.fill:parent;anchors.margins:summaryTab.activeFocus?2:0;visible:view.classicStyle;color:'#efefef';border.color:summaryTab.checked?'#808080':'#fff'
+                        Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:summaryTab.checked?'#fff':'#808080'}
+                        Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:summaryTab.checked?'#fff':'#808080'}
+                    }
+                }
+                contentItem:Label {text:summaryTab.text;color:view.dialogInk;font.bold:summaryTab.checked;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
             }
             TabButton {
                 id:errorsTab;implicitHeight:28;text:"Error";Accessible.name:"Transport errors and section diagnostics";Accessible.checked:errorsTab.checked
-                background:Rectangle {color:errorsTab.checked?host.selectionSurface:host.raised;border.width:errorsTab.activeFocus?2:0;border.color:host.blue}
-                contentItem:Label {text:errorsTab.text;color:host.ink;font.bold:errorsTab.checked;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
+                background:Rectangle {color:errorsTab.checked?host.selectionSurface:host.raised;border.width:errorsTab.activeFocus?2:0;border.color:host.blue
+                    Rectangle {anchors.fill:parent;anchors.margins:errorsTab.activeFocus?2:0;visible:view.classicStyle;color:'#efefef';border.color:errorsTab.checked?'#808080':'#fff'
+                        Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:errorsTab.checked?'#fff':'#808080'}
+                        Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:errorsTab.checked?'#fff':'#808080'}
+                    }
+                }
+                contentItem:Label {text:errorsTab.text;color:view.dialogInk;font.bold:errorsTab.checked;horizontalAlignment:Text.AlignHCenter;verticalAlignment:Text.AlignVCenter}
             }
         }
     }

@@ -309,4 +309,7 @@ var inspector = {
         return text.slice(0,8).join('\n')+(text.length>8?'\n'+(text.length-8)+' more entries in the structure tree':'');
     }
 };
+// Field help is supplied by the engine or the existing presentation tables.
+inspector.fieldComment=function(row){return row ? String(row.help || '') : '';};
+inspector.commentStatus=function(status,row){var comment=this.fieldComment(row);return status+(comment?' | '+comment:'');};
 if(typeof module!=='undefined')module.exports=inspector;

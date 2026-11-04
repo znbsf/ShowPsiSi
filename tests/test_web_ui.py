@@ -52,6 +52,11 @@ class ClassicPresentationTests(unittest.TestCase):
         for page,count,expected in ((0,0,1),(0,100,1),(1,101,2),(1,201,3)):
             self.assertEqual(self.model(f'inspector.tablePageHint({page},{count})'),f'Table records page {page+1} of {expected} (100 records per page)')
 
+    def test_classic_model_comment_status(self):
+        self.assertEqual(self.model('inspector.fieldComment(null)'), '')
+        self.assertEqual(self.model('inspector.commentStatus("Ready", {})'), 'Ready')
+        self.assertEqual(self.model('inspector.commentStatus("PID 0x0000", {help:"Full <comment> & text"})'), 'PID 0x0000 | Full <comment> & text')
+
     def test_classic_model_completion(self):
         self.assertEqual(self.model('classic.completion({packets:178000})'),'Scan complete · 178,000 packets · source unchanged')
         self.assertEqual(self.model('classic.completion({packets:10,coverage:{partial:true}})'),'Quick preview complete · partial, read-only · 10 packets · source unchanged')
@@ -954,6 +959,76 @@ class BrowserTests(unittest.TestCase):
             self.page.close()
             raise
 
+    def test_classic_c3_full_comment_tooltip_status_and_back(self):
+        self.analyze();p=self.page
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'")
+        fields=p.evaluate('showpsisi.getUiState().unified.fields')
+        index=next(i for i,r in enumerate(fields) if r['name']=='program_number')
+        comment=fields[index]['help'];self.assertTrue(comment)
+        row=p.locator('#unified-si .si-field-row').nth(index);cell=row.locator('.si-comment')
+        status=p.locator('#unified-si .si-status');original=status.text_content()
+        self.assertTrue(cell.evaluate('(e)=>e.scrollWidth>e.clientWidth'))
+        self.assertIn(' ',cell.locator('xpath=..').get_attribute('title'));cell.hover();self.assertEqual(cell.get_attribute('title'),comment)
+        self.assertEqual(row.get_attribute('aria-description'),comment)
+        row.focus();row.press('Enter')
+        self.assertEqual(status.text_content(),original+' | '+comment)
+        self.assertEqual(row.evaluate('(e)=>e.getBoundingClientRect().height'),20)
+        self.assertEqual(cell.evaluate('(e)=>getComputedStyle(e).textOverflow'),'ellipsis')
+        # Native accessibility tree must expose the full description of the row.
+        cdp=p.context.new_cdp_session(p)
+        ax=cdp.send('Accessibility.getFullAXTree')['nodes']
+        self.assertTrue(any(n.get('role',{}).get('value')=='row' and n.get('description',{}).get('value')==comment for n in ax))
+        cdp.detach()
+        # Fit the comment, then shrink it; hover must reflect the current geometry.
+        grip=p.locator('.si-column-grip[data-column="3"]');grip.dblclick()
+        p.mouse.move(0,0);cell.hover()
+        self.assertFalse(cell.evaluate('(e)=>e.scrollWidth>e.clientWidth'))
+        self.assertIsNone(cell.get_attribute('title'))
+        grip.focus()
+        for _ in range(22):grip.press('ArrowLeft')
+        p.mouse.move(0,0);cell.hover();self.assertEqual(cell.get_attribute('title'),comment)
+        row.click();p.keyboard.press('Control+g');p.locator('#classic-jump-input').fill('pid 0x0100');p.locator('#classic-jump-input').press('Enter')
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PMT'")
+        self.assertNotIn(comment,status.text_content())
+        p.locator('#unified-si [data-command="back"]').click()
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getUiState().unified.selectedField?.name==='program_number'")
+        self.assertEqual(status.text_content(),original+' | '+comment)
+        row=p.locator('#unified-si .si-field-row').nth(index);cell=row.locator('.si-comment')
+        cell.hover();self.assertEqual(cell.get_attribute('title'),comment)
+        self.assertEqual(row.get_attribute('aria-description'),comment)
+        p.locator('#unified-si .si-field-row').first.click()
+        self.assertEqual(status.text_content(),original)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_c3_summary_dialog_style_and_navigation(self):
+        self.analyze();p=self.page;self.classic_command('summary')
+        p.wait_for_function('()=>document.querySelectorAll("#transport-si .si-summary-list tbody tr").length>0')
+        summary=p.locator('#transport-si')
+        self.assertEqual(summary.evaluate('(e)=>getComputedStyle(e).backgroundColor'),'rgb(239, 239, 239)')
+        self.assertTrue(summary.evaluate('(e)=>getComputedStyle(e).fontFamily').startswith('Tahoma'))
+        self.assertEqual(summary.evaluate('(e)=>getComputedStyle(e).fontSize'),'13px')
+        self.assertEqual(summary.locator('input[readonly]').count(),6)
+        for field in summary.locator('input').all():
+            style=field.evaluate('(e)=>{const s=getComputedStyle(e);return [s.fontFamily,s.fontSize,s.backgroundColor,s.borderTopStyle,s.borderRadius];}')
+            self.assertTrue(style[0].startswith('Tahoma'));self.assertEqual(style[1:],['13px','rgb(255, 255, 255)','inset','0px'])
+        for button in summary.locator('button').all():
+            box=button.bounding_box();self.assertGreater(box['width'],0);self.assertGreater(box['height'],0)
+        for page in ('error','summary'):
+            summary.locator('[data-action="'+page+'"]').click()
+            p.wait_for_function('(page)=>document.querySelector("#transport-si [data-action="+page+"]").getAttribute("aria-pressed")==="true"',arg=page)
+            p.wait_for_function('()=>!document.querySelector("#transport-si .si-summary-pages").textContent.includes("Loading")')
+        summary.locator('[data-sort="packets"]').click()
+        p.wait_for_function('()=>document.querySelector("#transport-si tbody tr td")?.textContent==="0x1FFF"')
+        summary.locator('tbody tr').filter(has=p.locator('td',has_text='0x0000')).first.press('Enter')
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().pid===0&&!document.querySelector('#transport-si').offsetWidth")
+        self.classic_command('bitrate')
+        p.wait_for_function('()=>document.querySelectorAll(".mdi-active .statistics-list tbody tr").length>0')
+        statistics=p.locator('.mdi-active .statistics-view')
+        self.assertEqual(statistics.evaluate('(e)=>getComputedStyle(e).fontSize'),'13px')
+        self.assertTrue(statistics.evaluate('(e)=>getComputedStyle(e).fontFamily').startswith('Tahoma'))
+        self.assertEqual(statistics.locator('th').first.evaluate('(e)=>getComputedStyle(e).borderTopStyle'),'outset')
+        self.assertEqual(self.page_errors,[])
+
     def test_classic_identifier_dialog_and_exact_back(self):
         p=self.page
         p.locator('[data-menu="2"]').click()
@@ -1453,12 +1528,12 @@ class BrowserTests(unittest.TestCase):
         path=self.output/'objects.ts';path.write_bytes(packetize(carousel([(7,file(b'known'))])))
         self.analyze(path);self.classic_command('carousel')
         prefix='showpsisi.getUiState().documents.items.find(d=>d.kind==="carousel")?.view.result'
-        p.wait_for_function('()=>'+prefix+'?.modules.length===1')
+        p.wait_for_function('()=>'+prefix+'?.modules?.length===1')
         p.locator('.mdi-active [data-tab="OC Files"]').click();p.wait_for_function('()=>'+prefix+'?.inventory?.length===1')
         p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content?.text==="known"')
         p.locator('.mdi-active [data-view="Text"]').click();self.assertEqual(p.locator('.mdi-active textarea').input_value(),'known')
         path=self.output/'missing.ts';path.write_bytes(packetize(carousel([(7,file(b'x'*300))],missing=((7,1),))))
-        self.analyze(path);self.classic_command('carousel');p.wait_for_function('()=>'+prefix+'?.modules[0]?.status==="incomplete"')
+        self.analyze(path);self.classic_command('carousel');p.wait_for_function('()=>'+prefix+'?.modules?.[0]?.status==="incomplete"')
         p.locator('.mdi-active tbody tr').dblclick();p.wait_for_function('()=>'+prefix+'?.content_status==="unavailable_incomplete_module"')
         self.assertNotIn('known',p.locator('.mdi-active textarea').input_value());self.assertIn('unavailable_incomplete_module',p.locator('.mdi-active [role="status"]').inner_text())
 

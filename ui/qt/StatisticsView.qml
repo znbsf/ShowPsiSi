@@ -7,6 +7,16 @@ Pane {
  property Item focusOrigin:null
  function nextRegion(back){if(rows.activeFocus&&focusOrigin)focusOrigin.forceActiveFocus();else rows.forceActiveFocus();}
  required property var host
+ property bool classicStyle:false
+ Binding {target:view;property:'font.family';value:'Tahoma';when:view.classicStyle}
+ Binding {target:view;property:'font.pixelSize';value:13;when:view.classicStyle}
+ component DialogButton:Button {
+  id:button;objectName:"statisticsDialogButton:"+text
+  Rectangle {parent:button.background;anchors.fill:parent;anchors.margins:button.activeFocus?2:0;visible:view.classicStyle;color:'#efefef';border.color:button.down?'#808080':'#fff'
+   Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:button.down?'#fff':'#808080'}
+   Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:button.down?'#fff':'#808080'}
+  }
+ }
  property bool timing:false
  property var page:({})
  property bool loading:false
@@ -24,14 +34,25 @@ Pane {
  ColumnLayout {
   anchors.fill:parent;spacing:4
   TabBar {Layout.fillWidth:true;currentIndex:view.timing?1:0
-   TabButton{text:'Bitrate';onClicked:if(view.timing){view.timing=false;view.page={};view.request(0);}}
-   TabButton{text:'Timing';onClicked:if(!view.timing){view.timing=true;view.page={};view.request(0);}}
+   TabButton{id:bitrateTab;Rectangle{parent:bitrateTab.background;anchors.fill:parent;anchors.margins:bitrateTab.activeFocus?2:0;visible:view.classicStyle;color:'#efefef';border.color:bitrateTab.checked?'#808080':'#fff'
+     Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:bitrateTab.checked?'#fff':'#808080'}
+     Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:bitrateTab.checked?'#fff':'#808080'}
+    }
+    text:'Bitrate';onClicked:if(view.timing){view.timing=false;view.page={};view.request(0);}}
+   TabButton{id:timingTab;Rectangle{parent:timingTab.background;anchors.fill:parent;anchors.margins:timingTab.activeFocus?2:0;visible:view.classicStyle;color:'#efefef';border.color:timingTab.checked?'#808080':'#fff'
+     Rectangle {anchors.right:parent.right;width:1;height:parent.height;color:timingTab.checked?'#fff':'#808080'}
+     Rectangle {anchors.bottom:parent.bottom;height:1;width:parent.width;color:timingTab.checked?'#fff':'#808080'}
+    }
+    text:'Timing';onClicked:if(!view.timing){view.timing=true;view.page={};view.request(0);}}
   }
-  Label {objectName:'statisticsRateBasis';Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:11;text:'BitRates: '+((host.analysisState.transport_summary||{}).rate_basis||'No clock measurement')+'\nMeasured '+view.number(view.clock.measured_bitrate_bps)+' bps | PCR PID '+(view.clock.primary_pcr_pid==null?'Unknown':Shared.packetModel.hex(view.clock.primary_pcr_pid,4))+' | trusted duration '+view.number(view.clock.measured_duration_seconds)+' s\nCC errors '+view.number(view.clock.continuity_error_packets)+' | PCR jumps '+view.number(view.clock.pcr_jumps)+' | discontinuities '+view.number(view.clock.pcr_discontinuities)+' | wraps '+view.number(view.clock.pcr_wraps)+' | invalid PCR '+view.number(view.clock.invalid_pcr_fields)}
-  Label {Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:11;text:(view.clock.measurement_scope||'')+' '+(view.clock.duration_scope||'')+(view.clock.samples_truncated?' Raw samples limited to first 4096; counters cover all observations.':'')}
+  Label {objectName:'statisticsRateBasis';Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:view.classicStyle?13:11;text:'BitRates: '+((host.analysisState.transport_summary||{}).rate_basis||'No clock measurement')+'\nMeasured '+view.number(view.clock.measured_bitrate_bps)+' bps | PCR PID '+(view.clock.primary_pcr_pid==null?'Unknown':Shared.packetModel.hex(view.clock.primary_pcr_pid,4))+' | trusted duration '+view.number(view.clock.measured_duration_seconds)+' s\nCC errors '+view.number(view.clock.continuity_error_packets)+' | PCR jumps '+view.number(view.clock.pcr_jumps)+' | discontinuities '+view.number(view.clock.pcr_discontinuities)+' | wraps '+view.number(view.clock.pcr_wraps)+' | invalid PCR '+view.number(view.clock.invalid_pcr_fields)}
+  Label {Layout.fillWidth:true;wrapMode:Text.WordWrap;color:'#000';font.pixelSize:view.classicStyle?13:11;text:(view.clock.measurement_scope||'')+' '+(view.clock.duration_scope||'')+(view.clock.samples_truncated?' Raw samples limited to first 4096; counters cover all observations.':'')}
   RowLayout {Layout.fillWidth:true
    Repeater {model:view.timing?['PID','Packet','PCR (27 MHz ticks)','Delta (ticks)','Status']:['PID','#of packets','PacketRate (%)','Bitrate (bps)','Share']
-    delegate:Label{required property string modelData;text:modelData;color:'#000';font.pixelSize:11;Layout.fillWidth:true;Layout.preferredWidth:1}
+    delegate:Label{required property string modelData;text:modelData;color:'#000';
+     Rectangle {anchors.fill:parent;anchors.margins:-2;z:-1;visible:view.classicStyle;color:'#efefef';border.color:'#fff';Rectangle{anchors.right:parent.right;width:1;height:parent.height;color:'#808080'}
+      Rectangle{anchors.bottom:parent.bottom;height:1;width:parent.width;color:'#808080'}}
+     font.pixelSize:view.classicStyle?13:11;Layout.fillWidth:true;Layout.preferredWidth:1}
    }
   }
   ListView {
@@ -43,7 +64,7 @@ Pane {
     background:Rectangle{color:rows.currentIndex===index?'#dceafd':'#fff';border.color:'#ddd'}
     contentItem:RowLayout {spacing:4
      Repeater {model:view.timing?[Shared.packetModel.hex(modelData.pid,4),String(modelData.packet_index),String(modelData.pcr_27mhz),view.number(modelData.delta_27mhz),modelData.status]:[Shared.packetModel.hex(modelData.pid,4),view.number(modelData.packets),view.number(modelData.packet_fraction*100),view.number(modelData.bitrate_bps),'']
-      delegate:Label{required property var modelData;text:modelData;color:'#000';font.family:'Tahoma';font.pixelSize:11;elide:Text.ElideRight;Layout.fillWidth:true;Layout.preferredWidth:1}
+      delegate:Label{required property var modelData;text:modelData;color:'#000';font.family:'Tahoma';font.pixelSize:view.classicStyle?13:11;elide:Text.ElideRight;Layout.fillWidth:true;Layout.preferredWidth:1}
      }
     }
     Rectangle{visible:!view.timing;anchors.right:parent.right;anchors.rightMargin:4;anchors.verticalCenter:parent.verticalCenter;width:parent.width*.19;height:16;color:'#e0e0e0';Rectangle{width:parent.width*Math.max(0,Math.min(1,modelData.packet_fraction));height:parent.height;color:'#00a000'}}
@@ -53,11 +74,11 @@ Pane {
    Label{visible:!rows.count&&!view.loading;anchors.centerIn:parent;text:view.timing?'No observed PCR samples. Rate Unknown.':'No observed PID rows.';color:'#000'}
   }
   RowLayout {Layout.fillWidth:true
-   Button{text:'Previous';enabled:!view.loading&&view.page.offset>0;onClicked:view.request(Math.max(0,view.page.offset-100))}
+   DialogButton{text:'Previous';enabled:!view.loading&&view.page.offset>0;onClicked:view.request(Math.max(0,view.page.offset-100))}
    Label{color:'#000';text:(view.page.total?Number(view.page.offset)+1:0)+'–'+(Number(view.page.offset||0)+(view.page.items||[]).length)+' / '+(view.page.total||0)}
-   Button{text:'Next';enabled:!view.loading&&view.page.next_offset!==null&&view.page.next_offset!==undefined;onClicked:view.request(view.page.next_offset)}
-   Button{text:'Refresh';enabled:!view.loading;onClicked:view.request(view.page.offset||0)}
+   DialogButton{text:'Next';enabled:!view.loading&&view.page.next_offset!==null&&view.page.next_offset!==undefined;onClicked:view.request(view.page.next_offset)}
+   DialogButton{text:'Refresh';enabled:!view.loading;onClicked:view.request(view.page.offset||0)}
   }
-  Label{Layout.fillWidth:true;color:'#000';wrapMode:Text.WordWrap;font.pixelSize:11;text:view.error||(view.loading?'Loading…':'Double-click / Enter: original source packet')}
+  Label{Layout.fillWidth:true;color:'#000';wrapMode:Text.WordWrap;font.pixelSize:view.classicStyle?13:11;text:view.error||(view.loading?'Loading…':'Double-click / Enter: original source packet')}
  }
 }

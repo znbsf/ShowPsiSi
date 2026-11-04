@@ -539,6 +539,7 @@ SplitView {
                     required property var modelData
                     required property int index
                     id:fieldDelegate
+                    property alias commentToolTip:fieldCommentTip;property alias rowToolTip:fieldRowTip
                     objectName:'siField:'+index;width:view.fieldTableWidth;height:20;padding:0
                     Keys.onSpacePressed:view.selectField(index)
                     Keys.onReturnPressed:function(e){view.focusField(index);if(e.modifiers&Qt.ControlModifier)view.jumpFocusedReference();else view.selectField(index);}
@@ -550,6 +551,7 @@ SplitView {
                     background:Rectangle {color:parent.highlighted?view.classicSelection:view.classicPaper;Rectangle {anchors.bottom:parent.bottom;width:parent.width;height:1;color:'#ededed'}}
                     onClicked:{fieldList.forceActiveFocus();view.focusField(index);}
                     onDoubleClicked:if(modelData.groupPath)view.selectField(index)
+                    Accessible.description:Model.inspector.fieldComment(modelData)
                     Accessible.name:modelData.name+', '+(modelData.bit_length===undefined?'bit range unknown':modelData.bit_length+' bits')+', '+modelData.value
                     contentItem:Row {
                         Item {width:view.fieldColumnWidth(0);height:20;clip:true
@@ -563,9 +565,10 @@ SplitView {
                         }
                         TextLabel {width:view.fieldColumnWidth(1);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.groupPath?'':modelData.bit_length===undefined?'—':String(modelData.bit_length)}
                         TextLabel {width:view.fieldColumnWidth(2);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:view.fieldValue(modelData.value);color:view.classicValue;elide:Text.ElideRight}
-                        TextLabel {width:view.fieldColumnWidth(3);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.help || '';elide:Text.ElideRight}
+                        TextLabel {id:fieldComment;objectName:'siFieldComment:'+index;width:view.fieldColumnWidth(3);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:Model.inspector.fieldComment(modelData);elide:Text.ElideRight;HoverHandler{id:commentHover}}
                     }
-                    ToolTip {visible:parent.hovered;text:modelData.name+'  '+modelData.value+(modelData.help?'  '+modelData.help:'')}
+                    ToolTip {id:fieldCommentTip;objectName:'siFieldCommentTip:'+index;visible:commentHover.hovered && fieldComment.truncated && !!Model.inspector.fieldComment(modelData);text:Model.inspector.fieldComment(modelData)}
+                    ToolTip {id:fieldRowTip;visible:parent.hovered && !fieldCommentTip.visible;text:modelData.name+'  '+modelData.value}
                 }
                 Rectangle {z:-1;anchors.fill:parent;color:'white'}
                 Item {
@@ -674,8 +677,10 @@ SplitView {
                 }
             }
             TextLabel {
-                objectName:'siRange';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:11;elide:Text.ElideRight
-                text:view.unmappedSelection?"Selected byte has no SI field mapping":view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
+                objectName:'siRange';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:11;wrapMode:Text.Wrap
+                textFormat:Text.PlainText
+                text:Model.inspector.commentStatus(baseStatus,view.inspectionPending?null:view.selectedField)
+                readonly property string baseStatus:view.unmappedSelection?"Selected byte has no SI field mapping":view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
             }
         }
     }

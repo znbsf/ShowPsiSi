@@ -47,6 +47,16 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_classic_c2_identifier_and_reference_jumps(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c2-') as directory:
+            report=self.run_script('classic-c2',directory,auto=False,timeout=40,overrides={'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'],20,report)
+            for check in ('menu_disabled','menu_enabled','pat_field','shortcut_dialog','invalid','escape_focus','service_program','reference_menu','reference_click','reference_target','reference_back','null_pid','keyboard_target','keyboard_back','menu_key','no_reference','cancel','document_field','document_identifier','document_back','document_reference','document_reference_back','outside_analyze'):
+                self.assertTrue(report['checks'][check],(check,report))
+            for index in range(3):
+                for prefix in ('normalized_','target_','back_button_','back_'):
+                    self.assertTrue(report['checks'][prefix+str(index)],report)
+
     def test_classic_c1_completion_survives_service_selection(self):
         with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c1-') as directory:
             report=self.run_script('classic-c1',directory,timeout=35,overrides={'SHOWPSISI_STANDARDS':'dvb'})

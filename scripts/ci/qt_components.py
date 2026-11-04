@@ -98,7 +98,7 @@ def run(binary,artifacts,qt_sdk=None):
         result['binaries']['engine']=fingerprint(engine)
         sidecar=Path(engine).resolve().parent/'showpsisi-build.json'
         if sidecar.is_file():result['declared_build_record']=fingerprint(sidecar)
-        for relative in ('core/SiWireFields.h','core/main.cpp','ui/qt/Main.qml','ui/qt/UnifiedInspector.qml','ui/qt/TransportSummary.qml','ui/qt/ClassicFrame.qml','ui/qt/DocumentWorkspace.qml','ui/tauri/web/document-model.js','ui/tauri/web/classic-model.js','ui/tauri/web/classic-frame.js','ui/tauri/web/assets/toolbar128.bmp','ui/tauri/web/inspector-model.js',
+        for relative in ('core/SiWireFields.h','core/main.cpp','ui/qt/Main.qml','ui/qt/UnifiedInspector.qml','ui/qt/TransportSummary.qml','ui/qt/ClassicFrame.qml','ui/qt/DocumentWorkspace.qml','ui/tauri/web/document-model.js','ui/tauri/web/classic-model.js','ui/tauri/web/classic-frame.js','ui/tauri/web/assets/toolbar128.bmp','ui/tauri/web/inspector-model.js','ui/tauri/web/workbench.js',
                          'tests/qml_unified/tst_unified.qml','tests/qml_transport/tst_transport.qml','tests/qml_classic/tst_classic.qml','tests/qml_documents/tst_documents.qml',
                          'tests/test_unified_inspector.py','tests/si_reference_fixture.py','tests/test_transport_statistics.py'):
             result['source_files'].append({'file':relative,**fingerprint(ROOT/relative)})

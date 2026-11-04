@@ -179,3 +179,7 @@ body.si-mode footer #notice{padding:2px 5px;border:1px solid #aaa;align-self:str
 
 /* Keep classic controls reachable when the desktop reduces logical viewport size. */
 body.si-mode #app{min-height:0}body.si-mode.classic-configuration .sourcebar{max-height:35vh;overflow:auto;flex-shrink:0}
+
+#classic-jump-dialog{width:420px;max-width:90vw;background:#efefef;color:#000;border:1px solid #808080;border-radius:0;font:13px Tahoma,sans-serif}
+#classic-jump-dialog h2{font:bold 13px Tahoma,sans-serif}#classic-jump-input{display:block;width:100%;box-sizing:border-box;margin-top:6px;background:#fff;color:#000;border:2px inset #efefef;border-radius:0;font:13px Tahoma,sans-serif}
+#classic-jump-status{min-height:32px}#classic-jump-dialog .actions{display:flex;justify-content:flex-end;gap:8px}#classic-jump-dialog button{min-width:70px;min-height:24px;border:2px outset #efefef;border-radius:0;background:#efefef;color:#000;font:12px Tahoma,sans-serif}

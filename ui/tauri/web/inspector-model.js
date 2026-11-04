@@ -72,6 +72,20 @@ var inspector = {
         }
         return out;
     },
+    jumpTarget:function(target,state,organization) {
+        if(!target)return null;
+        var record=(state.tables || []).find(function(r){return r.id===target.id;});
+        if(!record)return null;
+        if(target.kind!=='service')return {record:record,key:record.id,opened:{'PSI Packets':true}};
+        var opened={Programs:true},rows=[];
+        for(var i=0;i<4;i++){
+            rows=this.programTree(state,state.tables || [],organization || {},opened,'');
+            rows.forEach(function(r){if(r.kind==='family')opened[r.name]=true;});
+        }
+        var matches=rows.filter(function(r){return r.service && r.service.id===target.sid && (target.key?r.service.key===target.key:r.service.source_id===target.id);});
+        if(matches.length!==1 || !matches[0].record)return null;
+        return {record:matches[0].record,key:matches[0].key,opened:opened};
+    },
     contextTargets:function(row,state){
         if(!row)return [];
         var record=row.record||row.sourceRecord,pid=record?record.pid:row.pid;

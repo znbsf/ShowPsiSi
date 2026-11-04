@@ -954,6 +954,104 @@ class BrowserTests(unittest.TestCase):
             self.page.close()
             raise
 
+    def test_classic_identifier_dialog_and_exact_back(self):
+        p=self.page
+        p.locator('[data-menu="2"]').click()
+        p.wait_for_function("()=>{const b=document.querySelector('[data-command=goTo]');return b.disabled&&b.title==='Analyze a source first'&&b.textContent.includes('Go to PID/SID…')&&b.textContent.includes('Ctrl+G');}")
+        p.keyboard.press('Escape');self.analyze()
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'&&!document.querySelector('[data-command=goTo]').disabled")
+        field=p.evaluate("showpsisi.getUiState().unified.fields.findIndex(r=>r.name==='program_map_PID')")
+        self.assertGreater(field,0)
+        p.locator('.si-field-row').nth(field).click()
+        p.locator('.si-column-grip[data-column="0"]').press('ArrowRight')
+        p.locator('.si-fields').evaluate('(e)=>{e.scrollTop=60;e.scrollLeft=10;e.focus();}')
+        origin=p.evaluate('showpsisi.getUiState().unified')
+        for query,label,pid,tid in [('0x0000','PID 0x0000 (0)',0,0),('sid 0x0067','SID 0x0067 (103)',0x102,2),('table 0x42','Table 0x42 (66)',0x11,0x42)]:
+            p.keyboard.press('Control+g');edit=p.locator('#classic-jump-input');edit.fill(query)
+            p.wait_for_function('(label)=>document.querySelector("#classic-jump-status").textContent===label',arg=label)
+            edit.press('Enter')
+            p.wait_for_function('([pid,tid])=>!document.querySelector("#classic-jump-dialog").open&&showpsisi.getUiState().settled&&showpsisi.getDetail().pid===pid&&showpsisi.getDetail().table_id===tid',arg=[pid,tid])
+            if tid==2:
+                self.assertEqual(p.evaluate('showpsisi.getDetail().extension'),0x67)
+                p.wait_for_function("()=>document.querySelector('.si-nav-row[aria-selected=true]')?.dataset.key.includes('service:')")
+            p.locator('[data-command="back"]').click()
+            p.wait_for_function('(origin)=>{const v=showpsisi.getUiState().unified;return showpsisi.getUiState().settled&&v.selected===origin.selected&&JSON.stringify(v.selectedField)===JSON.stringify(origin.selectedField);}',arg=origin)
+            restored=p.evaluate('showpsisi.getUiState().unified')
+            for name in ('selected','path','selectedField','range','columnWidths','scroll'):
+                self.assertEqual(restored[name],origin[name],(query,name))
+            self.assertEqual([(r['key'],r['expanded']) for r in restored['navigation']],[(r['key'],r['expanded']) for r in origin['navigation']])
+        p.locator('.si-fields').focus();p.keyboard.press('Control+g')
+        for query,message in [('8190','No PID 0x1FFE in this stream'),('pid 8192','PID must be between 0 and 8191'),('0x100garbage','Enter a PID, SID or table ID in decimal or 0x hexadecimal')]:
+            p.locator('#classic-jump-input').fill(query);p.locator('#classic-jump-input').press('Enter')
+            p.wait_for_function('(message)=>document.querySelector("#classic-jump-dialog").open&&document.querySelector("#classic-jump-status").textContent===message',arg=message)
+            self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selected'),origin['selected'])
+            self.assertEqual(p.evaluate('showpsisi.getUiState().unified.selectedField'),origin['selectedField'])
+        p.keyboard.press('Escape')
+        p.wait_for_function("()=>!document.querySelector('#classic-jump-dialog').open&&document.activeElement===document.querySelector('.si-fields')")
+        self.classic_command('goTo');p.locator('#classic-jump-dialog [data-cancel]').click()
+        self.assertFalse(p.locator('#classic-jump-dialog').is_visible())
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_jumps_in_existing_si_document_keep_its_back_stack(self):
+        self.analyze();p=self.page
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'")
+        self.classic_command('new')
+        p.wait_for_function("()=>showpsisi.getUiState().documents.items.some(d=>d.kind==='si'&&d.view?.fields.length)")
+        active='showpsisi.getUiState().documents.items.find(d=>d.id===showpsisi.getUiState().documents.active)'
+        initial=p.evaluate(active);count=p.evaluate('showpsisi.getUiState().documents.items.length')
+        index=next(i for i,r in enumerate(initial['view']['fields']) if r['name']=='program_map_PID' and r['value'].startswith('0x0100'))
+        p.locator('.mdi-active .si-field-row').nth(index).click()
+        origin=p.evaluate(active)['view']
+        p.keyboard.press('Control+g');p.locator('#classic-jump-input').fill('sid 0x0067');p.locator('#classic-jump-input').press('Enter')
+        p.wait_for_function('()=>'+active+'.view.selected===showpsisi.getState().tables.find(r=>r.name==="PMT"&&r.pid===258).id')
+        self.assertEqual(p.evaluate(active)['id'],initial['id'])
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.length'),count)
+        p.locator('#unified-si > .si-left [data-command="back"]').click()
+        p.wait_for_function('(origin)=>{const v='+active+'.view;return v.selected===origin.selected&&JSON.stringify(v.selectedField)===JSON.stringify(origin.selectedField);}',arg=origin)
+        p.locator('.mdi-active .si-fields').focus();p.keyboard.press('Control+Enter')
+        p.wait_for_function('()=>'+active+'.view.selected===showpsisi.getState().tables.find(r=>r.name==="PMT"&&r.pid===256).id')
+        p.keyboard.press('Alt+ArrowLeft')
+        p.wait_for_function('(origin)=>{const v='+active+'.view;return v.selected===origin.selected&&JSON.stringify(v.selectedField)===JSON.stringify(origin.selectedField);}',arg=origin)
+        self.assertEqual(p.evaluate(active)['id'],initial['id'])
+        self.assertEqual(p.evaluate('showpsisi.getUiState().documents.items.length'),count)
+        self.assertEqual(self.page_errors,[])
+
+    def test_classic_field_references_context_keys_and_back(self):
+        self.analyze();p=self.page
+        p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'")
+        index=p.evaluate("showpsisi.getUiState().unified.fields.findIndex(r=>r.name==='program_map_PID'&&r.value.startsWith('0x0100'))")
+        self.assertGreater(index,0)
+        field=p.locator('.si-field-row').nth(index)
+        for trigger in ('mouse','Shift+F10','ContextMenu','Control+Enter'):
+            field.click();p.locator('.si-fields').focus()
+            if trigger=='mouse':field.click(button='right')
+            else:p.keyboard.press(trigger)
+            if trigger!='Control+Enter':
+                p.wait_for_function("()=>{const m=document.querySelector('.si-context-menu');return !m.hidden&&m.textContent==='Go to PMT · PID 0x0100 (256)';}")
+                before=p.evaluate('showpsisi.getUiState().unified')
+                p.get_by_role('menuitem',name='Go to PMT · PID 0x0100 (256)',exact=True).click()
+            p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PMT'&&showpsisi.getDetail().pid===256")
+            # The fixture's null PCR PID must not become a reference.
+            null_index=p.evaluate("showpsisi.getUiState().unified.fields.findIndex(r=>r.name==='PCR_PID')")
+            self.assertGreater(null_index,0)
+            p.locator('.si-field-row').nth(null_index).click(button='right')
+            p.wait_for_function("()=>{const m=document.querySelector('.si-context-menu');return !m.hidden&&m.textContent==='No reference for this field'&&m.querySelector('button').disabled;}")
+            p.keyboard.press('Escape');p.keyboard.press('Alt+ArrowLeft')
+            p.wait_for_function("()=>showpsisi.getUiState().settled&&showpsisi.getDetail().name==='PAT'&&showpsisi.getUiState().unified.selectedField?.name==='program_map_PID'")
+            if trigger!='Control+Enter':
+                after=p.evaluate('showpsisi.getUiState().unified')
+                for name in ('selected','path','selectedField','range','scroll'):
+                    self.assertEqual(after[name],before[name],(trigger,name))
+                self.assertEqual([(r['key'],r['expanded']) for r in after['navigation']],[(r['key'],r['expanded']) for r in before['navigation']])
+        p.locator('.si-field-row').nth(1).click(button='right')
+        p.wait_for_function("()=>{const m=document.querySelector('.si-context-menu');return !m.hidden&&m.textContent==='No reference for this field'&&![...m.querySelectorAll('button')].some(b=>b.textContent.startsWith('Go to'));}")
+        self.assertEqual(p.locator('.si-field-row .reference-jump').count(),0)
+        p.keyboard.press('Escape')
+        self.show_scan_configuration();revision=p.evaluate('showpsisi.getState().analysis_revision')
+        p.locator('#scan').focus();p.keyboard.press('Control+Enter')
+        p.wait_for_function('(revision)=>showpsisi.getState().complete&&showpsisi.getUiState().settled&&showpsisi.getState().analysis_revision!==revision',arg=revision)
+        self.assertEqual(self.page_errors,[])
+
     def test_classic_c1_empty_title_coverage_and_service_status(self):
         p=self.page
         self.assertEqual(p.locator('.si-packet').inner_text(),'')

@@ -48,6 +48,18 @@ Item {
             host.deferInspection=false;inspector.fieldColumnWidths=[-1,-1,-1,-1];inspector.hexFraction=0.40;inspector.openFamilies={};inspector.closed={};inspector.fieldClosed={};inspector.limits={};host.coreInspecting=false;
             inspector.selectRecord(inspector.findRecord('PAT'));inspector.history=[];
         }
+        function test_c2_reference_right_click_and_back() {
+            wait(20);
+            var index=inspector.fieldRows.findIndex(function(r){return r.name==='program_map_PID' && r.value.indexOf('0x0100')===0;});verify(index>=0);
+            var fields=findChild(inspector,'unifiedFields');fields.positionViewAtIndex(index,ListView.Center);wait(20);
+            var row=findChild(inspector,'siField:'+index);verify(row!==null);mouseClick(row,80,10,Qt.RightButton);wait(20);
+            var target=findChild(inspector,'classicFieldReference');verify(target!==null);compare(target.text,'Go to PMT · PID 0x0100 (256)');verify(target.enabled);verify(target.width>=200);
+            var origin=inspector.captureContext();mouseClick(target,40,target.height/2);tryCompare(inspector,'selectedFieldIndex',-1);compare(host.detail.name,'PMT');compare(host.detail.pid,256);
+            mouseClick(findChild(inspector,'unifiedBack'));wait(20);compare(host.detail.id,origin.id);compare(inspector.selectedField.name,'program_map_PID');compare(inspector.selectedField.bit_offset,origin.field.bit_offset);
+            compare(fields.currentIndex,inspector.selectedFieldIndex);compare(fields.contentY,origin.fieldScroll);compare(fields.contentX,origin.fieldX);
+            fields.positionViewAtIndex(1,ListView.Beginning);wait(20);row=findChild(inspector,'siField:1');mouseClick(row,80,10,Qt.RightButton);wait(20);
+            target=findChild(inspector,'classicFieldReference');compare(target.text,'No reference for this field');compare(target.enabled,false);keyClick(Qt.Key_Escape);
+        }
         function test_c1_empty_hex_and_classic_titles() {
             host.detail={};wait(20);
             compare(findChild(inspector,'unifiedPacketUnavailable').visible,false);

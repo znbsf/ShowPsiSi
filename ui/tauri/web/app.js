@@ -2716,6 +2716,7 @@ document.addEventListener("keydown", (e) => {
   if($("#shortcuts-dialog").open)return;
   const workbenchKeys = !document.querySelector("dialog[open]") && !dvbiWorkspace.getState().active;
   if(workbenchKeys && classicMode) {
+    if(e.ctrlKey&&!e.altKey&&!e.shiftKey&&e.key.toLowerCase()==='g'){e.preventDefault();classicCommand('goTo');return;}
     if(e.key==='F6') {e.preventDefault();const origin=classicConfiguration?$('.sourcebar[role=region]'):null;if(documentMode)documentWorkspace.nextRegion(e.shiftKey,$('#unified-si>.si-left .si-navigation'));else if(summaryVisible)summaryView.nextRegion(e.shiftKey,origin);else siView.nextRegion(e.shiftKey,origin);return;}
     if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(summaryVisible){summaryVisible=false;syncSiMode();}else siView.back();return;}
     if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();const search=$('#unified-si .si-search');search.hidden=false;search.focus();return;}
@@ -3074,16 +3075,16 @@ const summaryPanel=document.createElement('section');summaryPanel.id='transport-
 const summaryButton=document.createElement('button');summaryButton.id='summary-toggle';summaryButton.className='btn';summaryButton.textContent='Summary / PID';workspaceButton.before(summaryButton);
 summaryButton.onclick=()=>{classicMode=true;summaryVisible=!summaryVisible;syncSiMode();summaryView.update();};
 summaryView=TransportSi.create(summaryPanel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record,pid)=>{summaryVisible=false;classicMode=true;syncSiMode();siView.filterPid(pid);siView.selectRecord(record,record.id,null,true,false);}});
-siView=UnifiedSi.create(siPanel,{state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),carousel:id=>openCarousel(id),teletext:pid=>openTeletext(pid),media:pid=>openMedia(pid,'PES'),topology:()=>topology.stale?null:topology.snapshot,
+siView=UnifiedSi.create(siPanel,{backTarget:()=>documentMode?documentWorkspace?.activeSection():null,state:()=>data,detail:()=>detail,pending:()=>loadingDetail,busy:()=>busy||!!backendFailure,error:()=>detailError||backendFailure,inspect:id=>inspect(id),carousel:id=>openCarousel(id),teletext:pid=>openTeletext(pid),media:pid=>openMedia(pid,'PES'),topology:()=>topology.stale?null:topology.snapshot,
   service:s=>openServices(s),packet:pid=>openPacket(pid,0),loadTopology:async()=>{await loadTopology();let pages=0;while(topology.snapshot?.page?.has_more&&!topology.error&&pages++<100)await loadTopology(true);}});
 siPanel.append(summaryPanel);
 const documentsPanel=document.createElement('div');documentsPanel.id='document-workspace';documentsPanel.hidden=true;siPanel.append(documentsPanel);
 documentWorkspace=DocumentWorkspace.create(documentsPanel,{
  create:(content,d,v)=>{
   if(d.kind==='si'){
-   const panel=document.createElement('section');panel.className='si-document';content.append(panel);let payload=d.payload;
-   const ui=UnifiedSi.create(panel,{state:()=>payload._view_state||data,detail:()=>payload,pending:()=>false,busy:()=>busy,error:()=>'',inspect:id=>inspect(id),topology:()=>topology.stale?null:topology.snapshot,loadTopology:async()=>{}});
-   v.update=next=>{payload=next.payload;ui.update();};v.snapshot=()=>ui.snapshot();v.focusNode=path=>ui.focusNode(path);v.nextRegion=(back,origin)=>ui.nextRegion(back,origin);v.dispose=()=>ui.dispose();ui.update();
+   const panel=document.createElement('section');panel.className='si-document';content.append(panel);let payload=d.payload,documentInspectPending=false;
+   const ui=UnifiedSi.create(panel,{navigationChanged:()=>siView?.refreshBack(),state:()=>payload._view_state||data,detail:()=>payload,pending:()=>documentInspectPending,busy:()=>busy,error:()=>'',inspect:async id=>{documentInspectPending=true;const snapshot=payload._view_state||data;pendingClassicDocument={id:d.id,target:id,state:snapshot};try{await inspect(id,-1,'classic-document:'+id,{kind:'service',atPacket:snapshot.selected_packet,revision:snapshot.analysis_revision||snapshot.revision});}finally{documentInspectPending=false;if(pendingClassicDocument?.id===d.id)pendingClassicDocument=null;siView.refreshBack();}},topology:()=>topology.stale?null:topology.snapshot,loadTopology:async()=>{}});
+   v.update=next=>{payload=next.payload;ui.update();};v.snapshot=()=>ui.snapshot();v.identifier=query=>ui.identifier(query);v.jumpTarget=target=>ui.jumpTarget(target);v.back=async()=>{await ui.back();siView.refreshBack();};v.canBack=()=>ui.canBack();v.focusNode=path=>ui.focusNode(path);v.nextRegion=(back,origin)=>ui.nextRegion(back,origin);v.dispose=()=>ui.dispose();ui.update();
   }else if(d.kind==='media'){const state=d.payload._view_state||data;const ui=MediaView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,packet:(pid,index,offset)=>{if(!busy&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision))openPacket(pid,index,offset);}},{pid:d.payload.pid,tab:d.payload.tab});v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();v.stop=preserve=>ui.stop(preserve);
   }else if(d.kind==='teletext'){const state=d.payload._view_state||data;const ui=TeletextView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,packet:(pid,index)=>openPacket(pid,index)},d.payload.pid);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
   }else if(d.kind==='carousel'){const state=d.payload._view_state||data;const ui=CarouselView.create(content,{state:()=>state,busy:()=>busy||!!backendFailure,call,section:async(id,path,cutoff)=>{await inspect(id,-1,'carousel:'+id,{kind:'service',atPacket:cutoff,revision:state.analysis_revision||state.revision});if(detail.id===id&&data.source===state.source&&(data.analysis_revision||data.revision)===(state.analysis_revision||state.revision)){openDocument('si');documentWorkspace.focusSection(id,path,cutoff);}}},d.payload.source_id);v.snapshot=()=>ui.snapshot();v.dispose=()=>ui.dispose();
@@ -3094,13 +3095,13 @@ documentWorkspace=DocumentWorkspace.create(documentsPanel,{
    const panel=document.createElement('section');panel.className='transport-si';content.append(panel);
    const ui=TransportSi.create(panel,{state:()=>data,busy:()=>busy||!!backendFailure,call,activate:(record)=>inspect(record.id)});v.update=()=>ui.update();v.dispose=()=>ui.dispose();ui.update();
   }else{const text=document.createElement('textarea');text.readOnly=true;text.setAttribute('aria-label','Native decoded table');content.append(text);v.update=next=>{const value=next.payload.section_native_text||next.payload.native_text||next.payload.raw_hex||'No selected table';if(text.value!==value)text.value=value;};}
- },changed:state=>{classicFrame?.update();if(documentMode&&classicMode){const active=state.items.find(d=>d.id===state.active);setShellTitle('ShowPsiSi - '+(active?.title||documentScope()));}}
+ },changed:state=>{classicFrame?.update();siView?.refreshBack();if(documentMode&&classicMode){const active=state.items.find(d=>d.id===state.active);setShellTitle('ShowPsiSi - '+(active?.title||documentScope()));}}
 });
-let documentIdentity='',documentLastDetail='';
+let documentIdentity='',documentLastDetail='',pendingClassicDocument=null;
 function syncDocuments(){
  if(!documentWorkspace)return;const identity=[data.source,data.analysis_revision||data.revision].join('|');
- if(documentIdentity!==identity){documentIdentity=identity;documentWorkspace.reset(identity);documentLastDetail='';}
- if(documentMode&&detail.id&&!loadingDetail&&detail.id+'@'+data.selected_packet!==documentLastDetail){documentLastDetail=detail.id+'@'+data.selected_packet;openDocument('si');}
+ if(documentIdentity!==identity){documentIdentity=identity;pendingClassicDocument=null;documentWorkspace.reset(identity);documentLastDetail='';}
+ if(documentMode&&detail.id&&!loadingDetail&&(detail.id+'@'+data.selected_packet!==documentLastDetail||pendingClassicDocument?.target===detail.id)){documentLastDetail=detail.id+'@'+data.selected_packet;if(pendingClassicDocument?.target===detail.id){const destination=pendingClassicDocument;pendingClassicDocument=null;documentWorkspace.replaceSection(destination.id,{...detail,_view_state:destination.state},documentScope(detail.native_table_at_packet)+' - '+detail.name+' PID '+hex(detail.pid));}else openDocument('si');}
 }
 function openMedia(pid,tab='PES'){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('media',String(pid)+'@'+data.selected_packet,documentScope()+' - PES / ES / Media',{pid,tab,_view_state:structuredClone(data)});syncSiMode();}
 function openTeletext(pid){documentMode=true;classicMode=true;documentLastDetail=detail.id+'@'+data.selected_packet;documentWorkspace.open('teletext',String(pid)+'@'+data.selected_packet,documentScope()+' - Teletext',{pid,_view_state:structuredClone(data)});syncSiMode();}
@@ -3127,6 +3128,7 @@ async function classicCommand(id){const state=classicState();if(!classic.enabled
  else if(id==='configuration'){if(classicConfiguration)cancelConfiguration();else{configurationDraft=captureConfiguration();classicConfiguration=true;syncSiMode();$('#source').focus();}}
  else if(id==='new'){documentMode=true;openDocument('si',true);}
  else if(id==='decoded'){documentMode=true;openDocument('decoded');}
+ else if(id==='goTo')openClassicJump();
  else if(id==='packets')openPacket(-1,0);
  else if(id==='media')openMedia(-1,'PES');
  else if(id==='teletext')openTeletext(-1);
@@ -3141,6 +3143,15 @@ async function classicCommand(id){const state=classicState();if(!classic.enabled
  else if(id==='diagnostics')$('#save-diagnostics').click();else if(id==='exit'){try{await invoke('close_application');}catch(error){notice(String(error),true);}}
  syncSiMode();
 }
+const classicJumpDialog=document.createElement('dialog');classicJumpDialog.id='classic-jump-dialog';classicJumpDialog.setAttribute('aria-labelledby','classic-jump-title');
+classicJumpDialog.innerHTML='<form><h2 id="classic-jump-title">Go to PID/SID…</h2><label for="classic-jump-input">PID, SID or table ID</label><input id="classic-jump-input" aria-label="PID, SID or table ID" autocomplete="off" spellcheck="false"><p id="classic-jump-status" role="status" aria-label="Identifier target" aria-live="polite"></p><div class="actions"><button type="submit">OK</button><button type="button" data-cancel>Cancel</button></div></form>';document.body.append(classicJumpDialog);
+let classicJumpOrigin=null,classicJumpView=null;
+function updateClassicJump(){const result=(classicJumpView||siView).identifier($('#classic-jump-input').value);$('#classic-jump-status').textContent=result.target?result.label:result.message;return result;}
+function openClassicJump(){classicJumpView=documentMode?(documentWorkspace.activeSection()||siView):siView;classicJumpOrigin=document.activeElement?.closest('.classic-menu')?.querySelector('[data-menu]')||document.activeElement;$('#classic-jump-input').value='';updateClassicJump();classicJumpDialog.showModal();$('#classic-jump-input').focus();}
+$('#classic-jump-input').oninput=updateClassicJump;
+classicJumpDialog.querySelector('form').onsubmit=event=>{event.preventDefault();const result=updateClassicJump();if(result.target&&classicJumpView.jumpTarget(result.target)){classicJumpOrigin=null;classicJumpDialog.close();if(classicJumpView===siView){documentMode=false;summaryVisible=false;syncSiMode();$('#unified-si .si-navigation').focus();}}};
+classicJumpDialog.querySelector('[data-cancel]').onclick=()=>classicJumpDialog.close();
+classicJumpDialog.addEventListener('close',()=>{if(classicJumpOrigin?.isConnected)classicJumpOrigin.focus({preventScroll:true});classicJumpOrigin=null;});
 const outputDialog=OutputDialog.create({native:()=>!!env.driver&&env.runtime!=='cloud-browser',call,notice,busy:value=>{exportPending=value;classicFrame?.update();},choose:o=>invoke('plugin:dialog|save',{options:{defaultPath:'selected-'+o.kind+'.'+o.extension,filters:[{name:o.label,extensions:[o.extension]}]}})});
 classicFrame=ClassicFrame.create(framePanel,{state:classicState,command:classicCommand,locks:value=>{$('#classic-num').textContent=value.num?'NUM':'';$('#classic-scroll').textContent=value.scroll?'SCRL':'';}});
 $('#source').addEventListener('input',()=>classicFrame.update());

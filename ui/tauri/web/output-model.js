@@ -20,7 +20,7 @@ var outputModel={
 
 var scanSettings={
  validate:function(v){
-  if(!v||['auto','dvb','atsc','isdb','isdb-japan','isdb-brazil','scte','dtmb'].indexOf(v.standards)<0||['full','prefix','range','distributed'].indexOf(v.scan_mode)<0||['percent','packets'].indexOf(v.budget_unit)<0)return 'Unknown standards or scan mode';
+  if(!v||['auto','dvb','atsc','isdb','isdb-japan','isdb-brazil','scte','j94-system-b','dtmb'].indexOf(v.standards)<0||['full','prefix','range','distributed'].indexOf(v.scan_mode)<0||['percent','packets'].indexOf(v.budget_unit)<0)return 'Unknown standards or scan mode';
   if(typeof v.default_charset!=='string'||v.default_charset.length>128||/[\x00-\x1f]/.test(v.default_charset))return 'Charset must be at most 128 printable characters';
   if(!Array.isArray(v.extra_pids)||v.extra_pids.length>64||v.extra_pids.some(function(n){return !Number.isSafeInteger(n)||n<0||n>8191;}))return 'Extra PIDs must be 0..8191, at most 64 entries';
   if(['prefix','distributed'].indexOf(v.scan_mode)>=0){var n=v.budget_unit==='percent'?v.sample_percent:v.max_packets;if(!Number.isSafeInteger(n)||n<1||(v.budget_unit==='percent'&&n>100))return 'Choose 1..100 percent or a positive packet budget';}

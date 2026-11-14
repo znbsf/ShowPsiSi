@@ -90,5 +90,25 @@ process.stdout.write('ok');
         self.assertEqual(run.stdout, 'ok')
 
 
+    def test_scan_settings_accept_every_engine_standards_context(self):
+        # The configuration dialog must not reject a context the engine's analyze API accepts.
+        api = json.loads((ROOT/'api/tools.json').read_text(encoding='utf-8'))
+        tool = next(t for t in api['tools'] if t['name'] == 'analyze')
+        contexts = tool['inputSchema']['properties']['standards']['enum']
+        script = r"""
+const fs=require('fs'),vm=require('vm');const c={};vm.createContext(c);
+vm.runInContext(fs.readFileSync(process.argv[1],'utf8')+';this.scanSettings=scanSettings;',c);
+const base={scan_mode:'full',budget_unit:'percent',default_charset:'',extra_pids:[]};
+const out={};for(const s of JSON.parse(process.argv[2]))out[s]=c.scanSettings.validate(Object.assign({standards:s},base));
+out.__bogus=c.scanSettings.validate(Object.assign({standards:'bogus'},base));
+process.stdout.write(JSON.stringify(out));
+"""
+        run = subprocess.run(['node', '-e', script, str(ROOT/'ui/tauri/web/output-model.js'), json.dumps(contexts)],
+                             check=True, text=True, capture_output=True, timeout=30)
+        result = json.loads(run.stdout)
+        self.assertIn('j94-system-b', contexts)
+        self.assertEqual(result.pop('__bogus'), 'Unknown standards or scan mode')
+        self.assertEqual({k: v for k, v in result.items() if v}, {})
+
 if __name__ == '__main__':
     unittest.main()

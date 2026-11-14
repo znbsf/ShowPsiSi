@@ -8,6 +8,11 @@ var documents = {
   var id='document-'+(++s.serial),offset=(s.items.length%8)*24;
   s.items.push({id:id,kind:kind,key:key,title:title,payload:payload||{},x:offset,y:offset,width:640,height:460,mode:'maximized'});s.active=id;return s;
  },
+ // Keep the same view instance (and its Back stack) when following a section.
+ replaceSection:function(state,id,payload,title){
+  var s=this.copy(state),d=s.items.find(function(d){return d.id===id&&d.kind==='si';});
+  if(d){d.payload=payload;d.key=payload.id+'@'+payload.native_table_at_packet;d.title=title;}return s;
+ },
  copy:function(s){return {identity:s.identity,serial:s.serial,active:s.active,items:s.items.map(function(d){return Object.assign({},d);})};},
  activate:function(state,id){var s=this.copy(state),i=s.items.findIndex(function(d){return d.id===id;});if(i<0)return s;var d=s.items.splice(i,1)[0];if(d.mode==='minimized')d.mode=d.previousMode||'normal';s.items.push(d);s.active=id;return s;},
  close:function(state,id){var s=this.copy(state);s.items=s.items.filter(function(d){return d.id!==id;});if(s.active===id)s.active=s.items.length?s.items[s.items.length-1].id:'';return s;},

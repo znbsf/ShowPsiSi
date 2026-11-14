@@ -1,5 +1,6 @@
 /* Same classic SI palette, bitmap icons and row metrics as Qt UnifiedInspector. */
 body.si-mode #app { background:#efefef; color:#000; }
+body.si-mode #notice.info-expired { visibility:visible; }
 body.si-mode #panes,body.si-mode #stats,body.si-mode #timeline { display:none; }
 :is(#unified-si,.si-document)[hidden] { display:none; }
 :is(#unified-si,.si-document) { --si-left:27%; --si-hex-height:40%; display:grid; grid-template-columns:var(--si-left) 6px minmax(0,1fr); flex:1; min-height:180px; overflow:hidden; background:#efefef;color:#000;font:14px 'Courier New',monospace; }
@@ -46,7 +47,7 @@ body.si-mode #panes,body.si-mode #stats,body.si-mode #timeline { display:none; }
 :is(#unified-si,.si-document) .si-hex button,:is(#unified-si,.si-document) .si-empty-byte { display:inline-block;width:24px;height:18px;padding:0;flex:none;background:transparent;color:#00f;border:0;box-shadow:none;font:inherit; }
 :is(#unified-si,.si-document) .si-hex .si-packet-header { color:#f00; }
 :is(#unified-si,.si-document) .si-ascii { padding-left:4px;border-left:5px solid #d4d4d4; }
-:is(#unified-si,.si-document) .si-status { font:11px Tahoma,sans-serif;min-height:20px;white-space:nowrap;overflow:hidden;padding:3px; }
+:is(#unified-si,.si-document) .si-status { font:11px Tahoma,sans-serif;min-height:20px;flex:none;white-space:normal;overflow-wrap:anywhere;padding:3px; }
 :is(#unified-si,.si-document).si-no-hex .si-hex-panes,:is(#unified-si,.si-document).si-no-hex .si-hex-divider { display:none; }
 body.si-mode .titlebar,body.si-mode .sourcebar { background:#f4f5f7;color:#17232b; }
 body.si-mode #scan-coverage { margin:0;padding:2px 10px;font-size:11px; }
@@ -58,6 +59,7 @@ body.si-mode #scan-coverage { margin:0;padding:2px 10px;font-size:11px; }
 @media(max-width:519px){.si-summary-counters{grid-template-columns:minmax(0,1fr)}}
 .si-summary-list{flex:1;min-height:0;overflow:auto}.si-summary-list table{border-collapse:collapse;width:100%}.si-summary-list th{position:sticky;top:0;background:var(--surface);text-align:left}.si-summary-list td,.si-summary-list th{padding:6px 8px;border-bottom:1px solid var(--border)}
 .si-summary-list tr.si-selected{background:var(--selection,#d7e7f5)}.si-summary-pages{display:flex;gap:10px;align-items:center}.si-summary-tabs{display:flex;gap:4px}.si-summary-tabs button{flex:1}.si-summary-tabs [aria-pressed=true]{background:var(--selection,#d7e7f5);font-weight:bold}
+body.si-mode :is(#transport-si,.transport-si) .si-summary-tabs button[aria-pressed=true]{background:#efefef;border-color:#808080 #fff #fff #808080;box-shadow:inset 1px 1px #808080;font-weight:bold}
 body.si-mode #app{height:100vh;min-height:0}body.si-mode{overflow:hidden}
 
 .classic-frame[hidden],.classic-frame [hidden]{display:none!important}
@@ -177,3 +179,20 @@ body.si-mode footer #notice{padding:2px 5px;border:1px solid #aaa;align-self:str
 
 /* Keep classic controls reachable when the desktop reduces logical viewport size. */
 body.si-mode #app{min-height:0}body.si-mode.classic-configuration .sourcebar{max-height:35vh;overflow:auto;flex-shrink:0}
+
+#classic-jump-dialog{width:420px;max-width:90vw;background:#efefef;color:#000;border:1px solid #808080;border-radius:0;font:13px Tahoma,sans-serif}
+#classic-jump-dialog h2{font:bold 13px Tahoma,sans-serif}#classic-jump-input{display:block;width:100%;box-sizing:border-box;margin-top:6px;background:#fff;color:#000;border:2px inset #efefef;border-radius:0;font:13px Tahoma,sans-serif}
+#classic-jump-status{min-height:32px}#classic-jump-dialog .actions{display:flex;justify-content:flex-end;gap:8px}#classic-jump-dialog button{min-width:70px;min-height:24px;border:2px outset #efefef;border-radius:0;background:#efefef;color:#000;font:12px Tahoma,sans-serif}
+
+/* DIALOG_138-style face, scoped to the classic frame (Advanced is unchanged). */
+body.si-mode :is(#transport-si,.transport-si,.statistics-view){background:#efefef;color:#000;font:13px Tahoma,'MS Sans Serif',sans-serif}
+body.si-mode :is(#transport-si,.transport-si,.statistics-view) :is(input,button,th,td,p){font:inherit;color:inherit}
+body.si-mode :is(#transport-si,.transport-si) .si-summary-counters input{background:#fff;border:2px inset #efefef;border-radius:0;box-shadow:none}
+body.si-mode :is(#transport-si,.transport-si,.statistics-view) button{min-width:48px;min-height:24px;padding:2px 7px;background:#efefef;border:2px outset #efefef;border-radius:0;box-shadow:none}
+body.si-mode :is(#transport-si,.transport-si,.statistics-view) button:active{border-style:inset}
+body.si-mode :is(.si-summary-list,.statistics-list){background:#fff;border:2px inset #efefef}
+body.si-mode :is(.si-summary-list,.statistics-list) th{background:#efefef;border:2px outset #efefef;font-weight:normal}
+body.si-mode .si-summary-list th:has(button){padding:0}
+body.si-mode .si-summary-list th button{width:100%;border:0;background:transparent;text-align:left}
+body.si-mode :is(#transport-si,.transport-si,.statistics-view) [aria-pressed=true]{background:#efefef!important;border-style:inset;font-weight:bold}
+body.si-mode .si-summary-list tr.si-selected{background:#ff0}

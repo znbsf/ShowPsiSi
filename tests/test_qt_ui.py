@@ -34,7 +34,9 @@ def native_environment():
                  ROOT / '.deps/tsduck/usr/lib',
                  ROOT / '.deps/tsduck/usr/lib/x86_64-linux-gnu']
     env['LD_LIBRARY_PATH'] = os.pathsep.join(str(p) for p in libraries if p.exists()) + os.pathsep + env.get('LD_LIBRARY_PATH', '')
-    env.update(QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software', PYTHONIOENCODING='utf-8',
+    # Declare a typical 1920x1080 desktop: the window sizes itself from Screen, and the
+    # plugin's default 800x600 screen would clamp every layout scenario.
+    env.update(QT_QPA_PLATFORM='offscreen:configfile=tests/qt_offscreen_screen.json', QT_QUICK_BACKEND='software', PYTHONIOENCODING='utf-8',
                SHOWPSISI_ROOT=str(ROOT), SHOWPSISI_AUTO='1',
                SHOWPSISI_CORE=env.get('SHOWPSISI_CORE', str(ROOT / ('build/bin/showpsisi-core' + EXE))),
                SHOWPSISI_SAMPLE=str(ROOT / 'samples/generated/lab.ts'))
@@ -45,6 +47,30 @@ def native_environment():
 
 
 class NativeQtTests(unittest.TestCase):
+    def test_classic_c3_full_comment_and_summary_face(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c3-') as directory:
+            report=self.run_script('classic-c3',directory,auto=False,timeout=40,overrides={'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'],8,report)
+            for check in ('pat_field','truncated','accessible','status','hover','tooltip','fits','new_section','back','back_accessible','back_status','back_tooltip','cleared','summary_face','six_fields'):
+                self.assertTrue(report['checks'][check],(check,report))
+
+    def test_classic_c2_identifier_and_reference_jumps(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c2-') as directory:
+            report=self.run_script('classic-c2',directory,auto=False,timeout=40,overrides={'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'],20,report)
+            for check in ('menu_disabled','menu_enabled','pat_field','shortcut_dialog','invalid','escape_focus','service_program','reference_menu','reference_click','reference_target','reference_back','null_pid','keyboard_target','keyboard_back','menu_key','no_reference','cancel','document_field','document_identifier','document_back','document_reference','document_reference_back','outside_analyze'):
+                self.assertTrue(report['checks'][check],(check,report))
+            for index in range(3):
+                for prefix in ('normalized_','target_','back_button_','back_'):
+                    self.assertTrue(report['checks'][prefix+str(index)],report)
+
+    def test_classic_c1_completion_survives_service_selection(self):
+        with tempfile.TemporaryDirectory(prefix='showpsisi-qt-classic-c1-') as directory:
+            report=self.run_script('classic-c1',directory,timeout=35,overrides={'SHOWPSISI_STANDARDS':'dvb'})
+            self.assertEqual(report['phase'],2,report)
+            for check in ('completion','coverage','coverage_partial','service_click','service_selected','service_status'):
+                self.assertTrue(report['checks'][check],report)
+
     def test_command_palette_commands_and_pid_jump(self):
         for theme in ('dark','light'):
             with self.subTest(theme=theme), tempfile.TemporaryDirectory(prefix='showpsisi-qt-palette-') as directory:

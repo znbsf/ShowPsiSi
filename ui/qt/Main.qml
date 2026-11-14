@@ -3,7 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
 import QtQml.Models
-import "qrc:/shared/workbench.js" as Shared
+import "../tauri/web/workbench.js" as Shared
 import "../tauri/web/classic-model.js" as Classic
 import "../tauri/web/output-model.js" as Output
 
@@ -201,7 +201,7 @@ ApplicationWindow {
     readonly property string activeCollection: tab === "Services" ? "services" : tab === "EPG" ? "events" : tab === "Issues" ? "diagnostics" : tab === "Tables" ? "tables" : ""
     readonly property double densitySourcePackets: Number(analysisState.coverage?.source_packets || analysisState.packets || 0)
     readonly property bool partialResults: !!analysisState.coverage?.partial
-    readonly property string coverageText: analysisState.coverage ? (partialResults ? "PARTIAL · read-only · " : "Full coverage · ") + num(analysisState.coverage.scanned_packets) + " / " + num(analysisState.coverage.source_packets) + " packets · " + (analysisState.coverage.ranges || []).map(function(r){return "["+num(r.start_packet)+", "+num(r.end_packet)+")";}).join(", ") : ""
+    readonly property string coverageText: !advancedMode ? Classic.classic.coverage(analysisState) : analysisState.coverage ? (partialResults ? "PARTIAL · read-only · " : "Full coverage · ") + num(analysisState.coverage.scanned_packets) + " / " + num(analysisState.coverage.source_packets) + " packets · " + (analysisState.coverage.ranges || []).map(function(r){return "["+num(r.start_packet)+", "+num(r.end_packet)+")";}).join(", ") : ""
     readonly property bool quickOptionsValid: scanMode.currentValue === "full" || (scanMode.currentValue === "range" ? /^\d+$/.test(scanStart.text) && /^\d+$/.test(scanEnd.text) && Number.isSafeInteger(Number(scanStart.text)) && Number.isSafeInteger(Number(scanEnd.text)) && Number(scanEnd.text)>Number(scanStart.text) : /^\d+$/.test(scanBudget.text) && Number.isSafeInteger(Number(scanBudget.text)) && Number(scanBudget.text)>0 && (scanBudgetUnit.currentIndex===1 || Number(scanBudget.text)<=100))
     property bool backendReady: core.available && !presentationPending && !core.busy && !dvbiWorkspace.busy && !protocolRestoring
     property var detail: JSON.parse(core.detailJson)
@@ -1213,11 +1213,13 @@ ApplicationWindow {
         documentWorkspace.open(kind,kind==='summary'?'summary':(detail.id||'empty')+'@'+detail.native_table_at_packet,title,payload,!!duplicate);
     }
     property string documentIdentity:(analysisState.source||'')+'|'+(analysisState.analysis_revision||analysisState.revision||'')
-    onDocumentIdentityChanged:{pendingServiceSource=null;if(documentWorkspace)documentWorkspace.reset(documentIdentity)}
-    onDetailChanged:if(documentMode&&detail.id&&!advancedMode&&!metadataMode)Qt.callLater(function(){if(detail.id){openDocument('si');if(pendingServiceSource&&pendingServiceSource.id===detail.id){var source=pendingServiceSource;pendingServiceSource=null;documentWorkspace.focusSection(source.id,source.path,source.cutoff);}}})
-    Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.close()}
-    Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(false)}
-    Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode;onActivated:documentWorkspace.cycle(true)}
+    property var pendingClassicDocument:null
+    onDocumentIdentityChanged:{pendingClassicDocument=null;pendingServiceSource=null;if(documentWorkspace)documentWorkspace.reset(documentIdentity)}
+    onDetailChanged:if(documentMode&&detail.id&&!advancedMode&&!metadataMode)Qt.callLater(function(){if(detail.id){if(pendingClassicDocument&&pendingClassicDocument.target===detail.id){var destination=pendingClassicDocument;pendingClassicDocument=null;var payload=Object.assign({},detail,{_view_state:destination.state});documentWorkspace.replaceSection(destination.id,payload,documentScope(detail.native_table_at_packet)+' - '+detail.name+' PID '+hex(detail.pid));}else openDocument('si');if(pendingServiceSource&&pendingServiceSource.id===detail.id){var source=pendingServiceSource;pendingServiceSource=null;documentWorkspace.focusSection(source.id,source.path,source.cutoff);}}})
+    Shortcut {sequence:'Ctrl+F4';enabled:documentMode&&!metadataMode&&!advancedMode&&!classicJumpDialog.visible;onActivated:documentWorkspace.close()}
+    Shortcut {sequence:'Ctrl+Tab';enabled:documentMode&&!metadataMode&&!advancedMode&&!classicJumpDialog.visible;onActivated:documentWorkspace.cycle(false)}
+    Shortcut {sequence:'Ctrl+Shift+Tab';enabled:documentMode&&!metadataMode&&!advancedMode&&!classicJumpDialog.visible;onActivated:documentWorkspace.cycle(true)}
+    function classicFieldFocused(){for(var item=win.activeFocusItem;item;item=item.parent)if(item.objectName==='unifiedFields')return true;return false;}
     function classicState(){return {available:backendReady,busy:core.busy,cancelling:core.cancelling,canPause:core.busy&&!core.loadingResults,paused:core.paused,hasInput:!!(source&&source.text.trim()),complete:!!analysisState.complete,native:true,exporting:exporting||core.exportPending,toolbar:classicToolbarVisible,status:classicStatusVisible,tree:classicTreeVisible,documentCount:documentMode?documentWorkspace.state.items.length:(analysisState.complete?1:0),features:{save:true,documents:true,packets:true,bitrate:true,services:true,carousel:true,teletext:true,media:true}};}
     function classicCommand(name){
         var state=classicState();if(!Classic.classic.enabled(name,state)){showMessage(Classic.classic.reason(name,state),"warning");return;}
@@ -1231,6 +1233,7 @@ ApplicationWindow {
         else if(name==='tree')classicTreeVisible=!classicTreeVisible;
         else if(name==='new'){documentMode=true;openDocument('si',true);}
         else if(name==='decoded'){documentMode=true;openDocument('decoded');}
+        else if(name==='goTo')classicJumpDialog.prepare();
         else if(name==='packets')openPacket(-1,0);
         else if(name==='media')openMedia(-1,'PES');
         else if(name==='teletext')openTeletext(-1);
@@ -1254,6 +1257,37 @@ ApplicationWindow {
         id:classicHelpDialog;title:'ShowPsiSi Help';modal:true;width:Math.min(600,win.width-40);anchors.centerIn:parent;standardButtons:Dialog.Close
         contentItem:Label {text:'Open a transport stream, then choose Analyzer → Start. Programs and PSI Packets lead to table fields and original bytes. Single-click selects; double-click text or click +/− to expand. F6 / Shift+F6 moves between panes. Alt+Left returns. Card Configuration opens source and scan options. Advanced workspace retains editing, topology, history and DVB-I. Disabled commands describe features not yet available.';wrapMode:Text.WordWrap;color:'#000';padding:14}
         background:Rectangle{color:'#efefef';border.color:'#808080'}
+    }
+    Shortcut {sequence:'Ctrl+G';enabled:!advancedMode&&!metadataMode&&!classicJumpDialog.visible&&Classic.classic.enabled('goTo',classicState());onActivated:classicJumpDialog.prepare()}
+    Dialog {
+        id:classicJumpDialog;objectName:'classicJumpDialog';title:'Go to PID/SID…';modal:true;focus:true
+        width:Math.min(440,win.width-32);anchors.centerIn:parent;font.family:'Tahoma';font.pixelSize:13
+        property Item origin:null
+        property var targetView:unifiedInspector
+        property var jumpResult:targetView.identifier(classicJumpInput.text)
+        function prepare(){targetView=documentMode?(documentWorkspace.activeSection()||unifiedInspector):unifiedInspector;origin=win.activeFocusItem;classicJumpInput.text='';open();classicJumpInput.forceActiveFocus();}
+        function submit(){if(jumpResult.target&&targetView.jumpTarget(jumpResult.target)){origin=null;close();if(targetView===unifiedInspector){documentMode=false;transportSummaryVisible=false;unifiedInspector.navigationItem.forceActiveFocus();}}}
+        onClosed:{if(origin)origin.forceActiveFocus();origin=null;}
+        background:Rectangle{color:'#efefef';border.color:'#808080'}
+        header:Label{text:classicJumpDialog.title;font.family:'Tahoma';font.pixelSize:13;font.bold:true;color:'#000';padding:12}
+        contentItem:ColumnLayout {
+            Label{text:'PID, SID or table ID';font.family:'Tahoma';color:'#000'}
+            TextField {
+                id:classicJumpInput;objectName:'classicJumpInput';Layout.fillWidth:true;selectByMouse:true;color:'#000';font.family:'Tahoma';font.pixelSize:13
+                Accessible.name:'PID, SID or table ID';onAccepted:classicJumpDialog.submit()
+                background:Rectangle{color:'#fff';border.color:'#808080';border.width:2;Rectangle{anchors.right:parent.right;anchors.bottom:parent.bottom;width:parent.width-2;height:1;color:'#fff'}}
+            }
+            Label {
+                objectName:'classicJumpStatus';Layout.fillWidth:true;Layout.minimumHeight:32;wrapMode:Text.Wrap;color:'#000';font.family:'Tahoma';font.pixelSize:13
+                text:classicJumpDialog.jumpResult.target?classicJumpDialog.jumpResult.label:classicJumpDialog.jumpResult.message
+                Accessible.name:'Identifier target';Accessible.description:text
+            }
+            RowLayout {
+                Item{Layout.fillWidth:true}
+                ClassicButton{objectName:'classicJumpOK';text:'OK';onClicked:classicJumpDialog.submit()}
+                ClassicButton{objectName:'classicJumpCancel';text:'Cancel';onClicked:classicJumpDialog.close()}
+            }
+        }
     }
     property var configurationDraft:null
     function configurationValues(){return {standards:standardChoice.currentValue,default_charset:defaultCharset.text,extra_pids:extraPidsValue,scan_mode:scanMode.currentValue,budget_unit:scanBudgetUnit.currentIndex===0?'percent':'packets',sample_percent:Number(scanBudget.text),max_packets:Number(scanBudget.text),start_packet:Number(scanStart.text),end_packet:Number(scanEnd.text),window_count:4};}
@@ -1956,6 +1990,7 @@ ApplicationWindow {
             }
             if (method === "query_topology") { acceptTopology(result); return; }
             if(method==="inspect"){
+                if(pendingClassicDocument&&(result.message||result.id!==pendingClassicDocument.target))pendingClassicDocument=null;
                 if(protocolSourceRef)resolveProtocolInspection(result);
                 else if(topologyEvidenceRef)resolveTopologyInspection(result);
                 if(protocolRestorePending){
@@ -2012,7 +2047,7 @@ ApplicationWindow {
                 core.mark("default_inspect_begin");defaultInspect();core.mark("default_inspect_end");
                 inspected = true;
                 let truncated=(result.demux || {}).truncated_sections || 0;
-                showMessage((partialResults ? "Quick preview complete · partial, read-only · source unchanged" : "Scan complete · source unchanged") + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
+                showMessage((!advancedMode ? Classic.classic.completion(analysisState) : partialResults ? "Quick preview complete · partial, read-only · source unchanged" : "Scan complete · source unchanged") + (truncated ? " · " + num(truncated) + " truncated section(s)" : ""), truncated ? "warning" : "info");
             }
             if (method === "query") {
                 if (snapshotTarget)
@@ -3736,6 +3771,171 @@ ApplicationWindow {
             });
         }
     }
+    Timer {
+        id:classicC3TestTimer;interval:100;repeat:true
+        property int phase:0
+        property double deadline:Date.now()+30000
+        property var checks:({})
+        property string comment:''
+        property int fieldIndex:-1
+        property string sectionId:''
+        function item(name){return classicC2TestTimer.item(name);}
+        function finish(){stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks,error:core.error}));}
+        onTriggered:{
+            if(Date.now()>deadline){checks.deadline=false;finish();return;}
+            if(!backendReady)return;
+            if(phase===0){scan();phase=1;return;}
+            if(!analysisState.complete||core.busy||core.inspecting||presentationPending||topologyLoading||!detail.id||unifiedInspector.pendingRestore)return;
+            var fields=item('unifiedFields'),status=item('siRange');
+            if(phase===1){
+                fieldIndex=unifiedInspector.fieldRows.findIndex(function(r){return r.name==='program_number';});
+                checks.pat_field=detail.name==='PAT'&&fieldIndex>=0;if(!checks.pat_field){finish();return;}
+                comment=unifiedInspector.fieldRows[fieldIndex].help;sectionId=detail.id;
+                unifiedInspector.focusField(fieldIndex);fields.positionViewAtIndex(fieldIndex,ListView.Center);fields.forceActiveFocus();phase=2;return;
+            }
+            if(phase===2){
+                var row=item('siField:'+fieldIndex),cell=item('siFieldComment:'+fieldIndex);
+                if(!row||!cell)return;
+                checks.truncated=cell.truncated&&row.height===20;
+                checks.accessible=row.Accessible.description===comment;
+                checks.status=status.text===status.baseStatus+' | '+comment&&status.wrapMode===Text.Wrap;
+                checks.hover=core.hover('siFieldComment:'+fieldIndex);phase=3;return;
+            }
+            if(phase===3){
+                var tip=item('siField:'+fieldIndex).commentToolTip;if(!tip||!tip.visible)return;
+                checks.tooltip=tip.text===comment;
+                unifiedInspector.resizeFieldColumn(3,1000);phase=4;return;
+            }
+            if(phase===4){
+                checks.fits=!item('siFieldComment:'+fieldIndex).truncated&&!item('siField:'+fieldIndex).commentToolTip.visible;var rowTip=item('siField:'+fieldIndex).rowToolTip;checks.row_tooltip=!!rowTip&&rowTip.text===unifiedInspector.fieldRows[fieldIndex].name+'  '+unifiedInspector.fieldRows[fieldIndex].value;
+                unifiedInspector.resizeFieldColumn(3,180);
+                unifiedInspector.selectRecord(analysisState.tables.find(function(r){return r.name==='PMT';}));phase=5;return;
+            }
+            if(phase===5){
+                checks.new_section=detail.id!==sectionId&&status.text.indexOf(comment)<0;
+                unifiedInspector.back();phase=6;return;
+            }
+            if(phase===6){
+                checks.back=detail.id===sectionId&&unifiedInspector.selectedField&&unifiedInspector.selectedField.help===comment&&fields.currentIndex===unifiedInspector.selectedFieldIndex;
+                checks.back_accessible=item('siField:'+unifiedInspector.selectedFieldIndex).Accessible.description===comment;
+                checks.back_status=status.text===status.baseStatus+' | '+comment;
+                core.hover('siFieldComment:'+unifiedInspector.selectedFieldIndex);phase=7;return;
+            }
+            if(phase===7){
+                var tip=item('siField:'+unifiedInspector.selectedFieldIndex).commentToolTip;if(!tip||!tip.visible)return;
+                checks.back_tooltip=tip.text===comment;
+                unifiedInspector.focusField(0);checks.cleared=status.text===status.baseStatus&&status.text.indexOf(comment)<0;
+                classicCommand('summary');phase=8;return;
+            }
+            if(phase===8){
+                if(transportSummary.loading||!transportSummary.page.items)return;
+                checks.summary_face=transportSummary.classicStyle&&transportSummary.font.family==='Tahoma'&&transportSummary.font.pixelSize===13&&Qt.colorEqual(transportSummary.background.color,'#efefef');
+                checks.six_fields=['fileSize','totalPackets','bitrate','errors','duration','packetSize'].every(function(id){var field=item('transportSummary:'+id);return field&&field.readOnly&&field.font.family==='Tahoma'&&field.font.pixelSize===13&&field.background.radius===0&&field.width>0&&field.height>0;});
+                finish();
+            }
+        }
+    }
+    Timer {
+        id:classicC2TestTimer;interval:100;repeat:true
+        property int phase:0
+        property double deadline:Date.now()+30000
+        property var checks:({})
+        property var origin:({})
+        property int targetIndex:0
+        property var targets:[{query:'0x0000',label:'PID 0x0000 (0)',pid:0,tid:0},{query:'sid 0x0067',label:'SID 0x0067 (103)',pid:258,tid:2},{query:'table 0x42',label:'Table 0x42 (66)',pid:17,tid:66}]
+        property var revision:null
+        property var documentOrigin:({})
+        property int documentCount:0
+        function item(name,parent){parent=parent||win.contentItem;if(parent.objectName===name)return parent;for(var i=0;i<parent.children.length;i++){var found=item(name,parent.children[i]);if(found)return found;}return null;}
+        function restored(){var now=unifiedInspector.captureContext();return ['id','path','field','fieldClosed','expandedRecords','openFamilies','fieldColumns','fieldScroll','fieldX','hexScroll','hexX','packetScroll','packetX','scroll','navX'].every(function(k){return JSON.stringify(now[k])===JSON.stringify(origin[k]);});}
+        function focusField(){item('unifiedFields').forceActiveFocus();}
+        function finish(){stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks,error:core.error}));}
+        onTriggered:{
+            if(Date.now()>deadline){checks.deadline=false;finish();return;}
+            if(!backendReady)return;
+            if(phase===0){checks.menu_disabled=!Classic.classic.enabled('goTo',classicState())&&Classic.classic.reason('goTo',classicState())==='Analyze a source first';scan();phase=1;return;}
+            if(!analysisState.complete||core.busy||core.inspecting||presentationPending||topologyLoading||!detail.id||unifiedInspector.pendingRestore)return;
+            var fields=item('unifiedFields');
+            if(phase===1){
+                checks.menu_enabled=Classic.classic.enabled('goTo',classicState());
+                var index=unifiedInspector.fieldRows.findIndex(function(r){return r.name==='program_map_PID'&&r.value.indexOf('0x0100')===0;});
+                checks.pat_field=index>=0;if(index<0){finish();return;}
+                unifiedInspector.focusField(index);fields.forceActiveFocus();unifiedInspector.resizeFieldColumn(0,unifiedInspector.fieldColumnWidth(0)+80);fields.contentY=60;fields.contentX=10;
+                origin=unifiedInspector.captureContext();core.key('Ctrl+G');phase=2;return;
+            }
+            if(phase===2){
+                checks.shortcut_dialog=classicJumpDialog.visible&&classicJumpInput.activeFocus;
+                var invalid=[['8190','No PID 0x1FFE in this stream'],['pid 8192','PID must be between 0 and 8191'],['0x100garbage','Enter a PID, SID or table ID in decimal or 0x hexadecimal']];
+                checks.invalid=invalid.every(function(row){classicJumpInput.text=row[0];classicJumpDialog.submit();return classicJumpDialog.visible&&!classicJumpDialog.jumpResult.target&&classicJumpDialog.jumpResult.message===row[1]&&restored();});
+                core.key('Escape');phase=3;return;
+            }
+            if(phase===3){checks.escape_focus=!classicJumpDialog.visible&&fields.activeFocus;classicCommand('goTo');classicJumpInput.text=targets[targetIndex].query;phase=4;return;}
+            if(phase===4){checks['normalized_'+targetIndex]=classicJumpDialog.jumpResult.label===targets[targetIndex].label;core.key('Return');phase=5;return;}
+            if(phase===5){
+                if(classicJumpDialog.visible)return;
+                var target=targets[targetIndex];checks['target_'+targetIndex]=detail.pid===target.pid&&detail.table_id===target.tid;
+                if(targetIndex===1)checks.service_program=detail.extension===103&&unifiedInspector.navigation[unifiedInspector.navigationItem.currentIndex].key.indexOf('service:')>=0;
+                checks['back_button_'+targetIndex]=core.click('unifiedBack');phase=6;return;
+            }
+            if(phase===6){
+                checks['back_'+targetIndex]=restored();targetIndex++;
+                if(targetIndex<targets.length){classicCommand('goTo');classicJumpInput.text=targets[targetIndex].query;phase=4;return;}
+                focusField();core.key('Shift+F10');phase=7;return;
+            }
+            if(phase===7){checks.reference_menu=unifiedInspector.fieldContextTarget&&unifiedInspector.fieldContextTarget.label==='Go to PMT · PID 0x0100 (256)';checks.reference_click=core.click('classicFieldReference');phase=8;return;}
+            if(phase===8){checks.reference_target=detail.name==='PMT'&&detail.pid===256;var nullPid=unifiedInspector.fieldRows.find(function(r){return r.name==='PCR_PID';});checks.null_pid=nullPid&&!unifiedInspector.fieldReference(nullPid);core.key('Alt+Left');phase=9;return;}
+            if(phase===9){checks.reference_back=restored();focusField();core.key('Ctrl+Return');phase=10;return;}
+            if(phase===10){checks.keyboard_target=detail.name==='PMT'&&detail.pid===256;core.click('unifiedBack');phase=11;return;}
+            if(phase===11){checks.keyboard_back=restored();focusField();core.key('Menu');phase=12;return;}
+            if(phase===12){checks.menu_key=unifiedInspector.fieldContextTarget&&unifiedInspector.fieldContextTarget.label==='Go to PMT · PID 0x0100 (256)';core.key('Escape');unifiedInspector.focusField(1);focusField();core.key('Shift+F10');phase=13;return;}
+            if(phase===13){checks.no_reference=!unifiedInspector.fieldContextTarget;core.key('Escape');classicCommand('goTo');core.click('classicJumpCancel');phase=14;return;}
+            if(phase===14){checks.cancel=!classicJumpDialog.visible;classicCommand('new');phase=15;return;}
+            var child=documentWorkspace.activeSection();
+            if(phase===15){
+                if(!child||!child.fieldRows.length)return;
+                var index=child.fieldRows.findIndex(function(r){return r.name==='program_map_PID'&&r.value.indexOf('0x0100')===0;});checks.document_field=index>=0;if(index<0){finish();return;}
+                child.focusField(index);item('unifiedFields',child).forceActiveFocus();documentOrigin=child.captureContext();documentCount=documentWorkspace.state.items.length;
+                classicCommand('goTo');classicJumpInput.text='sid 0x0067';core.key('Return');phase=16;return;
+            }
+            if(phase===16){if(pendingClassicDocument)return;checks.document_identifier=child&&child.detail.pid===258&&child.detail.extension===103&&documentWorkspace.state.items.length===documentCount;core.click('unifiedBack');phase=17;return;}
+            if(phase===17){if(pendingClassicDocument||child.pendingRestore)return;checks.document_back=child.detail.id===documentOrigin.id&&JSON.stringify(child.captureContext().field)===JSON.stringify(documentOrigin.field);item('unifiedFields',child).forceActiveFocus();core.key('Ctrl+Return');phase=18;return;}
+            if(phase===18){if(pendingClassicDocument)return;checks.document_reference=child.detail.name==='PMT'&&child.detail.pid===256&&documentWorkspace.state.items.length===documentCount;core.key('Alt+Left');phase=19;return;}
+            if(phase===19){if(pendingClassicDocument||child.pendingRestore)return;checks.document_reference_back=child.detail.id===documentOrigin.id&&JSON.stringify(child.captureContext().field)===JSON.stringify(documentOrigin.field);revision=analysisState.analysis_revision;classicConfigurationVisible=true;source.forceActiveFocus();core.key('Ctrl+Return');phase=20;return;}
+            if(phase===20){checks.outside_analyze=analysisState.analysis_revision!==revision;finish();}
+        }
+    }
+    Timer {
+        id:classicC1TestTimer;interval:100;repeat:true
+        property int phase:0
+        property double deadline:Date.now()+25000
+        property string completion:''
+        property string serviceTarget:''
+        property var checks:({})
+        onTriggered:{
+            if(Date.now()>deadline){stop();core.testResult(JSON.stringify({passed:false,phase:phase,checks:checks,error:core.error}));return;}
+            if(!analysisState.complete || core.busy || core.inspecting || presentationPending || topologyLoading || !detail.id)return;
+            if(phase===0){
+                advancedMode=false;phase=1;return;
+            }
+            if(phase===1){
+                if(!messageExpired)return;
+                var row=unifiedInspector.navigation.find(function(r){return r.service && r.record;});if(!row)return;
+                completion=notice;
+                checks.completion=notice.indexOf('Scan complete')===0;
+                checks.coverage=coverageText===Classic.classic.coverage(analysisState) && coverageText.indexOf('Full coverage')===0;
+                serviceTarget=row.record.id;
+                checks.service_click=core.click('unifiedRow:'+unifiedInspector.navigation.indexOf(row));phase=2;return;
+            }
+            if(phase===2){
+                function findStatus(item){if(item.objectName==='statusMessage')return item;for(var i=0;i<item.children.length;i++){var found=findStatus(item.children[i]);if(found)return found;}return null;}
+                var status=findStatus(win.contentItem);
+                checks.service_selected=detail.id===serviceTarget;
+                checks.service_status=notice===completion && core.isExposed('statusMessage') && status && status.opacity===1 && !status.Accessible.ignored;
+                checks.coverage_partial=Classic.classic.coverage({complete:false,coverage:{partial:true,mode:'range',scanned_packets:10,source_packets:100,ranges:[{start_packet:20,end_packet:30}]}})==='PARTIAL PREVIEW · READ-ONLY · range · 10 / 100 packets · planned ranges [start, end): [20, 30) · Unread gaps are unknown, not absent. Full scan required to edit/export.';
+                stop();core.testResult(JSON.stringify({passed:Object.keys(checks).every(function(k){return checks[k];}),phase:phase,checks:checks}));
+            }
+        }
+    }
     // Deterministic native integration harness. Positive evidence comes from the
     // separately built real engine; the Python driver releases its file gate.
     Timer {
@@ -3878,6 +4078,9 @@ ApplicationWindow {
         }
         if (core.env("SHOWPSISI_AUTO") === "1")
             autoTimer.start();
+        if (core.env("SHOWPSISI_SCRIPT") === "classic-c3") {advancedMode=false;classicC3TestTimer.start();}
+        if (core.env("SHOWPSISI_SCRIPT") === "classic-c2") {advancedMode=false;classicC2TestTimer.start();}
+        if (core.env("SHOWPSISI_SCRIPT") === "classic-c1") {advancedMode=false;classicC1TestTimer.start();}
         if (core.env("SHOWPSISI_SCRIPT") === "refinement") refinementTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "signal-metadata") metadataTestTimer.start();
         if (core.env("SHOWPSISI_SCRIPT") === "protocol-cards") protocolCardsTestTimer.start();
@@ -3990,7 +4193,7 @@ ApplicationWindow {
     Shortcut { sequence:"Ctrl+/"; enabled:!shortcutDialog.visible; onActivated:showShortcutHelp() }
     Shortcut {
         sequence: "Ctrl+K"
-        enabled: !shortcutDialog.visible
+        enabled: !shortcutDialog.visible && !classicJumpDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
             transportSummaryVisible=false;
@@ -4000,7 +4203,7 @@ ApplicationWindow {
             field.forceActiveFocus();field.selectAll();
         }
     }
-    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(transportSummaryVisible){transportSummaryVisible=false;return;} if(!advancedMode){unifiedInspector.back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
+    Shortcut { sequence: "Alt+Left"; enabled:!shortcutDialog.visible&&!classicJumpDialog.visible; onActivated: { if(metadataMode){dvbiWorkspace.back();return;} if(transportSummaryVisible){transportSummaryVisible=false;return;} if(!advancedMode){var section=documentMode?documentWorkspace.activeSection():null;(section||unifiedInspector).back();return;} if(protocolSourceOrigin)protocolSourceBack();else if(topologyBackStack.length || topologyOrigin || topologyEvidenceRef)topologyBack(); } }
     // Alt+Left/Right are reserved for navigation; pane sizing has its own chord.
     Shortcut { sequence: "Ctrl+Alt+Left"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(24) }
     Shortcut { sequence: "Ctrl+Alt+Right"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeInspector(-24) }
@@ -4008,7 +4211,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Alt+Down"; enabled: advancedMode && !metadataMode && !shortcutDialog.visible; onActivated: resizeTimeline(-24) }
     Shortcut {
         sequence: "F6"
-        enabled: !shortcutDialog.visible
+        enabled: !shortcutDialog.visible && !classicJumpDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusNext();return;}
             if(documentMode&&!advancedMode){documentWorkspace.nextRegion(false);return;}
@@ -4020,7 +4223,7 @@ ApplicationWindow {
     Shortcut { sequence:"Shift+F6"; enabled:!metadataMode && !shortcutDialog.visible; onActivated:documentMode&&!advancedMode?documentWorkspace.nextRegion(true):transportSummaryVisible?transportSummary.nextRegion(true):advancedMode?focusNextRegion(true):unifiedInspector.nextRegion(true) }
     Shortcut {
         sequence: "Ctrl+Shift+K"
-        enabled: !shortcutDialog.visible
+        enabled: !shortcutDialog.visible && !classicJumpDialog.visible
         onActivated: {
             if(metadataMode){dvbiWorkspace.focusSearch();return;}
             transportSummaryVisible=false;
@@ -4032,12 +4235,12 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+O"
-        enabled: backendReady && !shortcutDialog.visible
+        enabled: backendReady && !shortcutDialog.visible && !classicJumpDialog.visible
         onActivated: metadataMode ? dvbiWorkspace.openDialog() : fileDialog.open()
     }
     Shortcut {
         sequence: "Ctrl+Return"
-        enabled: !shortcutDialog.visible
+        enabled: !shortcutDialog.visible && !classicJumpDialog.visible && (advancedMode || metadataMode || !classicFieldFocused())
         onActivated: metadataMode ? dvbiWorkspace.importDocument(dvbiWorkspace.pathValue()) : inspectorView==="Structure" && treeFocused() && !!treeRows[tree.currentIndex]?.reference ? jumpReference(treeRows[tree.currentIndex]) : scan()
     }
     Shortcut {
@@ -4543,6 +4746,7 @@ ApplicationWindow {
         }
         UnifiedInspector {
             id: unifiedInspector
+            backView:documentMode?documentWorkspace.activeSection():null
             focusOrigin:sourceBar.visible?sourceBar:null
             onMediaRequested:function(pid){win.openMedia(pid,'PES');}
             onTeletextRequested:function(pid){win.openTeletext(pid);}
@@ -4571,15 +4775,16 @@ ApplicationWindow {
                     host:QtObject {
                         property var analysisState:detail._view_state||win.analysisState
                         property var detail:childInspector.parent.documentData.payload
-                        property bool coreInspecting:false
+                        property bool coreInspecting:win.coreInspecting
                         property bool backendReady:win.backendReady
-                        function inspect(id){win.inspect(id);}
+                        function inspect(id){win.pendingClassicDocument={id:childInspector.parent.documentData.id,target:id,state:analysisState};win.inspect(id,-1,analysisState.selected_packet);}
                         property var tableFamilies:win.tableFamilies
                     }
                 }
             }
             summaryComponent:Component {
                 TransportSummary {
+                    classicStyle:!win.advancedMode
                     host:win
                     onPageRequested:function(offset,sort,descending,errorsOnly){if(!core.busy)core.send('query_transport',{analysis_revision:analysisState.analysis_revision||analysisState.revision,offset:offset,limit:100,sort:sort,descending:descending,errors_only:errorsOnly});}
                     onEntryActivated:function(entry){var record=(analysisState.tables||[]).find(function(row){return row.pid===entry.pid;});if(record)win.inspect(record.id);}
@@ -4625,6 +4830,7 @@ ApplicationWindow {
             }
             statisticsComponent:Component {
                 StatisticsView {
+                    classicStyle:!win.advancedMode
                     host:win
                     onRequested:function(method,params){if(!core.busy)core.send(method,params);else receive(method,{message:'Wait for current analysis to finish'});}
                     onPacketActivated:function(pid,index){win.openPacket(pid,index);}
@@ -4648,6 +4854,7 @@ ApplicationWindow {
             }
         }
         TransportSummary {
+            classicStyle:!win.advancedMode
             id:transportSummary
             parent:unifiedInspector.externalContainer
             anchors.fill:parent

@@ -30,7 +30,7 @@ var inspector = {
                 var peers=(state.services || []).filter(function(x){return x.id===s.id && x.pmt_pid===s.pmt_pid;});
                 var r=peers.length===1 && pmts.length===1?pmts[0]:records.find(function(r){return r.id===s.source_id;});
                 if(r && r.name==='PMT')used[r.id]=true;
-                return {kind:r?'record':'info',key:'service:'+t.node_id+':'+s.id,label:serviceLabel(s)+(s.announced?'  [announced]':!pmts.length?'  [PMT unavailable]':peers.length>1?'  [PMT ambiguous]':''),record:r,program:true,service:s,depth:3};
+                return {kind:r?'record':'info',key:'service:'+t.node_id+':'+s.id,label:serviceLabel(s)+(s.announced?'  [announced]':!pmts.length?'  [PMT unavailable]':peers.length>1?'  [PMT ambiguous]':''),record:r,program:true,service:s,hint:self.serviceLcnHint(s),depth:3};
             });
         }
         Object.keys(networks).sort().forEach(function(nid){var n=networks[nid],group=[];
@@ -71,6 +71,20 @@ var inspector = {
             if(!dsmcc.length)out.push({kind:'info',key:'dsmcc:empty',label:'No observed DSM-CC sections',depth:1,icon:'field'});
         }
         return out;
+    },
+    jumpTarget:function(target,state,organization) {
+        if(!target)return null;
+        var record=(state.tables || []).find(function(r){return r.id===target.id;});
+        if(!record)return null;
+        if(target.kind!=='service')return {record:record,key:record.id,opened:{'PSI Packets':true}};
+        var opened={Programs:true},rows=[];
+        for(var i=0;i<4;i++){
+            rows=this.programTree(state,state.tables || [],organization || {},opened,'');
+            rows.forEach(function(r){if(r.kind==='family')opened[r.name]=true;});
+        }
+        var matches=rows.filter(function(r){return r.service && r.service.id===target.sid && (target.key?r.service.key===target.key:r.service.source_id===target.id);});
+        if(matches.length!==1 || !matches[0].record)return null;
+        return {record:matches[0].record,key:matches[0].key,opened:opened};
     },
     contextTargets:function(row,state){
         if(!row)return [];
@@ -121,6 +135,17 @@ var inspector = {
         var program=this.wireValue(node,'program_number');
         if(program)return 'Program '+program+' PID['+this.wireValue(node,'program_map_PID')+']';
         return node.label;
+    },
+    serviceLcnHint: function(s) {
+        if(s.lcn_status==='known' && s.logical_channel_number!==null && s.logical_channel_number!==undefined)return '';
+        return s.lcn_status==='conflict'?'Engine reports conflicting LCN candidates for this service; no resolved logical channel number is available.':'No resolved logical channel number: the status is not known or the number is missing.';
+    },
+    tablePageHint: function(page,count) {return 'Table records page '+(page+1)+' of '+Math.max(1,Math.ceil(count/100))+' (100 records per page)';},
+    classicTitle: function(record,tree) {
+        var body;
+        if(['PMT','NIT','BAT'].indexOf(record.name)>=0)body=this.navigationTitle(record,tree);
+        else body=(record.extension===null || record.extension===undefined?'—':this.hex(record.extension))+' PID['+this.hex(record.pid)+']'+(this.shortSyntax(record)?'':' Version '+record.version)+(record.last_section>0?' Section '+record.section+'/'+record.last_section:'');
+        return record.name+' : '+body;
     },
     navigationTitle: function(record,tree) {
         var version=' Version '+record.version, pid=' PID['+this.hex(record.pid)+']',suffix=record.last_section>0?' Section '+record.section+'/'+record.last_section:'';
@@ -284,4 +309,7 @@ var inspector = {
         return text.slice(0,8).join('\n')+(text.length>8?'\n'+(text.length-8)+' more entries in the structure tree':'');
     }
 };
+// Field help is supplied by the engine or the existing presentation tables.
+inspector.fieldComment=function(row){return row ? String(row.help || '') : '';};
+inspector.commentStatus=function(status,row){var comment=this.fieldComment(row);return status+(comment?' | '+comment:'');};
 if(typeof module!=='undefined')module.exports=inspector;

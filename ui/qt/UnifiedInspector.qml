@@ -4,6 +4,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQml.Models
 import "../tauri/web/inspector-model.js" as Model
+import "../tauri/web/workbench.js" as Shared
 
 SplitView {
     id: view
@@ -55,11 +56,12 @@ SplitView {
     property var limits: ({})
     property string selectedPath: "section"
     property var history: []
+    property var backView:null
     property bool restoring: false
     property var navigationOrigin: ({})
     property var selectionFilter: ({})
     property var pendingRestore: null
-    onDetailChanged: {packetFragment=0;if(detail.id && detail.id!==selectionFilter.id)selectionFilter={id:detail.id,page:page,family:family,query:query,pidFilter:pidFilter}}
+    onDetailChanged: {packetFragment=0;if(detail.id && detail.id!==selectionFilter.id)selectionFilter={id:detail.id,page:page,family:family,query:query,pidFilter:pidFilter};if(pendingRestore)Qt.callLater(revealSelection);}
     property int page: 0
     property string family: "All tables"
     property string query: ""
@@ -211,6 +213,7 @@ SplitView {
             fieldClosed=saved.fieldClosed || {};hexFraction=saved.hexFraction || 0.40;hexOpen=saved.hexOpen===undefined?true:saved.hexOpen;
             if(saved.fieldColumns)fieldColumnWidths=saved.fieldColumns.slice();
             selectedFieldIndex=saved.field ? fieldRows.findIndex(function(f){return !f.groupPath && f.nodePath===saved.field.nodePath && f.name===saved.field.name && f.bit_offset===saved.field.bit_offset && f.bit_length===saved.field.bit_length;}) : saved.fieldIndex===undefined?-1:saved.fieldIndex;
+            if(selectedFieldIndex>=0)fieldList.currentIndex=selectedFieldIndex;
             unmappedSelection=!!saved.unmapped;selectedByte=saved.byteCursor===undefined?-1:saved.byteCursor;selectedPacketByte=saved.packetCursor===undefined?-1:saved.packetCursor;
             fieldList.contentY=saved.fieldScroll || 0;fieldList.contentX=saved.fieldX || 0;hexRows.contentY=saved.hexScroll || 0;bytes.contentX=saved.hexX || 0;
             packetRows.contentY=saved.packetScroll || 0;packetBytes.contentX=saved.packetX || 0;nav.contentX=saved.navX || 0;
@@ -245,12 +248,28 @@ SplitView {
         pendingNode=nodePath?{id:r.id,path:nodePath}:null;
         selectedPath='section';if(r.id!==detail.id)host.inspect(r.id,-1);else if(nodePath)completeNodeSelection();
     }
+    function identifier(text){return Shared.workbench.paletteIdentifier('#'+text,state);}
+    function fieldReference(row){return Shared.workbench.classicReference(row,detail,state);}
+    function jumpTarget(target) {
+        if(!host.backendReady || inspectionPending || host.coreInspecting)return false;
+        var destination=Model.inspector.jumpTarget(target,state,organization);if(!destination)return false;
+        navigationOrigin=captureContext();
+        if(destination.record.id===detail.id)history=history.concat([navigationOrigin]).slice(-100);
+        pidFilter=-1;family='All tables';query='';
+        var opened=Object.assign({},openFamilies,destination.opened);opened[destination.record.name]=true;openFamilies=opened;
+        page=Math.max(0,Math.floor(records.findIndex(function(r){return r.id===destination.record.id;})/100));
+        selectRecord(destination.record,destination.key,undefined,false);
+        selectedFieldIndex=-1;selectedByte=-1;
+        Qt.callLater(function(){var index=navigation.findIndex(function(r){return r.key===destination.key;});if(index>=0){nav.currentIndex=index;nav.positionViewAtIndex(index,ListView.Contain);}if(treeVisible)nav.forceActiveFocus();else fieldList.forceActiveFocus();});
+        return true;
+    }
+    function jumpFocusedReference(){var target=fieldReference(selectedField);if(target)jumpTarget(target);}
     function back() {
         if(!history.length || !host.backendReady || host.coreInspecting)return;
         var h=history[history.length-1];history=history.slice(0,-1);restoring=true;
         navigationOrigin={};selectionFilter={id:h.id,page:h.page,family:h.family,query:h.query,pidFilter:h.pidFilter};pendingRestore=h;
         pendingNode=null;expandedRecords=h.expandedRecords || {};treeClosed=h.treeClosed || {};treeLimits=h.treeLimits || {};
-        openFamilies=h.openFamilies || {};pidFilter=h.pidFilter===undefined?-1:h.pidFilter;family=h.family;query=h.query;page=h.page;closed=h.closed;limits=h.limits;host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
+        openFamilies=h.openFamilies || {};pidFilter=h.pidFilter===undefined?-1:h.pidFilter;family=h.family;query=h.query;page=h.page;closed=h.closed;limits=h.limits;if(h.id!==detail.id)host.inspect(h.id,-1);selectedPath=h.path;restoring=false;
         Qt.callLater(revealSelection);
     }
     function activate(row) {
@@ -280,6 +299,22 @@ SplitView {
             return;
         }
         var next=Object.assign({},treeClosed);next[row.key]=!next[row.key];treeClosed=next;
+    }
+    property var fieldContextTarget:null
+    function openFieldContext(index,x,y){
+        if(inspectionPending)return;
+        focusField(index);fieldList.forceActiveFocus();fieldContextTarget=fieldReference(fieldRows[index]);fieldContextMenu.popup(x,y);
+    }
+    Menu {
+        id:fieldContextMenu;objectName:'classicFieldContext';parent:view;width:Math.max(200,fieldContextLabel.implicitWidth+16)
+        font.family:'Tahoma';font.pixelSize:12
+        background:Rectangle{color:'#efefef';border.color:'#808080'}
+        MenuItem {
+            objectName:'classicFieldReference';text:view.fieldContextTarget?view.fieldContextTarget.label:'No reference for this field';enabled:!!view.fieldContextTarget
+            contentItem:Text{id:fieldContextLabel;text:parent.text;font.family:'Tahoma';font.pixelSize:12;color:parent.enabled?'#000':'#808080';leftPadding:8;verticalAlignment:Text.AlignVCenter}
+            background:Rectangle{color:parent.highlighted?'#ffff00':'#efefef'}
+            onTriggered:view.jumpTarget(view.fieldContextTarget)
+        }
     }
     property var contextRow:null
     property var contextTargets:[]
@@ -417,22 +452,23 @@ SplitView {
                     TapHandler{acceptedButtons:Qt.RightButton;onTapped:function(eventPoint){nav.currentIndex=index;nav.forceActiveFocus();var point=navigationDelegate.mapToItem(view,eventPoint.position.x,eventPoint.position.y);view.openContext(modelData,point.x,point.y);}}
                     onClicked:{nav.currentIndex=index;nav.forceActiveFocus();view.activate(modelData);}
                     onDoubleClicked:view.fold(modelData)
-                    ToolTip {visible:parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
+                    ToolTip {visible:parent && parent.hovered;text:modelData.label+(modelData.hint?'\n'+modelData.hint:'')}
                     Accessible.name:modelData.label
+                    Accessible.description:modelData.hint || ''
                 }
             }
             TextLabel {visible:!!view.organizationStatus;text:view.organizationStatus;Layout.fillWidth:true;font.pixelSize:11;elide:Text.ElideRight}
             RowLayout {Layout.fillWidth:true;spacing:2
-                ClassicButton {objectName:'unifiedBack';text:'Back';implicitHeight:23;enabled:view.history.length>0 && host.backendReady;onClicked:view.back()}
+                ClassicButton {objectName:'unifiedBack';text:'Back';implicitHeight:23;enabled:(view.backView||view).history.length>0 && host.backendReady;onClicked:(view.backView||view).back()}
                 ComboBox {Layout.fillWidth:true;implicitHeight:23;font.pixelSize:11;model:host.tableFamilies;currentIndex:Math.max(0,host.tableFamilies.indexOf(view.family));onActivated:view.changeFilter(currentText,view.query)}
                 ClassicButton {text:'Find';implicitHeight:23;onClicked:view.focusSearch()}
             }
             TextField {id:search;objectName:'unifiedSearch';visible:view.searchVisible;Layout.fillWidth:true;implicitHeight:24;color:'black';placeholderTextColor:'#606060';placeholderText:'Find program / LCN / TP / PID';text:view.query;onTextEdited:view.changeFilter(view.family,text);selectByMouse:true}
             ClassicButton {text:'PID '+Model.inspector.hex(view.pidFilter)+' ×';visible:view.pidFilter>=0;implicitHeight:23;onClicked:view.filterPid(-1);Accessible.name:'Clear numeric PID filter'}
             RowLayout {visible:view.records.length>100;Layout.fillWidth:true;spacing:2
-                ClassicButton {objectName:'unifiedPrevious';text:'Previous';implicitHeight:23;enabled:page>0;onClicked:page--}
-                TextLabel {text:(page+1)+' / '+Math.max(1,Math.ceil(records.length/100));Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;font.pixelSize:12}
-                ClassicButton {objectName:'unifiedNext';text:'Next';implicitHeight:23;enabled:(page+1)*100<records.length;onClicked:page++}
+                ClassicButton {objectName:'unifiedPrevious';text:'Previous';implicitHeight:23;enabled:page>0;onClicked:page--;Accessible.name:'Previous page of table records. '+Model.inspector.tablePageHint(page,records.length);ToolTip.visible:hovered;ToolTip.text:Accessible.name}
+                TextLabel {objectName:'unifiedPageCount';text:(page+1)+' / '+Math.max(1,Math.ceil(records.length/100));Layout.fillWidth:true;horizontalAlignment:Text.AlignHCenter;font.pixelSize:12;Accessible.name:Model.inspector.tablePageHint(page,records.length);ToolTip.visible:pageHover.hovered;ToolTip.text:Accessible.name;HoverHandler{id:pageHover}}
+                ClassicButton {objectName:'unifiedNext';text:'Next';implicitHeight:23;enabled:(page+1)*100<records.length;onClicked:page++;Accessible.name:'Next page of table records. '+Model.inspector.tablePageHint(page,records.length);ToolTip.visible:hovered;ToolTip.text:Accessible.name}
             }
         }
     }
@@ -448,7 +484,7 @@ SplitView {
                 RowLayout {anchors.fill:parent;anchors.margins:3;spacing:5
                     Icon {kind:view.detail.name || 'psi'}
                     TextLabel {objectName:'unifiedTitle';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:13;elide:Text.ElideRight
-                        text:detail.id?view.sourceName+' - '+detail.name+' : '+(detail.name==='PMT'?'Program ':'')+Model.inspector.hex(detail.extension || 0)+' PID['+Model.inspector.hex(detail.pid)+']'+(Model.inspector.shortSyntax(detail)?'':' Version '+detail.version)+(detail.name==='PMT'?' PCR_PID['+Model.inspector.hex((detail.fields || {}).pcr_pid || 0)+']':''):'Open a transport stream'
+                        text:detail.id?view.sourceName+' - '+Model.inspector.classicTitle(detail,view.root):'Open a transport stream'
                     }
                     ClassicButton {objectName:'unifiedHex';text:hexOpen?'Hex −':'Hex +';implicitHeight:21;checkable:true;checked:hexOpen;onClicked:hexOpen=checked;font.pixelSize:10}
                 }
@@ -484,13 +520,15 @@ SplitView {
                 contentWidth:view.fieldTableWidth;flickableDirection:Flickable.AutoFlickDirection
                 ScrollBar.horizontal:ScrollBar{policy:ScrollBar.AsNeeded}
                 ScrollBar.vertical:ScrollBar{}
-                Keys.onReturnPressed:view.selectField(currentIndex)
+                Keys.onReturnPressed:function(e){if(e.modifiers&Qt.ControlModifier)view.jumpFocusedReference();else view.selectField(currentIndex);}
+                Keys.onEnterPressed:function(e){if(e.modifiers&Qt.ControlModifier)view.jumpFocusedReference();else view.selectField(currentIndex);}
                 Keys.onSpacePressed:view.selectField(currentIndex)
                 Keys.onUpPressed:{view.focusField(Math.max(0,view.selectedFieldIndex-1));positionViewAtIndex(currentIndex,ListView.Contain);}
                 Keys.onDownPressed:{view.focusField(Math.min(count-1,view.selectedFieldIndex+1));positionViewAtIndex(currentIndex,ListView.Contain);}
                 Keys.onPressed:function(e){
                     var index=Math.max(0,view.selectedFieldIndex),row=view.fieldRows[index];
-                    if(e.key===Qt.Key_Home){view.focusField(0);positionViewAtBeginning();}
+                    if(e.key===Qt.Key_Menu || e.key===Qt.Key_F10 && (e.modifiers&Qt.ShiftModifier)){var point=fieldList.mapToItem(view,20,Math.max(0,index*20-fieldList.contentY)+20);view.openFieldContext(index,point.x,point.y);}
+                    else if(e.key===Qt.Key_Home){view.focusField(0);positionViewAtBeginning();}
                     else if(e.key===Qt.Key_End){view.focusField(count-1);positionViewAtEnd();}
                     else if(e.key===Qt.Key_Right){if(row && row.groupPath && view.fieldClosed[row.groupPath])view.selectField(index);else if(view.fieldRows[index+1] && view.fieldRows[index+1].depth>row.depth)view.focusField(index+1);}
                     else if(e.key===Qt.Key_Left){if(row && row.groupPath && !view.fieldClosed[row.groupPath])view.selectField(index);else for(var parent=index-1;parent>=0;parent--)if(view.fieldRows[parent].depth<row.depth){view.focusField(parent);break;}}
@@ -500,13 +538,20 @@ SplitView {
                 delegate:ItemDelegate {
                     required property var modelData
                     required property int index
+                    id:fieldDelegate
+                    property alias commentToolTip:fieldCommentTip;property alias rowToolTip:fieldRowTip
                     objectName:'siField:'+index;width:view.fieldTableWidth;height:20;padding:0
                     Keys.onSpacePressed:view.selectField(index)
-                    Keys.onReturnPressed:view.selectField(index)
+                    Keys.onReturnPressed:function(e){view.focusField(index);if(e.modifiers&Qt.ControlModifier)view.jumpFocusedReference();else view.selectField(index);}
+                    Keys.onEnterPressed:function(e){view.focusField(index);if(e.modifiers&Qt.ControlModifier)view.jumpFocusedReference();else view.selectField(index);}
+                    Keys.onPressed:function(e){if(e.key===Qt.Key_Menu || e.key===Qt.Key_F10 && (e.modifiers&Qt.ShiftModifier)){var point=fieldDelegate.mapToItem(view,20,20);view.openFieldContext(index,point.x,point.y);e.accepted=true;}}
+                    TapHandler{acceptedButtons:Qt.RightButton;onTapped:function(eventPoint){var point=fieldDelegate.mapToItem(view,eventPoint.position.x,eventPoint.position.y);view.openFieldContext(index,point.x,point.y);}}
                     highlighted:index===view.selectedFieldIndex
+                    Accessible.selected:highlighted
                     background:Rectangle {color:parent.highlighted?view.classicSelection:view.classicPaper;Rectangle {anchors.bottom:parent.bottom;width:parent.width;height:1;color:'#ededed'}}
                     onClicked:{fieldList.forceActiveFocus();view.focusField(index);}
                     onDoubleClicked:if(modelData.groupPath)view.selectField(index)
+                    Accessible.description:Model.inspector.fieldComment(modelData)
                     Accessible.name:modelData.name+', '+(modelData.bit_length===undefined?'bit range unknown':modelData.bit_length+' bits')+', '+modelData.value
                     contentItem:Row {
                         Item {width:view.fieldColumnWidth(0);height:20;clip:true
@@ -520,9 +565,10 @@ SplitView {
                         }
                         TextLabel {width:view.fieldColumnWidth(1);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.groupPath?'':modelData.bit_length===undefined?'—':String(modelData.bit_length)}
                         TextLabel {width:view.fieldColumnWidth(2);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:view.fieldValue(modelData.value);color:view.classicValue;elide:Text.ElideRight}
-                        TextLabel {width:view.fieldColumnWidth(3);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:modelData.help || '';elide:Text.ElideRight}
+                        TextLabel {id:fieldComment;objectName:'siFieldComment:'+index;width:view.fieldColumnWidth(3);height:20;leftPadding:6;verticalAlignment:Text.AlignVCenter;text:Model.inspector.fieldComment(modelData);elide:Text.ElideRight;HoverHandler{id:commentHover}}
                     }
-                    ToolTip {visible:parent.hovered;text:modelData.name+'  '+modelData.value+(modelData.help?'  '+modelData.help:'')}
+                    ToolTip {id:fieldCommentTip;objectName:'siFieldCommentTip:'+index;visible:commentHover.hovered && fieldComment.truncated && !!Model.inspector.fieldComment(modelData);text:Model.inspector.fieldComment(modelData)}
+                    ToolTip {id:fieldRowTip;visible:!!parent && parent.hovered && !fieldCommentTip.visible;text:modelData.name+'  '+modelData.value}
                 }
                 Rectangle {z:-1;anchors.fill:parent;color:'white'}
                 Item {
@@ -583,7 +629,7 @@ SplitView {
                                 }
                             }
                         }
-                        TextLabel {visible:!view.packetRaw;anchors.fill:parent;anchors.margins:8;wrapMode:Text.Wrap;text:view.sourcePacket.status==='source_changed'?'Source file changed. Analyze again to view its original packet.':'Original packet unavailable for this section.'}
+                        TextLabel {objectName:'unifiedPacketUnavailable';visible:!!view.detail.id && !view.packetRaw;anchors.fill:parent;anchors.margins:8;wrapMode:Text.Wrap;text:view.sourcePacket.status==='source_changed'?'Source file changed. Analyze again to view its original packet.':'Original packet unavailable for this section.'}
                     }
                 }
                 ColumnLayout {
@@ -631,8 +677,10 @@ SplitView {
                 }
             }
             TextLabel {
-                objectName:'siRange';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:11;elide:Text.ElideRight
-                text:view.unmappedSelection?"Selected byte has no SI field mapping":view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
+                objectName:'siRange';Layout.fillWidth:true;font.family:'Tahoma';font.pixelSize:11;wrapMode:Text.Wrap
+                textFormat:Text.PlainText
+                text:Model.inspector.commentStatus(baseStatus,view.inspectionPending?null:view.selectedField)
+                readonly property string baseStatus:view.unmappedSelection?"Selected byte has no SI field mapping":view.selectedField && view.selectedField.bit_offset!==undefined ? view.selectedField.name+' : '+view.selectedField.bit_length+' bits  (bit '+view.selectedField.bit_offset+'–'+(view.selectedField.bit_offset+view.selectedField.bit_length-1)+')' : view.selectedField?'Exact bit range unavailable':view.selectedPath!=='section' && !view.activeRange?'Exact byte range unavailable for this decoded node':detail.id?'PID '+Model.inspector.hex(detail.pid)+'   '+detail.bytes+' bytes   CRC '+((detail.crc || {}).status || 'unavailable'):'Ready'
             }
         }
     }

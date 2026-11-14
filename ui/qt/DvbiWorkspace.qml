@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Dialogs
-import "qrc:/shared/workbench.js" as Shared
+import "../tauri/web/workbench.js" as Shared
 
 Item {
     id: pane

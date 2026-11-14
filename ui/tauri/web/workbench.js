@@ -331,6 +331,45 @@ workbench.resolveReference = function(field, detail, state) {
   }
   return target(tables.filter(function(r){return services.some(function(s){return s.source_id===r.id;});}),' · TSID '+identifier(tsid)+' · ONID '+identifier(onid));
 };
+workbench.classicReference = function(field, detail, state) {
+  if(!field || field.groupPath || !detail)return null;
+  var path=field.nodePath || '',name=field.name,context=null;
+  function wireNode(node) {
+    if(!node)return null;
+    if(node.path===path)return node;
+    var children=node.children || [];
+    for(var i=0;i<children.length;i++){var found=wireNode(children[i]);if(found)return found;}
+    return null;
+  }
+  function number(node,key) {
+    var rows=node && node.fields || [];
+    for(var i=0;i<rows.length;i++)if(rows[i].name===key){
+      var match=/^(0x[0-9a-f]+) \[([0-9]+)\]$/i.exec(String(rows[i].value));
+      if(match && Number(match[1])===Number(match[2]))return Number(match[1]);
+    }
+    return null;
+  }
+  var wire=wireNode(detail.si_structure),value=number(wire,name);
+  if(wire && value!==null) {
+    if(detail.name==='PAT' && /^section\/program\/[0-9]+$/.test(path) && name==='program_map_PID')
+      context={path:'native/PAT/service/program_map_pid',value:value,attributes:{service_id:number(wire,'program_number')}};
+    else if(detail.name==='PMT' && path==='section' && name==='PCR_PID')context={path:'native/PMT/pcr_pid',value:value};
+    else if(detail.name==='PMT' && /^section\/stream\/[0-9]+$/.test(path) && name==='elementary_PID')context={path:'native/PMT/component/elementary_pid',value:value};
+    else if(detail.name==='SDT' && /^section\/service\/[0-9]+$/.test(path) && name==='service_id')
+      context={path:'native/SDT/service/service_id',value:value,root:{transport_stream_id:detail.extension,original_network_id:number(detail.si_structure,'original_network_id')}};
+    else if(detail.name==='CAT' && /^section\/descriptor\/[0-9]+$/.test(path) && name==='CA_PID' && (detail.descriptors || []).some(function(d){return d.offset===wire.descriptor_offset && d.native_decoded===true && d.decode_status==='decoded' && d.native && d.native.name==='CA_descriptor';}))
+      context={path:'native/CAT/CA_descriptor/ca_pid',value:value};
+  }
+  // SDK-only classic rows retain the exact node hierarchy and attributes.
+  if(!context && path.indexOf('section/decoded')===0) {
+    var native=detail.section_native_table;
+    if(!native && detail.native_table_complete && (detail.native_table_sources || []).length===1 && detail.native_table_sources[0].id===detail.id)native=detail.native_table;
+    var node=native,parts=path.split('/').slice(2),names=node?[node.name]:[];
+    for(var j=0;node && j<parts.length;j++){if(!/^[0-9]+$/.test(parts[j])){node=null;break;}node=(node.children || [])[Number(parts[j])];if(node)names.push(node.name);}
+    if(node && !(node.attribute_case_collisions || []).length && Object.prototype.hasOwnProperty.call(node.attributes || {},name))context={path:'native/'+names.join('/')+'/'+name.toLowerCase(),value:node.attributes[name],attributes:node.attributes,root:native.attributes};
+  }
+  return context?workbench.resolveReference(context,detail,state):null;
+};
 workbench.objectNode = function(id, label, value, context) {
   var next=context?Object.assign({},context,{path:context.path+'/'+id}):null;
   if(value !== null && typeof value === 'object') {
